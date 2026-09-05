@@ -236,6 +236,10 @@ data object BrowserTab : Tab {
             settings.builtInZoomControls = true
             settings.displayZoomControls = false
             settings.cacheMode = WebSettings.LOAD_DEFAULT
+            // Сохранённые HTML веб-библиотеки лежат в нашем внешнем каталоге:
+            // с API 30 allowFileAccess по умолчанию false → ERR_ACCESS_DENIED.
+            @Suppress("DEPRECATION")
+            runCatching { settings.allowFileAccess = true }
 
             webChromeClient = object : WebChromeClient() {
                 override fun onProgressChanged(view: WebView, newProgress: Int) {
@@ -730,7 +734,15 @@ data object BrowserTab : Tab {
                 rows = webPages.sortedByDescending { it.savedAt }.map { Triple(it.id, it.host + " · " + it.title, it.url) },
                 onPick = { id ->
                     webPages.firstOrNull { it.id == id }?.let { p ->
-                        sharedWebView?.loadUrl("file://" + p.file)
+                        // WebView с API 30+ не пускает в file:// (ERR_ACCESS_DENIED):
+                        // читаем файл сами (наш каталог — доступ разрешён) и отдаём
+                        // содержимое через loadDataWithBaseURL с базой исходного url.
+                        val opened = runCatching {
+                            val html = java.io.File(p.file).readText()
+                            sharedWebView?.loadDataWithBaseURL(p.url, html, "text/html", "UTF-8", p.url)
+                            true
+                        }.getOrDefault(false)
+                        if (!opened) sharedWebView?.loadUrl("file://" + p.file)
                         libOpen = false
                     }
                 },
