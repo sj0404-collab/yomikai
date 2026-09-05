@@ -66,6 +66,8 @@ object TtsSpeaker {
     /** Инициализация системного TTS в процессе — повторные speak() ждут listener'а. */
     @Volatile
     private var initInProgress = false
+    /** Фразы, заказанные ДО готовности движка: ждут listener'а, не теряются. */
+    private val pendingReady = ArrayDeque<(TextToSpeech?) -> Unit>()
     private var mediaPlayer: MediaPlayer? = null
 
     @Volatile
@@ -106,7 +108,13 @@ object TtsSpeaker {
             val listener = TextToSpeech.OnInitListener { status ->
                 systemReady = status == TextToSpeech.SUCCESS
                 initInProgress = false
-                onReady(if (systemReady) systemTts else null)
+                val ready = if (systemReady) systemTts else null
+                onReady(ready)
+                // Голоса больше не «исчезают до инициализации»: всё, что было
+                // заказано во время старта движка, озвучивается сразу после него.
+                val pending = pendingReady.toList()
+                pendingReady.clear()
+                pending.forEach { it(ready) }
             }
             initInProgress = true
             systemTts = if (wantEngine != null) {
@@ -120,8 +128,13 @@ object TtsSpeaker {
             systemTts = null
             onReady(null)
         } else {
-            // Инициализация уже идёт — не дёргаем движок, ответ придёт из listener'а.
-            onReady(null)
+            // Инициализация уже идёт — не дёргаем движок; фразу ставим в
+            // очередь и озвучиваем из listener'а (раньше она молча терялась).
+            if (pendingReady.size < 8) {
+                pendingReady.addLast(onReady)
+            } else {
+                onReady(null)
+            }
         }
     }
 

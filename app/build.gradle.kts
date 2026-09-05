@@ -252,7 +252,6 @@ dependencies {
     // Нативные .so (55МБ!) НЕ в APK — качаются как дополнение в рантайме
     // (OnnxTts.downloadRuntime) и грузятся через System.load.
     implementation(files("libs/sherpa-onnx-classes.jar"))
-    implementation(libs.mediapipe.genai)
     implementation(libs.commons.compress)
     implementation(libs.xz)
     baselineProfile(projects.baselineProfile)

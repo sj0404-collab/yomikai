@@ -77,6 +77,7 @@ class AutoReadEngine(
         val box: OcrBoundingBox,
         val index: Int,
         val state: State,
+        val text: String = "",
     ) {
         enum class State { DONE, CURRENT, UPCOMING }
     }
@@ -330,7 +331,7 @@ class AutoReadEngine(
 
                 // Публикуем карту кадра: всё, что будет прочитано
                 _frameRegions.value = ordered.mapIndexed { i, r ->
-                    FrameRegion(r.boundingBox, i + 1, FrameRegion.State.UPCOMING)
+                    FrameRegion(r.boundingBox, i + 1, FrameRegion.State.UPCOMING, r.text)
                 }
 
                 // 4) реплика за репликой: подсветка -> озвучка -> ждём конца

@@ -9,6 +9,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.IconButton
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.HourglassBottom
+import androidx.compose.material.icons.outlined.HourglassTop
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -113,54 +115,44 @@ fun ReaderFloatingControls(
         modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.BottomEnd,
     ) {
-    // Индикация сканирования/распознавания: пользователь видит, что приложение
-    // работает, ещё до появления текста (и заметку о словарях после).
+    // Статус скана — БЕЗ громоздких центральных оверлеев и заметок
+    // «Текст готов»: в углу экрана маленькая песочная анимация (часики
+    // переворачиваются верх-вниз), а подробности уходят уведомлением в шторку.
     val ocrStage by mihon.data.ocr.OcrStageBus.event.collectAsState()
-    if (
-        ocrStage.stage == mihon.data.ocr.OcrStageBus.Stage.DETECTING ||
+    val scanActive = ocrStage.stage == mihon.data.ocr.OcrStageBus.Stage.DETECTING ||
         ocrStage.stage == mihon.data.ocr.OcrStageBus.Stage.RECOGNIZING
-    ) {
-        eu.kanade.presentation.reader.OcrLoadingIndicator(
-            visible = true,
-            // Индикатор — в центре читалки (над страницей), а не у верхней
-            // кромки экрана телефона (жалоба пользователя).
+    if (scanActive) {
+        var flip by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+        androidx.compose.runtime.LaunchedEffect(ocrStage.stage) {
+            while (true) {
+                flip = !flip
+                kotlinx.coroutines.delay(700)
+            }
+        }
+        Icon(
+            if (flip) Icons.Outlined.HourglassTop else Icons.Outlined.HourglassBottom,
+            contentDescription = "Сканирование",
+            tint = MaterialTheme.colorScheme.primary,
             modifier = Modifier
-                .align(Alignment.Center)
-                .padding(horizontal = 24.dp),
-        )
-        androidx.compose.material3.Text(
-            text = if (ocrStage.stage == mihon.data.ocr.OcrStageBus.Stage.DETECTING) {
-                "Сканирую облачка…"
-            } else {
-                "Распознаю текст… ${ocrStage.note}"
-            },
-            style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
-            color = androidx.compose.material3.MaterialTheme.colorScheme.primary,
-            modifier = Modifier
-                .align(Alignment.Center)
-                .padding(top = 56.dp, start = 16.dp, end = 16.dp),
+                .align(Alignment.TopEnd)
+                .padding(10.dp),
         )
     }
-    // Заметка о готовности видна 5 секунд в центре и гаснет сама.
-    var showDoneNote by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     androidx.compose.runtime.LaunchedEffect(ocrStage) {
-        showDoneNote = ocrStage.stage == mihon.data.ocr.OcrStageBus.Stage.DONE && ocrStage.note.isNotBlank()
-        if (showDoneNote) {
-            kotlinx.coroutines.delay(5000)
-            showDoneNote = false
+        val nctx = ctorContext
+        when (ocrStage.stage) {
+            mihon.data.ocr.OcrStageBus.Stage.DETECTING ->
+                mihon.data.ocr.OcrNotificationManager.updateStreaming(nctx, "Сканирую облачка…")
+            mihon.data.ocr.OcrStageBus.Stage.RECOGNIZING ->
+                mihon.data.ocr.OcrNotificationManager.updateStreaming(nctx, "Распознаю текст… ${ocrStage.note}")
+            mihon.data.ocr.OcrStageBus.Stage.DONE -> {
+                mihon.data.ocr.OcrNotificationManager.show(nctx, ocrStage.note.ifBlank { "Текст готов" })
+                kotlinx.coroutines.delay(10000)
+                mihon.data.ocr.OcrNotificationManager.dismiss(nctx)
+            }
+            else -> {}
         }
     }
-    if (showDoneNote) {
-        androidx.compose.material3.Text(
-            text = "Текст готов: ${ocrStage.note}",
-            style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier
-                .align(Alignment.Center)
-                .padding(top = 96.dp, start = 16.dp, end = 16.dp),
-        )
-    }
-
         AnimatedVisibility(
             visible = visible,
             enter = fadeIn(),

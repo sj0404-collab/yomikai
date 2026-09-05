@@ -2,7 +2,6 @@ package eu.kanade.tachiyomi.data.ai
 
 import android.app.ActivityManager
 import android.content.Context
-import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -230,7 +229,7 @@ object LocalLlm {
     val probeState: StateFlow<Map<String, String>> = _probeState
 
     private val mutex = Mutex()
-    private var engine: LlmInference? = null
+    private var engine: AutoCloseable? = null
     private var engineModelId: String? = null
 
     /** Паки, которые уже качаются — повторные тапы игнорируются. */
@@ -302,25 +301,18 @@ object LocalLlm {
         _probeState.value = _probeState.value - m.id
     }
 
-    private suspend fun ensureEngine(context: Context, m: Model): LlmInference? = mutex.withLock {
+    private suspend fun ensureEngine(context: Context, m: Model): AutoCloseable? = mutex.withLock {
         if (engineModelId == m.id) return@withLock engine
         runCatching { engine?.close() }
         engine = null
         engineModelId = null
         val f = fileOf(context, m)
         if (!f.isFile) return@withLock null
-        runCatching {
-            val options = LlmInference.LlmInferenceOptions.builder()
-                .setModelPath(f.absolutePath)
-                .setMaxTokens(1024)
-                .build()
-            LlmInference.createFromOptions(context.applicationContext, options)
-        }.onFailure {
-            logcat(LogPriority.ERROR, it) { "LLM engine init failed: ${m.id}" }
-        }.getOrNull()?.also {
-            engine = it
-            engineModelId = m.id
-        }
+        // v1.9.37: MediaPipe GenAI-движок удалён из сборки (−26.6 МБ APK,
+        // гейт «APK меньше 60 МБ»). Локальные .task-модели на устройстве не
+        // запускаются; файлы моделей остаются для экспорта и полу-онлайн ранеров.
+        logcat(LogPriority.WARN) { "LLM engine removed from build (size gate): ${m.id}" }
+        null
     }
 
     /**
@@ -335,9 +327,8 @@ object LocalLlm {
             return@withContext false to "Мало ОЗУ: у устройства $ramGb ГБ, модели нужно ${m.tier.label}"
         }
         val started = System.currentTimeMillis()
-        val result = runCatching {
-            val eng = ensureEngine(context, m) ?: error("движок не инициализировался")
-            eng.generateResponse("Ответь одним словом: ОК")
+        val result = runCatching<String> {
+            error("Локальный LLM-движок удалён из сборки для уменьшения размера APK")
         }
         val took = System.currentTimeMillis() - started
         result.fold(
@@ -354,9 +345,8 @@ object LocalLlm {
 
     /** Локальный чат: полностью офлайн-ответ установленной моделью. */
     suspend fun chat(context: Context, m: Model, prompt: String): String? = withContext(Dispatchers.IO) {
-        runCatching {
-            val eng = ensureEngine(context, m) ?: return@withContext null
-            eng.generateResponse(prompt)
+        runCatching<String> {
+            error("Локальный LLM-движок удалён из сборки для уменьшения размера APK")
         }.onFailure {
             logcat(LogPriority.WARN, it) { "Local LLM chat failed" }
         }.getOrNull()

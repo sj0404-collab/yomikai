@@ -42,6 +42,11 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Star
+import androidx.compose.material.icons.outlined.StarBorder
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FloatingActionButton
@@ -240,6 +245,7 @@ data object BrowserTab : Tab {
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView, url: String?) {
                     canGoBackState.value = view.canGoBack()
+                    runCatching { WebStore.addHistory(context, url ?: "", view.title ?: "") }
                     url?.let { urlState.value = it }
                 }
             }
@@ -287,6 +293,45 @@ data object BrowserTab : Tab {
 
         var isAutoRead by autoReadActive
         val ctx = androidx.compose.ui.platform.LocalContext.current
+        WebStore.load(ctx)
+        var moreOpen by remember { mutableStateOf(false) }
+        var libOpen by remember { mutableStateOf(false) }
+        var marksOpen by remember { mutableStateOf(false) }
+        var histOpen by remember { mutableStateOf(false) }
+        var tabsOpen by remember { mutableStateOf(false) }
+        var cacheOpen by remember { mutableStateOf(false) }
+        var webBookmarked by remember { mutableStateOf(false) }
+        val webPages by WebStore.pages.collectAsState()
+        val webMarks by WebStore.marks.collectAsState()
+        val webHist by WebStore.history.collectAsState()
+        val webTabs by WebStore.tabs.collectAsState()
+        androidx.compose.runtime.LaunchedEffect(urlBar) {
+            webBookmarked = WebStore.isBookmarked(urlBar)
+        }
+        fun loadUrlInput(raw: String) {
+            val input = raw.trim()
+            val target = when {
+                input.startsWith("http://") || input.startsWith("https://") -> input
+                input.contains('.') && !input.contains(' ') -> "https://$input"
+                else -> "https://www.google.com/search?q=" + java.net.URLEncoder.encode(input, "UTF-8")
+            }
+            WebStore.addTab(ctx, target, target)
+            sharedWebView?.loadUrl(target)
+        }
+        fun saveHtmlPage() {
+            val wv = sharedWebView ?: return
+            val currentUrl = wv.url ?: urlBar
+            val currentTitle = wv.title ?: currentUrl
+            wv.evaluateJavascript("(function(){return document.documentElement.outerHTML;})()") { json ->
+                val ok = runCatching {
+                    val html = org.json.JSONTokener(json).nextValue() as? String
+                    if (html.isNullOrBlank()) false else WebStore.savePage(ctx, currentUrl, currentTitle, html) != null
+                }.getOrDefault(false)
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    ctx.toast(if (ok) "Страница сохранена в веб-библиотеку" else "Не удалось сохранить страницу")
+                }
+            }
+        }
         var ocrBusy by remember { mutableStateOf(false) }
         var ocrText by remember { mutableStateOf<String?>(null) }
         var ocrJob by remember { mutableStateOf<Job?>(null) }
@@ -462,7 +507,13 @@ data object BrowserTab : Tab {
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
+                if (canGoBack) {
+                    IconButton(onClick = { sharedWebView?.goBack() }) {
+                        Icon(Icons.Outlined.ArrowBack, contentDescription = "Назад")
+                    }
+                }
                 OutlinedTextField(
                     value = urlBar,
                     onValueChange = { urlBar = it },
@@ -471,34 +522,19 @@ data object BrowserTab : Tab {
                     textStyle = MaterialTheme.typography.bodySmall,
                     placeholder = { Text("Адрес или поиск", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     trailingIcon = {
-                        IconButton(
-                            onClick = {
-                                val input = urlBar.trim()
-                                val target = when {
-                                    input.startsWith("http://") || input.startsWith("https://") -> input
-                                    input.contains('.') && !input.contains(' ') -> "https://$input"
-                                    else -> "https://www.google.com/search?q=" +
-                                        java.net.URLEncoder.encode(input, "UTF-8")
-                                }
-                                sharedWebView?.loadUrl(target)
-                            },
-                        ) {
+                        IconButton(onClick = { loadUrlInput(urlBar) }) {
                             Icon(Icons.Outlined.Refresh, contentDescription = "Перейти/обновить")
                         }
                     },
                 )
-            if (!immersive) {
-                if (!hiddenM.contains("b_urlscan")) {
-                IconButton(onClick = { manualScan() }) {
-                    Icon(Icons.Outlined.DocumentScanner, contentDescription = "Скан текста (OCR)")
+                IconButton(onClick = {
+                    webBookmarked = WebStore.toggleBookmark(ctx, urlBar, sharedWebView?.title ?: urlBar)
+                }) {
+                    Icon(if (webBookmarked) Icons.Outlined.Star else Icons.Outlined.StarBorder, contentDescription = "Закладка")
                 }
+                IconButton(onClick = { moreOpen = true }) {
+                    Icon(Icons.Outlined.MoreVert, contentDescription = "Ещё")
                 }
-                if (!hiddenM.contains("b_urlfull")) {
-                IconButton(onClick = { immersive = true }) {
-                    Icon(Icons.Outlined.Fullscreen, contentDescription = "Полный экран")
-                }
-                }
-            }
             }
             if (!immersive && progress < 1f) {
                 LinearProgressIndicator(
@@ -599,8 +635,8 @@ data object BrowserTab : Tab {
                                 }
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(if (saving) "Сохранение…  " else "Сохранить как главу  ", style = MaterialTheme.typography.labelMedium)
-                                SmallFloatingActionButton(onClick = { saveAsLocal() }) {
+                                Text("Сохранить HTML  ", style = MaterialTheme.typography.labelMedium)
+                                SmallFloatingActionButton(onClick = { saveHtmlPage() }) {
                                     if (saving) CircularProgressIndicator(modifier = Modifier.width(16.dp).height(16.dp))
                                     else Icon(Icons.Outlined.Download, contentDescription = "Сохранить")
                                 }
@@ -665,6 +701,106 @@ data object BrowserTab : Tab {
             }
         }
 
+        if (moreOpen) {
+            AlertDialog(
+                onDismissRequest = { moreOpen = false },
+                confirmButton = { TextButton(onClick = { moreOpen = false }) { Text("Закрыть") } },
+                title = { Text("Мини-браузер") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        TextButton(onClick = { moreOpen = false; tabsOpen = true }) { Text("Вкладки (${webTabs.size})") }
+                        TextButton(onClick = { moreOpen = false; marksOpen = true }) { Text("Закладки (${webMarks.size})") }
+                        TextButton(onClick = { moreOpen = false; libOpen = true }) { Text("Библиотека веб-страниц (${webPages.size})") }
+                        TextButton(onClick = { moreOpen = false; histOpen = true }) { Text("История просмотра") }
+                        TextButton(onClick = { moreOpen = false; cacheOpen = true }) { Text("Кэш и данные") }
+                        TextButton(onClick = { moreOpen = false; saveHtmlPage() }) { Text("Сохранить страницу (HTML)") }
+                        if (!hiddenM.contains("b_urlscan")) {
+                            TextButton(onClick = { moreOpen = false; manualScan() }) { Text("Скан текста (OCR)") }
+                        }
+                        if (!hiddenM.contains("b_urlfull")) {
+                            TextButton(onClick = { moreOpen = false; immersive = true }) { Text("Полный экран") }
+                        }
+                    }
+                },
+            )
+        }
+        if (libOpen) {
+            WebListDialog(
+                title = "Веб-библиотека (по источнику и id)",
+                rows = webPages.sortedByDescending { it.savedAt }.map { Triple(it.id, it.host + " · " + it.title, it.url) },
+                onPick = { id ->
+                    webPages.firstOrNull { it.id == id }?.let { p ->
+                        sharedWebView?.loadUrl("file://" + p.file)
+                        libOpen = false
+                    }
+                },
+                onDelete = { id -> webPages.firstOrNull { it.id == id }?.let { WebStore.deletePage(ctx, it) } },
+                onDismiss = { libOpen = false },
+            )
+        }
+        if (marksOpen) {
+            WebListDialog(
+                title = "Закладки",
+                rows = webMarks.map { Triple(it.id, it.title, it.url) },
+                onPick = { id ->
+                    webMarks.firstOrNull { it.id == id }?.let { m ->
+                        sharedWebView?.loadUrl(m.url)
+                        marksOpen = false
+                    }
+                },
+                onDelete = { id -> webMarks.firstOrNull { it.id == id }?.let { WebStore.deleteMark(ctx, it) } },
+                onDismiss = { marksOpen = false },
+            )
+        }
+        if (histOpen) {
+            WebListDialog(
+                title = "История просмотра",
+                rows = webHist.map {
+                    Triple(
+                        it.url,
+                        it.title,
+                        java.text.SimpleDateFormat("dd.MM HH:mm", java.util.Locale.getDefault()).format(java.util.Date(it.at)),
+                    )
+                },
+                onPick = { u -> sharedWebView?.loadUrl(u); histOpen = false },
+                onDismiss = { histOpen = false },
+            )
+        }
+        if (tabsOpen) {
+            WebListDialog(
+                title = "Вкладки",
+                rows = webTabs.map { Triple(it.id, it.title, it.url) },
+                onPick = { id ->
+                    webTabs.firstOrNull { it.id == id }?.let { t ->
+                        sharedWebView?.loadUrl(t.url)
+                        tabsOpen = false
+                    }
+                },
+                onDelete = { id -> WebStore.closeTab(ctx, id) },
+                onDismiss = { tabsOpen = false },
+            )
+        }
+        if (cacheOpen) {
+            AlertDialog(
+                onDismissRequest = { cacheOpen = false },
+                confirmButton = {
+                    TextButton(onClick = {
+                        runCatching { sharedWebView?.clearCache(true) }
+                        WebStore.clearCache(ctx)
+                        cacheOpen = false
+                    }) { Text("Очистить кэш") }
+                },
+                dismissButton = { TextButton(onClick = { cacheOpen = false }) { Text("Закрыть") } },
+                title = { Text("Кэш и данные") },
+                text = {
+                    Text(
+                        "Кэш WebView/приложения: " +
+                            String.format(java.util.Locale.getDefault(), "%.1f МБ", WebStore.cacheSizeBytes(ctx) / 1048576.0) +
+                            "\nОчистка не трогает веб-библиотеку и закладки.",
+                    )
+                },
+            )
+        }
         if (immersive) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopEnd) {
                 Column(

@@ -80,33 +80,11 @@ fun AutoReadHighlight(
             if (fr.state == AutoReadEngine.FrameRegion.State.CURRENT) continue // текущую рисуем ниже ярче
             val b = engine?.mapToViewport(fr.box) ?: fr.box
             val done = fr.state == AutoReadEngine.FrameRegion.State.DONE
-            if (style == "bubble") {
-                // Еле прозрачный кружок: прочитанное — совсем тускло,
-                // предстоящее — чуть заметнее. Без единого прямого угла.
-                val frW = with(density) { ((b.right - b.left) * iwFr).toDp() }
-                val frH = with(density) { ((b.bottom - b.top) * ihFr).toDp() }
-                val sideDp = maxOf(frW, frH) * 1.5f
-                val sidePx = with(density) { sideDp.toPx() }
-                val cx = ixFr + (b.left + b.right) / 2f * iwFr
-                val cy = iyFr + (b.top + b.bottom) / 2f * ihFr
-                Box(
-                    modifier = Modifier
-                        .offset {
-                            IntOffset(
-                                (cx - sidePx / 2f).roundToInt(),
-                                (cy - sidePx / 2f).roundToInt(),
-                            )
-                        }
-                        .width(sideDp)
-                        .height(sideDp)
-                        .background(
-                            color = accent.copy(alpha = if (done) 0.04f else 0.08f),
-                            shape = CircleShape,
-                        ),
-                )
-            } else {
-                val frW = with(density) { ((b.right - b.left) * iwFr).toDp() }
-                val frH = with(density) { ((b.bottom - b.top) * ihFr).toDp() }
+            val frW = with(density) { ((b.right - b.left) * iwFr).toDp() }
+            val frH = with(density) { ((b.bottom - b.top) * ihFr).toDp() }
+            // История и план чтения: распознанный текст лежит ТОЧНО в своём
+            // боксе поверх оригинала — без рамок, кругов и смещений.
+            if (fr.text.isNotBlank() && frW > 6.dp && frH > 3.dp) {
                 Box(
                     modifier = Modifier
                         .offset {
@@ -117,20 +95,16 @@ fun AutoReadHighlight(
                         }
                         .width(frW)
                         .height(frH)
-                        .border(
-                            width = 1.5.dp,
-                            color = if (done) {
-                                accent.copy(alpha = 0.25f)
-                            } else {
-                                accent.copy(alpha = 0.55f)
-                            },
-                            shape = RoundedCornerShape(4.dp),
-                        )
-                        .background(
-                            if (done) accent.copy(alpha = 0.05f) else Color.Transparent,
-                            RoundedCornerShape(4.dp),
-                        ),
-                )
+                        .background(Color.Black.copy(alpha = if (done) 0.34f else 0.48f)),
+                ) {
+                    androidx.compose.material3.Text(
+                        text = fr.text,
+                        color = Color.White.copy(alpha = if (done) 0.72f else 0.92f),
+                        fontSize = with(density) { (frH / 2.4f).toSp() },
+                        maxLines = 2,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
 
@@ -161,68 +135,23 @@ fun AutoReadHighlight(
             )
         }
 
-        if (style == "bubble") {
-            // Мягкий круг: радиальное пятно с центром на реплике, полностью
-            // сходит в ноль — ни рамки, ни капсулы, ни «прямоугольника в
-            // высоту». Диаметр чуть больше реплики, чтобы накрыть текст.
-            val sideDp = maxOf(boxWidth, boxHeight) * 1.6f
-            val sidePx = with(density) { sideDp.toPx() }
-            val cx = ix + (mappedSafe.left + mappedSafe.right) / 2f * iw
-            val cy = iy + (mappedSafe.top + mappedSafe.bottom) / 2f * ih
-            Box(
-                modifier = Modifier
-                    .offset {
-                        IntOffset(
-                            (cx - sidePx / 2f).roundToInt(),
-                            (cy - sidePx / 2f).roundToInt(),
-                        )
-                    }
-                    .width(sideDp)
-                    .height(sideDp)
-                    .background(
-                        brush = Brush.radialGradient(
-                            colors = listOf(
-                                accent.copy(alpha = 0.16f),
-                                accent.copy(alpha = 0.06f),
-                                Color.Transparent,
-                            ),
-                        ),
-                        shape = CircleShape,
-                    ),
-            )
-        }
-
-        if (style == "box" || style == "both") {
+        // Текущая реплика: распознанный текст поверх оригинала, точно в боксе,
+        // без рамок/подчёркиваний/пятен и без смещения (запрос пользователя).
+        if (region.text.isNotBlank() && boxWidth > 6.dp && boxHeight > 3.dp) {
             Box(
                 modifier = offsetModifier
                     .width(boxWidth)
                     .height(boxHeight)
-                    .border(
-                        width = strokeWidth.dp,
-                        color = accent,
-                        shape = RoundedCornerShape(6.dp),
-                    )
-                    .background(accent.copy(alpha = 0.14f), RoundedCornerShape(6.dp)),
-            )
-        }
-
-        if (style == "underline" || style == "both") {
-            // Подчёркивание: линия по нижней границе реплики.
-            // Считаем по iw/ih и со смещением ix/iy — как рамка выше. Раньше
-            // здесь стояло w/h без смещения, поэтому линия уезжала от текста
-            // тем сильнее, чем больше поля вокруг страницы.
-            Box(
-                modifier = Modifier
-                    .offset {
-                        IntOffset(
-                            (ix + mappedSafe.left * iw).roundToInt(),
-                            (iy + mappedSafe.bottom * ih).roundToInt(),
-                        )
-                    }
-                    .width(boxWidth)
-                    .height(strokeWidth.dp)
-                    .background(accent, RoundedCornerShape(strokeWidth.dp / 2)),
-            )
+                    .background(Color.Black.copy(alpha = 0.62f)),
+            ) {
+                androidx.compose.material3.Text(
+                    text = region.text,
+                    color = Color.White,
+                    fontSize = with(density) { (boxHeight / 2.4f).toSp() },
+                    maxLines = 3,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
