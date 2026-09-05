@@ -249,7 +249,7 @@ object TtsSpeaker {
                 engine.setPitch(p.speechPitch().get().coerceIn(0.5f, 2f))
                 val name = voiceSpec.substringAfterLast("::")
                 engine.voices?.firstOrNull { it.name == name }?.let { engine.setVoice(it) }
-                val maxLen = runCatching { engine.maxSpeechInputLength }.getOrDefault(0).takeIf { it > 0 } ?: 3500
+                val maxLen = 3500
                 val parts = spoken.chunked(maxLen)
                 val lastId = "ywv_" + (parts.size - 1)
                 engine.setOnUtteranceProgressListener(

@@ -242,9 +242,9 @@ data object BrowserTab : Tab {
                 "while(el&&!sc(el))el=el.parentElement;" +
                 "if(el){el.scrollTop+=dy;}else{window.scrollBy(0,dy);}return 1;})($dy)"
             try {
-                wv.post { wv.evaluateJavascript(js) { if (cont.isActive) cont.resume(Unit) } }
+                wv.post { wv.evaluateJavascript(js) { if (cont.isActive) cont.resume(Unit) {} } }
             } catch (e: Exception) {
-                if (cont.isActive) cont.resume(Unit)
+                if (cont.isActive) cont.resume(Unit) {}
             }
         }
 
