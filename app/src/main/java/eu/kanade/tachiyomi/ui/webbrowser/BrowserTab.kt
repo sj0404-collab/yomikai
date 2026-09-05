@@ -97,6 +97,15 @@ import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.FullscreenExit
 import androidx.compose.runtime.rememberCoroutineScope
 import eu.kanade.tachiyomi.util.ocr.toOcrImage
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.foundation.background
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -212,6 +221,33 @@ data object BrowserTab : Tab {
         return cropped
     }
 
+    /** Позиция скролла страницы: окно + внутренний скролл-контейнер. */
+    private suspend fun readScrollPos(wv: WebView): Float =
+        kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+            val js = "(function(){var el=document.elementFromPoint(innerWidth/2,innerHeight*0.65);" +
+                "while(el&&!(el.scrollHeight>el.clientHeight+4))el=el.parentElement;" +
+                "return (el?el.scrollTop:0)+window.scrollY;})()"
+            try {
+                wv.post { wv.evaluateJavascript(js) { r -> if (cont.isActive) cont.resume(r?.toFloatOrNull() ?: 0f) {} } }
+            } catch (e: Exception) {
+                if (cont.isActive) cont.resume(0f) {}
+            }
+        }
+
+    /** Скролл на dy px: сайт может скроллиться внутренним контейнером. */
+    private suspend fun scrollJs(wv: WebView, dy: Int) =
+        kotlinx.coroutines.suspendCancellableCoroutine<Unit> { cont ->
+            val js = "(function(dy){function sc(el){return el&&el.scrollHeight>el.clientHeight+4;}" +
+                "var el=document.elementFromPoint(innerWidth/2,innerHeight*0.65);" +
+                "while(el&&!sc(el))el=el.parentElement;" +
+                "if(el){el.scrollTop+=dy;}else{window.scrollBy(0,dy);}return 1;})($dy)"
+            try {
+                wv.post { wv.evaluateJavascript(js) { if (cont.isActive) cont.resume(Unit) } }
+            } catch (e: Exception) {
+                if (cont.isActive) cont.resume(Unit)
+            }
+        }
+
     override val options: TabOptions
         @Composable
         get() {
@@ -248,14 +284,12 @@ data object BrowserTab : Tab {
             @Suppress("DEPRECATION")
             runCatching { settings.allowFileAccess = true }
 
+            // v1.9.40: long-press в любом месте страницы = выбор области скана
+            // (раньше срабатывало только на картинках, а на тексте WebView
+            // открывал системное выделение текста с меню «Копировать»).
             setOnLongClickListener {
-                val t = hitTestResult.type
-                if (t == WebView.HitTestResult.IMAGE_TYPE || t == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE) {
-                    imageLongPress?.invoke()
-                    true
-                } else {
-                    false
-                }
+                imageLongPress?.invoke()
+                true
             }
             webChromeClient = object : WebChromeClient() {
                 override fun onProgressChanged(view: WebView, newProgress: Int) {
@@ -288,6 +322,14 @@ data object BrowserTab : Tab {
                     canGoBackState.value = view.canGoBack()
                     runCatching { WebStore.addHistory(context, url ?: "", view.title ?: "") }
                     runCatching { WebStore.touchTab(context, url ?: "", view.title ?: "") }
+                    // v1.9.40: системное выделение текста мешало выбору области:
+                    // long-press открывал меню «Копировать/Поделиться» вместо скана.
+                    runCatching {
+                        view.evaluateJavascript(
+                            "(function(){if(!document.getElementById('yk-noselect')){var s=document.createElement('style');s.id='yk-noselect';s.textContent='*{-webkit-user-select:none!important;user-select:none!important}';document.documentElement.appendChild(s);}})()",
+                            null,
+                        )
+                    }
                     url?.let { urlState.value = it }
                 }
             }
@@ -378,6 +420,9 @@ data object BrowserTab : Tab {
         var ocrBusy by remember { mutableStateOf(false) }
         var ocrText by remember { mutableStateOf<String?>(null) }
         var ocrJob by remember { mutableStateOf<Job?>(null) }
+        // v1.9.40: замороженный кадр для выбора области скана пальцем
+        var areaFrame by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+        val pip by WebStore.pipMode
         var immersive by remember { mutableStateOf(false) }
         val scope = rememberCoroutineScope()
         var saving by remember { mutableStateOf(false) }
@@ -386,41 +431,55 @@ data object BrowserTab : Tab {
         fun manualScan() {
             imageLongPress = { manualScan() }
             ocrJob?.cancel()
+            // v1.9.40: НЕ автоскан всего экрана (с шапкой и рекламой) и НЕ только
+            // картинки: пользователь сам рисует область пальцем на замороженном кадре.
+            val raw = captureWebView()
+            if (raw == null) {
+                ctx.toast("Не удалось захватить кадр для скана")
+                return
+            }
+            areaFrame = raw
+        }
+
+        /** OCR произвольной области кадра (прямоугольник в пикселях bitmap). */
+        fun runOcrCrop(raw: android.graphics.Bitmap, rect: android.graphics.RectF) {
+            ocrJob?.cancel()
             ocrJob = scope.launch {
                 ocrBusy = true
                 ocrText = null
                 try {
-                    val raw = captureWebView()
-                    if (raw == null) {
-                        ocrText = ""
+                    val l = rect.left.toInt().coerceIn(0, raw.width - 1)
+                    val t = rect.top.toInt().coerceIn(0, raw.height - 1)
+                    val r = rect.right.toInt().coerceIn(l + 1, raw.width)
+                    val b = rect.bottom.toInt().coerceIn(t + 1, raw.height)
+                    val cropped = if (r - l < 40 || b - t < 40) {
+                        raw
                     } else {
-                        val zone = detectBookZone()
-                        val cropped = cropToZone(raw, zone)
-                        val prefsN = Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
-                        val bmp = if (cropped.width < 1200) {
-                            val k = minOf(3f, 1200f / cropped.width)
-                            android.graphics.Bitmap.createScaledBitmap(
-                                cropped,
-                                (cropped.width * k).toInt(),
-                                (cropped.height * k).toInt(),
-                                true,
-                            ).also { if (it !== cropped) cropped.recycle() }
-                        } else {
-                            cropped
-                        }
-                        val text = withTimeout(90_000) {
-                            Injekt.get<mihon.domain.ocr.interactor.OcrProcessor>().getText(bmp.toOcrImage())
-                        }
-                        if (bmp !== raw) bmp.recycle()
-                        raw.recycle()
-                        ocrText = text
-                        // Продвинуто: шторка уведомлений + стриминг (если включено)
-                        if (prefsN.ocrToNotification().get() && text.isNotBlank()) {
-                            OcrNotificationManager.show(ctx.applicationContext, text)
-                        }
-                        if (prefsN.ocrStreamingHighlight().get() && text.isNotBlank()) {
-                            mihon.data.ocr.OcrHistoryStore.addStreamingScan(text.take(120), page = urlBar.take(40))
-                        }
+                        android.graphics.Bitmap.createBitmap(raw, l, t, r - l, b - t)
+                    }
+                    val prefsN = Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+                    val bmp = if (cropped.width < 1200) {
+                        val k = minOf(3f, 1200f / cropped.width)
+                        android.graphics.Bitmap.createScaledBitmap(
+                            cropped,
+                            (cropped.width * k).toInt(),
+                            (cropped.height * k).toInt(),
+                            true,
+                        ).also { if (it !== cropped) cropped.recycle() }
+                    } else {
+                        cropped
+                    }
+                    val text = withTimeout(90_000) {
+                        Injekt.get<mihon.domain.ocr.interactor.OcrProcessor>().getText(bmp.toOcrImage())
+                    }
+                    if (bmp !== raw) bmp.recycle()
+                    raw.recycle()
+                    ocrText = text
+                    if (prefsN.ocrToNotification().get() && text.isNotBlank()) {
+                        OcrNotificationManager.show(ctx.applicationContext, text)
+                    }
+                    if (prefsN.ocrStreamingHighlight().get() && text.isNotBlank()) {
+                        mihon.data.ocr.OcrHistoryStore.addStreamingScan(text.take(120), page = urlBar.take(40))
                     }
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
@@ -505,20 +564,36 @@ data object BrowserTab : Tab {
                 val prefs = Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
                 if (!prefs.autoReadAutoAdvance().get()) { isAutoRead = false; break }
 
-                // Плавный скролл на 60% высоты кадра (перекрытие 40%)
-                val startY = wv.scrollY
+                // v1.9.40: УМНЫЙ скролл на 60% высоты кадра (перекрытие 40%):
+                // сайт может скроллиться внутренним контейнером (window.scrollY
+                // стоит на месте) — раньше авточтение «не прокручивало» именно так.
+                val posBefore = readScrollPos(wv)
                 val step = (wv.height * 0.6f).roundToInt().coerceAtLeast(1)
                 var scrolled = 0
                 while (scrolled < step && isAutoRead) {
-                    val d = minOf(6, step - scrolled) // мелкий шаг = плавно, без рывков
-                    wv.scrollBy(0, d)
+                    val d = minOf(24, step - scrolled) // мелкий шаг = плавно, без рывков
+                    scrollJs(wv, d)
                     scrolled += d
-                    delay(16)
+                    delay(28)
+                }
+                delay(150)
+                var posAfter = readScrollPos(wv)
+                if (posAfter - posBefore <= 0f) {
+                    // JS не сдвинул (нет контейнера) — старый путь scrollBy
+                    var s2 = 0
+                    while (s2 < step && isAutoRead) {
+                        val d = minOf(6, step - s2)
+                        wv.scrollBy(0, d)
+                        s2 += d
+                        delay(16)
+                    }
+                    delay(150)
+                    posAfter = readScrollPos(wv)
                 }
                 // Пустой кадр — не ждём дорисовку, идём дальше сразу
                 if (readEngine.lastFrameHadText) delay(350)
 
-                if (wv.scrollY <= startY) {
+                if (posAfter - posBefore <= 0f) {
                     // Не сдвинулись — конец страницы (или контент короче экрана)
                     stuckCounter++
                     if (stuckCounter >= 2) { isAutoRead = false; break }
@@ -547,7 +622,7 @@ data object BrowserTab : Tab {
                 .fillMaxSize()
                 .systemBarsPadding(),
         ) {
-            if (!immersive) Row(
+            if (!immersive && !pip) Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 8.dp, vertical = 4.dp),
@@ -580,7 +655,7 @@ data object BrowserTab : Tab {
                     Icon(Icons.Outlined.MoreVert, contentDescription = "Ещё")
                 }
             }
-            if (!immersive && progress < 1f) {
+            if (!immersive && !pip && progress < 1f) {
                 LinearProgressIndicator(
                     progress = { progress },
                     modifier = Modifier.fillMaxWidth(),
@@ -615,7 +690,7 @@ data object BrowserTab : Tab {
         }
 
         // Плавающее SAO-меню браузера: автоскролл, наверх, закрыть
-        Box(
+        if (!pip) Box(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.BottomEnd,
         ) {
@@ -778,6 +853,20 @@ data object BrowserTab : Tab {
                 },
             )
         }
+        // v1.9.40: оверлей выбора области скана (кадр + прямоугольник пальцем)
+        areaFrame?.let { frame ->
+            AreaPickOverlay(
+                frame = frame,
+                onDismiss = {
+                    areaFrame = null
+                    runCatching { frame.recycle() }
+                },
+                onConfirm = { rect ->
+                    areaFrame = null
+                    runOcrCrop(frame, rect)
+                },
+            )
+        }
         if (libOpen) {
             WebListDialog(
                 title = "Веб-библиотека (по источнику и id)",
@@ -833,10 +922,13 @@ data object BrowserTab : Tab {
                 title = "Вкладки",
                 rows = webTabs.map { Triple(it.id, it.title, it.url) },
                 onPick = { id ->
-                    webTabs.firstOrNull { it.id == id }?.let { t ->
-                        sharedWebView?.loadUrl(t.url)
-                        tabsOpen = false
-                    }
+                    // v1.9.40: сначала текущую страницу — в АКТИВНУЮ вкладку,
+                    // затем открываем выбранную (раньше url писался в последнюю
+                    // вкладку списка и сайты «переезжали» между вкладками).
+                    runCatching { WebStore.touchTab(ctx, sharedWebView?.url ?: "", sharedWebView?.title ?: "") }
+                    val target = WebStore.switchTab(ctx, id)
+                    if (!target.isNullOrBlank()) sharedWebView?.loadUrl(target)
+                    tabsOpen = false
                 },
                 onDelete = { id -> WebStore.closeTab(ctx, id) },
                 newLabel = "＋ Новая вкладка",
@@ -925,6 +1017,15 @@ data object BrowserTab : Tab {
                                 TextButton(onClick = { TtsSpeaker.speak(ctx, ocrText ?: "") }) {
                                     Text("Голос")
                                 }
+                                TextButton(onClick = { TtsSpeaker.speakWithVoice(ctx, ocrText ?: "", TtsSpeaker.slotVoiceSpec("female")) }) {
+                                    Text("♀")
+                                }
+                                TextButton(onClick = { TtsSpeaker.speakWithVoice(ctx, ocrText ?: "", TtsSpeaker.slotVoiceSpec("male")) }) {
+                                    Text("♂")
+                                }
+                                TextButton(onClick = { TtsSpeaker.speakWithVoice(ctx, ocrText ?: "", TtsSpeaker.slotVoiceSpec("narrator")) }) {
+                                    Text("🎙")
+                                }
                                 TextButton(onClick = {
                                     val clipboard = ctx.getSystemService(android.content.ClipboardManager::class.java)
                                     clipboard?.setPrimaryClip(android.content.ClipData.newPlainText(null, ocrText))
@@ -944,6 +1045,105 @@ data object BrowserTab : Tab {
                 }
             }
         }
+        }
+    }
+}
+/**
+ * v1.9.40: выбор области скана пальцем: замороженный кадр на весь экран,
+ * пользователь рисует прямоугольник; «Скан области» — OCR выделенного.
+ * Заменяет автоскан «всего экрана с шапкой и рекламой» и системное выделение
+ * текста по long-press.
+ */
+@androidx.compose.runtime.Composable
+private fun AreaPickOverlay(
+    frame: android.graphics.Bitmap,
+    onDismiss: () -> Unit,
+    onConfirm: (android.graphics.RectF) -> Unit,
+) {
+    val st = remember {
+        object {
+            var ax = 0f
+            var ay = 0f
+            var bx = 0f
+            var by = 0f
+            var active = false
+        }
+    }
+    var tick by remember { mutableStateOf(0) }
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.45f))
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { off ->
+                        st.ax = off.x
+                        st.ay = off.y
+                        st.bx = off.x
+                        st.by = off.y
+                        st.active = true
+                        tick++
+                    },
+                    onDrag = { _, drag ->
+                        st.bx = (st.bx + drag.x).coerceIn(0f, size.width.toFloat())
+                        st.by = (st.by + drag.y).coerceIn(0f, size.height.toFloat())
+                        tick++
+                    },
+                )
+            },
+    ) {
+        val bw = constraints.maxWidth
+        val bh = constraints.maxHeight
+        Image(
+            bitmap = frame.asImageBitmap(),
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.FillBounds,
+        )
+        if (st.active) {
+            val l = minOf(st.ax, st.bx)
+            val t = minOf(st.ay, st.by)
+            val r = maxOf(st.ax, st.bx)
+            val b = maxOf(st.ay, st.by)
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                drawRect(
+                    color = androidx.compose.ui.graphics.Color(0x6633B5E5),
+                    topLeft = Offset(l, t),
+                    size = Size(r - l, b - t),
+                )
+                drawRect(
+                    color = androidx.compose.ui.graphics.Color(0xFF33B5E5),
+                    style = Stroke(4f),
+                    topLeft = Offset(l, t),
+                    size = Size(r - l, b - t),
+                )
+            }
+        }
+        Row(
+            modifier = Modifier
+                .align(androidx.compose.ui.Alignment.BottomCenter)
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            androidx.compose.material3.TextButton(onClick = onDismiss) {
+                androidx.compose.material3.Text("Отмена")
+            }
+            androidx.compose.material3.TextButton(
+                onClick = {
+                    val fx = frame.width.toFloat() / bw.toFloat()
+                    val fy = frame.height.toFloat() / bh.toFloat()
+                    onConfirm(
+                        android.graphics.RectF(
+                            minOf(st.ax, st.bx) * fx,
+                            minOf(st.ay, st.by) * fy,
+                            maxOf(st.ax, st.bx) * fx,
+                            maxOf(st.ay, st.by) * fy,
+                        ),
+                    )
+                },
+            ) {
+                androidx.compose.material3.Text("Скан области")
+            }
         }
     }
 }

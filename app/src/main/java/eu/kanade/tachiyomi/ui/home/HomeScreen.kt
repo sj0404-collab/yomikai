@@ -169,7 +169,7 @@ object HomeScreen : Screen() {
                         }
                     },
                     bottomBar = {
-                        if (!isTabletUi()) {
+                        if (!isTabletUi() && !eu.kanade.tachiyomi.ui.webbrowser.WebStore.pipMode.value) {
                             val bottomNavVisible by produceState(initialValue = true) {
                                 showBottomNavEvent.receiveAsFlow().collectLatest { value = it }
                             }
