@@ -83,6 +83,11 @@ class AutoReadEngine(
     }
 
     private val _frameRegions = MutableStateFlow<List<FrameRegion>>(emptyList())
+    // v1.9.39: озвученные строки «заморожены»: после автолистания они могут
+    // остаться вверху кадра, но повторно не читаются (помечаются DONE).
+    private val spokenLines = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private fun lineKey(t: String): String =
+        t.lowercase().replace(Regex("[^\p{L}0-9]+"), " ").trim()
     val frameRegions = _frameRegions.asStateFlow()
 
     /**
@@ -330,12 +335,16 @@ class AutoReadEngine(
                 }
 
                 // Публикуем карту кадра: всё, что будет прочитано
-                _frameRegions.value = ordered.mapIndexed { i, r ->
+                val frozen = ordered.filter { lineKey(it.text) in spokenLines }
+                val fresh = ordered.filterNot { lineKey(it.text) in spokenLines }
+                _frameRegions.value = fresh.mapIndexed { i, r ->
                     FrameRegion(r.boundingBox, i + 1, FrameRegion.State.UPCOMING, r.text)
+                } + frozen.mapIndexed { j, r ->
+                    FrameRegion(r.boundingBox, fresh.size + j + 1, FrameRegion.State.DONE, r.text)
                 }
 
                 // 4) реплика за репликой: подсветка -> озвучка -> ждём конца
-                for ((i, region) in ordered.withIndex()) {
+                for ((i, region) in fresh.withIndex()) {
                     if (job?.isActive != true) break
 
                     // Ответ ассистента подхватывается на лету (если уже
@@ -346,7 +355,7 @@ class AutoReadEngine(
                     if (prep?.gender != null && genders.get(i) == null) genders.set(i, prep.gender)
 
                     // Обновляем статусы: до i — прочитано, i — читается, после — предстоит
-                    _frameRegions.value = ordered.mapIndexed { j, r ->
+                    _frameRegions.value = fresh.mapIndexed { j, r ->
                         FrameRegion(
                             r.boundingBox,
                             j + 1,
@@ -401,6 +410,7 @@ class AutoReadEngine(
                     }
 
                     speakAndAwait(SpeechMarkup.strip(speakTextRaw), gender, slot)
+                spokenLines.add(lineKey(region.text))
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -422,6 +432,7 @@ class AutoReadEngine(
     }
 
     fun stop() {
+        spokenLines.clear()
         generation++ // инвалидируем все pending-колбэки
         job?.cancel()
         job = null
@@ -607,6 +618,12 @@ class AutoReadEngine(
          */
         fun cleanOcrGarbage(text: String, language: String): String {
             val rawRows = text.lines().map { it.trim() }.filter { it.isNotBlank() }
+            // Короткие целые слова («шум», «гам») OCR-чистка больше не кромсает:
+            // одиночное слово из букв проходит без правок и фильтров.
+            val singleWord = rawRows.singleOrNull()
+            if (singleWord != null && singleWord.length in 3..14 && singleWord.all { it.isLetter() }) {
+                return singleWord
+            }
             // OCR часто путает буквы с цифрами («4» вместо «а», «1» вместо «л»).
             // Убираем цифровые обрывки (числа без буквенного соседства):
             // «4а», «eS la 4», случайные «7» в середине текста.

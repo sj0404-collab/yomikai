@@ -203,7 +203,7 @@
     <string name="delete_downloads_for_manga">Удалить загруженные главы?</string>
     <string name="download_notifier_download_paused">Загрузки приостановлены</string>
     <string name="history">История</string>
-    <string name="local_source">Источник на устройстве</string>
+    <string name="local_source">Ваша библиотека</string>
     <string name="manga">Серии библиотеки</string>
     <string name="no_more_results">Больше нет результатов</string>
     <string name="pref_backup_interval">Частота автоматических резервных копий</string>
@@ -485,7 +485,7 @@
     <string name="local_invalid_format">Недопустимый формат глав</string>
     <string name="chapter_not_found">Глава не найдена</string>
     <string name="restrictions">Ограничения: %s</string>
-    <string name="action_display_local_badge">Источник на устройстве</string>
+    <string name="action_display_local_badge">Локально</string>
     <string name="off">Выключено</string>
     <string name="on">Включено</string>
     <string name="error_sharing_cover">Ошибка отправки обложки</string>

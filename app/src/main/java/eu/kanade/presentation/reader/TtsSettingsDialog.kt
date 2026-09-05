@@ -18,6 +18,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -77,6 +79,8 @@ fun TtsSettingsDialog(
     var assignMode by remember { mutableStateOf(0) } // 0=основной, 1=женский, 2=мужской
 
     var voices by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    var showAddSlot by remember { mutableStateOf(false) }
+    var addSlotRole by remember { mutableStateOf<String?>(null) }
     var sysReady by remember { mutableStateOf(false) }
     val systemEnginePkg = remember { prefs.systemTtsEngine().get() }
     var probe by remember { mutableStateOf<TextToSpeech?>(null) }
@@ -151,6 +155,29 @@ fun TtsSettingsDialog(
                 val net = if (voice.isNetworkConnectionRequired) "☁ сеть" else "📱 локальный"
                 voice.name to "$kind • $net • ${voice.name.substringAfterLast(':')}"
             }
+
+        // v1.9.39: голоса ВСЕХ установленных движков (RHVoice и др.), а не только
+        // движка по умолчанию: каждый движок инициализируется явно своим пакетом.
+        val extraVoices = mutableListOf<Pair<String, String>>()
+        for ((pkg, label) in eu.kanade.tachiyomi.data.tts.TtsSpeaker.installedEngines(context)) {
+            val isDefault = pkg == systemEnginePkg ||
+                (systemEnginePkg.isBlank() && pkg == runCatching { activeProbe.defaultEngine }.getOrDefault(""))
+            if (isDefault) continue
+            val eng = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val latch = java.util.concurrent.CountDownLatch(1)
+                var tts: TextToSpeech? = null
+                tts = TextToSpeech(context.applicationContext, { latch.countDown() }, pkg)
+                latch.await(3, java.util.concurrent.TimeUnit.SECONDS)
+                tts
+            }
+            val vs = eu.kanade.tachiyomi.data.tts.VoiceHelper.russianVoices(eng, pkg)
+            runCatching { eng?.shutdown() }
+            vs.forEach { v ->
+                val net = if (v.isNetworkConnectionRequired) "☁ сеть" else "📱 локальный"
+                extraVoices.add(("$pkg::${v.name}") to "$label • $net • ${v.name}")
+            }
+        }
+        voices = voices + extraVoices
 
         // Автовыбор выполняется по тому же выбранному пакету движка, включая
         // RHVoice fallback для прошивок с пустым getVoices().
@@ -234,6 +261,68 @@ fun TtsSettingsDialog(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+                Text("Голоса по ролям (пресеты озвучки)", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+                val slotsJsonNow = prefs.voiceSlots().get()
+                val slotsNow = remember(slotsJsonNow) {
+                    runCatching {
+                        val arr = org.json.JSONArray(slotsJsonNow)
+                        (0 until arr.length()).map { i ->
+                            val o = arr.getJSONObject(i)
+                            o.optString("role") to o.optString("voice")
+                        }
+                    }.getOrDefault(emptyList())
+                }
+                slotsNow.forEachIndexed { idx, (role, voice) ->
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            "${when (role) { "male" -> "♂"; "female" -> "♀"; else -> "🎙" }} $voice",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = {
+                            val arr = runCatching { org.json.JSONArray(prefs.voiceSlots().get()) }.getOrDefault(org.json.JSONArray())
+                            val newArr = org.json.JSONArray()
+                            for (i in 0 until arr.length()) if (i != idx) newArr.put(arr.get(i))
+                            prefs.voiceSlots().set(newArr.toString())
+                        }) { Text("Удалить") }
+                    }
+                }
+                TextButton(onClick = { showAddSlot = true }) { Text("＋ Добавить голос") }
+                if (showAddSlot) {
+                    if (addSlotRole == null) {
+                        AlertDialog(
+                            onDismissRequest = { showAddSlot = false },
+                            confirmButton = { TextButton(onClick = { showAddSlot = false }) { Text("Отмена") } },
+                            title = { Text("Роль голоса") },
+                            text = {
+                                Column {
+                                    TextButton(onClick = { addSlotRole = "male" }) { Text("♂ Мужской 1") }
+                                    TextButton(onClick = { addSlotRole = "female" }) { Text("♀ Женский 1") }
+                                    TextButton(onClick = { addSlotRole = "narrator" }) { Text("🎙 Нарратор 1") }
+                                }
+                            },
+                        )
+                    } else {
+                        AlertDialog(
+                            onDismissRequest = { addSlotRole = null; showAddSlot = false },
+                            confirmButton = { TextButton(onClick = { addSlotRole = null; showAddSlot = false }) { Text("Отмена") } },
+                            title = { Text("Голос для роли (локальный или онлайн)") },
+                            text = {
+                                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+                                    voices.forEach { (name, label) ->
+                                        TextButton(onClick = {
+                                            val arr = runCatching { org.json.JSONArray(prefs.voiceSlots().get()) }.getOrDefault(org.json.JSONArray())
+                                            arr.put(org.json.JSONObject().apply { put("role", addSlotRole); put("voice", name) })
+                                            prefs.voiceSlots().set(arr.toString())
+                                            addSlotRole = null
+                                            showAddSlot = false
+                                        }) { Text(label) }
+                                    }
+                                }
+                            },
+                        )
+                    }
                 }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,

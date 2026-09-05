@@ -85,6 +85,7 @@ object SpeechMarkup {
     fun strip(text: String): String {
         var out = TAG.replace(text, " ")
         out = out.replace(DIVIDER, ',')
+        out = out.replace(Regex("[~≈]+"), " ") // тильду не озвучивать словом «тильда»
         out = out.replace(Regex("""\s+"""), " ")
         out = out.replace(Regex("""\s+([,.!?;:])"""), "$1")
         out = out.replace(Regex(""",{2,}"""), ",")

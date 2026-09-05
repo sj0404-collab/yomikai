@@ -355,6 +355,24 @@ fun ReaderFloatingControls(
                                 }
 
                                 }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Мужской голос  ", style = MaterialTheme.typography.labelMedium)
+                                    SmallFloatingActionButton(onClick = {
+                                        uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>().voicePresetGender().set("male")
+                                        ctorContext.toast("Мужской голос по умолчанию")
+                                    }) {
+                                        Icon(Icons.Outlined.RecordVoiceOver, contentDescription = "Мужской голос")
+                                    }
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Женский голос  ", style = MaterialTheme.typography.labelMedium)
+                                    SmallFloatingActionButton(onClick = {
+                                        uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>().voicePresetGender().set("female")
+                                        ctorContext.toast("Женский голос по умолчанию")
+                                    }) {
+                                        Icon(Icons.Outlined.RecordVoiceOver, contentDescription = "Женский голос")
+                                    }
+                                }
                                 if (userActs.isNotEmpty()) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text("Кнопки конструктора  ", style = MaterialTheme.typography.labelMedium)
@@ -366,7 +384,7 @@ fun ReaderFloatingControls(
                                         }
                                     }
                                     if (ctorExpanded) {
-                                        userActs.forEach { act ->
+                                        userActs.filterNot { it.title.startsWith("Пресет") }.forEach { act ->
                                             Row(verticalAlignment = Alignment.CenterVertically) {
                                                 Text(act.title + "  ", style = MaterialTheme.typography.labelMedium)
                                                 SmallFloatingActionButton(onClick = {

@@ -87,8 +87,8 @@ object TtsSpeaker {
      * RHVoice, Acapela и любой другой установленный. Пустая настройка =
      * движок по умолчанию системы. При смене движка — переинициализация.
      */
-    private fun ensureSystem(context: Context, onReady: (TextToSpeech?) -> Unit) {
-        val wantEngine = prefs().systemTtsEngine().get().ifBlank { null }
+    private fun ensureSystem(context: Context, wantPkg: String? = null, onReady: (TextToSpeech?) -> Unit) {
+        val wantEngine = wantPkg ?: prefs().systemTtsEngine().get().ifBlank { null }
         if (systemTts != null && systemEnginePkg != wantEngine) {
             // Пользователь сменил движок — пересоздаём
             runCatching { systemTts?.shutdown() }
@@ -273,7 +273,18 @@ object TtsSpeaker {
         gender: String? = null,
         speakerSlot: Int = 0,
     ) {
-        ensureSystem(context) { engine ->
+        val slotVoiceRaw = runCatching {
+            val arr = org.json.JSONArray(prefs().voiceSlots().get())
+            val roleKey = when (gender) { "male" -> "male"; "female" -> "female"; else -> "narrator" }
+            (0 until arr.length()).firstOrNull { i -> arr.getJSONObject(i).optString("role") == roleKey }
+                ?.let { i -> arr.getJSONObject(i).optString("voice") }.orEmpty()
+        }.getOrDefault("")
+        val savedRawVoice = runCatching { prefs().voiceName().get() }.getOrDefault("")
+        val forcedPkg = (
+            slotVoiceRaw.takeIf { it.isNotBlank() && it.contains("::") }?.substringBefore("::")
+                ?: savedRawVoice.takeIf { it.contains("::") }?.substringBefore("::")
+            )?.ifBlank { null }
+        ensureSystem(context, forcedPkg) { engine ->
             if (engine == null) {
                 setSpeaking(false)
                 return@ensureSystem
@@ -289,7 +300,7 @@ object TtsSpeaker {
             // автоподбор по классификации имён (Svetlana/Dmitry/детские);
             // 3) общий голос; 4) язык ru-RU как последний рубеж.
             // Совет локального JSON-помощника (правила пользователя/агента)
-            val advisorVoice = LocalVoiceAdvisor.recommend(text, gender).voiceName
+            val advisorVoice = slotVoiceRaw.substringAfterLast("::").ifBlank { LocalVoiceAdvisor.recommend(text, gender).voiceName }
             val presetVoice = advisorVoice ?: when (gender) {
                 "female" -> p.voiceFemale().get()
                 "male" -> p.voiceMale().get()
@@ -327,7 +338,7 @@ object TtsSpeaker {
                     ) ?: VoiceHelper.pick(engine, kind, null, systemEnginePkg)
                 kind != null -> VoiceHelper.pick(engine, kind, null, systemEnginePkg)
                 else -> {
-                    val saved = p.voiceName().get()
+                    val saved = p.voiceName().get().substringAfterLast("::")
                     // Автоподбор как в overlay-translator: если голос не выбран
                     // или его нет в системе — берём лучший русский женский
                     // (Svetlana и др.), затем любой русский.
