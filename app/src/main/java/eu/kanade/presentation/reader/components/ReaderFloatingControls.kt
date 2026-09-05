@@ -2,6 +2,8 @@ package eu.kanade.presentation.reader.components
 
 import android.media.AudioManager
 import android.media.ToneGenerator
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
@@ -358,7 +360,7 @@ fun ReaderFloatingControls(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text("Мужской голос  ", style = MaterialTheme.typography.labelMedium)
                                     SmallFloatingActionButton(onClick = {
-                                        uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>().voicePresetGender().set("male")
+                                        Injekt.get<mihon.domain.ocr.service.OcrPreferences>().voicePresetGender().set("male")
                                         ctorContext.toast("Мужской голос по умолчанию")
                                     }) {
                                         Icon(Icons.Outlined.RecordVoiceOver, contentDescription = "Мужской голос")
@@ -367,7 +369,7 @@ fun ReaderFloatingControls(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text("Женский голос  ", style = MaterialTheme.typography.labelMedium)
                                     SmallFloatingActionButton(onClick = {
-                                        uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>().voicePresetGender().set("female")
+                                        Injekt.get<mihon.domain.ocr.service.OcrPreferences>().voicePresetGender().set("female")
                                         ctorContext.toast("Женский голос по умолчанию")
                                     }) {
                                         Icon(Icons.Outlined.RecordVoiceOver, contentDescription = "Женский голос")

@@ -337,7 +337,6 @@ data object BrowserTab : Tab {
         val ctx = androidx.compose.ui.platform.LocalContext.current
         WebStore.load(ctx)
         hostActivity = ctx as? android.app.Activity
-        imageLongPress = { manualScan() }
         var moreOpen by remember { mutableStateOf(false) }
         var libOpen by remember { mutableStateOf(false) }
         var marksOpen by remember { mutableStateOf(false) }
@@ -385,6 +384,7 @@ data object BrowserTab : Tab {
         var saveMsg by remember { mutableStateOf<String?>(null) }
 
         fun manualScan() {
+            imageLongPress = { manualScan() }
             ocrJob?.cancel()
             ocrJob = scope.launch {
                 ocrBusy = true

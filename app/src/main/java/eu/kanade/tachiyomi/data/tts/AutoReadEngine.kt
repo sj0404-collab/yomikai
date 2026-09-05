@@ -87,7 +87,7 @@ class AutoReadEngine(
     // остаться вверху кадра, но повторно не читаются (помечаются DONE).
     private val spokenLines = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private fun lineKey(t: String): String =
-        t.lowercase().replace(Regex("[^\p{L}0-9]+"), " ").trim()
+        t.lowercase().replace(Regex("[^\\p{L}0-9]+"), " ").trim()
     val frameRegions = _frameRegions.asStateFlow()
 
     /**
@@ -335,16 +335,16 @@ class AutoReadEngine(
                 }
 
                 // Публикуем карту кадра: всё, что будет прочитано
-                val frozen = ordered.filter { lineKey(it.text) in spokenLines }
-                val fresh = ordered.filterNot { lineKey(it.text) in spokenLines }
-                _frameRegions.value = fresh.mapIndexed { i, r ->
+                val frozenL = ordered.filter { lineKey(it.text) in spokenLines }
+                val speakable = ordered.filterNot { lineKey(it.text) in spokenLines }
+                _frameRegions.value = speakable.mapIndexed { i, r ->
                     FrameRegion(r.boundingBox, i + 1, FrameRegion.State.UPCOMING, r.text)
-                } + frozen.mapIndexed { j, r ->
-                    FrameRegion(r.boundingBox, fresh.size + j + 1, FrameRegion.State.DONE, r.text)
+                } + frozenL.mapIndexed { j, r ->
+                    FrameRegion(r.boundingBox, speakable.size + j + 1, FrameRegion.State.DONE, r.text)
                 }
 
                 // 4) реплика за репликой: подсветка -> озвучка -> ждём конца
-                for ((i, region) in fresh.withIndex()) {
+                for ((i, region) in speakable.withIndex()) {
                     if (job?.isActive != true) break
 
                     // Ответ ассистента подхватывается на лету (если уже
@@ -355,7 +355,7 @@ class AutoReadEngine(
                     if (prep?.gender != null && genders.get(i) == null) genders.set(i, prep.gender)
 
                     // Обновляем статусы: до i — прочитано, i — читается, после — предстоит
-                    _frameRegions.value = fresh.mapIndexed { j, r ->
+                    _frameRegions.value = speakable.mapIndexed { j, r ->
                         FrameRegion(
                             r.boundingBox,
                             j + 1,
