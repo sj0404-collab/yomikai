@@ -188,6 +188,17 @@ object WebStore {
         save(context)
     }
 
+    /** Обновить последнюю открытую вкладку (url/title) при загрузке страницы. */
+    fun touchTab(context: Context, url: String, title: String) {
+        if (url.isBlank() || tabs.value.isEmpty()) return
+        load(context)
+        val last = tabs.value.lastIndex
+        tabs.value = tabs.value.mapIndexed { i, t ->
+            if (i == last) t.copy(url = url, title = title.ifBlank { t.title }) else t
+        }
+        save(context)
+    }
+
     fun cacheSizeBytes(context: Context): Long = runCatching {
         fun rec(f: File): Long = if (f.isFile) f.length() else f.listFiles()?.sumOf { rec(it) } ?: 0L
         rec(context.cacheDir)
@@ -212,6 +223,8 @@ fun WebListDialog(
     rows: List<Triple<String, String, String>>,
     onPick: (String) -> Unit,
     onDelete: ((String) -> Unit)? = null,
+    newLabel: String? = null,
+    onNew: (() -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
@@ -225,6 +238,9 @@ fun WebListDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
+                if (newLabel != null && onNew != null) {
+                    TextButton(onClick = onNew) { Text(newLabel) }
+                }
                 if (rows.isEmpty()) Text("Пока пусто")
                 rows.forEach { r ->
                     Column(modifier = Modifier.fillMaxWidth()) {

@@ -88,6 +88,7 @@ class OcrPreferences(
     // API-ключа, с сайта Google Translate), eleven_api (ElevenLabs по ключу)
     fun voiceEngine() = preferenceStore.getString("pref_voice_engine", "system_tts")
     fun voiceName() = preferenceStore.getString("pref_voice_name", "ru-ru-x-dfa-network")
+    fun voiceSlots() = preferenceStore.getString("voice_slots", "[]")
     fun speechRate() = preferenceStore.getFloat("pref_speech_rate", 1.0f)
     fun speechPitch() = preferenceStore.getFloat("pref_speech_pitch", 1.0f)
     fun ttsWebLanguage() = preferenceStore.getString("pref_tts_web_lang", "ru")

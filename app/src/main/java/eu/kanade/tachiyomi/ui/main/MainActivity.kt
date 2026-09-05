@@ -151,6 +151,14 @@ class MainActivity : BaseActivity() {
         val splashScreen = if (isLaunch) installSplashScreen() else null
 
         super.onCreate(savedInstanceState)
+        // v1.9.39: без runtime-разрешения POST_NOTIFICATIONS (API 33+) шторка
+        // оставалась пустой при сканировании — запрашиваем сразу.
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 4711)
+        }
 
         Migrator.awaitAndRelease()
 

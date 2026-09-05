@@ -115,7 +115,7 @@ private fun OcrPlainTextCard(
 ) {
     Box(
         modifier = Modifier.fillMaxSize(),
-        contentAlignment = androidx.compose.ui.Alignment.Center,
+        contentAlignment = androidx.compose.ui.Alignment.BottomCenter,
     ) {
         androidx.compose.material3.Surface(
             shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),

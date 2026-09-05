@@ -48,7 +48,8 @@ class SpeechMarkupTest {
     @Test
     fun `plain text is untouched`() {
         val plain = "У меня бока болят от смеха~"
-        SpeechMarkup.strip(plain) shouldBe plain
+        // v1.9.39: тильда больше не озвучивается словом «тильда» — снимается.
+        SpeechMarkup.strip(plain) shouldBe "У меня бока болят от смеха"
         SpeechMarkup.genderOf(plain) shouldBe null
         SpeechMarkup.speakerSlot(plain) shouldBe 0
     }

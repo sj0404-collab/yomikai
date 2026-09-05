@@ -115,6 +115,11 @@ data object BrowserTab : Tab {
 
     @SuppressLint("StaticFieldLeak") // applicationContext — утечки нет
     private var sharedWebView: WebView? = null
+    /** v1.9.39: фуллскрин-видео (onShowCustomView) и long-press скан картинки. */
+    private var customView: android.view.View? = null
+    private var customViewCallback: android.webkit.WebChromeClient.CustomViewCallback? = null
+    private var hostActivity: android.app.Activity? = null
+    private var imageLongPress: (() -> Unit)? = null
 
     private var urlState = mutableStateOf(HOME_URL)
     private var canGoBackState = mutableStateOf(false)
@@ -236,20 +241,53 @@ data object BrowserTab : Tab {
             settings.builtInZoomControls = true
             settings.displayZoomControls = false
             settings.cacheMode = WebSettings.LOAD_DEFAULT
+            // Музыка/видео со страницы стартуют без тапа и играют в фоне.
+            settings.mediaPlaybackRequiresUserGesture = false
             // Сохранённые HTML веб-библиотеки лежат в нашем внешнем каталоге:
             // с API 30 allowFileAccess по умолчанию false → ERR_ACCESS_DENIED.
             @Suppress("DEPRECATION")
             runCatching { settings.allowFileAccess = true }
 
+            setOnLongClickListener {
+                val t = hitTestResult.type
+                if (t == WebView.HitTestResult.IMAGE_TYPE || t == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE) {
+                    imageLongPress?.invoke()
+                    true
+                } else {
+                    false
+                }
+            }
             webChromeClient = object : WebChromeClient() {
                 override fun onProgressChanged(view: WebView, newProgress: Int) {
                     progressState.floatValue = newProgress / 100f
+                }
+
+                // Видео во весь экран: кастомная вьюха поверх контента активности.
+                override fun onShowCustomView(view: android.view.View, callback: CustomViewCallback) {
+                    val root = hostActivity?.findViewById<android.widget.FrameLayout>(android.R.id.content)
+                    if (root == null) {
+                        callback.onCustomViewHidden()
+                        return
+                    }
+                    customView?.let { root.removeView(it) }
+                    customView = view
+                    customViewCallback = callback
+                    root.addView(view, android.widget.FrameLayout.LayoutParams(-1, -1))
+                }
+
+                override fun onHideCustomView() {
+                    val root = hostActivity?.findViewById<android.widget.FrameLayout>(android.R.id.content)
+                    customView?.let { root?.removeView(it) }
+                    customView = null
+                    customViewCallback?.onCustomViewHidden()
+                    customViewCallback = null
                 }
             }
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView, url: String?) {
                     canGoBackState.value = view.canGoBack()
                     runCatching { WebStore.addHistory(context, url ?: "", view.title ?: "") }
+                    runCatching { WebStore.touchTab(context, url ?: "", view.title ?: "") }
                     url?.let { urlState.value = it }
                 }
             }
@@ -298,6 +336,7 @@ data object BrowserTab : Tab {
         var isAutoRead by autoReadActive
         val ctx = androidx.compose.ui.platform.LocalContext.current
         WebStore.load(ctx)
+        hostActivity = ctx as? android.app.Activity
         var moreOpen by remember { mutableStateOf(false) }
         var libOpen by remember { mutableStateOf(false) }
         var marksOpen by remember { mutableStateOf(false) }
@@ -345,6 +384,7 @@ data object BrowserTab : Tab {
         var saveMsg by remember { mutableStateOf<String?>(null) }
 
         fun manualScan() {
+            imageLongPress = { manualScan() }
             ocrJob?.cancel()
             ocrJob = scope.launch {
                 ocrBusy = true
@@ -561,9 +601,9 @@ data object BrowserTab : Tab {
                     canGoBackState.value = webView.canGoBack()
                 },
                 onRelease = { webView ->
-                    // НЕ destroy(): просто ставим на паузу и отцепляем от иерархии,
-                    // страница и позиция скролла сохраняются до возврата на вкладку
-                    webView.onPause()
+                    // v1.9.39: БЕЗ onPause() — музыка и видео с открытой страницы
+                    // продолжают играть в фоне и при уходе с вкладки.
+                    // Страница и позиция скролла сохраняются до возврата.
                     (webView.parent as? ViewGroup)?.removeView(webView)
                 },
             )
@@ -665,7 +705,7 @@ data object BrowserTab : Tab {
                                     }
                                 }
                                 if (ctorExpanded) {
-                                    userActs.forEach { act ->
+                                    userActs.filterNot { it.title.startsWith("Пресет") }.forEach { act ->
                                         Row(verticalAlignment = Alignment.CenterVertically) {
                                             Text(act.title + "  ", style = MaterialTheme.typography.labelMedium)
                                             SmallFloatingActionButton(onClick = {
@@ -718,6 +758,16 @@ data object BrowserTab : Tab {
                         TextButton(onClick = { moreOpen = false; histOpen = true }) { Text("История просмотра") }
                         TextButton(onClick = { moreOpen = false; cacheOpen = true }) { Text("Кэш и данные") }
                         TextButton(onClick = { moreOpen = false; saveHtmlPage() }) { Text("Сохранить страницу (HTML)") }
+                        TextButton(onClick = {
+                            moreOpen = false
+                            runCatching {
+                                (ctx as? android.app.Activity)?.enterPictureInPictureMode(
+                                    android.app.PictureInPictureParams.Builder()
+                                        .setAspectRatio(android.util.Rational(16, 9))
+                                        .build(),
+                                )
+                            }
+                        }) { Text("Плавающий плеер (PiP)") }
                         if (!hiddenM.contains("b_urlscan")) {
                             TextButton(onClick = { moreOpen = false; manualScan() }) { Text("Скан текста (OCR)") }
                         }
@@ -789,6 +839,12 @@ data object BrowserTab : Tab {
                     }
                 },
                 onDelete = { id -> WebStore.closeTab(ctx, id) },
+                newLabel = "＋ Новая вкладка",
+                onNew = {
+                    WebStore.addTab(ctx, HOME_URL, "Новая вкладка")
+                    sharedWebView?.loadUrl(HOME_URL)
+                    tabsOpen = false
+                },
                 onDismiss = { tabsOpen = false },
             )
         }
