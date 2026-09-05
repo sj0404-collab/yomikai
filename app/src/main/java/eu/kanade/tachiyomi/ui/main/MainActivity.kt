@@ -144,6 +144,16 @@ class MainActivity : BaseActivity() {
         registerSecureActivity(this)
     }
 
+    // v1.9.40: PiP = мини-плеер веб-вкладки: пока активность в картинке-в-картинке,
+    // прячем нижнюю навигацию и панели (иначе PiP «сужает приложение», а не вкладку).
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: android.content.res.Configuration,
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        eu.kanade.tachiyomi.ui.webbrowser.WebStore.pipMode.value = isInPictureInPictureMode
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         val isLaunch = savedInstanceState == null
 

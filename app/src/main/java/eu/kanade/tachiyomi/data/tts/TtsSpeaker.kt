@@ -207,6 +207,70 @@ object TtsSpeaker {
         speakAs(context, text, gender = null, onState = onState)
     }
 
+    /** v1.9.40: spec голоса роли («пакет::имя») из слотов настроек. */
+    fun slotVoiceSpec(role: String): String? = runCatching {
+        val arr = org.json.JSONArray(prefs().voiceSlots().get())
+        (0 until arr.length()).map { i -> arr.getJSONObject(i) }
+            .firstOrNull { it.optString("role") == role }
+            ?.optString("voice")
+            ?.takeIf { it.isNotBlank() }
+    }.getOrNull()
+
+    /**
+     * v1.9.40: озвучка КОНКРЕТНЫМ голосом («пакет::имя») в обход ролей и ручного
+     * режима: кнопки «Проба» у слотов и ♀/♂/🎙 на карточке распознанного текста.
+     * spec пуст = обычный основной голос.
+     */
+    fun speakWithVoice(
+        context: Context,
+        text: String,
+        voiceSpec: String?,
+        onState: (Boolean) -> Unit = {},
+    ) {
+        if (voiceSpec.isNullOrBlank()) {
+            speak(context, text, onState)
+            return
+        }
+        stop()
+        onStateChange = onState
+        val spoken = SpeechMarkup.strip(text)
+        if (spoken.isBlank()) {
+            setSpeaking(false)
+            return
+        }
+        ensureSystem(context, voiceSpec.substringBefore("::").ifBlank { null }) { engine ->
+            if (engine == null) {
+                setSpeaking(false)
+                return@ensureSystem
+            }
+            runCatching {
+                val p = prefs()
+                engine.setSpeechRate(p.speechRate().get().coerceIn(0.5f, 2f))
+                engine.setPitch(p.speechPitch().get().coerceIn(0.5f, 2f))
+                val name = voiceSpec.substringAfterLast("::")
+                engine.voices?.firstOrNull { it.name == name }?.let { engine.setVoice(it) }
+                val maxLen = 3500
+                val parts = spoken.chunked(maxLen)
+                val lastId = "ywv_" + (parts.size - 1)
+                engine.setOnUtteranceProgressListener(
+                    object : UtteranceProgressListener() {
+                        override fun onStart(utteranceId: String?) {
+                            if (utteranceId == "ywv_0") setSpeaking(true)
+                        }
+                        override fun onDone(utteranceId: String?) {
+                            if (utteranceId == lastId) setSpeaking(false)
+                        }
+                        override fun onError(utteranceId: String?) = setSpeaking(false)
+                        override fun onError(utteranceId: String?, errorCode: Int) = setSpeaking(false)
+                    },
+                )
+                parts.forEachIndexed { i, part ->
+                    engine.speak(part, TextToSpeech.QUEUE_ADD, null, "ywv_$i")
+                }
+            }.onFailure { setSpeaking(false) }
+        }
+    }
+
     /**
      * Озвучка с учётом пола говорящего: gender = "female" | "male" | null.
      * Для системного движка используется соответствующий голос из пресетов

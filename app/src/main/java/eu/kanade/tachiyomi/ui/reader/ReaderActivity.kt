@@ -315,6 +315,11 @@ class ReaderActivity : BaseActivity() {
 
         binding = ReaderActivityBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        // v1.9.40: long-press на странице читалки = выбор области скана (как в вебе)
+        binding.root.setOnLongClickListener {
+            runCatching { enterOcrMode() }
+            true
+        }
         binding.setComposeOverlay()
 
         if (viewModel.needsInit()) {
@@ -1049,6 +1054,13 @@ class ReaderActivity : BaseActivity() {
                                 eu.kanade.tachiyomi.data.tts.TtsSpeaker.speak(
                                     this@ReaderActivity,
                                     dialog.queryText,
+                                )
+                            },
+                            onSpeakRole = { role ->
+                                eu.kanade.tachiyomi.data.tts.TtsSpeaker.speakWithVoice(
+                                    this@ReaderActivity,
+                                    dialog.queryText,
+                                    eu.kanade.tachiyomi.data.tts.TtsSpeaker.slotVoiceSpec(role),
                                 )
                             },
                             onChooseVoice = { showTtsDialog = true },

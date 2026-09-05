@@ -42,6 +42,7 @@ fun OcrResultOverlay(
     onPlayAudioClick: (List<DictionaryTerm>) -> Unit,
     onSpeak: () -> Unit = {},
     onChooseVoice: () -> Unit = {},
+    onSpeakRole: (String) -> Unit = {},
 ) {
     BackHandler(onBack = onDismissRequest)
     // Словарей нет — не дёргаем поиск и не показываем «No Dictionaries
@@ -67,10 +68,11 @@ fun OcrResultOverlay(
             noDictionaries -> {
                 OcrPlainTextCard(
                     text = queryText,
-                    onCopyText = onCopyText,
                     onDismissRequest = onDismissRequest,
+                    onCopyText = onCopyText,
                     onSpeak = onSpeak,
                     onChooseVoice = onChooseVoice,
+                    onSpeakRole = onSpeakRole,
                 )
             }
             presentation == OcrResultPresentation.POPUP && anchorRect != null -> {
@@ -112,6 +114,7 @@ private fun OcrPlainTextCard(
     onDismissRequest: () -> Unit,
     onSpeak: () -> Unit = {},
     onChooseVoice: () -> Unit = {},
+    onSpeakRole: (String) -> Unit = {},
 ) {
     Box(
         modifier = Modifier.fillMaxSize(),
@@ -146,10 +149,19 @@ private fun OcrPlainTextCard(
                         horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End,
                     ) {
                         androidx.compose.material3.TextButton(onClick = onSpeak) {
-                            androidx.compose.material3.Text("Голос")
+                            androidx.compose.material3.Text("▶ Голос")
+                        }
+                        androidx.compose.material3.TextButton(onClick = { onSpeakRole("female") }) {
+                            androidx.compose.material3.Text("♀")
+                        }
+                        androidx.compose.material3.TextButton(onClick = { onSpeakRole("male") }) {
+                            androidx.compose.material3.Text("♂")
+                        }
+                        androidx.compose.material3.TextButton(onClick = { onSpeakRole("narrator") }) {
+                            androidx.compose.material3.Text("🎙")
                         }
                         androidx.compose.material3.TextButton(onClick = onChooseVoice) {
-                            androidx.compose.material3.Text("Выбрать голос")
+                            androidx.compose.material3.Text("Выбрать")
                         }
                     }
                     androidx.compose.foundation.layout.Row(

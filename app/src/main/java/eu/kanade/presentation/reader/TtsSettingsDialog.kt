@@ -2,6 +2,7 @@ package eu.kanade.presentation.reader
 
 import android.speech.tts.TextToSpeech
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -220,8 +221,8 @@ fun TtsSettingsDialog(
         icon = { Icon(Icons.Outlined.RecordVoiceOver, contentDescription = null) },
         title = { Text("Озвучка (TTS)") },
         text = {
-            Column {
-                Row {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Row(modifier = Modifier.horizontalScroll(rememberScrollState())) {
                     FilterChip(
                         selected = engine == TtsSpeaker.ENGINE_SYSTEM,
                         onClick = { engine = TtsSpeaker.ENGINE_SYSTEM },
@@ -280,6 +281,13 @@ fun TtsSettingsDialog(
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.weight(1f),
                         )
+                        TextButton(onClick = {
+                            eu.kanade.tachiyomi.data.tts.TtsSpeaker.speakWithVoice(
+                                context,
+                                "Проба голоса роли: раз, два, три.",
+                                voice,
+                            )
+                        }) { Text("Проба") }
                         TextButton(onClick = {
                             val arr = runCatching { org.json.JSONArray(prefs.voiceSlots().get()) }.getOrDefault(org.json.JSONArray())
                             val newArr = org.json.JSONArray()
@@ -373,9 +381,8 @@ fun TtsSettingsDialog(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         } else {
-                            LazyColumn(modifier = Modifier.heightIn(max = 180.dp)) {
-                                items(entries.size) { idx ->
-                                    val e = entries[idx]
+                            Column(modifier = Modifier.heightIn(max = 180.dp).verticalScroll(rememberScrollState())) {
+                                entries.forEach { e ->
                                     Column(modifier = Modifier.padding(vertical = 3.dp)) {
                                         Text(
                                             "${e.model} • ${e.tookMs}мс",
@@ -450,11 +457,8 @@ fun TtsSettingsDialog(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 6.dp),
                         )
-                        LazyColumn(modifier = Modifier.heightIn(max = 150.dp)) {
-                            items(
-                                eu.kanade.tachiyomi.data.ai.AiAssistant.ZEN_MODELS,
-                                key = { it },
-                            ) { m ->
+                        Column(modifier = Modifier.heightIn(max = 150.dp).verticalScroll(rememberScrollState())) {
+                            eu.kanade.tachiyomi.data.ai.AiAssistant.ZEN_MODELS.forEach { m ->
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier
@@ -483,8 +487,8 @@ fun TtsSettingsDialog(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 6.dp),
                         )
-                        LazyColumn(modifier = Modifier.heightIn(max = 150.dp)) {
-                            items(orModels, key = { it }) { m ->
+                        Column(modifier = Modifier.heightIn(max = 150.dp).verticalScroll(rememberScrollState())) {
+                            orModels.forEach { m ->
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier
@@ -512,7 +516,7 @@ fun TtsSettingsDialog(
 
                 when (engine) {
                     TtsSpeaker.ENGINE_SYSTEM -> {
-                        Row(modifier = Modifier.padding(bottom = 4.dp)) {
+                        Row(modifier = Modifier.padding(bottom = 4.dp).horizontalScroll(rememberScrollState())) {
                             FilterChip(
                                 selected = assignMode == 0,
                                 onClick = { assignMode = 0 },
@@ -546,8 +550,8 @@ fun TtsSettingsDialog(
                                 "Голосов не найдено. Установите TTS-движок " +
                                     "(Speech Services by Google, RHVoice) в настройках системы.",
                             )
-                            else -> LazyColumn(modifier = Modifier.heightIn(max = 260.dp)) {
-                                items(voices, key = { it.first }) { (name, label) ->
+                            else -> Column(modifier = Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState())) {
+                                voices.forEach { (name, label) ->
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         modifier = Modifier

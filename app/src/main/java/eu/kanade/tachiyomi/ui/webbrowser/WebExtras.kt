@@ -13,6 +13,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.mutableStateOf
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
@@ -37,6 +38,10 @@ object WebStore {
     val marks = MutableStateFlow<List<Mark>>(emptyList())
     val history = MutableStateFlow<List<Hist>>(emptyList())
     val tabs = MutableStateFlow<List<TabItem>>(emptyList())
+    // v1.9.40: PiP-режим (мини-плеер): активности прячут всё, кроме веба
+    val pipMode = mutableStateOf(false)
+    // v1.9.40: какая вкладка сейчас открыта (раньше писали всегда в последнюю)
+    var activeTabId: String? = null
 
     private var loaded = false
 
@@ -62,6 +67,7 @@ object WebStore {
             tabs.value = root.optJSONArray("tabs").jsonList { o ->
                 TabItem(o.optString("id"), o.optString("url"), o.optString("title"))
             }
+            activeTabId = root.optString("activeTab").takeIf { it.isNotBlank() }
         }
     }
 
@@ -111,6 +117,7 @@ object WebStore {
                     }
                 },
             )
+            root.put("activeTab", activeTabId ?: "")
             file(context).writeText(root.toString())
         }
     }
@@ -179,24 +186,39 @@ object WebStore {
         load(context)
         val t = TabItem(System.currentTimeMillis().toString(), url, title.ifBlank { url })
         tabs.value = (tabs.value + t).takeLast(20)
+        activeTabId = t.id
         save(context)
         return t
     }
 
     fun closeTab(context: Context, id: String) {
         tabs.value = tabs.value.filterNot { it.id == id }
+        if (activeTabId == id) activeTabId = tabs.value.lastOrNull()?.id
         save(context)
     }
 
-    /** Обновить последнюю открытую вкладку (url/title) при загрузке страницы. */
+    /** Обновить АКТИВНУЮ вкладку (url/title) при загрузке страницы. */
     fun touchTab(context: Context, url: String, title: String) {
         if (url.isBlank() || tabs.value.isEmpty()) return
         load(context)
-        val last = tabs.value.lastIndex
-        tabs.value = tabs.value.mapIndexed { i, t ->
-            if (i == last) t.copy(url = url, title = title.ifBlank { t.title }) else t
+        var active = activeTabId?.takeIf { id -> tabs.value.any { it.id == id } }
+        if (active == null) {
+            active = tabs.value.last().id
+            activeTabId = active
+        }
+        val act = active
+        tabs.value = tabs.value.map { t ->
+            if (t.id == act) t.copy(url = url, title = title.ifBlank { t.title }) else t
         }
         save(context)
+    }
+
+    /** Переключить активную вкладку: возвращает её сохранённый url. */
+    fun switchTab(context: Context, id: String): String? {
+        load(context)
+        activeTabId = id
+        save(context)
+        return tabs.value.firstOrNull { it.id == id }?.url
     }
 
     fun cacheSizeBytes(context: Context): Long = runCatching {
