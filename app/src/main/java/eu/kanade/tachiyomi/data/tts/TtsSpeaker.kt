@@ -455,13 +455,10 @@ object TtsSpeaker {
             } else {
                 engine.language = Locale("ru", "RU")
             }
-            val voiceParams = forcedVoiceName?.let { name ->
-                android.os.Bundle().apply {
-                    // Hidden Android framework key used internally by
-                    // TextToSpeech.setVoice(); literal keeps public-SDK builds.
-                    putString("voiceName", name)
-                }
-            }
+            // v1.9.44: hidden-параметр «voiceName» убран: движки (RHVoice на
+            // устройстве) ОТКЛОНЯЮТ speak() с таким Bundle — пресеты Ж/М/нарратор
+            // звучали тишиной. Голос уже поставлен через setVoice() выше.
+            val voiceParams: android.os.Bundle? = null
             // Пунктуация → реальные паузы и интонация: текст режется на
             // предложения, каждое говорится отдельной utterance, между ними
             // тишина (250мс после точки, 420мс после !/?, 160мс после запятой).

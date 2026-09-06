@@ -43,6 +43,7 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.ArrowForward
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.StarBorder
@@ -138,6 +139,7 @@ data object BrowserTab : Tab {
 
     private var urlState = mutableStateOf(HOME_URL)
     private var canGoBackState = mutableStateOf(false)
+    private var canGoForwardState = mutableStateOf(false)
     private var progressState = mutableFloatStateOf(1f)
     private var autoscrollActive = mutableStateOf(false)
     private var autoscrollSpeed = mutableFloatStateOf(2f)
@@ -295,10 +297,36 @@ data object BrowserTab : Tab {
                 imageLongPress?.invoke()
                 true
             }
+            // v1.9.44: загрузки из веба через системный DownloadManager — файл
+            // реально появляется в Download/ и видно уведомление системы
+            // (раньше «скачивается», а файла нет).
+            setDownloadListener { url, ua, contentDisposition, mimetype, _ ->
+                runCatching {
+                    val dm = context.getSystemService(android.app.DownloadManager::class.java)
+                    val fname = android.webkit.URLUtil.guessFileName(url, contentDisposition, mimetype)
+                    val req = android.app.DownloadManager.Request(android.net.Uri.parse(url))
+                        .setMimeType(mimetype)
+                        .addRequestHeader("User-Agent", ua)
+                        .setTitle(fname)
+                        .setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                        .setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_DOWNLOADS, fname)
+                    dm?.enqueue(req)
+                    android.widget.Toast.makeText(context, "Загрузка: $fname (папка Download)", android.widget.Toast.LENGTH_LONG).show()
+                }.onFailure {
+                    android.widget.Toast.makeText(context, "Не удалось начать загрузку", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
             webChromeClient = object : WebChromeClient() {
                 override fun onProgressChanged(view: WebView, newProgress: Int) {
                     if (view !== sharedWebView) return
                     progressState.floatValue = newProgress / 100f
+                }
+
+                // v1.9.44: название сайта во вкладке обновляется сразу (SPA,
+                // редиректы), а не только по onPageFinished.
+                override fun onReceivedTitle(view: WebView, title: String?) {
+                    if (view !== sharedWebView) return
+                    runCatching { WebStore.touchTab(view.context, view.url ?: "", title ?: "") }
                 }
 
                 // Видео во весь экран: кастомная вьюха поверх контента активности.
@@ -327,6 +355,7 @@ data object BrowserTab : Tab {
                     // фоновая вкладка догрузилась — адрес/активную не трогаем
                     if (view !== sharedWebView) return
                     canGoBackState.value = view.canGoBack()
+                    canGoForwardState.value = view.canGoForward()
                     runCatching { WebStore.addHistory(context, url ?: "", view.title ?: "") }
                     runCatching { WebStore.touchTab(context, url ?: "", view.title ?: "") }
                     // v1.9.40: системное выделение текста мешало выбору области:
@@ -365,6 +394,7 @@ data object BrowserTab : Tab {
     override fun Content() {
         var urlBar by urlState
         val canGoBack by canGoBackState
+        val canGoForward by canGoForwardState
         val progress by progressState
 
         BackHandler(enabled = canGoBack) {
@@ -397,6 +427,12 @@ data object BrowserTab : Tab {
         var isAutoRead by autoReadActive
         val ctx = androidx.compose.ui.platform.LocalContext.current
         WebStore.load(ctx)
+        // v1.9.44: вкладки/активная восстанавливаются СИНХРОННО до первого кадра —
+        // старт и новая вкладка показывают последний открытый сайт, а не дефолт.
+        if (WebStore.tabs.value.isEmpty()) WebStore.addTab(ctx, HOME_URL, "Новая вкладка")
+        if (WebStore.tabs.value.none { it.id == WebStore.activeTabId.value }) {
+            WebStore.activeTabId.value = WebStore.tabs.value.lastOrNull()?.id
+        }
         hostActivity = ctx as? android.app.Activity
         androidx.compose.runtime.LaunchedEffect(Unit) {
             if (WebStore.tabs.value.isEmpty()) WebStore.addTab(ctx, HOME_URL, "Новая вкладка")
@@ -493,7 +529,7 @@ data object BrowserTab : Tab {
                     // весь экран и «плывали» по странице).
                     if (cropped !== raw) ocrFrame = cropped
                     val prefsN = Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
-                    var result = ocrWithPreprocess(cropped)
+                    var result = ocrWithPreprocess(ctx, cropped)
                     if (result.first.isBlank() && cropped !== raw) {
                         // v1.9.41: ретрай на увеличении — мелкий/бледный текст
                         val up = android.graphics.Bitmap.createScaledBitmap(
@@ -502,7 +538,7 @@ data object BrowserTab : Tab {
                             (cropped.height * 1.5f).toInt().coerceAtLeast(1),
                             true,
                         )
-                        result = ocrWithPreprocess(up)
+                        result = ocrWithPreprocess(ctx, up)
                         runCatching { up.recycle() }
                     }
                     val (text, regions) = result
@@ -601,7 +637,10 @@ data object BrowserTab : Tab {
                 // сайт может скроллиться внутренним контейнером (window.scrollY
                 // стоит на месте) — раньше авточтение «не прокручивало» именно так.
                 val posBefore = readScrollPos(wv)
-                val step = (wv.height * 0.6f).roundToInt().coerceAtLeast(1)
+                // v1.9.44: текст найден — шаг 60%; кадр пуст — мелкий шаг 35%,
+                // чтобы не проскочить текст и не «листать впустую».
+                val hadText = readEngine.lastFrameHadText
+                val step = (wv.height * (if (hadText) 0.6f else 0.35f)).roundToInt().coerceAtLeast(1)
                 var scrolled = 0
                 while (scrolled < step && isAutoRead) {
                     val d = minOf(24, step - scrolled) // мелкий шаг = плавно, без рывков
@@ -624,12 +663,12 @@ data object BrowserTab : Tab {
                     posAfter = readScrollPos(wv)
                 }
                 // Пустой кадр — не ждём дорисовку, идём дальше сразу
-                if (readEngine.lastFrameHadText) delay(350)
+                if (hadText) delay(350)
 
                 if (posAfter - posBefore <= 0f) {
                     // Не сдвинулись — конец страницы (или контент короче экрана)
                     stuckCounter++
-                    if (stuckCounter >= 2) { isAutoRead = false; break }
+                    if (stuckCounter >= 4) { isAutoRead = false; break }
                 } else {
                     stuckCounter = 0
                 }
@@ -666,6 +705,11 @@ data object BrowserTab : Tab {
                         Icon(Icons.Outlined.ArrowBack, contentDescription = "Назад")
                     }
                 }
+                if (canGoForward) {
+                    IconButton(onClick = { sharedWebView?.goForward() }) {
+                        Icon(Icons.Outlined.ArrowForward, contentDescription = "Вперёд")
+                    }
+                }
                 OutlinedTextField(
                     value = urlBar,
                     onValueChange = { urlBar = it },
@@ -674,8 +718,17 @@ data object BrowserTab : Tab {
                     textStyle = MaterialTheme.typography.bodySmall,
                     placeholder = { Text("Адрес или поиск", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     trailingIcon = {
-                        IconButton(onClick = { loadUrlInput(urlBar) }) {
-                            Icon(Icons.Outlined.Refresh, contentDescription = "Перейти/обновить")
+                        IconButton(onClick = {
+                            // v1.9.44: та же ссылка = обновить САЙТ (reload);
+                            // другой ввод = переход/поиск.
+                            val wv = sharedWebView
+                            if (wv != null && urlBar.trim() == (wv.url ?: "").trim()) {
+                                wv.reload()
+                            } else {
+                                loadUrlInput(urlBar)
+                            }
+                        }) {
+                            Icon(Icons.Outlined.Refresh, contentDescription = "Обновить страницу")
                         }
                     },
                 )
@@ -817,29 +870,6 @@ data object BrowserTab : Tab {
                                     Icon(if (immersive) Icons.Outlined.FullscreenExit else Icons.Outlined.Fullscreen, contentDescription = "Экран")
                                 }
                             }
-                            if (userActs.isNotEmpty()) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Кнопки конструктора  ", style = MaterialTheme.typography.labelMedium)
-                                    IconButton(onClick = {
-                                        ctorExpanded = !ctorExpanded
-                                        ctorUiPrefs.edit().putBoolean("menu_ctor_expanded", ctorExpanded).apply()
-                                    }) {
-                                        Icon(if (ctorExpanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown, contentDescription = "Скрыть или показать кнопки конструктора")
-                                    }
-                                }
-                                if (ctorExpanded) {
-                                    userActs.filterNot { it.title.startsWith("Пресет") }.forEach { act ->
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text(act.title + "  ", style = MaterialTheme.typography.labelMedium)
-                                            SmallFloatingActionButton(onClick = {
-                                                ctx.toast(eu.kanade.tachiyomi.data.ui.UiActionRegistry.apply(ctx, act))
-                                            }) {
-                                                Icon(Icons.Outlined.Tune, contentDescription = act.title)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
                             Text(
                                 "yomikai " + eu.kanade.tachiyomi.AppInfo.getVersionName(),
                                 style = MaterialTheme.typography.labelSmall,
@@ -941,7 +971,7 @@ data object BrowserTab : Tab {
         if (marksOpen) {
             WebListDialog(
                 title = "Закладки",
-                rows = webMarks.map { Triple(it.id, it.title, it.url) },
+                rows = webMarks.sortedBy { it.title }.map { Triple(it.id, it.title, it.url) },
                 onPick = { id ->
                     webMarks.firstOrNull { it.id == id }?.let { m ->
                         sharedWebView?.loadUrl(m.url)
@@ -987,7 +1017,9 @@ data object BrowserTab : Tab {
                 },
                 newLabel = "＋ Новая вкладка",
                 onNew = {
-                    WebStore.addTab(ctx, HOME_URL, "Новая вкладка")
+                    // v1.9.44: новая вкладка продолжает последний открытый сайт.
+                    val last = WebStore.tabs.value.lastOrNull { it.url.isNotBlank() }
+                    if (last != null) WebStore.addTab(ctx, last.url, last.title) else WebStore.addTab(ctx, HOME_URL, "Новая вкладка")
                     tabsOpen = false
                 },
                 onDismiss = { tabsOpen = false },
@@ -1033,165 +1065,57 @@ data object BrowserTab : Tab {
         // Карточка результата ручного скана: компактная, по центру, с отменой.
         // v1.9.41: распознавание СРАЗУ НА КАДРЕ: замороженный кадр, прогресс на нём,
         // текст реплик поверх своих рамок — без заливки и без шторки уведомлений.
-        // v1.9.42: распознавание НА САМОМ ФРАГМЕНТЕ: отсканированная область
-        // вписана по центру на тёмном фоне, текст реплик — поверх СВОИХ рамок
-        // (координаты области), без заливки под текстом.
-        ocrFrame?.let { frame ->
-            Box(
+        // v1.9.44: результат скана — компактная карточка СВЕРХУ СБОКУ (как просил
+        // пользователь): ничего не рисуется поверх страницы, никаких рамок.
+        if (ocrBusy || !ocrText.isNullOrBlank()) {
+            Column(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.72f))
+                    .align(Alignment.TopEnd)
+                    .padding(top = 6.dp, end = 6.dp, start = 48.dp)
+                    .background(
+                        MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.94f),
+                        RoundedCornerShape(12.dp),
+                    )
+                    .padding(10.dp)
                     .zIndex(20f),
             ) {
-                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                    val bw = constraints.maxWidth.toFloat()
-                    val bh = constraints.maxHeight.toFloat()
-                    val fw = frame.width.coerceAtLeast(1).toFloat()
-                    val fh = frame.height.coerceAtLeast(1).toFloat()
-                    val scale = minOf(bw / fw, bh / fh)
-                    val dw = fw * scale
-                    val dh = fh * scale
-                    val ox = (bw - dw) / 2f
-                    val oy = (bh - dh) / 2f
-                    val dens = androidx.compose.ui.platform.LocalDensity.current.density
-                    val dwDp = (dw / dens).dp
-                    val dhDp = (dh / dens).dp
-                    Image(
-                        bitmap = frame.asImageBitmap(),
-                        contentDescription = null,
-                        modifier = Modifier
-                            .offset {
-                                androidx.compose.ui.unit.IntOffset(ox.roundToInt(), oy.roundToInt())
-                            }
-                            .width(dwDp)
-                            .height(dhDp),
-                    )
-                    if (ocrBusy) {
-                        Column(
-                            modifier = Modifier.align(Alignment.Center),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            CircularProgressIndicator()
-                            Text(
-                                "Распознавание… (Закрыть = отмена)",
-                                color = androidx.compose.ui.graphics.Color.White,
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.padding(top = 8.dp),
-                            )
-                        }
-                    } else {
-                        ocrRegions.forEach { (box, text) ->
-                            Text(
-                                text = text,
-                                color = androidx.compose.ui.graphics.Color.White,
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    shadow = androidx.compose.ui.graphics.Shadow(
-                                        color = androidx.compose.ui.graphics.Color.Black,
-                                        offset = androidx.compose.ui.geometry.Offset(1f, 1f),
-                                        blurRadius = 2f,
-                                    ),
-                                ),
-                                modifier = Modifier
-                                    .offset {
-                                        androidx.compose.ui.unit.IntOffset(
-                                            (ox + box.left * dw).roundToInt(),
-                                            (oy + box.top * dh).roundToInt(),
-                                        )
-                                    }
-                                    .widthIn(max = ((box.right - box.left) * dw / dens).coerceAtLeast(60f).dp),
-                            )
-                        }
+                if (ocrBusy) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                        Text("Распознавание…", style = MaterialTheme.typography.bodySmall)
                     }
+                } else {
+                    Text(
+                        text = ocrText ?: "",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier
+                            .verticalScroll(rememberScrollState())
+                            .heightIn(max = 220.dp),
+                    )
                 }
                 Row(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    modifier = Modifier.padding(top = 2.dp),
                 ) {
                     if (!ocrBusy && !ocrText.isNullOrBlank()) {
-                        TextButton(onClick = { showOcrCard = true }) { Text("Текст") }
                         TextButton(onClick = {
                             val clipboard = ctx.getSystemService(android.content.ClipboardManager::class.java)
                             clipboard?.setPrimaryClip(android.content.ClipData.newPlainText(null, ocrText))
-                        }) { Text("Копировать") }
+                        }) { Text("Копир.") }
                         TextButton(onClick = { TtsSpeaker.speak(ctx, ocrText ?: "") }) { Text("Голос") }
                     }
                     TextButton(onClick = {
                         ocrJob?.cancel()
                         ocrBusy = false
-                        ocrFrame = null
+                        ocrText = null
                         ocrRegions = emptyList()
-                        runCatching { frame.recycle() }
+                        showOcrCard = false
+                        ocrFrame?.let { runCatching { it.recycle() } }
+                        ocrFrame = null
                     }) { Text("Закрыть") }
-                }
-            }
-        }
-        if (showOcrCard && !ocrText.isNullOrBlank()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    tonalElevation = 6.dp,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 520.dp)
-                        .padding(24.dp),
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        if (ocrBusy) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            ) {
-                                CircularProgressIndicator()
-                                Text("Распознавание… (закрытие = отмена)")
-                            }
-                        } else {
-                            Text(
-                                text = ocrText?.ifBlank { "Не удалось распознать текст на странице" } ?: "",
-                                style = MaterialTheme.typography.bodyLarge,
-                                modifier = Modifier
-                                    .verticalScroll(rememberScrollState())
-                                    .heightIn(max = 360.dp),
-                            )
-                        }
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 12.dp),
-                            horizontalArrangement = Arrangement.End,
-                        ) {
-                            if (!ocrBusy && !ocrText.isNullOrBlank()) {
-                                TextButton(onClick = { TtsSpeaker.speak(ctx, ocrText ?: "") }) {
-                                    Text("Голос")
-                                }
-                                TextButton(onClick = { TtsSpeaker.speakWithVoice(ctx, ocrText ?: "", TtsSpeaker.slotVoiceSpec("female")) }) {
-                                    Text("♀")
-                                }
-                                TextButton(onClick = { TtsSpeaker.speakWithVoice(ctx, ocrText ?: "", TtsSpeaker.slotVoiceSpec("male")) }) {
-                                    Text("♂")
-                                }
-                                TextButton(onClick = { TtsSpeaker.speakWithVoice(ctx, ocrText ?: "", TtsSpeaker.slotVoiceSpec("narrator")) }) {
-                                    Text("🎙")
-                                }
-                                TextButton(onClick = {
-                                    val clipboard = ctx.getSystemService(android.content.ClipboardManager::class.java)
-                                    clipboard?.setPrimaryClip(android.content.ClipData.newPlainText(null, ocrText))
-                                }) {
-                                    Text("Копировать")
-                                }
-                            }
-                            TextButton(onClick = {
-                                ocrJob?.cancel()
-                                ocrBusy = false
-                                ocrText = null
-                                showOcrCard = false
-                            }) {
-                                Text("Закрыть")
-                            }
-                        }
-                    }
                 }
             }
         }
@@ -1334,7 +1258,7 @@ private fun preprocessForOcr(src: android.graphics.Bitmap): android.graphics.Bit
     }
 
     /** OCR с препроцессом: текст + рамки реплик (нормализованные 0..1). */
-private suspend fun ocrWithPreprocess(src: android.graphics.Bitmap): Pair<String, List<Pair<mihon.domain.ocr.model.OcrBoundingBox, String>>> {
+private suspend fun ocrWithPreprocess(context: android.content.Context, src: android.graphics.Bitmap): Pair<String, List<Pair<mihon.domain.ocr.model.OcrBoundingBox, String>>> {
         val pre = preprocessForOcr(src)
         val bmp = if (pre.width < 1200) {
             val k = minOf(3f, 1200f / pre.width)
@@ -1343,17 +1267,30 @@ private suspend fun ocrWithPreprocess(src: android.graphics.Bitmap): Pair<String
             pre
         }
         return try {
-            val res = withTimeout(180_000) {
-                Injekt.get<mihon.domain.ocr.interactor.ScanPageOcr>()
-                    .await(
-                        chapterId = -1L,
-                        pageIndex = (System.currentTimeMillis() % 1_000_000L).toInt(),
-                        image = bmp.toOcrImage(),
-                    )
+            val ocr = Injekt.get<mihon.domain.ocr.interactor.ScanPageOcr>()
+            // v1.9.44: в вебе по умолчанию ОНЛАЙН OCR (Google Lens, ключ встроен) —
+            // качество выше и не тянется 2-МБ офлайн-модель; без сети — локальный
+            // CYRILLIC (кириллический).
+            val prefsO = Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+            val online = runCatching {
+                val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+                val net = cm?.activeNetwork
+                net != null && (cm.getNetworkCapabilities(net)
+                    ?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) ?: false)
+            }.getOrDefault(false)
+            val want = if (online) mihon.domain.ocr.model.OcrModel.GLENS else mihon.domain.ocr.model.OcrModel.CYRILLIC
+            prefsO.ocrModel().set(want)
+            val pgIdx = (System.currentTimeMillis() % 1_000_000L).toInt()
+            var regions = withTimeout(60_000) {
+                ocr.await(chapterId = -1L, pageIndex = pgIdx, image = bmp.toOcrImage())
+            }.let(::ocrFixedRegions)
+            if (regions.isEmpty() && want == mihon.domain.ocr.model.OcrModel.GLENS) {
+                // Онлайн не ответил (лимит/сеть) — откат на офлайн-кириллицу.
+                prefsO.ocrModel().set(mihon.domain.ocr.model.OcrModel.CYRILLIC)
+                regions = withTimeout(180_000) {
+                    ocr.await(chapterId = -1L, pageIndex = pgIdx, image = bmp.toOcrImage())
+                }.let(::ocrFixedRegions)
             }
-            val regions = res.regions
-                .map { it.boundingBox to it.text.trim() }
-                .filter { it.second.isNotBlank() }
             regions.joinToString("\n") { it.second } to regions
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
@@ -1361,4 +1298,12 @@ private suspend fun ocrWithPreprocess(src: android.graphics.Bitmap): Pair<String
             "" to emptyList()
         }
     }
+
+/** v1.9.44: фиксер похожих символов (M E Ч / А Т М / 5→Б) до вывода. */
+private fun ocrFixedRegions(
+    res: mihon.domain.ocr.model.OcrPageResult,
+): List<Pair<mihon.domain.ocr.model.OcrBoundingBox, String>> =
+    res.regions
+        .map { it.boundingBox to mihon.data.ocr.CyrillicTranslitFixer.autoFixCyrillic(it.text).trim() }
+        .filter { it.second.isNotBlank() }
 
