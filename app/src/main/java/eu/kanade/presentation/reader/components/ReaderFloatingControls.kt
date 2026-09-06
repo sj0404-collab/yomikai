@@ -140,21 +140,6 @@ fun ReaderFloatingControls(
                 .padding(10.dp),
         )
     }
-    androidx.compose.runtime.LaunchedEffect(ocrStage) {
-        val nctx = ctorContext
-        when (ocrStage.stage) {
-            mihon.data.ocr.OcrStageBus.Stage.DETECTING ->
-                mihon.data.ocr.OcrNotificationManager.updateStreaming(nctx, "Сканирую облачка…")
-            mihon.data.ocr.OcrStageBus.Stage.RECOGNIZING ->
-                mihon.data.ocr.OcrNotificationManager.updateStreaming(nctx, "Распознаю текст… ${ocrStage.note}")
-            mihon.data.ocr.OcrStageBus.Stage.DONE -> {
-                mihon.data.ocr.OcrNotificationManager.show(nctx, ocrStage.note.ifBlank { "Текст готов" })
-                kotlinx.coroutines.delay(10000)
-                mihon.data.ocr.OcrNotificationManager.dismiss(nctx)
-            }
-            else -> {}
-        }
-    }
         AnimatedVisibility(
             visible = visible,
             enter = fadeIn(),
