@@ -102,9 +102,9 @@ object SpeechMarkup {
         var out = text.replace("…", ",")
         out = out.replace(Regex("[.]{2,}"), ",")
         out = out.replace(Regex("[!?;:]{2,}"), ",")
-        out = out.replace(Regex("(^|\s)[.,!?;:·•*#|/^_=+<>]+(\s|$)"), " ")
+        out = out.replace(Regex("(^|\\s)[.,!?;:·•*#|/^_=+<>]+(\\s|$)"), " ")
         out = out.replace(Regex(",{2,}"), ",")
-        out = out.replace(Regex("\s{2,}"), " ")
+        out = out.replace(Regex("\\s{2,}"), " ")
         return out.trim().trim(',').trim()
     }
 

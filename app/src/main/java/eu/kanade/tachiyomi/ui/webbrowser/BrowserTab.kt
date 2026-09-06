@@ -447,7 +447,7 @@ data object BrowserTab : Tab {
         var areaFrame by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
         // v1.9.41: распознанный текст живёт НА кадре (рамки + текст без заливки)
         var ocrFrame by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
-        var ocrRegions by remember { mutableStateOf<List<Pair<android.graphics.RectF, String>>>(emptyList()) }
+        var ocrRegions by remember { mutableStateOf<List<Pair<mihon.domain.ocr.model.OcrBoundingBox, String>>>(emptyList()) }
         var showOcrCard by remember { mutableStateOf(false) }
         val pip by WebStore.pipMode
         var immersive by remember { mutableStateOf(false) }
@@ -515,70 +515,6 @@ data object BrowserTab : Tab {
                 } finally {
                     ocrBusy = false
                 }
-            }
-        }
-
-        /** v1.9.41: препроцесс (grayscale + контраст) — бледный текст читается. */
-        private fun preprocessForOcr(src: android.graphics.Bitmap): android.graphics.Bitmap {
-            val out = android.graphics.Bitmap.createBitmap(src.width, src.height, android.graphics.Bitmap.Config.ARGB_8888)
-            val canvas = android.graphics.Canvas(out)
-            val gray = android.graphics.Paint().apply {
-                colorFilter = android.graphics.ColorMatrixColorFilter(
-                    android.graphics.ColorMatrix(
-                        floatArrayOf(
-                            0.33f, 0.33f, 0.33f, 0f, 0f,
-                            0.33f, 0.33f, 0.33f, 0f, 0f,
-                            0.33f, 0.33f, 0.33f, 0f, 0f,
-                            0f, 0f, 0f, 1f, 0f,
-                        ),
-                    ),
-                )
-            }
-            canvas.drawBitmap(src, 0f, 0f, gray)
-            val k = 1.6f
-            val tr = 128 * (1 - k)
-            val contrast = android.graphics.Paint().apply {
-                colorFilter = android.graphics.ColorMatrixColorFilter(
-                    android.graphics.ColorMatrix(
-                        floatArrayOf(
-                            k, 0f, 0f, 0f, tr,
-                            0f, k, 0f, 0f, tr,
-                            0f, 0f, k, 0f, tr,
-                            0f, 0f, 0f, 1f, 0f,
-                        ),
-                    ),
-                )
-            }
-            canvas.drawBitmap(out, 0f, 0f, contrast)
-            return out
-        }
-
-        /** OCR с препроцессом: текст + рамки реплик (нормализованные 0..1). */
-        private suspend fun ocrWithPreprocess(src: android.graphics.Bitmap): Pair<String, List<Pair<android.graphics.RectF, String>>> {
-            val pre = preprocessForOcr(src)
-            val bmp = if (pre.width < 1200) {
-                val k = minOf(3f, 1200f / pre.width)
-                android.graphics.Bitmap.createScaledBitmap(pre, (pre.width * k).toInt(), (pre.height * k).toInt(), true)
-            } else {
-                pre
-            }
-            return try {
-                val res = withTimeout(180_000) {
-                    Injekt.get<mihon.domain.ocr.interactor.ScanPageOcr>()
-                        .await(
-                            chapterId = -1L,
-                            pageIndex = (System.currentTimeMillis() % 1_000_000L).toInt(),
-                            image = bmp.toOcrImage(),
-                        )
-                }
-                val regions = res.regions
-                    .map { it.boundingBox to it.text.trim() }
-                    .filter { it.second.isNotBlank() }
-                regions.joinToString("\n") { it.second } to regions
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                "" to emptyList()
             }
         }
 
@@ -1335,3 +1271,68 @@ private fun AreaPickOverlay(
         }
     }
 }
+
+/** v1.9.41: препроцесс (grayscale + контраст) — бледный текст читается. */
+private fun preprocessForOcr(src: android.graphics.Bitmap): android.graphics.Bitmap {
+        val out = android.graphics.Bitmap.createBitmap(src.width, src.height, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(out)
+        val gray = android.graphics.Paint().apply {
+            colorFilter = android.graphics.ColorMatrixColorFilter(
+                android.graphics.ColorMatrix(
+                    floatArrayOf(
+                        0.33f, 0.33f, 0.33f, 0f, 0f,
+                        0.33f, 0.33f, 0.33f, 0f, 0f,
+                        0.33f, 0.33f, 0.33f, 0f, 0f,
+                        0f, 0f, 0f, 1f, 0f,
+                    ),
+                ),
+            )
+        }
+        canvas.drawBitmap(src, 0f, 0f, gray)
+        val k = 1.6f
+        val tr = 128 * (1 - k)
+        val contrast = android.graphics.Paint().apply {
+            colorFilter = android.graphics.ColorMatrixColorFilter(
+                android.graphics.ColorMatrix(
+                    floatArrayOf(
+                        k, 0f, 0f, 0f, tr,
+                        0f, k, 0f, 0f, tr,
+                        0f, 0f, k, 0f, tr,
+                        0f, 0f, 0f, 1f, 0f,
+                    ),
+                ),
+            )
+        }
+        canvas.drawBitmap(out, 0f, 0f, contrast)
+        return out
+    }
+
+    /** OCR с препроцессом: текст + рамки реплик (нормализованные 0..1). */
+private suspend fun ocrWithPreprocess(src: android.graphics.Bitmap): Pair<String, List<Pair<mihon.domain.ocr.model.OcrBoundingBox, String>>> {
+        val pre = preprocessForOcr(src)
+        val bmp = if (pre.width < 1200) {
+            val k = minOf(3f, 1200f / pre.width)
+            android.graphics.Bitmap.createScaledBitmap(pre, (pre.width * k).toInt(), (pre.height * k).toInt(), true)
+        } else {
+            pre
+        }
+        return try {
+            val res = withTimeout(180_000) {
+                Injekt.get<mihon.domain.ocr.interactor.ScanPageOcr>()
+                    .await(
+                        chapterId = -1L,
+                        pageIndex = (System.currentTimeMillis() % 1_000_000L).toInt(),
+                        image = bmp.toOcrImage(),
+                    )
+            }
+            val regions = res.regions
+                .map { it.boundingBox to it.text.trim() }
+                .filter { it.second.isNotBlank() }
+            regions.joinToString("\n") { it.second } to regions
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            "" to emptyList()
+        }
+    }
+
