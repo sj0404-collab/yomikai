@@ -41,7 +41,7 @@ object WebStore {
     // v1.9.40: PiP-режим (мини-плеер): активности прячут всё, кроме веба
     val pipMode = mutableStateOf(false)
     // v1.9.40: какая вкладка сейчас открыта (раньше писали всегда в последнюю)
-    var activeTabId: String? = null
+    val activeTabId = MutableStateFlow<String?>(null)
 
     private var loaded = false
 
@@ -67,7 +67,7 @@ object WebStore {
             tabs.value = root.optJSONArray("tabs").jsonList { o ->
                 TabItem(o.optString("id"), o.optString("url"), o.optString("title"))
             }
-            activeTabId = root.optString("activeTab").takeIf { it.isNotBlank() }
+            activeTabId.value = root.optString("activeTab").takeIf { it.isNotBlank() }
         }
     }
 
@@ -117,7 +117,7 @@ object WebStore {
                     }
                 },
             )
-            root.put("activeTab", activeTabId ?: "")
+            root.put("activeTab", activeTabId.value ?: "")
             file(context).writeText(root.toString())
         }
     }
@@ -186,14 +186,14 @@ object WebStore {
         load(context)
         val t = TabItem(System.currentTimeMillis().toString(), url, title.ifBlank { url })
         tabs.value = (tabs.value + t).takeLast(20)
-        activeTabId = t.id
+        activeTabId.value = t.id
         save(context)
         return t
     }
 
     fun closeTab(context: Context, id: String) {
         tabs.value = tabs.value.filterNot { it.id == id }
-        if (activeTabId == id) activeTabId = tabs.value.lastOrNull()?.id
+        if (activeTabId.value == id) activeTabId.value = tabs.value.lastOrNull()?.id
         save(context)
     }
 
@@ -201,10 +201,10 @@ object WebStore {
     fun touchTab(context: Context, url: String, title: String) {
         if (url.isBlank() || tabs.value.isEmpty()) return
         load(context)
-        var active = activeTabId?.takeIf { id -> tabs.value.any { it.id == id } }
+        var active = activeTabId.value?.takeIf { id -> tabs.value.any { it.id == id } }
         if (active == null) {
             active = tabs.value.last().id
-            activeTabId = active
+            activeTabId.value = active
         }
         val act = active
         tabs.value = tabs.value.map { t ->
@@ -216,7 +216,7 @@ object WebStore {
     /** Переключить активную вкладку: возвращает её сохранённый url. */
     fun switchTab(context: Context, id: String): String? {
         load(context)
-        activeTabId = id
+        activeTabId.value = id
         save(context)
         return tabs.value.firstOrNull { it.id == id }?.url
     }

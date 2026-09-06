@@ -152,6 +152,13 @@ class MainActivity : BaseActivity() {
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         eu.kanade.tachiyomi.ui.webbrowser.WebStore.pipMode.value = isInPictureInPictureMode
+        if (isInPictureInPictureMode) {
+            android.widget.Toast.makeText(
+                this,
+                "Мини-плеер: двойной тап — во весь экран, тяните край окна — размер",
+                android.widget.Toast.LENGTH_LONG,
+            ).show()
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

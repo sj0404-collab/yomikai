@@ -92,6 +92,22 @@ object SpeechMarkup {
         return out.trim().trim(',').trim()
     }
 
+    /**
+     * v1.9.41: финальная зачистка ПЕРЕД синтезом: движки не должны произносить
+     * имена знаков («точка точка точка», «восклицательный знак»): повторы
+     * `. ! ? ; : …` схлопываются в одну паузу-запятую, одиночные служебные
+     * символы удаляются. [strip] не трогаем: на экране «…» остаётся видимой.
+     */
+    fun forSpeech(text: String): String {
+        var out = text.replace("…", ",")
+        out = out.replace(Regex("[.]{2,}"), ",")
+        out = out.replace(Regex("[!?;:]{2,}"), ",")
+        out = out.replace(Regex("(^|\s)[.,!?;:·•*#|/^_=+<>]+(\s|$)"), " ")
+        out = out.replace(Regex(",{2,}"), ",")
+        out = out.replace(Regex("\s{2,}"), " ")
+        return out.trim().trim(',').trim()
+    }
+
     /** Добавляет номер реплики в начало, если его там ещё нет. */
     fun withIndex(text: String, index: Int): String =
         if (TAG.containsMatchIn(text) && text.trimStart().startsWith("{$index}")) {

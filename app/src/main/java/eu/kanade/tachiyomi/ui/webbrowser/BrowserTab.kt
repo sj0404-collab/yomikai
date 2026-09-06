@@ -86,6 +86,7 @@ import kotlinx.coroutines.delay
 import eu.kanade.tachiyomi.util.system.toast
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
@@ -129,6 +130,9 @@ data object BrowserTab : Tab {
     private var customViewCallback: android.webkit.WebChromeClient.CustomViewCallback? = null
     private var hostActivity: android.app.Activity? = null
     private var imageLongPress: (() -> Unit)? = null
+    /** v1.9.41: живой WebView на каждую вкладку (до 4): переключение НЕ
+     *  перезапускает страницу — вкладки держатся открытыми, как в Via/Chrome. */
+    private val webViewPool = LinkedHashMap<String, WebView>()
 
     private var urlState = mutableStateOf(HOME_URL)
     private var canGoBackState = mutableStateOf(false)
@@ -262,10 +266,8 @@ data object BrowserTab : Tab {
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun obtainWebView(context: Context): WebView {
-        sharedWebView?.let { return it }
-
-        val webView = WebView(context.applicationContext).apply {
+    private fun configureWebView(context: Context, webView: WebView) {
+        webView.apply {
             setBackgroundColor(Color.parseColor("#13141F"))
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
@@ -293,6 +295,7 @@ data object BrowserTab : Tab {
             }
             webChromeClient = object : WebChromeClient() {
                 override fun onProgressChanged(view: WebView, newProgress: Int) {
+                    if (view !== sharedWebView) return
                     progressState.floatValue = newProgress / 100f
                 }
 
@@ -319,6 +322,8 @@ data object BrowserTab : Tab {
             }
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView, url: String?) {
+                    // фоновая вкладка догрузилась — адрес/активную не трогаем
+                    if (view !== sharedWebView) return
                     canGoBackState.value = view.canGoBack()
                     runCatching { WebStore.addHistory(context, url ?: "", view.title ?: "") }
                     runCatching { WebStore.touchTab(context, url ?: "", view.title ?: "") }
@@ -334,12 +339,24 @@ data object BrowserTab : Tab {
                 }
             }
         }
-        sharedWebView = webView
-        // Загрузка стартовой страницы — ПОСЛЕ первого кадра вкладки:
-        // раньше loadUrl в момент создания фризил переход (инициализация
-        // сети/рендера WebView блокировала главный поток при открытии).
-        webView.post { webView.loadUrl(HOME_URL) }
-        return webView
+    }
+
+    /** Живой WebView вкладки: открытые ранее вкладки НЕ пересоздаются. */
+    private fun webViewForTab(context: Context, tabId: String, url: String): WebView {
+        webViewPool[tabId]?.let { return it }
+        val wv = WebView(context.applicationContext)
+        configureWebView(context, wv)
+        webViewPool[tabId] = wv
+        // Держим не больше 4 живых: старую фоновую освобождаем (вернётся из store)
+        while (webViewPool.size > 4) {
+            val victim = webViewPool.keys.firstOrNull { it != tabId && it != WebStore.activeTabId.value } ?: break
+            webViewPool.remove(victim)?.let { old ->
+                runCatching { (old.parent as? ViewGroup)?.removeView(old) }
+                runCatching { old.destroy() }
+            }
+        }
+        wv.post { wv.loadUrl(url) }
+        return wv
     }
 
     @Composable
@@ -379,6 +396,12 @@ data object BrowserTab : Tab {
         val ctx = androidx.compose.ui.platform.LocalContext.current
         WebStore.load(ctx)
         hostActivity = ctx as? android.app.Activity
+        androidx.compose.runtime.LaunchedEffect(Unit) {
+            if (WebStore.tabs.value.isEmpty()) WebStore.addTab(ctx, HOME_URL, "Новая вкладка")
+            if (WebStore.activeTabId.value == null) {
+                WebStore.activeTabId.value = WebStore.tabs.value.lastOrNull()?.id
+            }
+        }
         var moreOpen by remember { mutableStateOf(false) }
         var libOpen by remember { mutableStateOf(false) }
         var marksOpen by remember { mutableStateOf(false) }
@@ -390,6 +413,7 @@ data object BrowserTab : Tab {
         val webMarks by WebStore.marks.collectAsState()
         val webHist by WebStore.history.collectAsState()
         val webTabs by WebStore.tabs.collectAsState()
+        val activeTabId by WebStore.activeTabId.collectAsState()
         androidx.compose.runtime.LaunchedEffect(urlBar) {
             webBookmarked = WebStore.isBookmarked(urlBar)
         }
@@ -401,7 +425,6 @@ data object BrowserTab : Tab {
                 else -> "https://www.google.com/search?q=" + java.net.URLEncoder.encode(input, "UTF-8")
             }
             WebStore.addTab(ctx, target, target)
-            sharedWebView?.loadUrl(target)
         }
         fun saveHtmlPage() {
             val wv = sharedWebView ?: return
@@ -422,6 +445,10 @@ data object BrowserTab : Tab {
         var ocrJob by remember { mutableStateOf<Job?>(null) }
         // v1.9.40: замороженный кадр для выбора области скана пальцем
         var areaFrame by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+        // v1.9.41: распознанный текст живёт НА кадре (рамки + текст без заливки)
+        var ocrFrame by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+        var ocrRegions by remember { mutableStateOf<List<Pair<android.graphics.RectF, String>>>(emptyList()) }
+        var showOcrCard by remember { mutableStateOf(false) }
         val pip by WebStore.pipMode
         var immersive by remember { mutableStateOf(false) }
         val scope = rememberCoroutineScope()
@@ -447,6 +474,8 @@ data object BrowserTab : Tab {
             ocrJob = scope.launch {
                 ocrBusy = true
                 ocrText = null
+                ocrRegions = emptyList()
+                ocrFrame = raw // результат появится ПРЯМО НА КАДРЕ
                 try {
                     val l = rect.left.toInt().coerceIn(0, raw.width - 1)
                     val t = rect.top.toInt().coerceIn(0, raw.height - 1)
@@ -458,23 +487,21 @@ data object BrowserTab : Tab {
                         android.graphics.Bitmap.createBitmap(raw, l, t, r - l, b - t)
                     }
                     val prefsN = Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
-                    val bmp = if (cropped.width < 1200) {
-                        val k = minOf(3f, 1200f / cropped.width)
-                        android.graphics.Bitmap.createScaledBitmap(
+                    var result = ocrWithPreprocess(cropped)
+                    if (result.first.isBlank() && cropped !== raw) {
+                        // v1.9.41: ретрай на увеличении — мелкий/бледный текст
+                        val up = android.graphics.Bitmap.createScaledBitmap(
                             cropped,
-                            (cropped.width * k).toInt(),
-                            (cropped.height * k).toInt(),
+                            (cropped.width * 1.5f).toInt().coerceAtLeast(1),
+                            (cropped.height * 1.5f).toInt().coerceAtLeast(1),
                             true,
-                        ).also { if (it !== cropped) cropped.recycle() }
-                    } else {
-                        cropped
+                        )
+                        result = ocrWithPreprocess(up)
+                        runCatching { up.recycle() }
                     }
-                    val text = withTimeout(90_000) {
-                        Injekt.get<mihon.domain.ocr.interactor.OcrProcessor>().getText(bmp.toOcrImage())
-                    }
-                    if (bmp !== raw) bmp.recycle()
-                    raw.recycle()
+                    val (text, regions) = result
                     ocrText = text
+                    ocrRegions = regions
                     if (prefsN.ocrToNotification().get() && text.isNotBlank()) {
                         OcrNotificationManager.show(ctx.applicationContext, text)
                     }
@@ -488,6 +515,70 @@ data object BrowserTab : Tab {
                 } finally {
                     ocrBusy = false
                 }
+            }
+        }
+
+        /** v1.9.41: препроцесс (grayscale + контраст) — бледный текст читается. */
+        private fun preprocessForOcr(src: android.graphics.Bitmap): android.graphics.Bitmap {
+            val out = android.graphics.Bitmap.createBitmap(src.width, src.height, android.graphics.Bitmap.Config.ARGB_8888)
+            val canvas = android.graphics.Canvas(out)
+            val gray = android.graphics.Paint().apply {
+                colorFilter = android.graphics.ColorMatrixColorFilter(
+                    android.graphics.ColorMatrix(
+                        floatArrayOf(
+                            0.33f, 0.33f, 0.33f, 0f, 0f,
+                            0.33f, 0.33f, 0.33f, 0f, 0f,
+                            0.33f, 0.33f, 0.33f, 0f, 0f,
+                            0f, 0f, 0f, 1f, 0f,
+                        ),
+                    ),
+                )
+            }
+            canvas.drawBitmap(src, 0f, 0f, gray)
+            val k = 1.6f
+            val tr = 128 * (1 - k)
+            val contrast = android.graphics.Paint().apply {
+                colorFilter = android.graphics.ColorMatrixColorFilter(
+                    android.graphics.ColorMatrix(
+                        floatArrayOf(
+                            k, 0f, 0f, 0f, tr,
+                            0f, k, 0f, 0f, tr,
+                            0f, 0f, k, 0f, tr,
+                            0f, 0f, 0f, 1f, 0f,
+                        ),
+                    ),
+                )
+            }
+            canvas.drawBitmap(out, 0f, 0f, contrast)
+            return out
+        }
+
+        /** OCR с препроцессом: текст + рамки реплик (нормализованные 0..1). */
+        private suspend fun ocrWithPreprocess(src: android.graphics.Bitmap): Pair<String, List<Pair<android.graphics.RectF, String>>> {
+            val pre = preprocessForOcr(src)
+            val bmp = if (pre.width < 1200) {
+                val k = minOf(3f, 1200f / pre.width)
+                android.graphics.Bitmap.createScaledBitmap(pre, (pre.width * k).toInt(), (pre.height * k).toInt(), true)
+            } else {
+                pre
+            }
+            return try {
+                val res = withTimeout(180_000) {
+                    Injekt.get<mihon.domain.ocr.interactor.ScanPageOcr>()
+                        .await(
+                            chapterId = -1L,
+                            pageIndex = (System.currentTimeMillis() % 1_000_000L).toInt(),
+                            image = bmp.toOcrImage(),
+                        )
+                }
+                val regions = res.regions
+                    .map { it.boundingBox to it.text.trim() }
+                    .filter { it.second.isNotBlank() }
+                regions.joinToString("\n") { it.second } to regions
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                "" to emptyList()
             }
         }
 
@@ -646,6 +737,16 @@ data object BrowserTab : Tab {
                         }
                     },
                 )
+                IconButton(onClick = { tabsOpen = true }) {
+                    Box(
+                        modifier = Modifier
+                            .size(22.dp)
+                            .border(1.5.dp, MaterialTheme.colorScheme.onSurfaceVariant, RoundedCornerShape(6.dp)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(webTabs.size.toString(), style = MaterialTheme.typography.labelSmall)
+                    }
+                }
                 IconButton(onClick = {
                     webBookmarked = WebStore.toggleBookmark(ctx, urlBar, sharedWebView?.title ?: urlBar)
                 }) {
@@ -665,21 +766,26 @@ data object BrowserTab : Tab {
                 modifier = Modifier
                     .fillMaxSize()
                     .weight(1f),
-                factory = { ctx ->
-                    val webView = obtainWebView(ctx)
-                    // Отцепляем от прошлого родителя, если вкладку пересоздали
-                    (webView.parent as? ViewGroup)?.removeView(webView)
-                    webView.onResume()
-                    webView
+                factory = { ctx -> android.widget.FrameLayout(ctx) },
+                update = { fl ->
+                    // v1.9.41: вкладка = свой живой WebView: переключение только
+                    // переставляет вьюху, страница и скролл НЕ перезапускаются.
+                    val tabId = activeTabId ?: webTabs.lastOrNull()?.id ?: return@AndroidView
+                    val item = webTabs.firstOrNull { it.id == tabId }
+                    val wv = webViewForTab(fl.context, tabId, item?.url ?: HOME_URL)
+                    sharedWebView = wv
+                    if (wv.parent !== fl) {
+                        (wv.parent as? ViewGroup)?.removeView(wv)
+                        fl.removeAllViews()
+                        fl.addView(wv, android.widget.FrameLayout.LayoutParams(-1, -1))
+                        // БЕЗ onPause()/onResume-потерь: музыка продолжает играть
+                        wv.onResume()
+                        canGoBackState.value = wv.canGoBack()
+                        wv.url?.let { urlState.value = it }
+                    }
                 },
-                update = { webView ->
-                    canGoBackState.value = webView.canGoBack()
-                },
-                onRelease = { webView ->
-                    // v1.9.39: БЕЗ onPause() — музыка и видео с открытой страницы
-                    // продолжают играть в фоне и при уходе с вкладки.
-                    // Страница и позиция скролла сохраняются до возврата.
-                    (webView.parent as? ViewGroup)?.removeView(webView)
+                onRelease = { fl ->
+                    (fl as? android.widget.FrameLayout)?.removeAllViews()
                 },
             )
         }
@@ -838,7 +944,8 @@ data object BrowserTab : Tab {
                             runCatching {
                                 (ctx as? android.app.Activity)?.enterPictureInPictureMode(
                                     android.app.PictureInPictureParams.Builder()
-                                        .setAspectRatio(android.util.Rational(16, 9))
+                                        .setAspectRatio(android.util.Rational(9, 16))
+                                        .setSeamlessResizeEnabled(true)
                                         .build(),
                                 )
                             }
@@ -926,15 +1033,19 @@ data object BrowserTab : Tab {
                     // затем открываем выбранную (раньше url писался в последнюю
                     // вкладку списка и сайты «переезжали» между вкладками).
                     runCatching { WebStore.touchTab(ctx, sharedWebView?.url ?: "", sharedWebView?.title ?: "") }
-                    val target = WebStore.switchTab(ctx, id)
-                    if (!target.isNullOrBlank()) sharedWebView?.loadUrl(target)
+                    WebStore.switchTab(ctx, id)
                     tabsOpen = false
                 },
-                onDelete = { id -> WebStore.closeTab(ctx, id) },
+                onDelete = { id ->
+                    WebStore.closeTab(ctx, id)
+                    webViewPool.remove(id)?.let { old ->
+                        runCatching { (old.parent as? ViewGroup)?.removeView(old) }
+                        runCatching { old.destroy() }
+                    }
+                },
                 newLabel = "＋ Новая вкладка",
                 onNew = {
                     WebStore.addTab(ctx, HOME_URL, "Новая вкладка")
-                    sharedWebView?.loadUrl(HOME_URL)
                     tabsOpen = false
                 },
                 onDismiss = { tabsOpen = false },
@@ -978,7 +1089,83 @@ data object BrowserTab : Tab {
         }
 
         // Карточка результата ручного скана: компактная, по центру, с отменой.
-        if (ocrBusy || ocrText != null) {
+        // v1.9.41: распознавание СРАЗУ НА КАДРЕ: замороженный кадр, прогресс на нём,
+        // текст реплик поверх своих рамок — без заливки и без шторки уведомлений.
+        ocrFrame?.let { frame ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f)),
+            ) {
+                Image(
+                    bitmap = frame.asImageBitmap(),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.FillBounds,
+                )
+                if (ocrBusy) {
+                    Column(
+                        modifier = Modifier.align(Alignment.Center),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        CircularProgressIndicator()
+                        Text(
+                            "Распознавание… (Закрыть = отмена)",
+                            color = androidx.compose.ui.graphics.Color.White,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                    }
+                } else {
+                    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                        val bw = constraints.maxWidth.toFloat()
+                        val bh = constraints.maxHeight.toFloat()
+                        ocrRegions.forEach { (box, text) ->
+                            Text(
+                                text = text,
+                                color = androidx.compose.ui.graphics.Color.White,
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    shadow = androidx.compose.ui.graphics.Shadow(
+                                        color = androidx.compose.ui.graphics.Color.Black,
+                                        offset = androidx.compose.ui.geometry.Offset(1.5f, 1.5f),
+                                        blurRadius = 5f,
+                                    ),
+                                ),
+                                modifier = Modifier.offset {
+                                    androidx.compose.ui.unit.IntOffset(
+                                        (box.left * bw).roundToInt(),
+                                        (box.top * bh).roundToInt(),
+                                    )
+                                },
+                            )
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (!ocrBusy && !ocrText.isNullOrBlank()) {
+                        TextButton(onClick = { showOcrCard = true }) { Text("Текст") }
+                        TextButton(onClick = {
+                            val clipboard = ctx.getSystemService(android.content.ClipboardManager::class.java)
+                            clipboard?.setPrimaryClip(android.content.ClipData.newPlainText(null, ocrText))
+                        }) { Text("Копировать") }
+                        TextButton(onClick = { TtsSpeaker.speak(ctx, ocrText ?: "") }) { Text("Голос") }
+                    }
+                    TextButton(onClick = {
+                        ocrJob?.cancel()
+                        ocrBusy = false
+                        ocrFrame = null
+                        ocrRegions = emptyList()
+                        runCatching { frame.recycle() }
+                    }) { Text("Закрыть") }
+                }
+            }
+        }
+        if (showOcrCard && !ocrText.isNullOrBlank()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Surface(
                     shape = RoundedCornerShape(16.dp),
@@ -1037,6 +1224,7 @@ data object BrowserTab : Tab {
                                 ocrJob?.cancel()
                                 ocrBusy = false
                                 ocrText = null
+                                showOcrCard = false
                             }) {
                                 Text("Закрыть")
                             }

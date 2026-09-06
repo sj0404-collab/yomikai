@@ -233,7 +233,7 @@ object TtsSpeaker {
         }
         stop()
         onStateChange = onState
-        val spoken = SpeechMarkup.strip(text)
+        val spoken = SpeechMarkup.forSpeech(SpeechMarkup.strip(text))
         if (spoken.isBlank()) {
             setSpeaking(false)
             return
@@ -289,7 +289,7 @@ object TtsSpeaker {
         onStateChange = onState
         // Служебная разметка ({1}{ж}, ÷) не должна попасть в синтез, даже
         // если вызывающий код забыл её снять.
-        val spoken = SpeechMarkup.strip(text)
+        val spoken = SpeechMarkup.forSpeech(SpeechMarkup.strip(text))
         if (spoken.isBlank()) {
             setSpeaking(false)
             return
@@ -344,8 +344,16 @@ object TtsSpeaker {
                 ?.let { i -> arr.getJSONObject(i).optString("voice") }.orEmpty()
         }.getOrDefault("")
         val savedRawVoice = runCatching { prefs().voiceName().get() }.getOrDefault("")
+        // v1.9.41: для обычной озвучки (без пола) ГЛАВНЫЙ голос из настроек важнее
+        // слота 🎙 — раньше слот перебивал выбор, и голос «не активировался».
+        val primaryRaw = if (gender == null) {
+            savedRawVoice.ifBlank { slotVoiceRaw }
+        } else {
+            slotVoiceRaw.ifBlank { savedRawVoice }
+        }
         val forcedPkg = (
-            slotVoiceRaw.takeIf { it.isNotBlank() && it.contains("::") }?.substringBefore("::")
+            primaryRaw.takeIf { it.isNotBlank() && it.contains("::") }?.substringBefore("::")
+                ?: slotVoiceRaw.takeIf { it.isNotBlank() && it.contains("::") }?.substringBefore("::")
                 ?: savedRawVoice.takeIf { it.contains("::") }?.substringBefore("::")
             )?.ifBlank { null }
         ensureSystem(context, forcedPkg) { engine ->
@@ -364,7 +372,7 @@ object TtsSpeaker {
             // автоподбор по классификации имён (Svetlana/Dmitry/детские);
             // 3) общий голос; 4) язык ru-RU как последний рубеж.
             // Совет локального JSON-помощника (правила пользователя/агента)
-            val advisorVoice = slotVoiceRaw.substringAfterLast("::").ifBlank { LocalVoiceAdvisor.recommend(text, gender).voiceName }
+            val advisorVoice = primaryRaw.substringAfterLast("::").ifBlank { LocalVoiceAdvisor.recommend(text, gender).voiceName }
             val presetVoice = advisorVoice ?: when (gender) {
                 "female" -> p.voiceFemale().get()
                 "male" -> p.voiceMale().get()
