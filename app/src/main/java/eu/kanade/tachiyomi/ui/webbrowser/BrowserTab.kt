@@ -87,6 +87,8 @@ import eu.kanade.tachiyomi.util.system.toast
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
+import androidx.compose.ui.zIndex
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
@@ -486,6 +488,10 @@ data object BrowserTab : Tab {
                     } else {
                         android.graphics.Bitmap.createBitmap(raw, l, t, r - l, b - t)
                     }
+                    // v1.9.42: оверлей покажет сам фрагмент: текст ляжет точно
+                    // на свои рамки (раньше координаты области растягивались на
+                    // весь экран и «плывали» по странице).
+                    if (cropped !== raw) ocrFrame = cropped
                     val prefsN = Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
                     var result = ocrWithPreprocess(cropped)
                     if (result.first.isBlank() && cropped !== raw) {
@@ -1027,52 +1033,72 @@ data object BrowserTab : Tab {
         // Карточка результата ручного скана: компактная, по центру, с отменой.
         // v1.9.41: распознавание СРАЗУ НА КАДРЕ: замороженный кадр, прогресс на нём,
         // текст реплик поверх своих рамок — без заливки и без шторки уведомлений.
+        // v1.9.42: распознавание НА САМОМ ФРАГМЕНТЕ: отсканированная область
+        // вписана по центру на тёмном фоне, текст реплик — поверх СВОИХ рамок
+        // (координаты области), без заливки под текстом.
         ocrFrame?.let { frame ->
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f)),
+                    .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.72f))
+                    .zIndex(20f),
             ) {
-                Image(
-                    bitmap = frame.asImageBitmap(),
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.FillBounds,
-                )
-                if (ocrBusy) {
-                    Column(
-                        modifier = Modifier.align(Alignment.Center),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        CircularProgressIndicator()
-                        Text(
-                            "Распознавание… (Закрыть = отмена)",
-                            color = androidx.compose.ui.graphics.Color.White,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(top = 8.dp),
-                        )
-                    }
-                } else {
-                    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                        val bw = constraints.maxWidth.toFloat()
-                        val bh = constraints.maxHeight.toFloat()
+                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                    val bw = constraints.maxWidth.toFloat()
+                    val bh = constraints.maxHeight.toFloat()
+                    val fw = frame.width.coerceAtLeast(1).toFloat()
+                    val fh = frame.height.coerceAtLeast(1).toFloat()
+                    val scale = minOf(bw / fw, bh / fh)
+                    val dw = fw * scale
+                    val dh = fh * scale
+                    val ox = (bw - dw) / 2f
+                    val oy = (bh - dh) / 2f
+                    val dens = androidx.compose.ui.platform.LocalDensity.current.density
+                    val dwDp = (dw / dens).dp
+                    val dhDp = (dh / dens).dp
+                    Image(
+                        bitmap = frame.asImageBitmap(),
+                        contentDescription = null,
+                        modifier = Modifier
+                            .offset {
+                                androidx.compose.ui.unit.IntOffset(ox.roundToInt(), oy.roundToInt())
+                            }
+                            .width(dwDp)
+                            .height(dhDp),
+                    )
+                    if (ocrBusy) {
+                        Column(
+                            modifier = Modifier.align(Alignment.Center),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            CircularProgressIndicator()
+                            Text(
+                                "Распознавание… (Закрыть = отмена)",
+                                color = androidx.compose.ui.graphics.Color.White,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(top = 8.dp),
+                            )
+                        }
+                    } else {
                         ocrRegions.forEach { (box, text) ->
                             Text(
                                 text = text,
                                 color = androidx.compose.ui.graphics.Color.White,
-                                style = MaterialTheme.typography.bodyMedium.copy(
+                                style = MaterialTheme.typography.bodySmall.copy(
                                     shadow = androidx.compose.ui.graphics.Shadow(
                                         color = androidx.compose.ui.graphics.Color.Black,
-                                        offset = androidx.compose.ui.geometry.Offset(1.5f, 1.5f),
-                                        blurRadius = 5f,
+                                        offset = androidx.compose.ui.geometry.Offset(1f, 1f),
+                                        blurRadius = 2f,
                                     ),
                                 ),
-                                modifier = Modifier.offset {
-                                    androidx.compose.ui.unit.IntOffset(
-                                        (box.left * bw).roundToInt(),
-                                        (box.top * bh).roundToInt(),
-                                    )
-                                },
+                                modifier = Modifier
+                                    .offset {
+                                        androidx.compose.ui.unit.IntOffset(
+                                            (ox + box.left * dw).roundToInt(),
+                                            (oy + box.top * dh).roundToInt(),
+                                        )
+                                    }
+                                    .widthIn(max = ((box.right - box.left) * dw / dens).coerceAtLeast(60f).dp),
                             )
                         }
                     }
