@@ -82,6 +82,18 @@ object CyrillicTranslitFixer {
 
     /**
      * Automatically fixes transliteration or Latin lookalikes for Russian text.
+     *
+     * Приоритет — омоглиф-фикс, а не транслитерация. Локальный CTC-модель на
+     * манге выдаёт кириллическое слово латинскими омоглифами (Х→X, А→A, Н→H),
+     * и старая логика для чисто латинской строки сразу вызывала
+     * [translitToCyrillic], превращая «XAA» в «ксАА» (X→кс): буквы «рассыпа-
+     * лись» и TTS диктовал бессмыслицу. Теперь сначала пробуем [fixLookalikes]
+     * (X→Х, A→А); если после него латиницы не осталось — строка и есть
+     * омоглифная кириллица и берётся как есть. Транслитерация остаётся
+     * запасным путём, только когда омоглифы не легли, а слово реально
+     * транслитерировано. Настоящую латиницу (англ. надпись / звукоподражание),
+     * которую не прочитать ни так, ни эдак, не трогаем — не выдумываем
+     * несуществующее русское слово.
      */
     fun autoFixCyrillic(text: String): String {
         if (text.isBlank()) return text
@@ -91,7 +103,19 @@ object CyrillicTranslitFixer {
 
         return when {
             latinCount > 0 && cyrillicCount > 0 -> fixLookalikes(text)
-            latinCount > 0 -> translitToCyrillic(text)
+            latinCount > 0 -> {
+                val lookalike = fixLookalikes(text)
+                val leftoverLatin = lookalike.count { it in 'a'..'z' || it in 'A'..'Z' }
+                when {
+                    // Все буквы легли в омоглифы → это кириллица, читаем её.
+                    leftoverLatin == 0 -> lookalike
+                    // Часть легла, часть нет → смесь; не угадываем (иначе
+                    // портили бы настоящую латинскую надпись). Оставляем как есть.
+                    lookalike.count { it in '\u0400'..'\u04FF' } > 0 -> text
+                    // Омоглифы не подошли совсем → пробуем честную транслитерацию.
+                    else -> translitToCyrillic(text)
+                }
+            }
             else -> text
         }
     }
