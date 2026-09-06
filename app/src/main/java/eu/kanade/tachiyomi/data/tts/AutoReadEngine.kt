@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import logcat.LogPriority
 import mihon.data.ocr.OcrHistoryStore
+import mihon.data.ocr.OcrRegionRules
 import mihon.data.ocr.RuMorph
 import mihon.data.ocr.MangaTranslatorService
 import mihon.data.ocr.CyrillicTranslitFixer
@@ -213,7 +214,10 @@ class AutoReadEngine(
 
                 val language = prefs.autoReadLanguage().get()
                 val translate = prefs.autoReadTranslate().get()
-                val order = prefs.scanReadingOrder().get()
+                // Порядок чтения берём из пресета типа контента (манхва/вебтун →
+                // «vertical» сверху вниз), а не из старого `scanReadingOrder`,
+                // который по умолчанию «rtl» и ломал подсветку на вебтунах.
+                val order = OcrRegionRules.readingOrderFor(prefs)
 
                 // ===== БАЛЛОНЫ ВМЕСТО «ВСЕЙ СТРАНИЦЫ» (фикс по скриншотам) =====
                 // Полностраничные движки возвращают один регион 0,0-1,1.
