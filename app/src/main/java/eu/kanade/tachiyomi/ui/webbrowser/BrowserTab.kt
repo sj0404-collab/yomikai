@@ -1053,8 +1053,9 @@ data object BrowserTab : Tab {
                     val dh = fh * scale
                     val ox = (bw - dw) / 2f
                     val oy = (bh - dh) / 2f
-                    val dwDp = dw.toDp()
-                    val dhDp = dh.toDp()
+                    val dens = androidx.compose.ui.platform.LocalDensity.current.density
+                    val dwDp = (dw / dens).dp
+                    val dhDp = (dh / dens).dp
                     Image(
                         bitmap = frame.asImageBitmap(),
                         contentDescription = null,
@@ -1097,7 +1098,7 @@ data object BrowserTab : Tab {
                                             (oy + box.top * dh).roundToInt(),
                                         )
                                     }
-                                    .widthIn(max = ((box.right - box.left) * dw).coerceAtLeast(60f).toDp()),
+                                    .widthIn(max = ((box.right - box.left) * dw / dens).coerceAtLeast(60f).dp),
                             )
                         }
                     }
