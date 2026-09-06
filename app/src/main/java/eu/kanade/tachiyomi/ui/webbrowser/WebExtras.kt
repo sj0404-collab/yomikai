@@ -44,6 +44,7 @@ object WebStore {
     val activeTabId = MutableStateFlow<String?>(null)
 
     private var loaded = false
+    private var marksSeeded = false
 
     private fun file(context: Context): File = File(context.filesDir, "webstore.json")
 
@@ -53,7 +54,7 @@ object WebStore {
         loaded = true
         runCatching {
             val f = file(context)
-            if (!f.isFile) return
+            if (!f.isFile) return@runCatching
             val root = JSONObject(f.readText())
             pages.value = root.optJSONArray("pages").jsonList { o ->
                 Page(o.optString("id"), o.optString("host"), o.optString("title"), o.optString("url"), o.optString("file"), o.optLong("savedAt"))
@@ -68,7 +69,10 @@ object WebStore {
                 TabItem(o.optString("id"), o.optString("url"), o.optString("title"))
             }
             activeTabId.value = root.optString("activeTab").takeIf { it.isNotBlank() }
+            marksSeeded = root.optBoolean("marksSeeded", false)
         }
+        // v1.9.44: стартовый набор RU-закладок (манга/аниме/ранобэ).
+        seedDefaultMarks(context)
     }
 
     private inline fun <T> JSONArray?.jsonList(map: (JSONObject) -> T?): List<T> {
@@ -118,8 +122,34 @@ object WebStore {
                 },
             )
             root.put("activeTab", activeTabId.value ?: "")
+            root.put("marksSeeded", marksSeeded)
             file(context).writeText(root.toString())
         }
+    }
+
+    /** v1.9.44: закладки по умолчанию: RU манга/аниме/ранобэ; иерархия — префикс категории. */
+    private fun seedDefaultMarks(context: Context) {
+        if (marksSeeded) return
+        marksSeeded = true
+        if (marks.value.isNotEmpty()) { save(context); return }
+        val preset = listOf(
+            "Манга" to ("Mangabuff" to "https://mangabuff.ru/"),
+            "Манга" to ("Remanga" to "https://remanga.org/"),
+            "Манга" to ("MangaLib" to "https://mangalib.me/"),
+            "Манга" to ("ReadManga" to "https://readmanga.io/"),
+            "Манга" to ("MintManga" to "https://mintmanga.live/"),
+            "Аниме" to ("AnimeVost" to "https://animevost.org/"),
+            "Аниме" to ("AniLibria" to "https://anilibria.tv/"),
+            "Аниме" to ("AnimeBest" to "https://animebest.org/"),
+            "Ранобэ" to ("RanobeLib" to "https://ranobelib.me/"),
+            "Ранобэ" to ("NoveLib" to "https://novelib.me/"),
+        )
+        val now = System.currentTimeMillis()
+        marks.value = preset.mapIndexed { idx, pr ->
+            val (cat, site) = pr
+            Mark("seed$idx", hostOf(site.second), "$cat · ${site.first}", site.second, now - idx)
+        }
+        save(context)
     }
 
     fun pagesDir(context: Context): File =

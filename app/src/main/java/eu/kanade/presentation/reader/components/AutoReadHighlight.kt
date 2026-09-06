@@ -59,70 +59,11 @@ fun AutoReadHighlight(
     val style = prefs.highlightStyle().get()
     val strokeWidth = prefs.highlightWidth().get().coerceIn(1f, 12f)
 
-    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-        val w = constraints.maxWidth.toFloat()
-        val h = constraints.maxHeight.toFloat()
-        val density = LocalDensity.current
+    // v1.9.44: по запросу пользователя подсветка авточтения НЕ рисует ничего:
+    // ни рамок, ни контуров, ни заливок — страница остаётся чистой.
+    @Suppress("UNUSED_PARAMETER", "UNUSED_VARIABLE")
+    val unusedKeepSignature = region
 
-        // Карта кадра: прочитанные (тускло), текущая (ярко), будущие (пунктир).
-        // Видно и историю, и предстоящий план чтения.
-        val frameRegions: List<AutoReadEngine.FrameRegion> = if (engine != null) {
-            engine.frameRegions.collectAsState().value
-        } else {
-            emptyList()
-        }
-        val imgFr = imageRect
-        val iwFr = if (imgFr != null) (imgFr.right - imgFr.left) * w else w
-        val ihFr = if (imgFr != null) (imgFr.bottom - imgFr.top) * h else h
-        val ixFr = if (imgFr != null) imgFr.left * w else 0f
-        val iyFr = if (imgFr != null) imgFr.top * h else 0f
-        // v1.9.43: БЕЗ ЗАЛИВКИ и без текста поверх страницы: история и план
-        // чтения не рисуют ничего (реплики и так видны на странице), текущая
-        // реплика — только контур рамки (ниже).
-        for (fr in frameRegions) {
-            if (fr.state != AutoReadEngine.FrameRegion.State.CURRENT) continue
-        }
-
-        val img = imageRect
-        val iw = if (img != null) (img.right - img.left) * w else w
-        val ih = if (img != null) (img.bottom - img.top) * h else h
-        val ix = if (img != null) img.left * w else 0f
-        val iy = if (img != null) img.top * h else 0f
-        val mapped = engine?.mapToViewport(region.box) ?: region.box
-        // Санитария: вырожденный бокс (узкая полоса во всю высоту) — мусор
-        // маппинга, а не реплика: схлопываем в точку, рисовать нечего.
-        val mappedSafe = if ((mapped.right - mapped.left) < 0.12f || (mapped.bottom - mapped.top) > 0.92f) {
-            mihon.domain.ocr.model.OcrBoundingBox(
-                left = mapped.left,
-                top = mapped.top,
-                right = mapped.left,
-                bottom = mapped.top,
-            )
-        } else {
-            mapped
-        }
-        val boxWidth = with(density) { ((mappedSafe.right - mappedSafe.left) * iw).toDp() }
-        val boxHeight = with(density) { ((mappedSafe.bottom - mappedSafe.top) * ih).toDp() }
-        val offsetModifier = Modifier.offset {
-            IntOffset(
-                (ix + mappedSafe.left * iw).roundToInt(),
-                (iy + mappedSafe.top * ih).roundToInt(),
-            )
-        }
-
-        // v1.9.43: текущая реплика = ТОЛЬКО контур рамки акцентным цветом
-        // (без заливки, без текста поверх оригинала — текст уже на странице).
-        if (boxWidth > 6.dp && boxHeight > 3.dp) {
-            Box(
-                modifier = offsetModifier
-                    .width(boxWidth)
-                    .height(boxHeight)
-                    .border(
-                        width = strokeWidth.dp,
-                        color = accent,
-                        shape = RoundedCornerShape(6.dp),
-                    ),
-            )
-        }
-    }
+    @Suppress("UNUSED_VARIABLE")
+    val unusedKeepSettings = Triple(accent, style, strokeWidth)
 }

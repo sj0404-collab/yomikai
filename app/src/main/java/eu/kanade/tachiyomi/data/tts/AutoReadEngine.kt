@@ -14,6 +14,7 @@ import logcat.LogPriority
 import mihon.data.ocr.OcrHistoryStore
 import mihon.data.ocr.RuMorph
 import mihon.data.ocr.MangaTranslatorService
+import mihon.data.ocr.CyrillicTranslitFixer
 import mihon.domain.ocr.interactor.ScanPageOcr
 import mihon.domain.ocr.model.OcrBoundingBox
 import mihon.domain.ocr.model.OcrImage
@@ -225,7 +226,9 @@ class AutoReadEngine(
                 // Если детектор ничего не нашёл — текст страницы хотя бы
                 // делится на строки-реплики вместо одного блока.
                 var lines: List<Line> = result.regions.map {
-                    Line(normalizeOcrTextForDisplay(it.text).trim(), it.boundingBox)
+                    // v1.9.44: OCR-путаница латиницы/кириллицы (M E Ч, А Т М) и
+                    // цифр (5→Б) лечится фиксером похожих символов.
+                    Line(normalizeOcrTextForDisplay(CyrillicTranslitFixer.autoFixCyrillic(it.text)).trim(), it.boundingBox)
                 }
                 val wholePage = result.regions.size == 1 && result.regions.first().isWholePage
                 if (wholePage && !bitmap.isRecycled) {
