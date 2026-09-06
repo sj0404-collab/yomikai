@@ -76,36 +76,11 @@ fun AutoReadHighlight(
         val ihFr = if (imgFr != null) (imgFr.bottom - imgFr.top) * h else h
         val ixFr = if (imgFr != null) imgFr.left * w else 0f
         val iyFr = if (imgFr != null) imgFr.top * h else 0f
+        // v1.9.43: БЕЗ ЗАЛИВКИ и без текста поверх страницы: история и план
+        // чтения не рисуют ничего (реплики и так видны на странице), текущая
+        // реплика — только контур рамки (ниже).
         for (fr in frameRegions) {
-            if (fr.state == AutoReadEngine.FrameRegion.State.CURRENT) continue // текущую рисуем ниже ярче
-            val b = engine?.mapToViewport(fr.box) ?: fr.box
-            val done = fr.state == AutoReadEngine.FrameRegion.State.DONE
-            val frW = with(density) { ((b.right - b.left) * iwFr).toDp() }
-            val frH = with(density) { ((b.bottom - b.top) * ihFr).toDp() }
-            // История и план чтения: распознанный текст лежит ТОЧНО в своём
-            // боксе поверх оригинала — без рамок, кругов и смещений.
-            if (fr.text.isNotBlank() && frW > 6.dp && frH > 3.dp) {
-                Box(
-                    modifier = Modifier
-                        .offset {
-                            IntOffset(
-                                (ixFr + b.left * iwFr).roundToInt(),
-                                (iyFr + b.top * ihFr).roundToInt(),
-                            )
-                        }
-                        .width(frW)
-                        .height(frH)
-                        .background(Color.Black.copy(alpha = if (done) 0.34f else 0.48f)),
-                ) {
-                    androidx.compose.material3.Text(
-                        text = fr.text,
-                        color = Color.White.copy(alpha = if (done) 0.72f else 0.92f),
-                        fontSize = with(density) { (frH / 2.4f).toSp() },
-                        maxLines = 2,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                    )
-                }
-            }
+            if (fr.state != AutoReadEngine.FrameRegion.State.CURRENT) continue
         }
 
         val img = imageRect
@@ -135,23 +110,19 @@ fun AutoReadHighlight(
             )
         }
 
-        // Текущая реплика: распознанный текст поверх оригинала, точно в боксе,
-        // без рамок/подчёркиваний/пятен и без смещения (запрос пользователя).
-        if (region.text.isNotBlank() && boxWidth > 6.dp && boxHeight > 3.dp) {
+        // v1.9.43: текущая реплика = ТОЛЬКО контур рамки акцентным цветом
+        // (без заливки, без текста поверх оригинала — текст уже на странице).
+        if (boxWidth > 6.dp && boxHeight > 3.dp) {
             Box(
                 modifier = offsetModifier
                     .width(boxWidth)
                     .height(boxHeight)
-                    .background(Color.Black.copy(alpha = 0.62f)),
-            ) {
-                androidx.compose.material3.Text(
-                    text = region.text,
-                    color = Color.White,
-                    fontSize = with(density) { (boxHeight / 2.4f).toSp() },
-                    maxLines = 3,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                )
-            }
+                    .border(
+                        width = strokeWidth.dp,
+                        color = accent,
+                        shape = RoundedCornerShape(6.dp),
+                    ),
+            )
         }
     }
 }
