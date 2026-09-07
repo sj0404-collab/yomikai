@@ -54,7 +54,7 @@ class AutoReadEngine(
     private val bubbleOcr: mihon.domain.ocr.interactor.OcrProcessor by lazy { Injekt.get() }
 
     /** Строка кадра: текст + нормализованный box (для подсветки/порядка). */
-    private data class Line(val text: String, val boundingBox: OcrBoundingBox)
+    data class Line(val text: String, val boundingBox: OcrBoundingBox)
 
     data class SpokenRegion(
         val text: String,
@@ -146,7 +146,10 @@ class AutoReadEngine(
     @Synchronized
     private fun isDuplicate(rawText: String): Boolean {
         val norm = rawText.lowercase().filter { it.isLetterOrDigit() }
-        if (norm.length < 4) return true // мусор/односимвольные не читаем повторно
+        // Короткие настоящие слова (я, и, но, не, да…) читаем, а не режем как
+        // мусор: к этому месту чистка уже отбросила обрывки, а одиночные слова
+        // — осмысленные реплики. Раньше guard `length < 4 -> true` глушил их.
+        if (norm.length < 4) return false
         for (old in spokenTexts) {
             if (old.contains(norm) || norm.contains(old)) return true
             if (trigramSimilarity(old, norm) >= 0.75f) return true
@@ -256,7 +259,6 @@ class AutoReadEngine(
                 val fresh = lines
                     .asSequence()
                     .map { it.copy(text = cleanOcrGarbage(it.text, language)) }
-                    .filter { it.text.length >= MIN_TEXT_LENGTH }
                     .filter { isMeaningful(it.text, language) }
                     .filter { !isDuplicate(it.text) }
                     // Рамка обязана лежать внутри страницы и иметь разумный
@@ -270,12 +272,9 @@ class AutoReadEngine(
                     }
                     .toList()
 
-                // 3) порядок чтения
-                val ordered = when (order) {
-                    "ltr" -> fresh.sortedWith(compareBy({ rowOf(it.boundingBox.top) }, { it.boundingBox.left }))
-                    "vertical" -> fresh.sortedBy { it.boundingBox.top }
-                    else -> fresh.sortedWith(compareBy({ rowOf(it.boundingBox.top) }, { -it.boundingBox.right }))
-                }
+                // 3) порядок чтения (группировка в строки по близости центров Y,
+                // а не по фиксированным 12% полосам — убирает «лесенку»)
+                val ordered = orderRegions(fresh, order)
 
                 // 3.5) Пол говорящих. Приоритет:
                 //  а) ВСТРОЕННЫЙ локальный AI (LocalSpeakerAi) — морфология
@@ -512,9 +511,6 @@ class AutoReadEngine(
         }
     }
 
-    /** Строка (ряд) для сортировки: реплики в пределах 12% высоты — один ряд. */
-    private fun rowOf(top: Float): Int = (top / 0.12f).toInt()
-
     /**
      * Словарный фолбэк пола говорящего: работает, когда морфология
      * LocalSpeakerAi не дала ответа (в реплике нет «я …ла/…л»). Ориентируемся
@@ -633,9 +629,56 @@ class AutoReadEngine(
     // region Чистка мусора OCR
 
     companion object {
-        private const val MIN_TEXT_LENGTH = 2
         private const val HISTORY_LIMIT = 600
         private const val MAX_BUBBLES_PER_FRAME = 14
+
+        /** Настоящие одно- и двухбуквенные русские слова (союзы/предлоги/междометия). */
+        private val RUSSIAN_SINGLE_WORD = setOf("а", "и", "в", "с", "у", "о", "я", "к")
+        private val RUSSIAN_SHORT_WORD = setOf(
+            "но", "не", "да", "он", "мы", "вы", "ты", "ни", "от", "до", "на",
+            "за", "по", "из", "ко", "то", "ли", "же", "бы", "ну", "ах", "ох",
+            "ой", "эх", "уж", "ага", "так", "тот", "это", "се", "об", "при", "про",
+        )
+
+        /** Одно- или двухбуквенное настоящее русское слово. */
+        fun isShortRussianWord(text: String): Boolean {
+            val t = text.trim().lowercase()
+            return t in RUSSIAN_SINGLE_WORD || t in RUSSIAN_SHORT_WORD
+        }
+
+        /**
+         * Упорядочивает реплики кадра в читаемый порядок.
+         *
+         * Раньше строки делились фиксированными 12% полосами по `top`: баблы
+         * одной строки, чуть смещённые по вертикали, попадали в разные полосы
+         * и читались «лесенкой». Теперь баблы группируются в строки по близости
+         * вертикальных ЦЕНТРОВ (допуск = 0.7 медианной высоты), строки идут
+         * сверху вниз, внутри строки — по направлению чтения (ltr/rlt/vertical).
+         */
+        fun orderRegions(lines: List<Line>, order: String): List<Line> {
+            if (lines.size <= 1) return lines
+            val heights = lines.map { it.boundingBox.bottom - it.boundingBox.top }.sorted()
+            val medianH = heights[heights.size / 2].coerceAtLeast(0.001f)
+            val tolerance = (medianH * 0.7f).coerceAtLeast(0.025f)
+
+            data class Row(var centerY: Float, val items: MutableList<Line> = mutableListOf())
+            val rows = mutableListOf<Row>()
+            for (line in lines.sortedBy { it.boundingBox.top }) {
+                val cy = (line.boundingBox.top + line.boundingBox.bottom) / 2f
+                val last = rows.lastOrNull()
+                if (last != null && kotlin.math.abs(cy - last.centerY) <= tolerance) {
+                    last.items.add(line)
+                    last.centerY = (last.centerY * (last.items.size - 1) + cy) / last.items.size
+                } else {
+                    rows.add(Row(cy).apply { items.add(line) })
+                }
+            }
+            return when (order) {
+                "ltr" -> rows.flatMap { it.items.sortedBy { l -> l.boundingBox.left } }
+                "vertical" -> lines.sortedBy { it.boundingBox.top }
+                else -> rows.flatMap { it.items.sortedByDescending { l -> l.boundingBox.right } }
+            }
+        }
 
         /**
          * Чистка OCR-мусора ВНУТРИ реплики (по скриншотам пользователя:
@@ -681,8 +724,8 @@ class AutoReadEngine(
             // Палки, скобки, стрелки, точки: буквы < 40% строки — мусор
             if (letters == 0) return false
             if (letters.toFloat() / total < 0.4f && total >= 3) return false
-            // Одна-две буквы («о», «РУ») — обрывок
-            if (letters <= 2) return false
+            // Одна-две буквы — настоящие русские слова (я, и, в, с, но, не…)
+            if (letters <= 2) return language == "ru" && isShortRussianWord(row)
             when (language) {
                 "ru" -> {
                     val cyr = row.count { it in '\u0400'..'\u04FF' }
@@ -705,9 +748,11 @@ class AutoReadEngine(
         fun isMeaningful(text: String, language: String): Boolean {
             if (text.isBlank()) return false
             if (!matchesLanguage(text, language)) return false
-            // Реплика обязана содержать хотя бы одно слово из 3+ букв
-            return text.split(Regex("\\s+")).any { w -> w.count { it.isLetter() } >= 3 } ||
-                // …или быть короткой осмысленной («Да!», «Ах!», «Нет?»)
+            val words = text.split(Regex("\\s+"))
+            return words.any { w -> w.count { it.isLetter() } >= 3 } ||
+                // Короткие настоящие русские слова (я, и, но, не…) — читаем.
+                (language == "ru" && words.any { isShortRussianWord(it) }) ||
+                // …или короткая осмысленная («Да!», «Ах!», «Нет?»)
                 (text.length in 2..6 && text.count { it.isLetter() } >= 2)
         }
 
