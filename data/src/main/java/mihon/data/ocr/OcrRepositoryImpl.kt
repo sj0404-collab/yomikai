@@ -112,6 +112,25 @@ class OcrRepositoryImpl(
     private var activeScanSessions = 0
     private var activeOperations = 0
 
+    /**
+     * Движок GLENS с учётом выбранного языка источника. Движок кэшируется, но
+     * язык/регион читаются из настроек на каждый вызов: если пользователь сменил
+     * язык (en/ru/ja/…), кэш пересоздаётся, чтобы читалка применяла новый язык,
+     * а не зашитый ранее (было жёстко "ja"/"Asia/Tokyo").
+     */
+    private fun glensEngine(): GlensOcrEngine {
+        val language = ocrPreferences.glensLanguage().get()
+        val region = ocrPreferences.glensRegion().get()
+        val existing = glensEngine
+        if (existing != null && existing.clientLanguage == language && existing.clientRegion == region) {
+            return existing
+        }
+        return GlensOcrEngine(
+            clientLanguage = language.ifBlank { "ja" },
+            clientRegion = region,
+        ).also { glensEngine = it }
+    }
+
     internal enum class EngineType {
         CYRILLIC,
         LEGACY,
@@ -227,9 +246,7 @@ class OcrRepositoryImpl(
                 }
             }
             EngineType.GLENS -> {
-                glensEngine ?: GlensOcrEngine().also {
-                    glensEngine = it
-                }
+                glensEngine()
             }
             EngineType.OWOCR -> {
                 owOcrEngine ?: OwOcrEngine(context).also {
@@ -553,10 +570,7 @@ class OcrRepositoryImpl(
         val result = try {
             submitTask(PrioritizedTaskQueue.Priority.NORMAL) {
                 engineLocks.withTextEngineLock(EngineType.GLENS) {
-                    val engine = glensEngine ?: GlensOcrEngine().also {
-                        glensEngine = it
-                    }
-                    engine.recognizePage(image)
+                    glensEngine().recognizePage(image)
                 }
             }
         } catch (error: Throwable) {

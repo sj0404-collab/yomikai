@@ -65,6 +65,13 @@ class OcrPreferences(
     //  single    — без фолбэков, только выбранный движок
     fun fallbackPreset() = preferenceStore.getString("pref_fallback_preset", "auto")
 
+    // Язык/регион распознавания для онлайнового GLENS-движка. Раньше были
+    // жёстко зашиты ("ja"/"Asia/Tokyo"), из-за чего пользователь не мог читать
+    // английские, русские и другие источники. Язык — BCP-47 (en, ru, ja,
+    // ko, zh…), регион — IANA tz (необязателен).
+    fun glensLanguage() = preferenceStore.getString("pref_glens_language", "ja")
+    fun glensRegion() = preferenceStore.getString("pref_glens_region", "Asia/Tokyo")
+
     // OpenRouter Settings
     fun openrouterApiKey() = preferenceStore.getString("pref_openrouter_api_key", "")
     fun openrouterModel() = preferenceStore.getString("pref_openrouter_model", "google/gemini-2.5-flash")

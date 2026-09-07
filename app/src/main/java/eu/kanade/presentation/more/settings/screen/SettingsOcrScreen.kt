@@ -79,6 +79,7 @@ object SettingsOcrScreen : SearchableSettings {
             getRegionGroup(prefs = prefs, presetRegion = presetRegion),
             getTuningGroup(prefs = prefs),
             getEnginesGroup(prefs = prefs, navigator = navigator, availableIds = availableIds),
+            getGlensLanguageGroup(prefs = prefs),
             getHistoryGroup(onOpenHistory = { showHistory = true }),
         )
     }
@@ -273,6 +274,59 @@ object SettingsOcrScreen : SearchableSettings {
                 Preference.PreferenceItem.InfoPreference(
                     title = stringResource(MR.strings.pref_ocr_available_count)
                         .format(availableIds.size),
+                ),
+            ),
+        )
+    }
+
+    /**
+     * Язык источника для онлайнового GLENS-движка. Раньше был зашит («ja»/«Asia/
+     * Tokyo»): пользователь не мог читать английский, русский и прочие источники.
+     * Настройка влияет только на Glens (онлайн), офлайн-движки читают по
+     * выбранному языку распознавания.
+     */
+    private fun getGlensLanguageGroup(prefs: OcrPreferences): Preference.PreferenceGroup {
+        val languages = linkedMapOf(
+            "ja" to "Японский",
+            "en" to "Английский",
+            "ru" to "Русский",
+            "ko" to "Корейский",
+            "zh" to "Китайский",
+            "zh-Hant" to "Китайский (традиционный)",
+            "fr" to "Французский",
+            "de" to "Немецкий",
+            "es" to "Испанский",
+            "it" to "Итальянский",
+            "pt" to "Португальский",
+            "ar" to "Арабский",
+            "hi" to "Хинди",
+            "th" to "Тайский",
+            "vi" to "Вьетнамский",
+            "id" to "Индонезийский",
+            "tr" to "Турецкий",
+            "nl" to "Нидерландский",
+            "pl" to "Польский",
+            "uk" to "Украинский",
+        )
+        return Preference.PreferenceGroup(
+            title = "Язык распознавания (Glens)",
+            preferenceItems = listOf(
+                Preference.PreferenceItem.ListPreference(
+                    preference = prefs.glensLanguage(),
+                    entries = languages,
+                    title = "Язык источника",
+                    subtitleProvider = { value, _ ->
+                        val display = languages[value] ?: value
+                        "Сейчас: $display — используется онлайновым Glens-движком"
+                    },
+                ),
+                Preference.PreferenceItem.EditTextPreference(
+                    preference = prefs.glensRegion(),
+                    title = "Регион (IANA timezone)",
+                    subtitle = "Напр. Asia/Tokyo, Europe/Kiev, America/New_York (необязательно)",
+                ),
+                Preference.PreferenceItem.InfoPreference(
+                    title = "Меняйте язык под источник каждый раз: английский / японский / другие страны мира. Зависит от онлайн-движка (Glens); офлайн-движки читают по настройке языка распознавания.",
                 ),
             ),
         )

@@ -19,7 +19,16 @@ import kotlin.random.Random
  * OCR engine backed by Google Lens online OCR.
  * Extracts plain text from text-layout boxes in the protobuf response.
  */
-internal class GlensOcrEngine : OcrEngine {
+internal class GlensOcrEngine(
+    /**
+     * BCP-47 язык источника (en, ru, ja, ko, zh…). Раньше был зашит "ja":
+     * пользователь не мог читать англ/рус/прочие источники. Прокидывается из
+     * OcrPreferences.glensLanguage().
+     */
+    val clientLanguage: String = DEFAULT_CLIENT_LANGUAGE,
+    /** IANA tz региона (необязателен, напр. "Asia/Tokyo", "Europe/Kiev"). */
+    val clientRegion: String = DEFAULT_CLIENT_REGION,
+) : OcrEngine {
     private val textPostprocessor = TextPostprocessor()
 
     override suspend fun recognizeText(image: Bitmap): String = withContext(Dispatchers.IO) {
@@ -111,8 +120,8 @@ internal class GlensOcrEngine : OcrEngine {
                         clientContext.writeInt32(fieldNumber = CLIENT_CONTEXT_PLATFORM, value = PLATFORM_WEB)
                         clientContext.writeInt32(fieldNumber = CLIENT_CONTEXT_SURFACE, value = SURFACE_CHROMIUM)
                         clientContext.writeMessage(fieldNumber = CLIENT_CONTEXT_LOCALE_CONTEXT) { localeContext ->
-                            localeContext.writeString(fieldNumber = LOCALE_LANGUAGE, value = DEFAULT_CLIENT_LANGUAGE)
-                            localeContext.writeString(fieldNumber = LOCALE_REGION, value = DEFAULT_CLIENT_REGION)
+                            localeContext.writeString(fieldNumber = LOCALE_LANGUAGE, value = clientLanguage)
+                            localeContext.writeString(fieldNumber = LOCALE_REGION, value = clientRegion)
                         }
                         clientContext.writeMessage(fieldNumber = CLIENT_CONTEXT_CLIENT_FILTERS) { clientFilters ->
                             clientFilters.writeMessage(fieldNumber = CLIENT_FILTERS_FILTER) { filter ->
