@@ -3,11 +3,15 @@ package eu.kanade.tachiyomi.ui.manga
 import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material.icons.Icons
@@ -16,11 +20,13 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -130,6 +136,11 @@ class MangaScreen(
 
         val autoReadState by screenModel.chapterAutoRead.collectAsStateWithLifecycle()
 
+        // Настройки скан-чтения: движок и формат документа (выбор перед стартом).
+        var showScanSettings by remember { mutableStateOf(false) }
+        var scanEngine by remember { mutableStateOf(AutoReadEngineChoice.OFFLINE) }
+        var scanFormat by remember { mutableStateOf("md") }
+
         // Открытие читалки в режиме авточтения после фонового скана главы.
         LaunchedEffect(autoReadState.openChapterId) {
             val chapterId = autoReadState.openChapterId
@@ -216,7 +227,7 @@ class MangaScreen(
             }
             if (nextUnread != null && !autoReadState.running && autoReadState.openChapterId == null) {
                 SmallFloatingActionButton(
-                    onClick = { screenModel.scanAndAutoReadChapter(nextUnread) },
+                    onClick = { showScanSettings = true },
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(bottom = 96.dp, end = 16.dp),
@@ -228,6 +239,48 @@ class MangaScreen(
                     )
                 }
             }
+        }
+
+        // Выбор движка распознавания и формата документа перед стартом скана.
+        if (showScanSettings && nextUnread != null) {
+            AlertDialog(
+                onDismissRequest = { showScanSettings = false },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            screenModel.setAutoReadEngine(scanEngine)
+                            screenModel.setAutoReadFormat(scanFormat)
+                            showScanSettings = false
+                            screenModel.scanAndAutoReadChapter(nextUnread)
+                        },
+                    ) {
+                        Text("Сканировать и читать")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showScanSettings = false }) {
+                        Text("Отмена")
+                    }
+                },
+                title = { Text("Сканирование главы") },
+                text = {
+                    Column(
+                        Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text("Движок распознавания", fontWeight = FontWeight.Bold)
+                        ScanEngineRow("Оффлайн", AutoReadEngineChoice.OFFLINE, scanEngine) { scanEngine = it }
+                        ScanEngineRow("Glens", AutoReadEngineChoice.GLENS, scanEngine) { scanEngine = it }
+                        ScanEngineRow("GitHub-раннер", AutoReadEngineChoice.GITHUB_RUNNER, scanEngine) { scanEngine = it }
+                        Spacer(Modifier.height(8.dp))
+                        Text("Формат документа", fontWeight = FontWeight.Bold)
+                        ScanFormatRow("Markdown (md)", "md", scanFormat) { scanFormat = it }
+                        ScanFormatRow("TXT", "txt", scanFormat) { scanFormat = it }
+                        ScanFormatRow("PDF", "pdf", scanFormat) { scanFormat = it }
+                        ScanFormatRow("DOCX", "docx", scanFormat) { scanFormat = it }
+                    }
+                },
+            )
         }
 
         // Прогресс фонового скана и результат.
@@ -492,5 +545,43 @@ class MangaScreen(
         val source = source_ as? HttpSource ?: return
         val url = source.getMangaUrl(manga.toSManga())
         context.copyToClipboard(url, url)
+    }
+}
+
+/** Строка выбора OCR-движка в диалоге скан-чтения. */
+@Composable
+private fun ScanEngineRow(
+    label: String,
+    engine: AutoReadEngineChoice,
+    current: AutoReadEngineChoice,
+    onSelect: (AutoReadEngineChoice) -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable { onSelect(engine) },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = engine == current, onClick = { onSelect(engine) })
+        Text(label)
+    }
+}
+
+/** Строка выбора формата документа в диалоге скан-чтения. */
+@Composable
+private fun ScanFormatRow(
+    label: String,
+    format: String,
+    current: String,
+    onSelect: (String) -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable { onSelect(format) },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = format == current, onClick = { onSelect(format) })
+        Text(label)
     }
 }
