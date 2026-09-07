@@ -28,6 +28,8 @@ object VoiceModeResolver {
         SINGLE("single", "Один голос", "Весь текст — голосом нарратора"),
         DUAL("dual", "Два голоса", "Мужские реплики — мужским, женские — женским"),
         TRIPLE("triple", "Три голоса", "Муж + Жен + Нарратор (описания, ремарки)"),
+        /** Много голосов: свой голос каждому персонажу одного пола в сцене. */
+        MULTI("multi", "Много голосов", "Отдельный голос каждому персонажу одного пола"),
         ;
 
         companion object {
@@ -127,6 +129,7 @@ object VoiceModeResolver {
             Mode.SINGLE -> "Один голос: нарратор ${narratorGender()} (${p.voiceNarratorEngine().get().ifBlank { p.voiceEngine().get() }})"
             Mode.DUAL -> "Два голоса: муж (${p.voiceMaleEngine().get().ifBlank { "system_tts" }}) + жен (${p.voiceFemaleEngine().get().ifBlank { "system_tts" }})"
             Mode.TRIPLE -> "Три голоса: муж (${p.voiceMaleEngine().get()}) + жен (${p.voiceFemaleEngine().get()}) + нарратор ${narratorGender()} (${p.voiceNarratorEngine().get()})"
+            Mode.MULTI -> "Много голосов: отдельный голос каждому персонажу одного пола"
         }
     }
 

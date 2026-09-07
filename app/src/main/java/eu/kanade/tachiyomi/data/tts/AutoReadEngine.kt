@@ -409,10 +409,18 @@ class AutoReadEngine(
 
                     // Ручной режим важнее автоопределения: читатель выбрал
                     // голос кнопкой в читалке и ждёт именно его.
-                    val gender = if (prefs.manualVoiceMode().get()) {
-                        prefs.manualVoiceGender().get().takeIf { it.isNotBlank() } ?: "female"
-                    } else {
-                        genders.get(i) // мог дозаполниться AI пока читали предыдущие
+                    //
+                    // Роль-режим (1 / 2 / много голосов):
+                    //  • SINGLE — весь текст одним голосом нарратора;
+                    //  • DUAL/TRIPLE — пол реплики (муж/жен) определяет голос;
+                    //  • MULTI — как DUAL, но с отдельным слотом каждому
+                    //    персонажу одного пола (см. slot ниже).
+                    val roleMode = VoiceModeResolver.currentMode()
+                    val gender = when {
+                        prefs.manualVoiceMode().get() ->
+                            prefs.manualVoiceGender().get().takeIf { it.isNotBlank() } ?: "female"
+                        roleMode == VoiceModeResolver.Mode.SINGLE -> VoiceModeResolver.narratorGender()
+                        else -> genders.get(i) // мог дозаполниться AI пока читали предыдущие
                     }
 
                     // Служебные пометки: номер по порядку чтения и пол.
@@ -438,8 +446,11 @@ class AutoReadEngine(
                     // Слот говорящего: два персонажа одного пола в сцене
                     // получают разные голоса. Считаем по индексам, а не через
                     // indexOf: одинаковые реплики иначе дали бы один и тот же
-                    // слот.
-                    val slot = if (prefs.perSpeakerVoices().get()) {
+                    // слот. В режиме «много голосов» это всегда включено.
+                    val slot = if (
+                        roleMode == VoiceModeResolver.Mode.MULTI ||
+                        prefs.perSpeakerVoices().get()
+                    ) {
                         (0 until i).count { genders.get(it) == gender }
                     } else {
                         0

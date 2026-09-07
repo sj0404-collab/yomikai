@@ -50,6 +50,7 @@ import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -59,6 +60,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.RadioButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -95,6 +97,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Fullscreen
@@ -446,6 +449,7 @@ data object BrowserTab : Tab {
         var histOpen by remember { mutableStateOf(false) }
         var tabsOpen by remember { mutableStateOf(false) }
         var cacheOpen by remember { mutableStateOf(false) }
+        var voiceOpen by remember { mutableStateOf(false) }
         var webBookmarked by remember { mutableStateOf(false) }
         val webPages by WebStore.pages.collectAsState()
         val webMarks by WebStore.marks.collectAsState()
@@ -602,6 +606,12 @@ data object BrowserTab : Tab {
 
         val readEngine = remember { autoReadEngine ?: AutoReadEngine(ctx.applicationContext).also { autoReadEngine = it } }
         val currentRegion by readEngine.currentRegion.collectAsState()
+        // Рамки распознанных реплик кадра — для per-bubble значков 🔊.
+        val frameRegions by readEngine.frameRegions.collectAsState()
+        val voicePrefs = remember { Injekt.get<mihon.domain.ocr.service.OcrPreferences>() }
+        val roleMode by voicePrefs.voiceMode().changes().collectAsState(initial = voicePrefs.voiceMode().get())
+        val voiceEngine by voicePrefs.voiceEngine().changes().collectAsState(initial = voicePrefs.voiceEngine().get())
+        val voiceIcons by voicePrefs.voiceIcons().changes().collectAsState(initial = voicePrefs.voiceIcons().get())
 
         // Цикл авточтения:
         // • кадр = ПОЛНЫЙ видимый вьюпорт;
@@ -790,6 +800,34 @@ data object BrowserTab : Tab {
             eu.kanade.presentation.reader.components.AutoReadHighlight(region = region, engine = readEngine)
         }
 
+        // Per-bubble значки 🔊 на рамках распознанных реплик. Тап — озвучить
+        // именно этот текст (жёлоба: «голосовой значок не работает в вебе»).
+        // Показываются по тому же переключателю, что и в читалке.
+        if (voiceIcons && frameRegions.isNotEmpty()) {
+            eu.kanade.presentation.reader.components.OcrBubbleVoiceOverlay(
+                regions = frameRegions,
+                onSpeakRegion = { text, _ ->
+                    readEngine.speakSingle(text)
+                },
+                perBubble = true,
+                draggable = true,
+            )
+        }
+
+        // Выбор голосов и ролей прямо в браузере: 1 / 2 / много голосов и
+        // движок (Авто = веб онлайн / локальный оффлайн).
+        if (voiceOpen) {
+            VoiceQuickDialog(
+                onDismiss = { voiceOpen = false },
+                roleMode = roleMode,
+                voiceEngine = voiceEngine,
+                voiceIcons = voiceIcons,
+                onRoleMode = { m -> voicePrefs.voiceMode().set(m) },
+                onVoiceEngine = { e -> voicePrefs.voiceEngine().set(e) },
+                onVoiceIcons = { b -> voicePrefs.voiceIcons().set(b) },
+            )
+        }
+
         // Плавающее SAO-меню браузера: автоскролл, наверх, закрыть
         if (!pip) Box(
             modifier = Modifier.fillMaxSize(),
@@ -852,6 +890,15 @@ data object BrowserTab : Tab {
                                     manualScan()
                                 }) {
                                     Icon(Icons.Outlined.DocumentScanner, contentDescription = "OCR")
+                                }
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Голоса  ", style = MaterialTheme.typography.labelMedium)
+                                SmallFloatingActionButton(onClick = {
+                                    menuOpen = false
+                                    voiceOpen = true
+                                }) {
+                                    Icon(Icons.Outlined.RecordVoiceOver, contentDescription = "Голоса")
                                 }
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1307,3 +1354,89 @@ private fun ocrFixedRegions(
         .map { it.boundingBox to mihon.data.ocr.CyrillicTranslitFixer.autoFixCyrillic(it.text).trim() }
         .filter { it.second.isNotBlank() }
 
+
+/**
+ * Быстрый выбор голосов в мини-браузере: роли (1 / 2 / много голосов), движок
+ * (Авто — веб онлайн / локальный оффлайн) и значки 🔊 на репликах. Пишет в те же
+ * преференсы, что и настройки озвучки читалки, поэтому выбор согласован.
+ */
+@Composable
+private fun VoiceQuickDialog(
+    onDismiss: () -> Unit,
+    roleMode: String,
+    voiceEngine: String,
+    voiceIcons: Boolean,
+    onRoleMode: (String) -> Unit,
+    onVoiceEngine: (String) -> Unit,
+    onVoiceIcons: (Boolean) -> Unit,
+) {
+    val modeOptions = listOf(
+        eu.kanade.tachiyomi.data.tts.VoiceModeResolver.Mode.SINGLE to "Один голос",
+        eu.kanade.tachiyomi.data.tts.VoiceModeResolver.Mode.DUAL to "Два голоса",
+        eu.kanade.tachiyomi.data.tts.VoiceModeResolver.Mode.MULTI to "Много голосов",
+    )
+    val engineOptions = listOf(
+        eu.kanade.tachiyomi.data.tts.TtsSpeaker.ENGINE_AUTO to "Авто (веб онлайн / локально оффлайн)",
+        eu.kanade.tachiyomi.data.tts.TtsSpeaker.ENGINE_GOOGLE_WEB to "Веб (Google, без ключа)",
+        eu.kanade.tachiyomi.data.tts.TtsSpeaker.ENGINE_SYSTEM to "Локально (системные)",
+    )
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Готово") } },
+        title = { Text("Голоса в браузере") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .heightIn(max = 460.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text("Роли", style = MaterialTheme.typography.labelLarge)
+                modeOptions.forEach { (m, label) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onRoleMode(m.id) },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = roleMode == m.id, onClick = { onRoleMode(m.id) })
+                        Text(label, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                Text(
+                    "Движок",
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+                engineOptions.forEach { (e, label) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onVoiceEngine(e) },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = voiceEngine == e, onClick = { onVoiceEngine(e) })
+                        Text(label, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                Text(
+                    "Значки озвучки",
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onVoiceIcons(!voiceIcons) },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(selected = voiceIcons, onClick = { onVoiceIcons(!voiceIcons) })
+                    Text(
+                        if (voiceIcons) "Показывать 🔊 на репликах" else "Значки выключены",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+        },
+    )
+}
