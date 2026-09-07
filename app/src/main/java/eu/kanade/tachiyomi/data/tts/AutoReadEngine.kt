@@ -475,6 +475,9 @@ class AutoReadEngine(
     /** Озвучка с ожиданием реального окончания фразы. */
     private suspend fun speakAndAwait(text: String, gender: String? = null, speakerSlot: Int = 0) {
         var started = false
+        // Флаг фактического завершения фразы. MutableStateFlow, потому что onState
+        // приходит из потока TTS, а читается из этой корутины (диспетчер IO).
+        val done = MutableStateFlow(false)
         val t0 = System.currentTimeMillis()
         TtsSpeaker.speakAs(context, text, gender, speakerSlot) { speaking ->
             if (speaking && !started) {

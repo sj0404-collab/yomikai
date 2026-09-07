@@ -67,7 +67,7 @@ fun OcrBubbleVoiceOverlay(
 
         if (perBubble) {
             regions.forEachIndexed { index, region ->
-                val box = region.boundingBox
+                val box = region.box
                 if (region.text.isBlank() || !box.isValidForIcon()) return@forEachIndexed
                 // Позиция правого верхнего угла рамки в dp внутри компоновки.
                 val xDp = (box.left * maxW.value).dp
@@ -144,10 +144,10 @@ private fun DraggableSpeakIcon(
                         },
                         onDragEnd = {
                             val target = regions
-                                .filter { it.text.isNotBlank() && it.boundingBox.isValidForIcon() }
+                                .filter { it.text.isNotBlank() && it.box.isValidForIcon() }
                                 .minByOrNull { r ->
-                                    val cx = r.boundingBox.centerX() * pxW
-                                    val cy = r.boundingBox.centerY() * pxH
+                                    val cx = r.box.centerX() * pxW
+                                    val cy = r.box.centerY() * pxH
                                     val dx = cx - (posX + 18f)
                                     val dy = cy - (posY + 18f)
                                     dx * dx + dy * dy
