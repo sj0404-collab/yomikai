@@ -133,6 +133,7 @@ data class BrowseSourceScreen(
                     HomeScreen.Tab.Browser(url = source.getHomeUrl(), title = source.name),
                 )
             }
+            Unit
         }
 
         LaunchedEffect(screenModel.source) {

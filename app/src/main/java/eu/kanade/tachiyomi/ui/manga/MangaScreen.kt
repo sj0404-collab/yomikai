@@ -178,13 +178,15 @@ class MangaScreen(
             onWebViewClicked = {
                 // Открыть мангу во вкладке «Браузер» (web) вместо полноэкранного
                 // встроенного WebView-экрана.
-                getMangaUrl(screenModel.manga, screenModel.source)?.let { url ->
+                val url = getMangaUrl(screenModel.manga, screenModel.source)
+                if (url != null) {
                     navigator.popUntilRoot()
                     scope.launch {
                         HomeScreen.openTab(
-                            HomeScreen.Tab.Browser(url = url, title = screenModel.manga?.title),
+                            HomeScreen.Tab.Browser(url = url, title = screenModel.manga?.title ?: url),
                         )
                     }
+                    Unit
                 }
             }.takeIf { isHttpSource },
             onWebViewLongClicked = {
