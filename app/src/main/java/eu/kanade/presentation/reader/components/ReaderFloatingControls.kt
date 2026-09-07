@@ -34,6 +34,7 @@ import androidx.compose.material.icons.outlined.AutoMode
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.RecordVoiceOver
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.RecordVoiceOver
@@ -89,6 +90,10 @@ fun ReaderFloatingControls(
     manualVoiceGender: String = "female",
     onVoiceModeChange: (Boolean) -> Unit = {},
     onVoiceGenderChange: (String) -> Unit = {},
+    /** Значки 🔊 на каждой реплике (переключатель). */
+    voiceIconsEnabled: Boolean = false,
+    /** Включить/выключить значки озвучки реплик. */
+    onVoiceIconsToggle: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var manualVoice by remember(manualVoiceMode) { mutableStateOf(manualVoiceMode) }
@@ -251,6 +256,30 @@ fun ReaderFloatingControls(
                                     }) {
                                         Icon(Icons.Outlined.Pause, contentDescription = "Стоп чтения")
                                     }
+                                }
+                                if (!hiddenM.contains("r_voiceicons")) {
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        if (voiceIconsEnabled) "Значки озвучки: вкл  " else "Значки озвучки: выкл  ",
+                                        style = MaterialTheme.typography.labelMedium,
+                                    )
+                                    SmallFloatingActionButton(onClick = {
+                                        beepAction()
+                                        onVoiceIconsToggle(!voiceIconsEnabled)
+                                    }) {
+                                        Icon(
+                                            Icons.Outlined.RecordVoiceOver,
+                                            contentDescription = "Значки озвучки",
+                                            tint = if (voiceIconsEnabled) {
+                                                MaterialTheme.colorScheme.primary
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurface
+                                            },
+                                        )
+                                    }
+                                }
+
                                 }
                                 if (!hiddenM.contains("r_export")) {
 

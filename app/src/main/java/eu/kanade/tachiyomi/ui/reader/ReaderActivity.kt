@@ -870,6 +870,24 @@ class ReaderActivity : BaseActivity() {
                 var manualVoiceGender by androidx.compose.runtime.remember {
                     androidx.compose.runtime.mutableStateOf(ocrPrefsForVoice.manualVoiceGender().get())
                 }
+                // Значки 🔊 на репликах: показываются по переключателю.
+                var voiceIconsEnabled by androidx.compose.runtime.remember {
+                    androidx.compose.runtime.mutableStateOf(ocrPrefsForVoice.voiceIcons().get())
+                }
+                // Рамки распознанных реплик текущего кадра (для значков).
+                val frameRegions by autoReadEngine.frameRegions.collectAsState()
+
+                // Значки 🔊 на рамках реплик: показываются по переключателю.
+                if (voiceIconsEnabled && frameRegions.isNotEmpty()) {
+                    eu.kanade.presentation.reader.components.OcrBubbleVoiceOverlay(
+                        regions = frameRegions,
+                        onSpeakRegion = { text, _ ->
+                            autoReadEngine.speakSingle(text)
+                        },
+                        perBubble = true,
+                        draggable = true,
+                    )
+                }
 
                 eu.kanade.presentation.reader.components.ReaderFloatingControls(
                     visible = state.menuVisible && state.dialog == null,
@@ -900,6 +918,12 @@ class ReaderActivity : BaseActivity() {
                     onStopSpeak = {
                         stopAutoReadLoop()
                         viewModel.stopAutoSpeak()
+                    },
+                    voiceIconsEnabled = voiceIconsEnabled,
+                    onVoiceIconsToggle = { enabled ->
+                        voiceIconsEnabled = enabled
+                        ocrPrefsForVoice.voiceIcons().set(enabled)
+                        toast(if (enabled) "Значки озвучки реплик включены" else "Значки озвучки реплик выключены")
                     },
                     onReadingOrderChange = { order ->
                         uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
@@ -1462,7 +1486,10 @@ class ReaderActivity : BaseActivity() {
                         withUIContext {
                             when (val viewer = viewModel.state.value.viewer) {
                                 is eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer ->
-                                    viewer.scrollDown() // вебтун: скролл на почти-экран
+                                    // Вебтун: листаем на ~35% высоты экрана, а не на 3/4.
+                                    // Перекрытие держит автопрокрутку, пока кадр не прочитан,
+                                    // и не пропускает реплики на границе вьюпорта (фикс «рывка»).
+                                    viewer.scrollDownByFraction(0.35f)
                                 is eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer ->
                                     viewer.moveToNext() // постранично, с учётом RTL/LTR
                                 else -> {}

@@ -449,9 +449,31 @@ class AutoReadEngine(
         _isReading.value = false
     }
 
+    /**
+     * Озвучить ОДНУ реплику (бабл), выбранную пользователем (значок 🔊,
+     * перетаскивание значка или ручной бабл). В отличие от [readFrame] не
+     * трогает историю кадра и не листает: просто произносит переданный текст
+     * выбранным движком/полом. Запускается в [scope], чтобы [job] был активен
+     * во время озвучки (иначе [speakAndAwait] мгновенно прерывается).
+     */
+    fun speakSingle(text: String, gender: String? = null, speakerSlot: Int = 0) {
+        val clean = SpeechMarkup.strip(text).trim()
+        if (clean.isBlank()) return
+        if (_isReading.value) TtsSpeaker.stop()
+        job?.cancel()
+        val myGen = ++generation
+        job = scope.launch {
+            _isReading.value = true
+            try {
+                speakAndAwait(clean, gender, speakerSlot)
+            } finally {
+                if (generation == myGen) _isReading.value = false
+            }
+        }
+    }
+
     /** Озвучка с ожиданием реального окончания фразы. */
     private suspend fun speakAndAwait(text: String, gender: String? = null, speakerSlot: Int = 0) {
-        val done = MutableStateFlow(false)
         var started = false
         val t0 = System.currentTimeMillis()
         TtsSpeaker.speakAs(context, text, gender, speakerSlot) { speaking ->

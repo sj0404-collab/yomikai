@@ -118,6 +118,12 @@ class OcrPreferences(
     // Автолистание после дочитывания кадра (в браузере — автоскролл на кадр)
     fun autoReadAutoAdvance() = preferenceStore.getBoolean("pref_autoread_advance", true)
 
+    /**
+     * Значки 🔊 на рамках распознанных реплик в читалке. По умолчанию выключено,
+     * чтобы не мешать чтению; включается переключателем в плавающем меню.
+     */
+    fun voiceIcons() = preferenceStore.getBoolean("pref_autoread_voice_icons", false)
+
     // AI-определение пола говорящего (Gemini Vision по лицам и баллонам):
     // женские реплики читает женский голос-пресет, мужские — мужской.
     // Требует Google AI ключ; выключено по умолчанию (онлайн, медленнее).

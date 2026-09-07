@@ -425,6 +425,24 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
     }
 
     /**
+     * Плавный прокрут на долю высоты экрана. Нужен авточтения: штатный
+     * [scrollDown] листает на 3/4 экрана, из-за чего нижние реплики кадра
+     * выпадали и «читались» снова только рывком. Меньший шаг (с перекрытием)
+     * держит автопрокрутку, пока кадр не прочитан, и не пропускает текст на
+     * границе вьюпорта.
+     */
+    fun scrollDownByFraction(fraction: Float) {
+        val px = (activity.resources.displayMetrics.heightPixels * fraction)
+            .toInt()
+            .coerceAtLeast(1)
+        if (config.usePageTransitions) {
+            recycler.smoothScrollBy(0, px)
+        } else {
+            recycler.scrollBy(0, px)
+        }
+    }
+
+    /**
      * Called from the containing activity when a key [event] is received. It should return true
      * if the event was handled, false otherwise.
      */
