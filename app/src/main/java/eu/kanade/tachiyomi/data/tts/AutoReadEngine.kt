@@ -6,10 +6,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import logcat.LogPriority
 import mihon.data.ocr.OcrHistoryStore
 import mihon.data.ocr.OcrRegionRules
@@ -213,7 +215,35 @@ class AutoReadEngine(
                     }.getOrNull()
                 } else null
 
-                val result = scanPageOcr.await(chapterId, pageIndex, image)
+                // Жёсткий таймаут OCR кадра: движок (локальный при первом
+                // запуске/загрузке модели, онлайн при недоступном GLENS или
+                // неотвечающем Google) может «зависнуть» без ответа. Без этого
+                // авточтение крутится вечно («бесконечное сканирование»).
+                // По таймауту кадр считается пустым: возвращаем пустой регион
+                // и идём по обычному конвейеру (пустой кадр → дочитывается и
+                // страница листается дальше, а не блокируется навсегда).
+                val result: mihon.domain.ocr.model.OcrPageResult = try {
+                    withTimeout(OCR_FRAME_TIMEOUT_MS) {
+                        scanPageOcr.await(chapterId, pageIndex, image)
+                    }
+                } catch (e: TimeoutCancellationException) {
+                    logcat(LogPriority.WARN) {
+                        "OCR frame timeout (${OCR_FRAME_TIMEOUT_MS}ms) pageIndex=$pageIndex"
+                    }
+                    OcrHistoryStore.addAutoRead(
+                        false,
+                        "OCR-кадр таймаут",
+                        "${OCR_FRAME_TIMEOUT_MS / 1000}с pageIndex=$pageIndex",
+                    )
+                    mihon.domain.ocr.model.OcrPageResult(
+                        chapterId = chapterId,
+                        pageIndex = pageIndex,
+                        ocrModel = prefs.ocrModel().get(),
+                        imageWidth = bitmap.width,
+                        imageHeight = bitmap.height,
+                        regions = emptyList(),
+                    )
+                }
 
                 val language = prefs.autoReadLanguage().get()
                 val translate = prefs.autoReadTranslate().get()
@@ -631,6 +661,14 @@ class AutoReadEngine(
     companion object {
         private const val HISTORY_LIMIT = 600
         private const val MAX_BUBBLES_PER_FRAME = 14
+
+        /**
+         * Максимальное время OCR одного кадра в авточтении. Локальный движок
+         * при первом запуске/загрузке модели, а также онлайн-движок (GLENS /
+         * Google) при недоступном сервисе БЕЗ этого жёсткого лимита могли
+         * заморозить авточтение навсегда. По таймауту кадр считается пустым.
+         */
+        private const val OCR_FRAME_TIMEOUT_MS = 45_000L
 
         /** Настоящие одно- и двухбуквенные русские слова (союзы/предлоги/междометия). */
         private val RUSSIAN_SINGLE_WORD = setOf("а", "и", "в", "с", "у", "о", "я", "к")

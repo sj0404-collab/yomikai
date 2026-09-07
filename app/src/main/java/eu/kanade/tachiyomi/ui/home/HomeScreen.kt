@@ -211,6 +211,9 @@ object HomeScreen : Screen() {
 
             val goToLibraryTab = { tabNavigator.current = LibraryTab }
 
+            // Контекст для открытия внешних URL во вкладке «Браузер» (web).
+            val browserCtx = androidx.compose.ui.platform.LocalContext.current.applicationContext
+
             BackHandler(enabled = tabNavigator.current != LibraryTab, onBack = goToLibraryTab)
 
             LaunchedEffect(Unit) {
@@ -231,6 +234,16 @@ object HomeScreen : Screen() {
                                     BrowseTab.showExtension()
                                 }
                                 BrowseTab
+                            }
+                            // Открыть сайт во вкладке «Браузер» (web), а не во
+                            // встроенном полноэкранном WebView-экране.
+                            is Tab.Browser -> {
+                                eu.kanade.tachiyomi.ui.webbrowser.WebStore.addTab(
+                                    browserCtx,
+                                    it.url,
+                                    it.title,
+                                )
+                                eu.kanade.tachiyomi.ui.webbrowser.BrowserTab
                             }
                             Tab.Dictionary -> MoreTab // словарь скрыт из таб-бара
                             is Tab.More -> MoreTab
@@ -405,6 +418,12 @@ object HomeScreen : Screen() {
         data object History : Tab
         data class Browse(val toExtensions: Boolean = false) : Tab
         data object Dictionary : Tab
+
+        /**
+         * Открыть сайт во вкладке «Браузер» (web) вместо полноэкранного
+         * встроенного WebView. url — адрес, title — заголовок вкладки.
+         */
+        data class Browser(val url: String, val title: String = url) : Tab
 
         /** Вкладка «AI»: агент, чат, workspace и плагины разработчика. */
         data object AiChat : Tab

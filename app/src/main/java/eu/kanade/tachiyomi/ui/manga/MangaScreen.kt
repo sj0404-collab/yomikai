@@ -73,7 +73,6 @@ import eu.kanade.tachiyomi.ui.manga.notes.MangaNotesScreen
 import eu.kanade.tachiyomi.ui.manga.track.TrackInfoDialogHomeScreen
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.setting.SettingsScreen
-import eu.kanade.tachiyomi.ui.webview.WebViewScreen
 import eu.kanade.tachiyomi.util.system.copyToClipboard
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
@@ -177,11 +176,16 @@ class MangaScreen(
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             },
             onWebViewClicked = {
-                openMangaInWebView(
-                    navigator,
-                    screenModel.manga,
-                    screenModel.source,
-                )
+                // Открыть мангу во вкладке «Браузер» (web) вместо полноэкранного
+                // встроенного WebView-экрана.
+                getMangaUrl(screenModel.manga, screenModel.source)?.let { url ->
+                    navigator.popUntilRoot()
+                    scope.launch {
+                        HomeScreen.openTab(
+                            HomeScreen.Tab.Browser(url = url, title = screenModel.manga?.title),
+                        )
+                    }
+                }
             }.takeIf { isHttpSource },
             onWebViewLongClicked = {
                 copyMangaUrl(
@@ -467,18 +471,6 @@ class MangaScreen(
             source.getMangaUrl(manga.toSManga())
         } catch (e: Exception) {
             null
-        }
-    }
-
-    private fun openMangaInWebView(navigator: Navigator, manga_: Manga?, source_: Source?) {
-        getMangaUrl(manga_, source_)?.let { url ->
-            navigator.push(
-                WebViewScreen(
-                    url = url,
-                    initialTitle = manga_?.title,
-                    sourceId = source_?.id,
-                ),
-            )
         }
     }
 
