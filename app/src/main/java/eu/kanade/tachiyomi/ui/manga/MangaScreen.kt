@@ -3,8 +3,25 @@ package eu.kanade.tachiyomi.ui.manga
 import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Autorenew
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SmallFloatingActionButton
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -111,6 +128,24 @@ class MangaScreen(
             }
         }
 
+        val autoReadState by screenModel.chapterAutoRead.collectAsStateWithLifecycle()
+
+        // Открытие читалки в режиме авточтения после фонового скана главы.
+        LaunchedEffect(autoReadState.openChapterId) {
+            val chapterId = autoReadState.openChapterId
+            if (chapterId != null) {
+                autoReadState.exportFile?.let { path ->
+                    context.toast("Транскрипт сохранён: $path")
+                }
+                val chapter = successState.chapters.firstOrNull { it.chapter.id == chapterId }?.chapter
+                if (chapter != null) {
+                    openChapterAutoRead(context, chapter)
+                }
+                screenModel.clearAutoReadOpen()
+            }
+        }
+
+        Box(Modifier.fillMaxSize()) {
         MangaScreen(
             state = successState,
             snackbarHostState = screenModel.snackbarHostState,
@@ -172,6 +207,74 @@ class MangaScreen(
             onAllChapterSelected = screenModel::toggleAllSelection,
             onInvertSelection = screenModel::invertSelection,
         )
+
+            // Кнопка «Скан и чтение»: фоновое авто-сканирование следующей
+            // непрочитанной главы с прогрессом, затем открытие читалки в
+            // авточтении. Размещается чуть выше основного FAB «Читать».
+            val nextUnread = remember(successState.manga, successState.chapters) {
+                screenModel.getNextUnreadChapter()
+            }
+            if (nextUnread != null && !autoReadState.running && autoReadState.openChapterId == null) {
+                SmallFloatingActionButton(
+                    onClick = { screenModel.scanAndAutoReadChapter(nextUnread) },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(bottom = 96.dp, end = 16.dp),
+                    containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Autorenew,
+                        contentDescription = "Сканировать текущую главу и читать",
+                    )
+                }
+            }
+        }
+
+        // Прогресс фонового скана и результат.
+        when {
+            autoReadState.running -> {
+                AlertDialog(
+                    onDismissRequest = {},
+                    confirmButton = {},
+                    title = { Text("Сканирование главы") },
+                    text = {
+                        Column(
+                            Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(autoReadState.title.ifBlank { "Сканирование…" })
+                            if (autoReadState.total > 0) {
+                                Text("Страница ${autoReadState.processed} из ${autoReadState.total}")
+                            } else {
+                                Text("Подготовка…")
+                            }
+                            LinearProgressIndicator(
+                                progress = {
+                                    if (autoReadState.total > 0) {
+                                        (autoReadState.processed.toFloat() / autoReadState.total.toFloat())
+                                            .coerceIn(0f, 1f)
+                                    } else {
+                                        0f
+                                    }
+                                },
+                            )
+                        }
+                    },
+                )
+            }
+            autoReadState.error != null -> {
+                AlertDialog(
+                    onDismissRequest = { screenModel.dismissAutoReadError() },
+                    confirmButton = {
+                        TextButton(onClick = { screenModel.dismissAutoReadError() }) {
+                            Text("OK")
+                        }
+                    },
+                    title = { Text("Не удалось просканировать") },
+                    text = { Text(autoReadState.error.orEmpty()) },
+                )
+            }
+        }
 
         var showScanlatorsDialog by remember { mutableStateOf(false) }
 
@@ -294,6 +397,11 @@ class MangaScreen(
 
     private fun openChapter(context: Context, chapter: Chapter) {
         context.startActivity(ReaderActivity.newIntent(context, chapter.mangaId, chapter.id))
+    }
+
+    /** Открыть главу сразу в режиме авточтения (после фонового скана). */
+    private fun openChapterAutoRead(context: Context, chapter: Chapter) {
+        context.startActivity(ReaderActivity.newAutoReadIntent(context, chapter.mangaId, chapter.id))
     }
 
     private fun getMangaUrl(manga_: Manga?, source_: Source?): String? {

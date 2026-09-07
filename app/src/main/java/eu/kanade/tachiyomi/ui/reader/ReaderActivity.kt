@@ -151,6 +151,18 @@ class ReaderActivity : BaseActivity() {
             }
         }
 
+        /**
+         * Читалка, которая сразу начинает авточтение (для фонового скан-чтения
+         * главы). Не зависит от сохранённой опции «автостарт чтения», чтобы
+         * сценарий «сканируй главу → открой и читай» работал предсказуемо и
+         * не менял постоянные настройки пользователя.
+         */
+        fun newAutoReadIntent(context: Context, mangaId: Long?, chapterId: Long?): Intent {
+            return newIntent(context, mangaId, chapterId).apply {
+                putExtra("autoread_start", true)
+            }
+        }
+
         fun newIntent(context: Context, uri: android.net.Uri): Intent {
             return Intent(context, ReaderActivity::class.java).apply {
                 data = uri
@@ -459,7 +471,8 @@ class ReaderActivity : BaseActivity() {
         // автопрокрутку со сканом и озвучкой. Повторно на том же кадре не
         // стартуем (autoReadActive), чтобы не спамить озвучкой при поворотах.
         val autoStartChapter by remember { mutableStateOf(
-            uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>().autoReadAutoStart().get(),
+            uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>().autoReadAutoStart().get() ||
+                intent.getBooleanExtra("autoread_start", false),
         ) }
         androidx.compose.runtime.LaunchedEffect(state.currentChapter?.chapter?.id, state.viewer) {
             if (autoStartChapter && state.viewer != null && !autoReadActive) {
