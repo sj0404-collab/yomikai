@@ -119,6 +119,23 @@ object VoiceModeResolver {
                     ResolvedVoice(g, engine.ifBlank { TtsSpeaker.ENGINE_SYSTEM }, name, true, false)
                 }
             }
+            // Много голосов: по полу, как DUAL; отдельные слоты персонажам
+            // назначаются в AutoReadEngine (speakerSlot), здесь voice тот же.
+            Mode.MULTI -> {
+                val g = detectedGender ?: narratorGender()
+                val isMale = g == "male"
+                val engine = if (isMale) p.voiceMaleEngine().get() else p.voiceFemaleEngine().get()
+                val fallbackEngine = p.voiceEngine().get()
+                val effEngine = engine.ifBlank { fallbackEngine }
+                val name = if (isMale) p.voiceMale().get() else p.voiceFemale().get()
+                ResolvedVoice(
+                    gender = g,
+                    engine = effEngine.ifBlank { TtsSpeaker.ENGINE_SYSTEM },
+                    voiceName = name,
+                    isLocal = effEngine == TtsSpeaker.ENGINE_SYSTEM || effEngine == TtsSpeaker.ENGINE_REMOTE,
+                    isOnline = effEngine == TtsSpeaker.ENGINE_GOOGLE_WEB,
+                )
+            }
         }
     }
 
