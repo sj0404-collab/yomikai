@@ -182,11 +182,17 @@ data object BrowserTab : Tab {
         val js = """
             (function() {
                 var vh = window.innerHeight, vw = window.innerWidth;
-                var minArea = vw * vh * 0.10; // картинка занимает >=10% экрана
+                var minArea = vw * vh * 0.08; // картинка >=8% экрана
                 var top = vh, bottom = 0, left = vw, right = 0, found = false;
-                var nodes = document.querySelectorAll('img, canvas');
+                // Старница манги часто рисуется не только <img>/<canvas>, но и
+                // <div> с background-image (полноэкранные/вебтун-ридеры). Ловим
+                // и такие узлы, иначе зона не находится и сканируется весь экран
+                // вместе с шапкой/подвалом сайта (жалоба пользователя).
+                var nodes = document.querySelectorAll('img, canvas, [style*="background-image"], [data-src]');
                 for (var i = 0; i < nodes.length; i++) {
-                    var r = nodes[i].getBoundingClientRect();
+                    var el = nodes[i];
+                    var r = el.getBoundingClientRect();
+                    if (r.width < 1 || r.height < 1) continue;
                     var visW = Math.min(r.right, vw) - Math.max(r.left, 0);
                     var visH = Math.min(r.bottom, vh) - Math.max(r.top, 0);
                     if (visW <= 0 || visH <= 0) continue;
@@ -197,8 +203,37 @@ data object BrowserTab : Tab {
                     left = Math.min(left, Math.max(r.left, 0));
                     right = Math.max(right, Math.min(r.right, vw));
                 }
-                if (!found) return "";
-                return (left / vw) + "," + (top / vh) + "," + (right / vw) + "," + (bottom / vh);
+                // Вычесть фиксированные шапку/подвал ридера (навигация «— том N
+                // глава M →», счётчик «N/M»): они обычно position:fixed/sticky.
+                function shrinkToContent() {
+                    // head = нижняя граница верхней панели (контент ниже её),
+                    // foot = верхняя граница нижней панели (контент выше её).
+                    var head = 0, foot = vh;
+                    var chrome = document.querySelectorAll('header, footer, nav, [class*="header"], [class*="footer"], [class*="toolbar"], [class*="reader-top"], [class*="reader-bottom"]');
+                    for (var k = 0; k < chrome.length; k++) {
+                        var c = chrome[k];
+                        var cs = window.getComputedStyle(c);
+                        if (cs.position !== 'fixed' && cs.position !== 'sticky' && cs.position !== 'absolute') continue;
+                        var cr = c.getBoundingClientRect();
+                        if (cr.height < 10 || cr.height > vh * 0.35) continue;
+                        if (cr.top >= 0 && cr.top < vh * 0.5) head = Math.max(head, Math.min(cr.bottom, vh));
+                        if (cr.bottom <= vh && cr.bottom > vh * 0.5) foot = Math.min(foot, Math.max(cr.top, 0));
+                    }
+                    return [head, foot];
+                }
+                var hf = shrinkToContent();
+                if (found) {
+                    top = Math.max(top, hf[0]);
+                    bottom = Math.min(bottom, hf[1]);
+                    if (bottom - top > vh * 0.10) {
+                        return (left / vw) + "," + (top / vh) + "," + (right / vw) + "," + (bottom / vh);
+                    }
+                } else if (hf[1] - hf[0] > vh * 0.30) {
+                    // Зона не нашлась, но есть фиксированная шапка/подвал ридера —
+                    // отдаём полосу контента между ними, а не весь экран.
+                    return "0," + (hf[0] / vh) + ",1," + (hf[1] / vh);
+                }
+                return "";
             })()
         """.trimIndent()
         return kotlinx.coroutines.suspendCancellableCoroutine { cont ->

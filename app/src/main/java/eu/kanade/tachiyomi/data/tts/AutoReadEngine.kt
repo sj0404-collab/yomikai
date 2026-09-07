@@ -749,10 +749,13 @@ class AutoReadEngine(
                 return singleWord
             }
             // OCR часто путает буквы с цифрами («4» вместо «а», «1» вместо «л»).
-            // Убираем цифровые обрывки (числа без буквенного соседства):
-            // «4а», «eS la 4», случайные «7» в середине текста.
+            // Убираем только ЦИФРЫ, слипшиеся с буквой (4а, а4, eS la 4) — это
+            // типичная ошибка OCR. Самостоятельные числа («1», «глава 1», «5»)
+            // НЕ трогаем: пользователь просил, чтобы цифры озвучивались
+            // («он цифры не говорит почему-то»). Чисто числовые строки-мусор
+            // («2/89», «7») отсекаются ниже по isMeaningfulRow (нет букв).
             val rows = rawRows.map { row ->
-                row.replace(Regex("(?<![\\p{L}0-9])[0-9]+(?![\\p{L}])"), " ")
+                row.replace(Regex("(?<=[\\p{L}])[0-9]+|[0-9]+(?=[\\p{L}])"), " ")
                     .replace(Regex("\\s+"), " ").trim()
             }.filter { it.isNotBlank() }
             if (rows.isEmpty()) return ""
@@ -797,12 +800,52 @@ class AutoReadEngine(
         fun isMeaningful(text: String, language: String): Boolean {
             if (text.isBlank()) return false
             if (!matchesLanguage(text, language)) return false
+            // Служебная навигация сайта: «— том 1 глава 1 →», «том 1 глава 1»,
+            // «← том 3 глава 5 →». Это шапка/футер манга-ридера, а не реплика;
+            // раньше авточтение постоянно зачитывало эти подписи и стрелки.
+            if (isSiteChromeNoise(text)) return false
             val words = text.split(Regex("\\s+"))
             return words.any { w -> w.count { it.isLetter() } >= 3 } ||
                 // Короткие настоящие русские слова (я, и, но, не…) — читаем.
                 (language == "ru" && words.any { isShortRussianWord(it) }) ||
                 // …или короткая осмысленная («Да!», «Ах!», «Нет?»)
                 (text.length in 2..6 && text.count { it.isLetter() } >= 2)
+        }
+
+        /**
+         * Служебная навигация манга-ридера, которую авточтение не должно
+         * зачитывать: подписи «том N глава N», счётчик страниц «N/M» и
+         * строки, состоящие только из стрелок/декора (нет букв).
+         * Возвращает true, если текст — это навигация, а не реплика.
+         */
+        fun isSiteChromeNoise(text: String): Boolean {
+            val t = text.trim()
+            if (t.isBlank()) return false
+            val letters = t.count { it.isLetter() }
+            if (letters > 0) {
+                // «— том 1 глава 1 →», «том 1, глава 2», «← том 3 глава 5 →».
+                // Отсекаем только если после удаления подписи остаётся мало
+                // настоящих букв (это навигация, а не реплика с упоминанием тома).
+                val chapter = Regex("том(а|у|е)?[\\s\\d.,-]*глава[\\s\\d.,-]*", RegexOption.IGNORE_CASE)
+                if (chapter.containsMatchIn(t)) {
+                    val left = chapter.replace(t, "")
+                        .replace(Regex("[→←⇐⇒↔—–-|/\\\\\\d\\s,.\\(\\)«»\\[\\]\\\"']"), "")
+                    if (left.count { it.isLetter() } <= 3) return true
+                }
+                // Оглавление ридера «Том 1», «Т. 12», «Том 2, глава 3» без реплики.
+                if (Regex("^том(а|у|е)?\\.?\\s*\\d+", RegexOption.IGNORE_CASE).containsMatchIn(t) &&
+                    t.count { it.isDigit() } >= 1 && letters <= 6) return true
+                // Счётчик страниц «N / M», «2/89», «стр. 2 из 89».
+                if (Regex("^\\s*[\\d.,\\s]+\\s*(/|из|оф)\\s*[\\d.,\\s]+\\s*$", RegexOption.IGNORE_CASE)
+                        .containsMatchIn(t)) {
+                    return true
+                }
+            }
+            // Строка без букв (стрелки, точки, палки, цифры) — не реплика.
+            if (letters == 0) {
+                return t.any { it in "→←⇐⇒↔<|/\\·•⭐❤⟩⟨" } || t.count { it.isDigit() } >= 2
+            }
+            return false
         }
 
         /**
