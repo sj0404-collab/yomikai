@@ -136,6 +136,11 @@ class MangaScreen(
 
         val autoReadState by screenModel.chapterAutoRead.collectAsStateWithLifecycle()
 
+        // Следующая непрочитанная глава — цель скан-чтения (кнопка и диалог).
+        val nextUnread = remember(successState.manga, successState.chapters) {
+            screenModel.getNextUnreadChapter()
+        }
+
         // Настройки скан-чтения: движок и формат документа (выбор перед стартом).
         var showScanSettings by remember { mutableStateOf(false) }
         var scanEngine by remember { mutableStateOf(AutoReadEngineChoice.OFFLINE) }
@@ -222,9 +227,6 @@ class MangaScreen(
             // Кнопка «Скан и чтение»: фоновое авто-сканирование следующей
             // непрочитанной главы с прогрессом, затем открытие читалки в
             // авточтении. Размещается чуть выше основного FAB «Читать».
-            val nextUnread = remember(successState.manga, successState.chapters) {
-                screenModel.getNextUnreadChapter()
-            }
             if (nextUnread != null && !autoReadState.running && autoReadState.openChapterId == null) {
                 SmallFloatingActionButton(
                     onClick = { showScanSettings = true },
