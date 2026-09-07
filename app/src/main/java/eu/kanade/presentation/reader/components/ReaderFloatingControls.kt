@@ -33,8 +33,10 @@ import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.AutoMode
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DocumentScanner
+import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.RecordVoiceOver
+import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.RecordVoiceOver
@@ -94,6 +96,8 @@ fun ReaderFloatingControls(
     voiceIconsEnabled: Boolean = false,
     /** Включить/выключить значки озвучки реплик. */
     onVoiceIconsToggle: (Boolean) -> Unit = {},
+    /** Идёт ли чтение (для состояний кнопки «Стоп чтения»: покой / работа). */
+    readingActive: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     var manualVoice by remember(manualVoiceMode) { mutableStateOf(manualVoiceMode) }
@@ -237,24 +241,57 @@ fun ReaderFloatingControls(
                                 if (!hiddenM.contains("r_autoread")) {
 
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Прочитать страницу  ", style = MaterialTheme.typography.labelMedium)
-                                    SmallFloatingActionButton(onClick = {
-                                        beepAction()
-                                        menuOpen = false
-                                        onAutoSpeakPage()
-                                    }) {
-                                        Icon(Icons.Outlined.PlayArrow, contentDescription = "Прочитать страницу")
+                                    Text(
+                                        if (readingActive) "Чтение: идёт…  " else "Прочитать страницу  ",
+                                        style = MaterialTheme.typography.labelMedium,
+                                    )
+                                    SmallFloatingActionButton(
+                                        onClick = {
+                                            beepAction()
+                                            menuOpen = false
+                                            onAutoSpeakPage()
+                                        },
+                                        containerColor = if (readingActive) {
+                                            MaterialTheme.colorScheme.tertiaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.secondaryContainer
+                                        },
+                                    ) {
+                                        Icon(
+                                            if (readingActive) Icons.Outlined.GraphicEq else Icons.Outlined.PlayArrow,
+                                            contentDescription = "Прочитать страницу",
+                                            tint = if (readingActive) {
+                                                MaterialTheme.colorScheme.onTertiaryContainer
+                                            } else {
+                                                MaterialTheme.colorScheme.onSecondaryContainer
+                                            },
+                                        )
                                     }
                                 }
 
                                 }
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text("Стоп чтения  ", style = MaterialTheme.typography.labelMedium)
-                                    SmallFloatingActionButton(onClick = {
-                                        beepAction()
-                                        onStopSpeak()
-                                    }) {
-                                        Icon(Icons.Outlined.Pause, contentDescription = "Стоп чтения")
+                                    SmallFloatingActionButton(
+                                        onClick = {
+                                            beepAction()
+                                            onStopSpeak()
+                                        },
+                                        containerColor = if (readingActive) {
+                                            MaterialTheme.colorScheme.errorContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.surfaceVariant
+                                        },
+                                    ) {
+                                        Icon(
+                                            if (readingActive) Icons.Outlined.StopCircle else Icons.Outlined.Pause,
+                                            contentDescription = "Стоп чтения",
+                                            tint = if (readingActive) {
+                                                MaterialTheme.colorScheme.onErrorContainer
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            },
+                                        )
                                     }
                                 }
                                 if (!hiddenM.contains("r_voiceicons")) {

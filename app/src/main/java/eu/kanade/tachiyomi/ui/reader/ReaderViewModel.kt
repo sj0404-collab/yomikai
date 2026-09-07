@@ -923,6 +923,33 @@ class ReaderViewModel @JvmOverloads constructor(
     }
 
     /**
+     * Распознать текст в выбранной прямоугольной области без показа
+     * результата-попапа. Нужен для «долгого касания» (autoclick с удержанием):
+     * пользователь удерживает область, она запоминается, распознаётся и тут же
+     * озвучивается. Возвращает пустую строку, если текста нет.
+     */
+    suspend fun recognizeRegionText(bitmap: Bitmap): String {
+        val work = prepareCropForOcr(bitmap)
+        return try {
+            ocrProcessor.getText(work.toOcrImage())
+        } finally {
+            if (work !== bitmap && !work.isRecycled) work.recycle()
+        }
+    }
+
+    /**
+     * Установить запомненную область сканирования (нормализованный 0..1 box).
+     * Используется в «долгом касании»: область запоминается и переиспользуется.
+     * Хранится в настройках как "left,top,right,bottom".
+     */
+    fun rememberOcrRegion(box: mihon.domain.ocr.model.OcrBoundingBox) {
+        val prefs = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+        prefs.rememberedScanRegion().set(
+            listOf(box.left, box.top, box.right, box.bottom).joinToString(","),
+        )
+    }
+
+    /**
      * Мелкие/узкие кропы апскейлим и добавляем белые поля: детектору и
      * распознаванию нужен масштаб и контекст вокруг надписи, иначе
      * «нет текста» на вполне читаемом куске.
@@ -1000,7 +1027,11 @@ class ReaderViewModel @JvmOverloads constructor(
                 logcat(LogPriority.ERROR, e) { "OCR processing failed" }
                 withUIContext {
                     mutableState.update { it.copy(isProcessingOcr = false) }
-                    eventChannel.send(Event.OcrError)
+                    // Не отбрасываем причину: раньше здесь был Event.OcrError (data
+                    // object), и пользователь видел глухое «Unknown OCR Error
+                    // Occurred», не зная, что именно пошло не так. Передаём
+                    // реальную причину, чтобы показывать её и чинить точечно.
+                    eventChannel.send(Event.OcrError(e.message))
                 }
             } finally {
                 if (!bitmap.isRecycled) {
@@ -1269,6 +1300,7 @@ class ReaderViewModel @JvmOverloads constructor(
         data class OfflineExportResult(val message: String) : Event
         data object OcrMemoryError : Event
         data object OcrInitializationError : Event
-        data object OcrError : Event
+        /** Общая ошибка OCR. `message` — реальная причина (или null). */
+        data class OcrError(val message: String? = null) : Event
     }
 }

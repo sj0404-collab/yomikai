@@ -124,6 +124,20 @@ class OcrPreferences(
      */
     fun voiceIcons() = preferenceStore.getBoolean("pref_autoread_voice_icons", false)
 
+    /**
+     * Автоматически начинать чтение (скан + озвучка) при открытии главы.
+     * По умолчанию выключено, чтобы не пугать пользователя внезапной озвучкой.
+     */
+    fun autoReadAutoStart() = preferenceStore.getBoolean("pref_autoread_auto_start", false)
+
+    /**
+     * Запомненная нормализованная область сканирования (0..1 box) для
+     * автопрокрутки: задаётся длительным касанием (autoclick с удержанием)
+     * и переиспользуется, чтобы не выбирать область заново на каждом кадре.
+     * Формат "left,top,right,bottom"; пустая строка = не задана.
+     */
+    fun rememberedScanRegion() = preferenceStore.getString("pref_autoread_remembered_region", "")
+
     // AI-определение пола говорящего (Gemini Vision по лицам и баллонам):
     // женские реплики читает женский голос-пресет, мужские — мужской.
     // Требует Google AI ключ; выключено по умолчанию (онлайн, медленнее).
