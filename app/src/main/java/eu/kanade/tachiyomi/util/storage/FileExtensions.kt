@@ -5,6 +5,8 @@ import android.net.Uri
 import androidx.core.content.FileProvider
 import eu.kanade.tachiyomi.BuildConfig
 import java.io.File
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
 
 val Context.cacheImageDir: File
     get() = File(cacheDir, "shared_image")
@@ -15,7 +17,23 @@ val Context.cacheImageDir: File
  * @param context context of application
  */
 fun File.getUriCompat(context: Context): Uri {
-    return FileProvider.getUriForFile(context, BuildConfig.APPLICATION_ID + ".provider", this)
+    return try {
+        FileProvider.getUriForFile(context, BuildConfig.APPLICATION_ID + ".provider", this)
+    } catch (e: IllegalArgumentException) {
+        // Файл лежит вне настроенных корней FileProvider (например, внутренний
+        // files/ai_workspace на устройстве без внешнего хранилища, либо путь
+        // оказался не покрыт provider_paths.xml). Копируем во внутренний
+        // cacheDir — он всегда настроен как cache-path — и шарим оттуда, чтобы
+        // «Поделиться» никогда не роняло приложение.
+        logcat(LogPriority.WARN, e) { "File not covered by FileProvider; sharing from cache: $absolutePath" }
+        val sharedDir = File(context.cacheDir, "shared").apply { mkdirs() }
+        val copy = File(sharedDir, name).apply {
+            if (!exists()) {
+                inputStream().use { i -> outputStream().use { o -> i.copyTo(o) } }
+            }
+        }
+        FileProvider.getUriForFile(context, BuildConfig.APPLICATION_ID + ".provider", copy)
+    }
 }
 
 /**
