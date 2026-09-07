@@ -1,8 +1,8 @@
 package mihon.data.ocr
 
-import org.junit.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertTrue
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 
 /**
  * Тесты автоматического исправления латиница/кириллица в OCR-тексте.
