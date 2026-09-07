@@ -777,6 +777,19 @@ class ReaderActivity : BaseActivity() {
             Box(modifier = Modifier.fillMaxSize()) {
                 val isHttpSource = viewModel.getSource() is HttpSource
                 var showTtsDialog by remember { mutableStateOf(false) }
+                // Быстрая смена AI-модели (по требованию пользователя): верхняя
+                // AI-кнопка теперь открывает «Сменить AI-модель», а из него уже
+                // можно попасть в полный диалог озвучки.
+                var showModelPicker by remember { mutableStateOf(false) }
+                if (showModelPicker) {
+                    eu.kanade.presentation.reader.AiModelPickerDialog(
+                        onDismissRequest = { showModelPicker = false },
+                        onOpenVoiceSettings = {
+                            showModelPicker = false
+                            showTtsDialog = true
+                        },
+                    )
+                }
                 // AI-чат перенесён из читалки в отдельную вкладку «AI»
                 // нижней навигации (по требованию пользователя).
                 if (showTtsDialog) {
@@ -883,10 +896,10 @@ class ReaderActivity : BaseActivity() {
                     },
                     onClickSettings = viewModel::openSettingsDialog,
                     onClickOcrSettings = {
-                        // Верхняя AI-кнопка теперь открывает настройки озвучки
-                        // прямо в читалке (раньше дублировала плавающую кнопку
-                        // и уводила из читалки).
-                        showTtsDialog = true
+                        // Верхняя AI-кнопка: быстрая смена модели. Полная
+                        // озвучка/голоса доступны из этого диалога одной кнопкой
+                        // («Голос и озвучка…»).
+                        showModelPicker = true
                     },
                     onClickOcr = ::enterOcrMode,
                 )
