@@ -32,6 +32,13 @@
         tools:ignore="ProtectedPermissions" />
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- v1.9.55: мини-плеер поверх ВСЕХ приложений. SYSTEM_ALERT_WINDOW —
+         плавающее окно над другими приложениями (запрашивается в настройках
+         «Показ поверх других приложений»). MEDIA_PLAYBACK — чтобы сервис,
+         в котором крутится видео, считался воспроизведением мультимедиа и
+         не гасился системой. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
     <queries>
         <package android:name="com.ichi2.anki" />
@@ -234,6 +241,14 @@
             android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync"
             tools:node="merge" />
+
+        <!-- v1.9.55: мини-плеер поверх всех приложений. Foreground-сервис
+             держит плавающее окно с собственным WebView, чтобы видео играло,
+             пока пользователь в другом приложении. -->
+        <service
+            android:name=".ui.webbrowser.MiniOverlayService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

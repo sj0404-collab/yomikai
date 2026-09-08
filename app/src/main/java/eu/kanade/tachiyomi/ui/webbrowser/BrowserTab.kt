@@ -1057,13 +1057,27 @@ data object BrowserTab : Tab {
                         TextButton(onClick = { moreOpen = false; saveHtmlPage() }) { Text("Сохранить страницу (HTML)") }
                         TextButton(onClick = {
                             moreOpen = false
-                            // v1.9.52: внутри-приложение мини-плеер. Системный PiP
-                            // выносил ВСЮ активность целиком, из-за чего нельзя было
-                            // листать вкладки — теперь выносится только web-вкладка.
+                            // v1.9.55: плавающий мини-плеер ПОВЕРХ ВСЕХ приложений —
+                            // настоящее окно поверх любого приложения. Если разрешение
+                            // «Показ поверх других приложений» не выдано, открываем
+                            // системные настройки; иначе запускаем foreground-сервис.
+                            val url = sharedWebView?.url ?: urlBar
+                            if (MiniOverlayService.canDrawOverlays(ctx)) {
+                                MiniOverlayService.start(ctx, url)
+                                ctx.toast("Мини-плеер поверх всех приложений")
+                            } else {
+                                MiniOverlayService.requestPermission(ctx)
+                                ctx.toast("Разрешите показ поверх других приложений")
+                            }
+                        }) { Text("Мини-плеер поверх всех приложений") }
+                        TextButton(onClick = {
+                            moreOpen = false
+                            // v1.9.52: внутри-приложение мини-плеер. Окно живёт только
+                            // внутри yomikai, но приложение остаётся полностью рабочим.
                             WebStore.miniWebOpen.value = true
                             WebStore.pipMode.value = false
-                            ctx.toast("Вкладка Web вынесена в мини-плеер (листайте вкладки)")
-                        }) { Text("Мини-плеер (плавающее окно)") }
+                            ctx.toast("Вкладка Web вынесена в мини-плеер (внутри приложения)")
+                        }) { Text("Мини-плеер внутри приложения") }
                         if (!hiddenM.contains("b_urlscan")) {
                             TextButton(onClick = { moreOpen = false; manualScan() }) { Text("Скан текста (OCR)") }
                         }
