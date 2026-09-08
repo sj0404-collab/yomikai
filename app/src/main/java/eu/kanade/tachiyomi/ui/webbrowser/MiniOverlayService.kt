@@ -21,32 +21,30 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
-import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 
 /**
- * Мини-плеер ПОВЕРХ ВСЕХ приложений (v1.9.55).
+ * ЕДИНЫЙ мини-плеер (v1.9.56) — «мини-браузер внутри приложения», видимый
+ * ПОВЕРХ ВСЕХ приложений.
  *
- * В отличие от встроенного MiniWebOverlay (живёт только внутри yomikai), этот
- * сервис поднимает настоящее плавающее окно через [WindowManager] с типом
- * `TYPE_APPLICATION_OVERLAY`, поэтому оно видно над любым приложением и
- * пользователь может смотреть видео, листая что угодно в других приложениях.
+ * Раньше было ДВА независимых плеера — встроенный «мини-плеер внутри
+ * приложения» и этот системный (поверх всех приложений). Они сосуществовали
+ * и показывали по два окна одновременно. Теперь мини-плеер ровно один — этот.
+ * Встроенный дубликат удалён; web-вкладка всегда держит собственный WebView.
+ *
+ * Это полноценный само-браузер: отдельный WebView, свой URL-бар, кнопки
+ * назад/вперёд/обновить, зум, прозрачность панели и перетаскивание за шапку.
  *
  * Требует разрешения «Показ поверх других приложений» (SYSTEM_ALERT_WINDOW):
  * [MiniOverlayService.requestPermission] открывает системные настройки, а
  * [MiniOverlayService.canDrawOverlays] проверяет выдано ли оно.
  *
  * ВАЖНО про видео: WebView рисует <video> через аппаратный оверлей. Поэтому
- * здесь НЕ накладывается прозрачность на сам WebView (иначе видео будет
- * останавливаться). Слайдер прозрачности меняет только фон панели управления,
- * а содержимое страницы остаётся непрозрачным и стабильным.
- *
- * Примечание: это ОТДЕЛЬНЫЙ экземпляр WebView (Android не даёт перенести
- * WebView из окна приложения в окно поверх других приложений). Он открывает
- * текущий адрес веб-вкладки — тот же контент, но независимая сессия.
+ * на сам WebView НЕ накладывается прозрачность (иначе видео останавливается).
+ * Слайдер меняет прозрачность только фона панели управления.
  */
 class MiniOverlayService : Service() {
 
@@ -54,8 +52,8 @@ class MiniOverlayService : Service() {
         private const val CHANNEL_ID = "mini_overlay"
         private const val NOTIF_ID = 0x4D4E
         private const val EXTRA_URL = "url"
-        private const val BASE_W_DP = 220f
-        private const val BASE_H_DP = 340f
+        private const val BASE_W_DP = 230f
+        private const val BASE_H_DP = 360f
 
         /** Разрешено ли рисовать поверх других приложений. */
         fun canDrawOverlays(context: Context): Boolean =
@@ -103,6 +101,9 @@ class MiniOverlayService : Service() {
     private var webView: WebView? = null
     private var params: WindowManager.LayoutParams? = null
     private var currentUrl: String = "https://mangabuff.ru"
+    private var urlView: TextView? = null
+    private var backBtn: Button? = null
+    private var fwdBtn: Button? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -140,7 +141,7 @@ class MiniOverlayService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val b = Notification.Builder(this, CHANNEL_ID)
                 .setContentTitle("Мини-плеер")
-                .setContentText("Веб-вкладка поверх всех приложений")
+                .setContentText("Мини-браузер поверх всех приложений")
                 .setSmallIcon(android.R.drawable.ic_media_play)
                 .setOngoing(true)
             if (contentIntent != null) b.setContentIntent(contentIntent)
@@ -149,7 +150,7 @@ class MiniOverlayService : Service() {
             @Suppress("DEPRECATION")
             val b = Notification.Builder(this)
                 .setContentTitle("Мини-плеер")
-                .setContentText("Веб-вкладка поверх всех приложений")
+                .setContentText("Мини-браузер поверх всех приложений")
                 .setSmallIcon(android.R.drawable.ic_media_play)
                 .setOngoing(true)
             if (contentIntent != null) b.setContentIntent(contentIntent)
@@ -164,45 +165,75 @@ class MiniOverlayService : Service() {
         var scale = 1f
         var chromeAlpha = 0.92f
 
-        // Корневой слой: вертикальный — панель управления сверху, WebView ниже.
         val layout = LinearLayout(this)
         layout.orientation = LinearLayout.VERTICAL
-        layout.setBackgroundColor(0xDD11101F.toInt())
-        layout.setPadding(dp(6f), dp(6f), dp(6f), dp(6f))
+        layout.setBackgroundColor(0xE6121020.toInt())
+        layout.setPadding(dp(5f), dp(5f), dp(5f), dp(5f))
 
-        // Панель управления (шапка). Здесь же — драг, зум и прозрачность.
-        val bar = LinearLayout(this)
-        bar.orientation = LinearLayout.HORIZONTAL
-        bar.gravity = Gravity.CENTER_VERTICAL
-        bar.setBackgroundColor(0x33FFFFFF)
-        bar.setPadding(dp(4f), dp(0f), dp(4f), dp(0f))
+        // ===== РОВ 1: перетаскивание + название страницы + закрыть =====
+        val barTitle = LinearLayout(this)
+        barTitle.orientation = LinearLayout.HORIZONTAL
+        barTitle.gravity = Gravity.CENTER_VERTICAL
+        barTitle.setBackgroundColor(0x33FFFFFF)
+        barTitle.setPadding(dp(6f), dp(2f), dp(4f), dp(2f))
 
-        fun makeButton(text: String, onClick: () -> Unit): Button {
+        fun textButton(symbol: String, onClick: () -> Unit): Button {
             val b = Button(this)
-            b.text = text
+            b.text = symbol
             b.textSize = 12f
+            b.setAllCaps(false)
             b.setPadding(dp(6f), dp(0f), dp(6f), dp(0f))
             b.setOnClickListener { onClick() }
             return b
         }
 
-        val title = TextView(this)
-        title.text = "⦿ Мини-плеер"
-        title.textSize = 12f
-        title.setTextColor(0xFFFFFFFF.toInt())
-        val titleParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        bar.addView(title, titleParams)
+        // Ручка-индикатор перетаскивания.
+        val handle = TextView(this)
+        handle.text = "≡   "
+        handle.textSize = 14f
+        handle.setTextColor(0xFFFFFFFF.toInt())
+        barTitle.addView(handle, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
 
-        val minus = makeButton("−") {
+        // URL / название текущей страницы (обновляется при загрузке).
+        val urlTv = TextView(this)
+        urlTv.setTextColor(0xFFE0E0E0.toInt())
+        urlTv.textSize = 11f
+        urlTv.maxLines = 1
+        urlTv.ellipsize = android.text.TextUtils.TruncateAt.END
+        barTitle.addView(urlTv, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        urlView = urlTv
+
+        val close = textButton("✕") { stopSelf() }
+        barTitle.addView(close)
+
+        layout.addView(barTitle, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(30f)))
+
+        // ===== РОВ 2: назад / вперёд / обновить / зум ± / прозрачность =====
+        val ctl = LinearLayout(this)
+        ctl.orientation = LinearLayout.HORIZONTAL
+        ctl.gravity = Gravity.CENTER_VERTICAL
+        ctl.setBackgroundColor(0x22FFFFFF)
+        ctl.setPadding(dp(2f), dp(0f), dp(2f), dp(0f))
+
+        val back = textButton("‹") { webView?.let { if (it.canGoBack()) it.goBack() } }
+        val fwd = textButton("›") { webView?.let { if (it.canGoForward()) it.goForward() } }
+        val reload = textButton("⟳") { webView?.reload() }
+        backBtn = back
+        fwdBtn = fwd
+        ctl.addView(back)
+        ctl.addView(fwd)
+        ctl.addView(reload)
+
+        val minus = textButton("−") {
             scale = (scale - 0.2f).coerceIn(0.5f, 2.2f)
             resize(dp(BASE_W_DP * scale), dp(BASE_H_DP * scale))
         }
-        bar.addView(minus)
-        val plus = makeButton("+") {
+        val plus = textButton("+") {
             scale = (scale + 0.2f).coerceIn(0.5f, 2.2f)
             resize(dp(BASE_W_DP * scale), dp(BASE_H_DP * scale))
         }
-        bar.addView(plus)
+        ctl.addView(minus)
+        ctl.addView(plus)
 
         val slider = SeekBar(this)
         slider.max = 70 // 0.30..1.00
@@ -210,22 +241,19 @@ class MiniOverlayService : Service() {
         slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
                 chromeAlpha = 0.30f + progress / 100f
-                val a = (0x33 + (0xCC * ((chromeAlpha - 0.30f) / 0.70f)).toInt()).coerceIn(0x33, 0xFF)
-                bar.setBackgroundColor((a shl 24) or 0xFFFFFF)
+                val a = (0x22 + (0xDD * ((chromeAlpha - 0.30f) / 0.70f)).toInt()).coerceIn(0x22, 0xFF)
+                ctl.setBackgroundColor((a shl 24) or 0xFFFFFF)
             }
             override fun onStartTrackingTouch(sb: SeekBar?) {}
             override fun onStopTrackingTouch(sb: SeekBar?) {}
         })
-        val sliderParams = LinearLayout.LayoutParams(dp(70f), LinearLayout.LayoutParams.WRAP_CONTENT)
+        val sliderParams = LinearLayout.LayoutParams(dp(64f), LinearLayout.LayoutParams.WRAP_CONTENT)
         sliderParams.leftMargin = dp(4f)
-        bar.addView(slider, sliderParams)
+        ctl.addView(slider, sliderParams)
 
-        val close = makeButton("✕") { stopSelf() }
-        bar.addView(close)
+        layout.addView(ctl, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(30f)))
 
-        layout.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(34f)))
-
-        // WebView (не прозрачный — иначе видео останавливается).
+        // ===== WebView (непрозрачный — иначе видео останавливается) =====
         val wv = WebView(this)
         wv.setBackgroundColor(0xFF000000.toInt())
         wv.settings.javaScriptEnabled = true
@@ -237,11 +265,26 @@ class MiniOverlayService : Service() {
         wv.settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
         // Музыка/видео стартуют без тапа и играют в фоне.
         wv.settings.mediaPlaybackRequiresUserGesture = false
-        wv.webChromeClient = WebChromeClient()
+        wv.webChromeClient = object : WebChromeClient() {
+            override fun onReceivedTitle(view: WebView, title: String?) {
+                if (title.isNullOrBlank()) return
+                urlTv.text = title
+            }
+        }
         wv.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, url: String?): Boolean {
                 if (url != null) view.loadUrl(url)
                 return true
+            }
+
+            override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                urlTv.text = url ?: ""
+            }
+
+            override fun onPageFinished(view: WebView, url: String?) {
+                urlTv.text = view.title?.takeIf { it.isNotBlank() } ?: url
+                backBtn?.isEnabled = view.canGoBack()
+                fwdBtn?.isEnabled = view.canGoForward()
             }
         }
         wv.loadUrl(currentUrl)
@@ -269,8 +312,8 @@ class MiniOverlayService : Service() {
         p.y = dp(120f)
         params = p
 
-        // Перетаскивание за панель управления.
-        bar.setOnTouchListener(object : View.OnTouchListener {
+        // Перетаскивание за шапку (не за WebView, чтобы листать страницу).
+        barTitle.setOnTouchListener(object : View.OnTouchListener {
             private var initialRawX = 0f
             private var initialRawY = 0f
             private var initialX = 0

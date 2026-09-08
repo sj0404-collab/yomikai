@@ -838,57 +838,29 @@ data object BrowserTab : Tab {
                 update = { fl ->
                     // v1.9.41: вкладка = свой живой WebView: переключение только
                     // переставляет вьюху, страница и скролл НЕ перезапускаются.
-                    // v1.9.52: если открыт плавающий мини-плеер, вьюха сейчас
-                    // живёт в нём — здесь её НЕ забираем (иначе две панели
-                    // дерутся за один WebView). Остаётся тень вкладки + кнопка
-                    // «Развернуть», которая возвращает полноэкранный браузер.
-                    if (WebStore.miniWebOpen.value) {
+                    // v1.9.56: вкладка ВСЕГДА держит свой WebView — отдельный
+                    // мини-браузер внутри приложения. Единственный плавающий
+                    // мини-плеер — системный (MiniOverlayService, поверх всех
+                    // приложений) с СОБСТВЕННЫМ WebView, поэтому конфликтов
+                    // «двух панелей за один WebView» больше нет.
+                    val tabId = activeTabId ?: webTabs.lastOrNull()?.id ?: return@AndroidView
+                    val item = webTabs.firstOrNull { it.id == tabId }
+                    val wv = webViewForTab(fl.context, tabId, item?.url ?: HOME_URL)
+                    sharedWebView = wv
+                    if (wv.parent !== fl) {
+                        (wv.parent as? ViewGroup)?.removeView(wv)
                         fl.removeAllViews()
-                    } else {
-                        val tabId = activeTabId ?: webTabs.lastOrNull()?.id ?: return@AndroidView
-                        val item = webTabs.firstOrNull { it.id == tabId }
-                        val wv = webViewForTab(fl.context, tabId, item?.url ?: HOME_URL)
-                        sharedWebView = wv
-                        if (wv.parent !== fl) {
-                            (wv.parent as? ViewGroup)?.removeView(wv)
-                            fl.removeAllViews()
-                            fl.addView(wv, android.widget.FrameLayout.LayoutParams(-1, -1))
-                            // БЕЗ onPause()/onResume-потерь: музыка продолжает играть
-                            wv.onResume()
-                            canGoBackState.value = wv.canGoBack()
-                            wv.url?.let { urlState.value = it }
-                        }
+                        fl.addView(wv, android.widget.FrameLayout.LayoutParams(-1, -1))
+                        // БЕЗ onPause()/onResume-потерь: музыка продолжает играть
+                        wv.onResume()
+                        canGoBackState.value = wv.canGoBack()
+                        wv.url?.let { urlState.value = it }
                     }
                 },
                 onRelease = { fl ->
                     (fl as? android.widget.FrameLayout)?.removeAllViews()
                 },
             )
-            // v1.9.52: пока вкладка вынесена в плавающий мини-плеер, в полноэкранном
-            // слоте браузера показываем заглушку с кнопкой «Развернуть», которая
-            // возвращает web-вкладку на место.
-            if (WebStore.miniWebOpen.value) {
-                androidx.compose.foundation.layout.Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        androidx.compose.material3.Text(
-                            "Вкладка Web сейчас в мини-плеере",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        androidx.compose.material3.Button(onClick = {
-                            WebStore.miniWebOpen.value = false
-                            WebStore.pipMode.value = false
-                        }) {
-                            androidx.compose.material3.Text("Развернуть в полный браузер")
-                        }
-                    }
-                }
-            }
             }
         }
 
@@ -1070,14 +1042,6 @@ data object BrowserTab : Tab {
                                 ctx.toast("Разрешите показ поверх других приложений")
                             }
                         }) { Text("Мини-плеер поверх всех приложений") }
-                        TextButton(onClick = {
-                            moreOpen = false
-                            // v1.9.52: внутри-приложение мини-плеер. Окно живёт только
-                            // внутри yomikai, но приложение остаётся полностью рабочим.
-                            WebStore.miniWebOpen.value = true
-                            WebStore.pipMode.value = false
-                            ctx.toast("Вкладка Web вынесена в мини-плеер (внутри приложения)")
-                        }) { Text("Мини-плеер внутри приложения") }
                         if (!hiddenM.contains("b_urlscan")) {
                             TextButton(onClick = { moreOpen = false; manualScan() }) { Text("Скан текста (OCR)") }
                         }
