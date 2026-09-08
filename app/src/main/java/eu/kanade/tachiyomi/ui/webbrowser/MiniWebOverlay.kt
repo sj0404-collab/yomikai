@@ -1,16 +1,18 @@
 package eu.kanade.tachiyomi.ui.webbrowser
 
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
@@ -44,8 +46,12 @@ import kotlin.math.roundToInt
  * выносится только живая web-вкладка: [BrowserTab.attachActiveWebView]
  * переносит WebView активной вкладки в это окно, а само приложение остаётся
  * полностью рабочим — можно листать вкладки и продолжать пользоваться другими
- * экранами. Окно можно перетаскивать, масштабировать (кнопки ±) и делать
- * полупрозрачным (слайдер). Кнопка ✕ возвращает вкладку в полноэкранный браузер.
+ * экранами.
+ *
+ * Перетаскивать можно ТОЛЬКО за шапку (полосу-заголовок). Сам контент
+ * (web-вкладка) отдан WebView целиком: внутри него работают прокрутка страницы,
+ * тапы и воспроизведение видео. Масштаб (кнопки ±) и прозрачность (слайдер) —
+ * в той же шапке. Кнопка ✕ возвращает вкладку в полноэкранный браузер.
  *
  * Рендерится в [HomeScreen] поверх любого таба.
  */
@@ -73,13 +79,7 @@ fun MiniWebOverlay() {
                 .padding(end = 14.dp, bottom = 88.dp)
                 .width((baseWidth * scale).dp)
                 .height((baseHeight * scale).dp)
-                .graphicsLayer { this.alpha = alpha.coerceIn(0.2f, 1f) }
-                .pointerInput(Unit) {
-                    detectDragGestures { change, drag ->
-                        change.consume()
-                        offset += drag
-                    }
-                },
+                .graphicsLayer { this.alpha = alpha.coerceIn(0.2f, 1f) },
             shape = RoundedCornerShape(14.dp),
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surfaceVariant,
@@ -87,20 +87,47 @@ fun MiniWebOverlay() {
             elevation = CardDefaults.cardElevation(defaultElevation = 10.dp),
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Шапка: масштаб ±, прозрачность (слайдер), закрыть в полный браузер.
+                // <-- Перетаскивание ТОЛЬКО за заголовок (ручку): иначе детектор
+                // жестов перехватывает касания контента и страница не листается,
+                // а тап по видео сбрасывает воспроизведение.
                 Row(
-                    modifier = Modifier.height(34.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(36.dp)
+                        .background(
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
+                        )
+                        .pointerInput(Unit) {
+                            androidx.compose.foundation.gestures.detectDragGestures { change, drag ->
+                                change.consume()
+                                offset += drag
+                            }
+                        },
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
+                    // Ручка-индикатор: наглядная зона для перетаскивания.
+                    Row(
+                        modifier = Modifier.padding(horizontal = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        repeat(3) {
+                            Box(
+                                modifier = Modifier
+                                    .size(3.dp)
+                                    .background(MaterialTheme.colorScheme.onSurfaceVariant, CircleShape),
+                            )
+                        }
+                    }
                     IconButton(
-                        modifier = Modifier.size(28.dp),
+                        modifier = Modifier.size(30.dp),
                         onClick = { scale = (scale - 0.2f).coerceIn(0.5f, 2.5f) },
                     ) {
                         Icon(Icons.Outlined.ZoomOut, contentDescription = "Уменьшить", modifier = Modifier.size(18.dp))
                     }
                     IconButton(
-                        modifier = Modifier.size(28.dp),
+                        modifier = Modifier.size(30.dp),
                         onClick = { scale = (scale + 0.2f).coerceIn(0.5f, 2.5f) },
                     ) {
                         Icon(Icons.Outlined.ZoomIn, contentDescription = "Увеличить", modifier = Modifier.size(18.dp))
@@ -112,7 +139,7 @@ fun MiniWebOverlay() {
                         modifier = Modifier.weight(1f).height(28.dp),
                     )
                     IconButton(
-                        modifier = Modifier.size(28.dp),
+                        modifier = Modifier.size(30.dp),
                         onClick = {
                             WebStore.miniWebOpen.value = false
                             WebStore.pipMode.value = false
@@ -126,7 +153,8 @@ fun MiniWebOverlay() {
                         )
                     }
                 }
-                // Живая web-вкладка.
+                // Живая web-вкладка. Без каких-либо pointerInput поверх: WebView
+                // сам обрабатывает прокрутку, тапы и видео.
                 Box(modifier = Modifier.weight(1f).fillMaxSize()) {
                     MirrorWebViewHost(modifier = Modifier.fillMaxSize())
                 }
