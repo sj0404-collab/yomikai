@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.webbrowser
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -98,7 +99,7 @@ fun MiniWebOverlay() {
                             MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
                         )
                         .pointerInput(Unit) {
-                            androidx.compose.foundation.gestures.detectDragGestures { change, drag ->
+                            detectDragGestures { change, drag ->
                                 change.consume()
                                 offset += drag
                             }
