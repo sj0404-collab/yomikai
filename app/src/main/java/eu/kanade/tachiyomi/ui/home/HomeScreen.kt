@@ -158,6 +158,7 @@ object HomeScreen : Screen() {
             // Provide usable navigator to content screen
             CompositionLocalProvider(LocalNavigator provides navigator) {
                 val tabsToShow = visibleTabs()
+                Box {
                 Scaffold(
                     startBar = {
                         if (isTabletUi()) {
@@ -206,6 +207,10 @@ object HomeScreen : Screen() {
                             }
                         }
                     }
+                }
+                // v1.9.52: плавающий мини-плеер поверх любого таба. Открывается из
+                // веб-вкладки; приложение остаётся рабочим (вкладки листаются).
+                eu.kanade.tachiyomi.ui.webbrowser.MiniWebOverlay()
                 }
             }
 

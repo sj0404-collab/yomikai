@@ -40,6 +40,13 @@ object WebStore {
     val tabs = MutableStateFlow<List<TabItem>>(emptyList())
     // v1.9.40: PiP-режим (мини-плеер): активности прячут всё, кроме веба
     val pipMode = mutableStateOf(false)
+    // v1.9.52: внутри-приложение плавающий мини-плеер. Вопреки системному PiP
+    // (который выносил ВСЁ приложение целиком), здесь выносится только живая
+    // web-вкладка, а само приложение остаётся рабочим: вкладки листаются,
+    // вертикальная навигация видна. Масштаб + прозрачность — ползунками.
+    val miniWebOpen = mutableStateOf(false)
+    val miniWebAlpha = mutableStateOf(0.92f)
+    val miniWebScale = mutableStateOf(1f)
     // v1.9.40: какая вкладка сейчас открыта (раньше писали всегда в последнюю)
     val activeTabId = MutableStateFlow<String?>(null)
 
