@@ -34,7 +34,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -53,6 +52,15 @@ import kotlin.math.roundToInt
  * (web-вкладка) отдан WebView целиком: внутри него работают прокрутка страницы,
  * тапы и воспроизведение видео. Масштаб (кнопки ±) и прозрачность (слайдер) —
  * в той же шапке. Кнопка ✕ возвращает вкладку в полноэкранный браузер.
+ *
+ * ВАЖНО про видео (v1.9.53): содержимое WebView НИКОГДА не оборачивается в
+ * [androidx.compose.ui.graphics.graphicsLayer] с прозрачностью. WebView рисует
+ * видео через аппаратный оверлей; когда окно лежало в graphicsLayer{alpha},
+ * при каждой перерисовке слоя видеоповерх пересоздавался и видео
+ * останавливалось («каждую секунду», «вышел-вернулся — стоп»). Поэтому
+ * прозрачность теперь применяется ТОЛЬКО к фону рамки окна, а сам WebView
+ * остаётся непрозрачным и аппаратно-стабильным. Это единственный способ
+ * совместить живое видео и плавающее окно.
  *
  * Рендерится в [HomeScreen] поверх любого таба.
  */
@@ -79,25 +87,25 @@ fun MiniWebOverlay() {
                 .offset { IntOffset(offset.x.roundToInt(), offset.y.roundToInt()) }
                 .padding(end = 14.dp, bottom = 88.dp)
                 .width((baseWidth * scale).dp)
-                .height((baseHeight * scale).dp)
-                .graphicsLayer { this.alpha = alpha.coerceIn(0.2f, 1f) },
+                .height((baseHeight * scale).dp),
             shape = RoundedCornerShape(14.dp),
+            // Прозрачность — только у ФОНА рамки. Без graphicsLayer над WebView:
+            // иначе видео в WebView будет останавливаться. WebView поверх —
+            // непрозрачный и стабильный.
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = alpha.coerceIn(0.3f, 1f)),
             ),
             elevation = CardDefaults.cardElevation(defaultElevation = 10.dp),
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // <-- Перетаскивание ТОЛЬКО за заголовок (ручку): иначе детектор
-                // жестов перехватывает касания контента и страница не листается,
-                // а тап по видео сбрасывает воспроизведение.
+                // Перетаскивание ТОЛЬКО за шапку: иначе детектор жестов перехватывает
+                // касания контента и страница не листается, а тап по видео сбрасывает
+                // воспроизведение. Шапка — обычный фон, без слоя над контентом.
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(36.dp)
-                        .background(
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f),
-                        )
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
                         .pointerInput(Unit) {
                             detectDragGestures { change, drag ->
                                 change.consume()
@@ -154,8 +162,8 @@ fun MiniWebOverlay() {
                         )
                     }
                 }
-                // Живая web-вкладка. Без каких-либо pointerInput поверх: WebView
-                // сам обрабатывает прокрутку, тапы и видео.
+                // Живая web-вкладка. Без каких-либо graphicsLayer/pointerInput поверх:
+                // WebView сам обрабатывает прокрутку, тапы и видео.
                 Box(modifier = Modifier.weight(1f).fillMaxSize()) {
                     MirrorWebViewHost(modifier = Modifier.fillMaxSize())
                 }
