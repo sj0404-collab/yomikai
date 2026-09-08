@@ -1,0 +1,209 @@
+name: Release Universal
+
+# ОТДЕЛЬНЫЙ релиз «под любой андроид»: собирает ОДИН универсальный APK
+# (armeabi-v7a + arm64-v8a + x86 + x86_64 в одном файле), поэтому встаёт на
+# любой современный телефон/планшет — и на x86_64, которого нет в arm64-сборке.
+#
+# Триггер: тег вида `universal-v<semver>` (напр. `universal-v1.9.53`).
+# Такой тег НЕ попадает под `v*` в release.yml, поэтому не конфликтует с
+# обычной arm64-сборкой — обе живут отдельными релизами.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Версия (semver), напр. 1.9.53"
+        required: true
+        default: "1.9.53"
+  push:
+    tags:
+      - 'universal-v*'
+
+env:
+  MIHON_GITHUB_RELEASE: true
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  get_version:
+    runs-on: 'ubuntu-24.04'
+    outputs:
+      tag: ${{ steps.out.outputs.tag }}
+      release_tag: ${{ steps.out.outputs.release_tag }}
+      version_name: ${{ steps.out.outputs.version_name }}
+    steps:
+      - name: Derive version from tag or input
+        id: out
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            raw="${GITHUB_REF/refs\/tags\//}"            # universal-v1.9.53
+            tag="$raw"
+            release_tag="${raw#universal-}"              # v1.9.53
+          else
+            version="${{ github.event.inputs.version }}"
+            tag="universal-v${version}"
+            release_tag="v${version}"
+          fi
+          version_name="${release_tag#v}"                # 1.9.53
+          [ -z "$version_name" ] && { echo "::error::не удалось вычислить версию из $GITHUB_REF"; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "version_name=$version_name" >> "$GITHUB_OUTPUT"
+
+  build:
+    runs-on: 'ubuntu-24.04'
+    timeout-minutes: 60
+    needs: [get_version]
+    outputs:
+      version_name: ${{ steps.version.outputs.version_name }}
+      version_code: ${{ steps.version.outputs.version_code }}
+      sha256: ${{ steps.digest.outputs.sha256 }}
+      size: ${{ steps.digest.outputs.size }}
+      abis: ${{ steps.digest.outputs.abis }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5.5.0
+        with:
+          java-version-file: .github/.java-version
+          distribution: temurin
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+        with:
+          cache-key-prefix: yomikai-universal-v1-
+
+      - name: Build universal (all-ABI) release APK
+        run: ./gradlew assembleRelease -Penable-updater --stacktrace
+        env:
+          RELEASE_TAG: ${{ needs.get_version.outputs.release_tag }}
+          SPLIT_ALL_ABI: "true"
+          storeFileBase64: ${{ secrets.SIGNING_KEY }}
+          storePassword: ${{ secrets.KEY_STORE_PASSWORD }}
+          keyAlias: ${{ secrets.ALIAS }}
+          keyPassword: ${{ secrets.KEY_PASSWORD }}
+
+      - name: Collect and rename universal APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          outdir="app/build/outputs/apk/release"
+          ls -l "$outdir"/*.apk 2>/dev/null || true
+          # Универсальный файл создаётся при isUniversalApk=true.
+          universal="$outdir/app-universal-release.apk"
+          if [ ! -f "$universal" ]; then
+            echo "::error::не найден универсальный APK $universal"
+            exit 1
+          fi
+          mv "$universal" "yomikai-${{ needs.get_version.outputs.tag }}.apk"
+          echo "Доставлен универсальный APK: yomikai-${{ needs.get_version.outputs.tag }}.apk"
+
+      - name: Verify version and ABIs baked into the APK
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="yomikai-${{ needs.get_version.outputs.tag }}.apk"
+          expected="${{ needs.get_version.outputs.version_name }}"
+          sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/android-sdk}}"
+          aapt=$(find "$sdk/build-tools" -maxdepth 2 -type f -name 'aapt2' 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$aapt" ]; then
+            aapt=$(find "$sdk/build-tools" -maxdepth 2 -type f -name 'aapt' 2>/dev/null | sort -V | tail -1 || true)
+          fi
+          [ -n "$aapt" ] || { echo "::error::aapt2 не найден в $sdk/build-tools"; exit 1; }
+          info=$("$aapt" dump badging "$apk")
+          version_name=$(printf '%s' "$info" | sed -n "s/^package:.*versionName='\([^']*\)'.*/\1/p")
+          version_code=$(printf '%s' "$info" | sed -n "s/^package:.*versionCode='\([^']*\)'.*/\1/p")
+          echo "APK versionName=$version_name versionCode=$version_code"
+          if [ "$version_name" != "$expected" ]; then
+            echo "::error::versionName=$version_name, а ожидалось $expected"
+            exit 1
+          fi
+          for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+            n=$(printf '%s' "$info" | grep -c "$abi" || true)
+            echo "$abi: $n"
+            [ "${n:-0}" -ge 1 ] || { echo "::error::в APK нет нативной библиотеки $abi"; exit 1; }
+          done
+          echo "version_name=$version_name" >> "$GITHUB_OUTPUT"
+          echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
+
+      - name: Compute APK digest
+        id: digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="yomikai-${{ needs.get_version.outputs.tag }}.apk"
+          ls -la "$apk"
+          sha256=$(sha256sum "$apk" | cut -d' ' -f1)
+          size=$(stat -c%s "$apk")
+          abis="armeabi-v7a arm64-v8a x86 x86_64"
+          echo "sha256=$sha256" >> "$GITHUB_OUTPUT"
+          echo "size=$size" >> "$GITHUB_OUTPUT"
+          echo "abis=$abis" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: yomikai-universal
+          path: yomikai-${{ needs.get_version.outputs.tag }}.apk
+
+  release:
+    name: Create Universal GitHub Release
+    runs-on: windows-2025
+    needs: [get_version, build]
+    permissions:
+      contents: write
+    steps:
+      - name: Download APK artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: yomikai-universal
+          path: downloaded
+
+      - name: Resolve payload
+        id: payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=$(find downloaded -type f -name '*.apk' | head -1)
+          [ -n "$apk" ] || { echo "::error::APK не найден"; exit 1; }
+          echo "apk=$apk" >> "$GITHUB_OUTPUT"
+
+      - name: Create Universal GitHub Release
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
+        with:
+          tag_name: ${{ needs.get_version.outputs.tag }}
+          name: "Yomikai ${{ needs.get_version.outputs.version_name }} — Universal (все АПИ)"
+          body: |
+            ### Один APK для любого андроида: `yomikai-${{ needs.get_version.outputs.tag }}.apk`
+
+            | Поле | Значение |
+            |---|---|
+            | Коммит | `${{ github.sha }}` |
+            | Сборка | [run ${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) |
+            | versionName / versionCode | `${{ needs.build.outputs.version_name }}` / `${{ needs.build.outputs.version_code }}` |
+            | ABI | armeabi-v7a, arm64-v8a, x86, x86_64 |
+            | SHA-256 | `${{ needs.build.outputs.sha256 }}` |
+            | Размер | ${{ needs.build.outputs.size }} bytes |
+
+            #### Что это
+
+            Универсальный APK со **всеми нативными библиотеками** в одном файле
+            (включая `x86_64` и `armeabi-v7a`), поэтому он устанавливается на
+            любой современный Android — и на обычные arm64-телефоны, и на
+            планшеты/эмуляторы x86_64, которых arm64-сборка не покрывает.
+
+            Обычный релиз (`v*`) — отдельный, под `arm64-v8a`; этот —
+            дополнительный универсальный. Обе версии подписаны одним ключом и
+            ставятся поверх друг друга, версия внутри APK одинаковая.
+          files: ${{ steps.payload.outputs.apk }}
+          draft: false
+          prerelease: false
+          token: ${{ secrets.GITHUB_TOKEN }}
