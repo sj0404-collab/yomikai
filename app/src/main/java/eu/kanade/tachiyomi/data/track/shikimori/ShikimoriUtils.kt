@@ -3,6 +3,8 @@ package eu.kanade.tachiyomi.data.track.shikimori
 import eu.kanade.tachiyomi.data.database.models.Track
 import tachiyomi.core.common.util.system.logcat
 
+private object ShikimoriLog
+
 fun Track.toShikimoriStatus() = when (status) {
     Shikimori.READING -> "watching"
     Shikimori.COMPLETED -> "completed"
@@ -24,7 +26,7 @@ fun toTrackStatus(status: String) = when (status) {
     "planned" -> Shikimori.PLAN_TO_READ
     "rewatching" -> Shikimori.REREADING
     else -> {
-        logcat { "Shikimori: Unknown track status: $status, defaulting to READING" }
+        ShikimoriLog.logcat { "Shikimori: Unknown track status: $status, defaulting to READING" }
         Shikimori.READING
     }
 }

@@ -4,6 +4,8 @@ import eu.kanade.tachiyomi.data.database.models.Track
 import tachiyomi.core.common.util.system.logcat
 import java.util.UUID
 
+private object HikkaLog
+
 fun Track.toApiStatus() = when (status) {
     Hikka.READING -> "reading"
     Hikka.COMPLETED -> "completed"
@@ -24,7 +26,7 @@ fun toTrackStatus(status: String) = when (status) {
     "dropped" -> Hikka.DROPPED
     "planned" -> Hikka.PLAN_TO_READ
     else -> {
-        logcat { "Hikka: Unknown track status: $status, defaulting to READING" }
+        HikkaLog.logcat { "Hikka: Unknown track status: $status, defaulting to READING" }
         Hikka.READING
     }
 }

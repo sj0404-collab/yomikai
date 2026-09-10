@@ -151,7 +151,7 @@ data class RanobeReaderScreen(
             // Применяем голос
             val voices = engine.voices
             if (voices != null && selectedVoiceIndex < voices.size) {
-                engine.voice = voices[selectedVoiceIndex]
+                engine.voice = voices.elementAt(selectedVoiceIndex)
             }
             engine.setSpeechRate(speechRate)
             engine.setPitch(pitch)
@@ -312,7 +312,7 @@ data class RanobeReaderScreen(
                                             val engine = tts.value
                                             val voices = engine?.voices
                                             if (voices != null && idx < voices.size) {
-                                                engine.voice = voices[idx]
+                                                engine.voice = voices.elementAt(idx)
                                             }
                                         }
                                         .padding(horizontal = 6.dp, vertical = 4.dp),
