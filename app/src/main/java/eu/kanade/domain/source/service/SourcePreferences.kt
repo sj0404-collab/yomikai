@@ -86,4 +86,16 @@ class SourcePreferences(
         "migration_hide_without_updates",
         false,
     )
+
+    /**
+     * Трекинг состояния источников: sourceId → JSON с successCount, failCount, lastCheck.
+     * Позволяет показывать индикатор здоровья и авто-отключать сломанные.
+     */
+    val sourceHealth: Preference<String> = preferenceStore.getString("source_health_data", "{}")
+
+    /**
+     * Зеркала для источников: sourceId → List<домен>.
+     * Используется для автоматического переключения при недоступности основного домена.
+     */
+    val sourceMirrorDomains: Preference<String> = preferenceStore.getString("source_mirror_domains", "{}")
 }

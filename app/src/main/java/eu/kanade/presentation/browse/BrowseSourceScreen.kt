@@ -27,6 +27,7 @@ import eu.kanade.presentation.browse.components.BrowseSourceList
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.util.formattedMessage
 import eu.kanade.tachiyomi.source.Source
+import eu.kanade.tachiyomi.util.source.SourceHealthManager
 import kotlinx.coroutines.flow.StateFlow
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.domain.library.model.LibraryDisplayMode
@@ -83,6 +84,17 @@ fun BrowseSourceContent(
         with(context) { state.error.formattedMessage }
     }
 
+    // Трекер здоровья: записываем ошибку и показываем статус
+    val sourcePreferences = remember { Injekt.get<eu.kanade.domain.source.service.SourcePreferences>() }
+    LaunchedEffect(errorState) {
+        if (errorState is LoadState.Error && source != null) {
+            SourceHealthManager.recordFailure(sourcePreferences, source.id)
+        }
+    }
+    val sourceHealth = remember(source) {
+        source?.let { SourceHealthManager.getHealth(sourcePreferences, it.id) }
+    }
+
     LaunchedEffect(errorState) {
         if (mangaList.itemCount > 0 && errorState != null && errorState is LoadState.Error) {
             val result = snackbarHostState.showSnackbar(
@@ -103,10 +115,13 @@ fun BrowseSourceContent(
     }
 
     if (mangaList.itemCount == 0) {
+        val healthWarning = if (sourceHealth != null && !sourceHealth.isHealthy) {
+            "\n\nИсточник имеет проблемы с доступностью (${sourceHealth.failCount} ошибок из ${sourceHealth.successCount + sourceHealth.failCount}). Попробуйте позже или проверьте зеркала."
+        } else ""
         EmptyScreen(
             modifier = Modifier.padding(contentPadding),
             message = when (errorState) {
-                is LoadState.Error -> getErrorMessage(errorState)
+                is LoadState.Error -> getErrorMessage(errorState) + healthWarning
                 else -> stringResource(MR.strings.no_results_found)
             },
             actions = if (source is LocalSource) {

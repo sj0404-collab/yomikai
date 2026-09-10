@@ -95,7 +95,7 @@ class MiniOverlayService : Service() {
         /** Запустить плавающий мини-плеер поверх всех приложений. */
         fun start(context: Context, url: String) {
             val intent = Intent(context, MiniOverlayService::class.java)
-                .putExtra(EXTRA_URL, url.takeIf { it.isNotBlank() } ?: "https://mangabuff.ru")
+                .putExtra(EXTRA_URL, url.takeIf { it.isNotBlank() } ?: "https://mangabuff.ru/")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
@@ -114,7 +114,7 @@ class MiniOverlayService : Service() {
     private var root: FrameLayout? = null
     private var webView: WebView? = null
     private var params: WindowManager.LayoutParams? = null
-    private var currentUrl: String = "https://mangabuff.ru"
+    private var currentUrl: String = "https://mangabuff.ru/"
     private var urlView: TextView? = null
     private var backBtn: Button? = null
     private var fwdBtn: Button? = null
