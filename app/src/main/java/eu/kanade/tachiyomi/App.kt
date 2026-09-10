@@ -153,6 +153,16 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
             .apply { name = "ocr-pending-init"; priority = Thread.MIN_PRIORITY }
             .start()
 
+        // Пользовательский словарь OCR живёт в файле приложения: сюда
+        // добавляются слова с карточки результата («＋ Словарь») и из настроек.
+        // Обращается сразу после старта, чтобы фоновое распознавание и читалка
+        // видели одни и те же слова.
+        android.util.Log.d("OcrVocabulary", "configure(file=" +
+            java.io.File(filesDir, "ocr_vocab.txt").absolutePath + ")")
+        mihon.data.ocr.OcrVocabulary.configure(
+            java.io.File(filesDir, "ocr_vocab.txt").absolutePath,
+        )
+
         // Первый запуск без онбординга: сразу создаём основную папку
         // "Yomikai" на телефоне (как у CDisplayEx) и помечаем онбординг
         // пройденным — приложение открывается прямо в библиотеке.

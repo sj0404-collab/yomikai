@@ -89,6 +89,14 @@ class OcrPreferences(
     fun voiceEngine() = preferenceStore.getString("pref_voice_engine", "system_tts")
     fun voiceName() = preferenceStore.getString("pref_voice_name", "ru-ru-x-dfa-network")
     fun voiceSlots() = preferenceStore.getString("voice_slots", "[]")
+
+    // Словари голосовых ролей и интонаций: персонаж → голос/питч/темп и
+    // узор текста → пауза/питч/темп. Хранятся JSON-массивами, читаются в
+    // [eu.kanade.tachiyomi.data.tts.VoiceRoleDictionary]
+    // и [eu.kanade.tachiyomi.data.tts.VoiceIntonationDictionary].
+    fun voiceRoles() = preferenceStore.getString("voice_role_dict", "[]")
+    fun voiceIntonations() = preferenceStore.getString("voice_intonation_dict", "[]")
+
     fun speechRate() = preferenceStore.getFloat("pref_speech_rate", 1.0f)
     fun speechPitch() = preferenceStore.getFloat("pref_speech_pitch", 1.0f)
     fun ttsWebLanguage() = preferenceStore.getString("pref_tts_web_lang", "ru")

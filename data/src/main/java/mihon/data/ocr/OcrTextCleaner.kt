@@ -23,6 +23,9 @@ object OcrTextCleanerStats {
     var wordDictHits: Int = 0
 
     @Volatile
+    var userDictHits: Int = 0
+
+    @Volatile
     var punctFixes: Int = 0
 
     @Volatile
@@ -30,6 +33,7 @@ object OcrTextCleanerStats {
 
     fun reset() {
         wordDictHits = 0
+        userDictHits = 0
         punctFixes = 0
         splitFixes = 0
     }
@@ -251,8 +255,11 @@ object OcrTextCleaner {
     }
 
     /**
-     * DP-разбиение сплошного прогона капсом на слова из [RuWordList]:
-     * минимум сегментов при полном покрытии, как в [splitKnownWords].
+     * DP-разбиение сплошного прогона капсом на слова из [RuWordList] и
+     * пользовательского словаря [OcrVocabulary]: минимум сегментов при полном
+     * покрытии, как в [splitKnownWords]. Словарик пользователя подключается
+     * через [knownWord], поэтому слипшиеся имена персонажей и редкие термины
+     * тоже делятся на слова.
      */
     private fun splitGluedRun(run: String): List<String>? {
         if (run.length < 6) return null
@@ -263,13 +270,53 @@ object OcrTextCleaner {
             val maxEnd = minOf(run.length, start + 24)
             for (end in start + 2..maxEnd) {
                 val word = run.substring(start, end)
-                if (word !in RuWordList.upper) continue
+                if (!knownWord(word)) continue
                 val candidate = prefix + word
                 val current = best[end]
                 if (current == null || candidate.size < current.size) best[end] = candidate
             }
         }
         return best[run.length]?.takeIf { it.size > 1 }
+    }
+
+    /**
+     * Правда, если слово есть во встроенном частотном словаре [RuWordList]
+     * ИЛИ в пользовательском словаре OCR ([OcrVocabulary]). Словарь только
+     * РАЗРЕШАЕТ вставить границу — сам текст при этом никогда не заменяется.
+     * Словарное слово пользователя дополнительно считается в статистику
+     * [OcrTextCleanerStats.userDictHits], чтобы индикатор сканирования не
+     * «врал», что словарь отработал.
+     */
+    fun knownWord(word: String): Boolean {
+        if (word.isEmpty()) return false
+        val up = word.uppercase()
+        if (up in RuWordList.upper) return true
+        val user = OcrVocabulary.isUserWord(up)
+        if (user) OcrTextCleanerStats.userDictHits++
+        return user
+    }
+
+    /**
+     * Доля букв кириллического текста, попавших в известные словарям слова
+     * (встроенный [RuWordList] + пользовательский [OcrVocabulary]).
+     *
+     * Нужна [CyrillicOcrEngine] для ранжирования кандидатов v3/v5: из двух
+     * гипотез с близкой уверенностью предпочтительнее та, чьи слова реально
+     * существуют у пользователя. Чистая латынь и звукоподражания не считаются.
+     */
+    fun dictionaryCoverage(text: String): Float {
+        if (text.isBlank()) return 0f
+        var letters = 0
+        var covered = 0
+        for (token in text.split(Regex("[^\\p{L}\\p{N}]+"))) {
+            val lexical = token.filter(Char::isLetter)
+            val cyrillicCount = lexical.count { it.code in CYRILLIC_RANGE }
+            if (cyrillicCount == 0) continue
+            letters += lexical.length
+            if (knownWord(lexical)) covered += lexical.length
+        }
+        if (letters == 0) return 0f
+        return covered.toFloat() / letters
     }
 
     private fun normalizeCaptionWord(word: String): String = CAPTION_NORMALIZATIONS[word] ?: word

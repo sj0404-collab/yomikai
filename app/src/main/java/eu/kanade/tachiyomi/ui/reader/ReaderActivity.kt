@@ -1064,6 +1064,15 @@ class ReaderActivity : BaseActivity() {
                                 )
                             },
                             onChooseVoice = { showTtsDialog = true },
+                            onAddToDictionary = {
+                                val added = mihon.data.ocr.OcrVocabulary.addFromText(
+                                    dialog.queryText,
+                                )
+                                toast(
+                                    if (added > 0) "Словарь OCR: добавлено $added"
+                                    else "Словарь OCR: ничего нового",
+                                )
+                            },
                             )
                             if (searchState.dictionaries.isNotEmpty()) OcrVoiceFloatingControls(
                                 enabled = dialog.queryText.isNotBlank(),

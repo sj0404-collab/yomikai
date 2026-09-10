@@ -209,6 +209,13 @@ object TtsSpeaker {
 
     /** v1.9.40: spec голоса роли («пакет::имя») из слотов настроек. */
     fun slotVoiceSpec(role: String): String? = runCatching {
+        // Словарь голосовых ролей имеет приоритет над legacy-слотами:
+        // роль из {имя:Аки} или кнопки ♀/♂ может быть описана там точнее.
+        val dictVoice = VoiceRoleDictionary.load(prefs())
+            .firstOrNull { it.matchesName(role) }
+            ?.voice
+            ?.takeIf { it.isNotBlank() }
+        if (dictVoice != null) return@runCatching dictVoice
         val arr = org.json.JSONArray(prefs().voiceSlots().get())
         (0 until arr.length()).map { i -> arr.getJSONObject(i) }
             .firstOrNull { it.optString("role") == role }
@@ -302,13 +309,16 @@ object TtsSpeaker {
         }.getOrNull()
         val effectiveGender = manual ?: gender ?: SpeechMarkup.genderOf(text)
         val slot = if (speakerSlot != 0) speakerSlot else SpeechMarkup.speakerSlot(text)
+        // Имя говорящего ({имя:Аки}) нужно словарю голосовых ролей, чтобы
+        // подобрать голос/питч/темп конкретного персонажа.
+        val speakerName = SpeechMarkup.speakerName(text)
         when (prefs().voiceEngine().get()) {
             ENGINE_GOOGLE_WEB -> speakGoogleWeb(context, spoken)
             ENGINE_ELEVENLABS -> speakElevenLabs(context, spoken)
             // legacy-значения pref_voice_engine со сборок с ONNX:
             // нейроголоса теперь живут на сервере, маршрутизируем туда же.
             ENGINE_REMOTE, "onnx_tts", "onnx" -> speakRemote(context, spoken, effectiveGender)
-            else -> speakSystem(context, spoken, effectiveGender, slot)
+            else -> speakSystem(context, spoken, effectiveGender, slot, speakerName)
         }
     }
 
@@ -336,6 +346,7 @@ object TtsSpeaker {
         text: String,
         gender: String? = null,
         speakerSlot: Int = 0,
+        speakerName: String? = null,
     ) {
         val slotVoiceRaw = runCatching {
             val arr = org.json.JSONArray(prefs().voiceSlots().get())
@@ -344,15 +355,26 @@ object TtsSpeaker {
                 ?.let { i -> arr.getJSONObject(i).optString("voice") }.orEmpty()
         }.getOrDefault("")
         val savedRawVoice = runCatching { prefs().voiceName().get() }.getOrDefault("")
+        // Словарь голосовых ролей подбирает роль по имени говорящего
+        // ({имя:Аки}), затем по полу. Голос/питч/темп роли перекрывают
+        // слоты и пресеты пола, которые работают только по полу.
+        val role = VoiceRoleDictionary.resolve(prefs(), speakerName, gender)
+        // ВАЖНО: роль может как задать точный голос, так и только
+        // модификаторы; распознаём оба случая отдельно.
+        val rolePitch = role?.pitch?.takeIf { it > 0f && it != 1f } ?: 1f
+        val roleRate = role?.rate?.takeIf { it > 0f && it != 1f } ?: 1f
+        val roleVoice = role?.voice?.takeIf { it.isNotBlank() }
         // v1.9.41: для обычной озвучки (без пола) ГЛАВНЫЙ голос из настроек важнее
         // слота 🎙 — раньше слот перебивал выбор, и голос «не активировался».
-        val primaryRaw = if (gender == null) {
-            savedRawVoice.ifBlank { slotVoiceRaw }
-        } else {
-            slotVoiceRaw.ifBlank { savedRawVoice }
-        }
+        val primaryRaw = roleVoice
+            ?: if (gender == null) {
+                savedRawVoice.ifBlank { slotVoiceRaw }
+            } else {
+                slotVoiceRaw.ifBlank { savedRawVoice }
+            }
         val forcedPkg = (
-            primaryRaw.takeIf { it.isNotBlank() && it.contains("::") }?.substringBefore("::")
+            roleVoice?.takeIf { it.isNotBlank() && it.contains("::") }?.substringBefore("::")
+                ?: primaryRaw.takeIf { it.isNotBlank() && it.contains("::") }?.substringBefore("::")
                 ?: slotVoiceRaw.takeIf { it.isNotBlank() && it.contains("::") }?.substringBefore("::")
                 ?: savedRawVoice.takeIf { it.contains("::") }?.substringBefore("::")
             )?.ifBlank { null }
@@ -485,10 +507,11 @@ object TtsSpeaker {
                 override fun onError(utteranceId: String?) = setSpeaking(false)
                 override fun onError(utteranceId: String?, errorCode: Int) = setSpeaking(false)
             })
-            val baseRate = (p.speechRate().get() * presetAge.rate).coerceIn(0.5f, 2f)
+            val baseRate = (p.speechRate().get() * presetAge.rate * roleRate).coerceIn(0.5f, 2f)
             // Тон по полу: если для пола не нашлось ОТДЕЛЬНОГО голоса,
             // различаем персонажей питчем — мужчины ниже, женщины выше.
-            // С отдельными голосами модификатор не нужен (=1.0).
+            // С отдельными голосами модификатор не нужен (=1.0). Роль из
+            // словаря добавляет свой pitch/rate поверх всех пресетов.
             val voiceMatchesGender = v != null && when (gender) {
                 "male" -> VoiceHelper.classify(v) == VoiceKind.MALE
                 "female" -> VoiceHelper.classify(v) == VoiceKind.FEMALE
@@ -501,12 +524,21 @@ object TtsSpeaker {
                 else -> 1.0f
             }
             val basePitch = (p.speechPitch().get() * genderPitchMod *
-                presetGender.pitch * presetAge.pitch).coerceIn(0.5f, 2f)
+                presetGender.pitch * presetAge.pitch * rolePitch).coerceIn(0.5f, 2f)
             var queued = false
             sentences.forEachIndexed { i, sentence ->
                 val trimmed = sentence.trim()
                 if (trimmed.isEmpty()) return@forEachIndexed
+                // Словарь интонаций: узор фразы → пауза/питч/темп именно этого
+                // предложения. Перекрывает знаковую пунктуацию.
+                val intonation = VoiceIntonationDictionary.matchRule(p, trimmed)
+                val intonationPitch = intonation?.pitch?.takeIf { it > 0f && it != 1f } ?: 1f
+                val intonationRate = intonation?.rate?.takeIf { it > 0f && it != 1f } ?: 1f
                 when {
+                    intonation != null -> {
+                        engine.setPitch((basePitch * intonationPitch).coerceIn(0.5f, 2f))
+                        engine.setSpeechRate((baseRate * intonationRate).coerceIn(0.5f, 2f))
+                    }
                     trimmed.endsWith("?") || trimmed.endsWith("?!") || trimmed.endsWith("⁇") -> {
                         engine.setPitch((basePitch * 1.12f).coerceAtMost(2f))
                         engine.setSpeechRate(baseRate * 0.95f)
@@ -528,7 +560,10 @@ object TtsSpeaker {
                     TextToSpeech.ERROR
                 }
                 if (r == TextToSpeech.SUCCESS) queued = true
-                val pauseMs = when {
+                val pauseMs = intonation?.let { r ->
+                    // Словарь интонаций задал свою длину паузы после фразы.
+                    if (r.pauseMs > 0) r.pauseMs.toLong() else null
+                } ?: when {
                     trimmed.endsWith("!") || trimmed.endsWith("?") ||
                         trimmed.endsWith("‼") || trimmed.endsWith("⁇") -> 420L
                     trimmed.endsWith(",") || trimmed.endsWith(";") -> 160L

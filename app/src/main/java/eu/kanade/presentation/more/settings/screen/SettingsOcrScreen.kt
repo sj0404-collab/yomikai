@@ -56,6 +56,12 @@ object SettingsOcrScreen : SearchableSettings {
             OcrHistoryDialog(onDismiss = { showHistory = false })
         }
 
+        // Редактор пользовательского словаря OCR.
+        var showVocabulary by remember { mutableStateOf(false) }
+        if (showVocabulary) {
+            OcrVocabularyDialog(onDismiss = { showVocabulary = false })
+        }
+
         // Доступность плагинов пересчитывается при смене состояния сети:
         // список должен честно показывать, что можно выбрать прямо сейчас.
         val online = rememberNetworkState(context)
@@ -78,8 +84,28 @@ object SettingsOcrScreen : SearchableSettings {
             getContentTypeGroup(prefs = prefs, contentType = contentType),
             getRegionGroup(prefs = prefs, presetRegion = presetRegion),
             getTuningGroup(prefs = prefs),
+            getVocabularyGroup(onOpenVocabulary = { showVocabulary = true }),
             getEnginesGroup(prefs = prefs, navigator = navigator, availableIds = availableIds),
             getHistoryGroup(onOpenHistory = { showHistory = true }),
+        )
+    }
+
+    @Composable
+    private fun getVocabularyGroup(onOpenVocabulary: () -> Unit): Preference.PreferenceGroup {
+        val size = remember { mihon.data.ocr.OcrVocabulary.size() }
+        return Preference.PreferenceGroup(
+            title = "Словарь OCR",
+            preferenceItems = listOf(
+                Preference.PreferenceItem.InfoPreference(
+                    title = "Пользовательский словарь: $size слов",
+                ),
+                Preference.PreferenceItem.TextPreference(
+                    title = "Управление словарём",
+                    subtitle = "Добавить, удалить или очистить слова — они сразу влияют на\n" +
+                        "разбиение и выбор кандидатов",
+                    onClick = onOpenVocabulary,
+                ),
+            ),
         )
     }
 

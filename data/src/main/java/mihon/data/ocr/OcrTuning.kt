@@ -123,6 +123,14 @@ data class OcrTuning(
     /** Бонус цельного кропа, если его слитный вывод разделяется на известные слова. */
     val wholeLineBoundaryBonus: Float = 0.08f,
 
+    /**
+     * Бонус ранжирования за словарное покрытие (встроенный [RuWordList] +
+     * пользовательский [OcrVocabulary]). Из двух кандидатов v3/v5 с равной
+     * уверенностью побеждает тот, чьи слова реально есть в словарях. Словарь
+     * не подменяет текст — он лишь «голосует» за читаемую гипотезу.
+     */
+    val dictionaryCoverageBonus: Float = 0.08f,
+
     /** Сколько лучших отклонённых строк поднимает второй rescue-эшелон. */
     val rescueMaxLines: Int = 6,
 
@@ -142,6 +150,7 @@ data class OcrTuning(
         require(shortTextMinConfidence in 0f..1f) { "shortTextMinConfidence вне диапазона 0..1" }
         require(minCoverage in 0f..0.9f) { "minCoverage вне диапазона 0..0.9" }
         require(rescueMaxLines in 0..64) { "rescueMaxLines вне диапазона 0..64" }
+        require(dictionaryCoverageBonus in 0f..0.5f) { "dictionaryCoverageBonus вне диапазона 0..0.5" }
         require(readingOrder in READING_ORDERS) { "неизвестный readingOrder: $readingOrder" }
     }
 

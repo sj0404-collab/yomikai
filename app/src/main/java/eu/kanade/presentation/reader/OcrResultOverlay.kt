@@ -43,6 +43,7 @@ fun OcrResultOverlay(
     onSpeak: () -> Unit = {},
     onChooseVoice: () -> Unit = {},
     onSpeakRole: (String) -> Unit = {},
+    onAddToDictionary: () -> Unit = {},
 ) {
     BackHandler(onBack = onDismissRequest)
     // Словарей нет — не дёргаем поиск и не показываем «No Dictionaries
@@ -73,6 +74,7 @@ fun OcrResultOverlay(
                     onSpeak = onSpeak,
                     onChooseVoice = onChooseVoice,
                     onSpeakRole = onSpeakRole,
+                    onAddToDictionary = onAddToDictionary,
                 )
             }
             presentation == OcrResultPresentation.POPUP && anchorRect != null -> {
@@ -115,6 +117,7 @@ private fun OcrPlainTextCard(
     onSpeak: () -> Unit = {},
     onChooseVoice: () -> Unit = {},
     onSpeakRole: (String) -> Unit = {},
+    onAddToDictionary: () -> Unit = {},
 ) {
     Box(
         modifier = Modifier.fillMaxSize(),
@@ -170,6 +173,9 @@ private fun OcrPlainTextCard(
                     ) {
                         androidx.compose.material3.TextButton(onClick = onCopyText) {
                             androidx.compose.material3.Text("Копировать")
+                        }
+                        androidx.compose.material3.TextButton(onClick = onAddToDictionary) {
+                            androidx.compose.material3.Text("＋ Словарь")
                         }
                         androidx.compose.material3.TextButton(onClick = onDismissRequest) {
                             androidx.compose.material3.Text("Закрыть")

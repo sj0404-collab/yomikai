@@ -911,7 +911,8 @@ internal class CyrillicOcrEngine(
         } else {
             0f
         }
-        return candidate.confidence * fitness + lengthBonus + verifierBonus
+        val dictionaryBonus = tuning().dictionaryCoverageBonus * OcrTextCleaner.dictionaryCoverage(candidate.text)
+        return candidate.confidence * fitness + lengthBonus + verifierBonus + dictionaryBonus
     }
 
     private fun createHighContrast(source: Bitmap): Bitmap {

@@ -83,6 +83,17 @@ fun TtsSettingsDialog(
     var showAddSlot by remember { mutableStateOf(false) }
     var addSlotRole by remember { mutableStateOf<String?>(null) }
     var sysReady by remember { mutableStateOf(false) }
+
+    // Словари голосовых ролей и интонаций (JSON в настройках). Редактируются
+    // здесь, сохраняются сразу же — как legacy-слоты голосов выше.
+    var roles by remember {
+        mutableStateOf(eu.kanade.tachiyomi.data.tts.VoiceRoleDictionary.load(prefs))
+    }
+    var rules by remember {
+        mutableStateOf(eu.kanade.tachiyomi.data.tts.VoiceIntonationDictionary.load(prefs))
+    }
+    var showAddRole by remember { mutableStateOf(false) }
+    var showAddRule by remember { mutableStateOf(false) }
     val systemEnginePkg = remember { prefs.systemTtsEngine().get() }
     var probe by remember { mutableStateOf<TextToSpeech?>(null) }
     var probeInitStatus by remember { mutableStateOf(Int.MIN_VALUE) }
@@ -331,6 +342,114 @@ fun TtsSettingsDialog(
                             },
                         )
                     }
+                }
+
+                // ── Словарь голосовых ролей: имя/метка → голос, питч, темп ──
+                Text(
+                    "Словарь голосовых ролей (персонаж → голос)",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+                Text(
+                    "Роль подбирается по имени из разметки {имя:Аки}, затем по полу. " +
+                        "Голос и модификаторы питча/темпа перекрывают пресеты пола.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                roles.forEachIndexed { idx, role ->
+                    val roleParams = buildString {
+                        if (role.voice.isNotBlank()) append(" • ${role.voice}")
+                        if (role.pitch != 1f || role.rate != 1f) {
+                            append(" • ×${"%.2f".format(role.pitch)}/×${"%.2f".format(role.rate)}")
+                        }
+                    }
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "${role.name} — ${when (role.gender) {
+                                    "male" -> "♂"
+                                    "female" -> "♀"
+                                    "neutral" -> "⚥"
+                                    else -> "авто"
+                                }}$roleParams",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Text(
+                                if (role.markers.isNotEmpty()) role.markers.joinToString(", ")
+                                else role.name,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        TextButton(onClick = {
+                            eu.kanade.tachiyomi.data.tts.TtsSpeaker.speakWithVoice(
+                                context,
+                                "Проба голоса роли ${role.name}.",
+                                role.voice.ifBlank { null },
+                            )
+                        }) { Text("Проба") }
+                        TextButton(onClick = {
+                            roles = roles.filterIndexed { i, _ -> i != idx }
+                            eu.kanade.tachiyomi.data.tts.VoiceRoleDictionary.save(prefs, roles)
+                        }) { Text("Удалить") }
+                    }
+                }
+                TextButton(onClick = { showAddRole = true }) { Text("＋ Добавить роль") }
+
+                // ── Словарь интонаций: узор фразы → пауза/питч/темп ──
+                Text(
+                    "Словарь интонаций (узор фразы → пауза и тон)",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+                Text(
+                    "Применяется к каждому предложению: узор текста задаёт паузу, " +
+                        "высоту и темп именно этой реплики.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                rules.forEachIndexed { idx, rule ->
+                    val ruleParams = buildString {
+                        if (rule.pauseMs > 0) append(" • пауза ${rule.pauseMs}мс")
+                        if (rule.pitch != 1f || rule.rate != 1f) {
+                            append(" • ×${"%.2f".format(rule.pitch)}/×${"%.2f".format(rule.rate)}")
+                        }
+                        if (!rule.enabled) append(" • выкл")
+                    }
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "${if (rule.exact) "=" else "~"} «${rule.pattern}»$ruleParams",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        TextButton(onClick = {
+                            rules = rules.filterIndexed { i, _ -> i != idx }
+                            eu.kanade.tachiyomi.data.tts.VoiceIntonationDictionary.save(prefs, rules)
+                        }) { Text("Удалить") }
+                    }
+                }
+                TextButton(onClick = { showAddRule = true }) { Text("＋ Добавить интонацию") }
+                if (showAddRole) {
+                    AddRoleDialog(
+                        voices = voices,
+                        onDismiss = { showAddRole = false },
+                        onAdd = { role ->
+                            roles = roles + role
+                            eu.kanade.tachiyomi.data.tts.VoiceRoleDictionary.save(prefs, roles)
+                            showAddRole = false
+                        },
+                    )
+                }
+                if (showAddRule) {
+                    AddRuleDialog(
+                        onDismiss = { showAddRule = false },
+                        onAdd = { rule ->
+                            rules = rules + rule
+                            eu.kanade.tachiyomi.data.tts.VoiceIntonationDictionary.save(prefs, rules)
+                            showAddRule = false
+                        },
+                    )
                 }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -672,6 +791,200 @@ fun TtsSettingsDialog(
                     },
                 ) { Text("Проба") }
                 TextButton(onClick = onOpenFullSettings) { Text("Ещё") }
+            }
+        },
+    )
+}
+
+/**
+ * Диалог добавления голосовой роли: имя/метки (для {имя:Аки}), пол, возраст,
+ * необязательный голос из списка и модификаторы питча/темпа.
+ */
+@Composable
+private fun AddRoleDialog(
+    voices: List<Pair<String, String>>,
+    onDismiss: () -> Unit,
+    onAdd: (eu.kanade.tachiyomi.data.tts.VoiceRole) -> Unit,
+) {
+    var name by remember { mutableStateOf("") }
+    var markers by remember { mutableStateOf("") }
+    var gender by remember { mutableStateOf("auto") }
+    var age by remember { mutableStateOf("adult") }
+    var voice by remember { mutableStateOf("") }
+    var pitch by remember { mutableFloatStateOf(1.0f) }
+    var rate by remember { mutableFloatStateOf(1.0f) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val trimmedName = name.trim()
+                    if (trimmedName.isNotBlank()) {
+                        onAdd(
+                            eu.kanade.tachiyomi.data.tts.VoiceRole(
+                                id = trimmedName,
+                                name = trimmedName,
+                                gender = gender,
+                                age = age,
+                                voice = voice,
+                                pitch = pitch,
+                                rate = rate,
+                                markers = markers.split(',')
+                                    .map(String::trim)
+                                    .filter { it.isNotEmpty() },
+                            ),
+                        )
+                    }
+                },
+            ) { Text("Добавить") }
+            TextButton(onClick = onDismiss) { Text("Отмена") }
+        },
+        title = { Text("Новая роль") },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Имя (совпадает с {имя:Аки})") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = markers,
+                    onValueChange = { markers = it },
+                    label = { Text("Доп. метки через запятую (необязательно)") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp),
+                )
+                Text("Пол:", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+                Row(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    listOf("auto" to "Авто", "male" to "♂ Мужской", "female" to "♀ Женский", "neutral" to "⚥ Средний")
+                        .forEach { (value, label) ->
+                            FilterChip(
+                                selected = gender == value,
+                                onClick = { gender = value },
+                                label = { Text(label) },
+                                modifier = Modifier.padding(end = 4.dp),
+                            )
+                        }
+                }
+                Text("Возраст:", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+                Row(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    eu.kanade.tachiyomi.data.tts.VoicePreset.Age.entries.forEach { a ->
+                        FilterChip(
+                            selected = age == a.id,
+                            onClick = { age = a.id },
+                            label = { Text(a.title) },
+                            modifier = Modifier.padding(end = 4.dp),
+                        )
+                    }
+                }
+                Text("Голос (пусто = подбор по полу/возрасту):", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+                Column(modifier = Modifier.heightIn(max = 150.dp).verticalScroll(rememberScrollState())) {
+                    voices.forEach { (vname, vlabel) ->
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            androidx.compose.material3.RadioButton(
+                                selected = voice == vname,
+                                onClick = { voice = vname },
+                            )
+                            Text(vlabel, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+                Text(
+                    "Питч: ×${"%.2f".format(pitch)} (1.0 = обычный)",
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+                Slider(value = pitch, onValueChange = { pitch = it }, valueRange = 0.5f..2f)
+                Text(
+                    "Темп: ×${"%.2f".format(rate)} (1.0 = обычный)",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                Slider(value = rate, onValueChange = { rate = it }, valueRange = 0.5f..2f)
+            }
+        },
+    )
+}
+
+/**
+ * Диалог добавления правила интонации: узор фразы → пауза, питч и темп.
+ */
+@Composable
+private fun AddRuleDialog(
+    onDismiss: () -> Unit,
+    onAdd: (eu.kanade.tachiyomi.data.tts.VoiceIntonationRule) -> Unit,
+) {
+    var pattern by remember { mutableStateOf("") }
+    var exact by remember { mutableStateOf(false) }
+    var pauseMs by remember { mutableStateOf("") }
+    var pitch by remember { mutableFloatStateOf(1.0f) }
+    var rate by remember { mutableFloatStateOf(1.0f) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    if (pattern.isNotBlank()) {
+                        onAdd(
+                            eu.kanade.tachiyomi.data.tts.VoiceIntonationRule(
+                                pattern = pattern.trim(),
+                                exact = exact,
+                                pauseMs = pauseMs.toIntOrNull()?.coerceIn(0, 10000) ?: 0,
+                                pitch = pitch,
+                                rate = rate,
+                                enabled = true,
+                            ),
+                        )
+                    }
+                },
+            ) { Text("Добавить") }
+            TextButton(onClick = onDismiss) { Text("Отмена") }
+        },
+        title = { Text("Новая интонация") },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                OutlinedTextField(
+                    value = pattern,
+                    onValueChange = { pattern = it },
+                    label = { Text("Узор фразы (например «Что?!» или «.!»)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(top = 6.dp),
+                ) {
+                    androidx.compose.material3.Checkbox(
+                        checked = exact,
+                        onCheckedChange = { exact = it },
+                    )
+                    Text("Точное совпадение всего предложения", style = MaterialTheme.typography.bodySmall)
+                }
+                OutlinedTextField(
+                    value = pauseMs,
+                    onValueChange = { pauseMs = it },
+                    label = { Text("Пауза после фразы, мс (0 = по знакам)") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp),
+                )
+                Text(
+                    "Питч: ×${"%.2f".format(pitch)} (1.0 = обычный)",
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+                Slider(value = pitch, onValueChange = { pitch = it }, valueRange = 0.5f..2f)
+                Text(
+                    "Темп: ×${"%.2f".format(rate)} (1.0 = обычный)",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                Slider(value = rate, onValueChange = { rate = it }, valueRange = 0.5f..2f)
             }
         },
     )
