@@ -358,6 +358,10 @@ dependencies {
     implementation(libs.furiganable)
     implementation(libs.materialKolor)
 
+    // Media
+    implementation(libs.media3.exoplayer)
+    implementation(libs.media3.ui)
+
     // Logging
     implementation(libs.logcat)
 

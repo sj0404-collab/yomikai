@@ -7,6 +7,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
@@ -39,6 +40,7 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import cafe.adriel.voyager.navigator.tab.LocalTabNavigator
 import cafe.adriel.voyager.navigator.tab.TabNavigator
+import eu.kanade.domain.source.model.ContentType
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.isTabletUi
@@ -151,6 +153,11 @@ object HomeScreen : Screen() {
         // PWA-оболочка Yomihon удалена: приложение всегда работает в нативном
         // интерфейсе, MangaLib PWA живёт как нативная вкладка с мостами.
         val navigator = LocalNavigator.currentOrThrow
+        val sourcePrefs = remember { Injekt.get<SourcePreferences>() }
+        var contentType by remember {
+            mutableStateOf(sourcePrefs.contentType.get())
+        }
+
         TabNavigator(
             tab = LibraryTab,
             key = TabNavigatorKey,
@@ -188,21 +195,30 @@ object HomeScreen : Screen() {
                     },
                     contentWindowInsets = WindowInsets(0),
                 ) { contentPadding ->
-                    Box(
+                    Column(
                         modifier = Modifier
                             .padding(contentPadding)
                             .consumeWindowInsets(contentPadding),
                     ) {
-                        AnimatedContent(
-                            targetState = tabNavigator.current,
-                            transitionSpec = {
-                                materialFadeThroughIn(initialScale = 1f, durationMillis = TabFadeDuration) togetherWith
-                                    materialFadeThroughOut(durationMillis = TabFadeDuration)
+                        ContentTypeBar(
+                            selected = contentType,
+                            onSelect = { newType ->
+                                contentType = newType
+                                sourcePrefs.contentType.set(newType)
                             },
-                            label = "tabContent",
-                        ) {
-                            tabNavigator.saveableState(key = "currentTab", it) {
-                                it.Content()
+                        )
+                        Box(modifier = Modifier.weight(1f)) {
+                            AnimatedContent(
+                                targetState = tabNavigator.current,
+                                transitionSpec = {
+                                    materialFadeThroughIn(initialScale = 1f, durationMillis = TabFadeDuration) togetherWith
+                                        materialFadeThroughOut(durationMillis = TabFadeDuration)
+                                },
+                                label = "tabContent",
+                            ) {
+                                tabNavigator.saveableState(key = "currentTab", it) {
+                                    it.Content()
+                                }
                             }
                         }
                     }

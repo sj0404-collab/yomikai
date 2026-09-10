@@ -1,6 +1,7 @@
 package eu.kanade.domain.source.service
 
 import eu.kanade.domain.source.interactor.SetMigrateSorting
+import eu.kanade.domain.source.model.ContentType
 import eu.kanade.tachiyomi.util.system.LocaleHelper
 import mihon.domain.migration.models.MigrationFlag
 import tachiyomi.core.common.preference.Preference
@@ -98,4 +99,11 @@ class SourcePreferences(
      * Используется для автоматического переключения при недоступности основного домена.
      */
     val sourceMirrorDomains: Preference<String> = preferenceStore.getString("source_mirror_domains", "{}")
+
+    val contentType: Preference<ContentType> = preferenceStore.getObjectFromString(
+        "content_type",
+        ContentType.DEFAULT,
+        ContentType::name,
+        { ContentType.valueOf(it) },
+    )
 }
