@@ -105,9 +105,9 @@ jobs:
           tag="${{ needs.get_tag.outputs.tag }}"
           expected_name="${tag#v}"
           sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/android-sdk}}"
-          aapt=$(find "$sdk/build-tools" -maxdepth 2 -type f -name 'aapt2' 2>/dev/null | sort -V | tail -1 || true)
+          aapt=$(find "$sdk/build-tools" -maxdepth 2 -type f -name 'aapt2*' 2>/dev/null | sort -V | tail -1 || true)
           if [ -z "$aapt" ]; then
-            aapt=$(find "$sdk/build-tools" -maxdepth 2 -type f -name 'aapt' 2>/dev/null | sort -V | tail -1 || true)
+            aapt=$(find "$sdk/build-tools" -maxdepth 2 -type f -name 'aapt*' 2>/dev/null | sort -V | tail -1 || true)
           fi
           [ -n "$aapt" ] || { echo "::error::aapt2 не найден в $sdk/build-tools"; exit 1; }
           echo "Используется $aapt"

@@ -117,9 +117,9 @@ jobs:
           apk="yomikai-${{ needs.get_version.outputs.tag }}.apk"
           expected="${{ needs.get_version.outputs.version_name }}"
           sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/android-sdk}}"
-          aapt=$(find "$sdk/build-tools" -maxdepth 2 -type f -name 'aapt2' 2>/dev/null | sort -V | tail -1 || true)
+          aapt=$(find "$sdk/build-tools" -maxdepth 2 -type f -name 'aapt2*' 2>/dev/null | sort -V | tail -1 || true)
           if [ -z "$aapt" ]; then
-            aapt=$(find "$sdk/build-tools" -maxdepth 2 -type f -name 'aapt' 2>/dev/null | sort -V | tail -1 || true)
+            aapt=$(find "$sdk/build-tools" -maxdepth 2 -type f -name 'aapt*' 2>/dev/null | sort -V | tail -1 || true)
           fi
           [ -n "$aapt" ] || { echo "::error::aapt2 не найден в $sdk/build-tools"; exit 1; }
           info=$("$aapt" dump badging "$apk")
