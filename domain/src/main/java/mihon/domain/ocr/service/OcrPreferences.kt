@@ -65,6 +65,13 @@ class OcrPreferences(
     //  single    — без фолбэков, только выбранный движок
     fun fallbackPreset() = preferenceStore.getString("pref_fallback_preset", "auto")
 
+    // Язык/регион распознавания для онлайнового GLENS-движка. Раньше были
+    // жёстко зашиты ("ja"/"Asia/Tokyo"), из-за чего пользователь не мог читать
+    // английские, русские и другие источники. Язык — BCP-47 (en, ru, ja,
+    // ko, zh…), регион — IANA tz (необязателен).
+    fun glensLanguage() = preferenceStore.getString("pref_glens_language", "ja")
+    fun glensRegion() = preferenceStore.getString("pref_glens_region", "Asia/Tokyo")
+
     // OpenRouter Settings
     fun openrouterApiKey() = preferenceStore.getString("pref_openrouter_api_key", "")
     fun openrouterModel() = preferenceStore.getString("pref_openrouter_model", "google/gemini-2.5-flash")
@@ -125,6 +132,26 @@ class OcrPreferences(
 
     // Автолистание после дочитывания кадра (в браузере — автоскролл на кадр)
     fun autoReadAutoAdvance() = preferenceStore.getBoolean("pref_autoread_advance", true)
+
+    /**
+     * Значки 🔊 на рамках распознанных реплик в читалке. По умолчанию выключено,
+     * чтобы не мешать чтению; включается переключателем в плавающем меню.
+     */
+    fun voiceIcons() = preferenceStore.getBoolean("pref_autoread_voice_icons", false)
+
+    /**
+     * Автоматически начинать чтение (скан + озвучка) при открытии главы.
+     * По умолчанию выключено, чтобы не пугать пользователя внезапной озвучкой.
+     */
+    fun autoReadAutoStart() = preferenceStore.getBoolean("pref_autoread_auto_start", false)
+
+    /**
+     * Запомненная нормализованная область сканирования (0..1 box) для
+     * автопрокрутки: задаётся длительным касанием (autoclick с удержанием)
+     * и переиспользуется, чтобы не выбирать область заново на каждом кадре.
+     * Формат "left,top,right,bottom"; пустая строка = не задана.
+     */
+    fun rememberedScanRegion() = preferenceStore.getString("pref_autoread_remembered_region", "")
 
     // AI-определение пола говорящего (Gemini Vision по лицам и баллонам):
     // женские реплики читает женский голос-пресет, мужские — мужской.

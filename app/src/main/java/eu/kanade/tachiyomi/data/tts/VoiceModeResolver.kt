@@ -28,6 +28,8 @@ object VoiceModeResolver {
         SINGLE("single", "Один голос", "Весь текст — голосом нарратора"),
         DUAL("dual", "Два голоса", "Мужские реплики — мужским, женские — женским"),
         TRIPLE("triple", "Три голоса", "Муж + Жен + Нарратор (описания, ремарки)"),
+        /** Много голосов: свой голос каждому персонажу одного пола в сцене. */
+        MULTI("multi", "Много голосов", "Отдельный голос каждому персонажу одного пола"),
         ;
 
         companion object {
@@ -117,6 +119,23 @@ object VoiceModeResolver {
                     ResolvedVoice(g, engine.ifBlank { TtsSpeaker.ENGINE_SYSTEM }, name, true, false)
                 }
             }
+            // Много голосов: по полу, как DUAL; отдельные слоты персонажам
+            // назначаются в AutoReadEngine (speakerSlot), здесь voice тот же.
+            Mode.MULTI -> {
+                val g = detectedGender ?: narratorGender()
+                val isMale = g == "male"
+                val engine = if (isMale) p.voiceMaleEngine().get() else p.voiceFemaleEngine().get()
+                val fallbackEngine = p.voiceEngine().get()
+                val effEngine = engine.ifBlank { fallbackEngine }
+                val name = if (isMale) p.voiceMale().get() else p.voiceFemale().get()
+                ResolvedVoice(
+                    gender = g,
+                    engine = effEngine.ifBlank { TtsSpeaker.ENGINE_SYSTEM },
+                    voiceName = name,
+                    isLocal = effEngine == TtsSpeaker.ENGINE_SYSTEM || effEngine == TtsSpeaker.ENGINE_REMOTE,
+                    isOnline = effEngine == TtsSpeaker.ENGINE_GOOGLE_WEB,
+                )
+            }
         }
     }
 
@@ -127,6 +146,7 @@ object VoiceModeResolver {
             Mode.SINGLE -> "Один голос: нарратор ${narratorGender()} (${p.voiceNarratorEngine().get().ifBlank { p.voiceEngine().get() }})"
             Mode.DUAL -> "Два голоса: муж (${p.voiceMaleEngine().get().ifBlank { "system_tts" }}) + жен (${p.voiceFemaleEngine().get().ifBlank { "system_tts" }})"
             Mode.TRIPLE -> "Три голоса: муж (${p.voiceMaleEngine().get()}) + жен (${p.voiceFemaleEngine().get()}) + нарратор ${narratorGender()} (${p.voiceNarratorEngine().get()})"
+            Mode.MULTI -> "Много голосов: отдельный голос каждому персонажу одного пола"
         }
     }
 

@@ -6,10 +6,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import logcat.LogPriority
 import mihon.data.ocr.OcrHistoryStore
 import mihon.data.ocr.OcrRegionRules
@@ -54,7 +56,7 @@ class AutoReadEngine(
     private val bubbleOcr: mihon.domain.ocr.interactor.OcrProcessor by lazy { Injekt.get() }
 
     /** Строка кадра: текст + нормализованный box (для подсветки/порядка). */
-    private data class Line(val text: String, val boundingBox: OcrBoundingBox)
+    data class Line(val text: String, val boundingBox: OcrBoundingBox)
 
     data class SpokenRegion(
         val text: String,
@@ -146,7 +148,10 @@ class AutoReadEngine(
     @Synchronized
     private fun isDuplicate(rawText: String): Boolean {
         val norm = rawText.lowercase().filter { it.isLetterOrDigit() }
-        if (norm.length < 4) return true // мусор/односимвольные не читаем повторно
+        // Короткие настоящие слова (я, и, но, не, да…) читаем, а не режем как
+        // мусор: к этому месту чистка уже отбросила обрывки, а одиночные слова
+        // — осмысленные реплики. Раньше guard `length < 4 -> true` глушил их.
+        if (norm.length < 4) return false
         for (old in spokenTexts) {
             if (old.contains(norm) || norm.contains(old)) return true
             if (trigramSimilarity(old, norm) >= 0.75f) return true
@@ -210,7 +215,35 @@ class AutoReadEngine(
                     }.getOrNull()
                 } else null
 
-                val result = scanPageOcr.await(chapterId, pageIndex, image)
+                // Жёсткий таймаут OCR кадра: движок (локальный при первом
+                // запуске/загрузке модели, онлайн при недоступном GLENS или
+                // неотвечающем Google) может «зависнуть» без ответа. Без этого
+                // авточтение крутится вечно («бесконечное сканирование»).
+                // По таймауту кадр считается пустым: возвращаем пустой регион
+                // и идём по обычному конвейеру (пустой кадр → дочитывается и
+                // страница листается дальше, а не блокируется навсегда).
+                val result: mihon.domain.ocr.model.OcrPageResult = try {
+                    withTimeout(OCR_FRAME_TIMEOUT_MS) {
+                        scanPageOcr.await(chapterId, pageIndex, image)
+                    }
+                } catch (e: TimeoutCancellationException) {
+                    logcat(LogPriority.WARN) {
+                        "OCR frame timeout (${OCR_FRAME_TIMEOUT_MS}ms) pageIndex=$pageIndex"
+                    }
+                    OcrHistoryStore.addAutoRead(
+                        false,
+                        "OCR-кадр таймаут",
+                        "${OCR_FRAME_TIMEOUT_MS / 1000}с pageIndex=$pageIndex",
+                    )
+                    mihon.domain.ocr.model.OcrPageResult(
+                        chapterId = chapterId,
+                        pageIndex = pageIndex,
+                        ocrModel = prefs.ocrModel().get(),
+                        imageWidth = bitmap.width,
+                        imageHeight = bitmap.height,
+                        regions = emptyList(),
+                    )
+                }
 
                 val language = prefs.autoReadLanguage().get()
                 val translate = prefs.autoReadTranslate().get()
@@ -256,7 +289,6 @@ class AutoReadEngine(
                 val fresh = lines
                     .asSequence()
                     .map { it.copy(text = cleanOcrGarbage(it.text, language)) }
-                    .filter { it.text.length >= MIN_TEXT_LENGTH }
                     .filter { isMeaningful(it.text, language) }
                     .filter { !isDuplicate(it.text) }
                     // Рамка обязана лежать внутри страницы и иметь разумный
@@ -270,12 +302,9 @@ class AutoReadEngine(
                     }
                     .toList()
 
-                // 3) порядок чтения
-                val ordered = when (order) {
-                    "ltr" -> fresh.sortedWith(compareBy({ rowOf(it.boundingBox.top) }, { it.boundingBox.left }))
-                    "vertical" -> fresh.sortedBy { it.boundingBox.top }
-                    else -> fresh.sortedWith(compareBy({ rowOf(it.boundingBox.top) }, { -it.boundingBox.right }))
-                }
+                // 3) порядок чтения (группировка в строки по близости центров Y,
+                // а не по фиксированным 12% полосам — убирает «лесенку»)
+                val ordered = orderRegions(fresh, order)
 
                 // 3.5) Пол говорящих. Приоритет:
                 //  а) ВСТРОЕННЫЙ локальный AI (LocalSpeakerAi) — морфология
@@ -380,10 +409,18 @@ class AutoReadEngine(
 
                     // Ручной режим важнее автоопределения: читатель выбрал
                     // голос кнопкой в читалке и ждёт именно его.
-                    val gender = if (prefs.manualVoiceMode().get()) {
-                        prefs.manualVoiceGender().get().takeIf { it.isNotBlank() } ?: "female"
-                    } else {
-                        genders.get(i) // мог дозаполниться AI пока читали предыдущие
+                    //
+                    // Роль-режим (1 / 2 / много голосов):
+                    //  • SINGLE — весь текст одним голосом нарратора;
+                    //  • DUAL/TRIPLE — пол реплики (муж/жен) определяет голос;
+                    //  • MULTI — как DUAL, но с отдельным слотом каждому
+                    //    персонажу одного пола (см. slot ниже).
+                    val roleMode = VoiceModeResolver.currentMode()
+                    val gender = when {
+                        prefs.manualVoiceMode().get() ->
+                            prefs.manualVoiceGender().get().takeIf { it.isNotBlank() } ?: "female"
+                        roleMode == VoiceModeResolver.Mode.SINGLE -> VoiceModeResolver.narratorGender()
+                        else -> genders.get(i) // мог дозаполниться AI пока читали предыдущие
                     }
 
                     // Служебные пометки: номер по порядку чтения и пол.
@@ -409,8 +446,11 @@ class AutoReadEngine(
                     // Слот говорящего: два персонажа одного пола в сцене
                     // получают разные голоса. Считаем по индексам, а не через
                     // indexOf: одинаковые реплики иначе дали бы один и тот же
-                    // слот.
-                    val slot = if (prefs.perSpeakerVoices().get()) {
+                    // слот. В режиме «много голосов» это всегда включено.
+                    val slot = if (
+                        roleMode == VoiceModeResolver.Mode.MULTI ||
+                        prefs.perSpeakerVoices().get()
+                    ) {
                         (0 until i).count { genders.get(it) == gender }
                     } else {
                         0
@@ -449,10 +489,35 @@ class AutoReadEngine(
         _isReading.value = false
     }
 
+    /**
+     * Озвучить ОДНУ реплику (бабл), выбранную пользователем (значок 🔊,
+     * перетаскивание значка или ручной бабл). В отличие от [readFrame] не
+     * трогает историю кадра и не листает: просто произносит переданный текст
+     * выбранным движком/полом. Запускается в [scope], чтобы [job] был активен
+     * во время озвучки (иначе [speakAndAwait] мгновенно прерывается).
+     */
+    fun speakSingle(text: String, gender: String? = null, speakerSlot: Int = 0) {
+        val clean = SpeechMarkup.strip(text).trim()
+        if (clean.isBlank()) return
+        if (_isReading.value) TtsSpeaker.stop()
+        job?.cancel()
+        val myGen = ++generation
+        job = scope.launch {
+            _isReading.value = true
+            try {
+                speakAndAwait(clean, gender, speakerSlot)
+            } finally {
+                if (generation == myGen) _isReading.value = false
+            }
+        }
+    }
+
     /** Озвучка с ожиданием реального окончания фразы. */
     private suspend fun speakAndAwait(text: String, gender: String? = null, speakerSlot: Int = 0) {
-        val done = MutableStateFlow(false)
         var started = false
+        // Флаг фактического завершения фразы. MutableStateFlow, потому что onState
+        // приходит из потока TTS, а читается из этой корутины (диспетчер IO).
+        val done = MutableStateFlow(false)
         val t0 = System.currentTimeMillis()
         TtsSpeaker.speakAs(context, text, gender, speakerSlot) { speaking ->
             if (speaking && !started) {
@@ -486,9 +551,6 @@ class AutoReadEngine(
             OcrHistoryStore.addAutoRead(false, "TTS не запустился", text.take(60))
         }
     }
-
-    /** Строка (ряд) для сортировки: реплики в пределах 12% высоты — один ряд. */
-    private fun rowOf(top: Float): Int = (top / 0.12f).toInt()
 
     /**
      * Словарный фолбэк пола говорящего: работает, когда морфология
@@ -608,9 +670,64 @@ class AutoReadEngine(
     // region Чистка мусора OCR
 
     companion object {
-        private const val MIN_TEXT_LENGTH = 2
         private const val HISTORY_LIMIT = 600
         private const val MAX_BUBBLES_PER_FRAME = 14
+
+        /**
+         * Максимальное время OCR одного кадра в авточтении. Локальный движок
+         * при первом запуске/загрузке модели, а также онлайн-движок (GLENS /
+         * Google) при недоступном сервисе БЕЗ этого жёсткого лимита могли
+         * заморозить авточтение навсегда. По таймауту кадр считается пустым.
+         */
+        private const val OCR_FRAME_TIMEOUT_MS = 45_000L
+
+        /** Настоящие одно- и двухбуквенные русские слова (союзы/предлоги/междометия). */
+        private val RUSSIAN_SINGLE_WORD = setOf("а", "и", "в", "с", "у", "о", "я", "к")
+        private val RUSSIAN_SHORT_WORD = setOf(
+            "но", "не", "да", "он", "мы", "вы", "ты", "ни", "от", "до", "на",
+            "за", "по", "из", "ко", "то", "ли", "же", "бы", "ну", "ах", "ох",
+            "ой", "эх", "уж", "ага", "так", "тот", "это", "се", "об", "при", "про",
+        )
+
+        /** Одно- или двухбуквенное настоящее русское слово. */
+        fun isShortRussianWord(text: String): Boolean {
+            val t = text.trim().lowercase()
+            return t in RUSSIAN_SINGLE_WORD || t in RUSSIAN_SHORT_WORD
+        }
+
+        /**
+         * Упорядочивает реплики кадра в читаемый порядок.
+         *
+         * Раньше строки делились фиксированными 12% полосами по `top`: баблы
+         * одной строки, чуть смещённые по вертикали, попадали в разные полосы
+         * и читались «лесенкой». Теперь баблы группируются в строки по близости
+         * вертикальных ЦЕНТРОВ (допуск = 0.7 медианной высоты), строки идут
+         * сверху вниз, внутри строки — по направлению чтения (ltr/rlt/vertical).
+         */
+        fun orderRegions(lines: List<Line>, order: String): List<Line> {
+            if (lines.size <= 1) return lines
+            val heights = lines.map { it.boundingBox.bottom - it.boundingBox.top }.sorted()
+            val medianH = heights[heights.size / 2].coerceAtLeast(0.001f)
+            val tolerance = (medianH * 0.7f).coerceAtLeast(0.025f)
+
+            data class Row(var centerY: Float, val items: MutableList<Line> = mutableListOf())
+            val rows = mutableListOf<Row>()
+            for (line in lines.sortedBy { it.boundingBox.top }) {
+                val cy = (line.boundingBox.top + line.boundingBox.bottom) / 2f
+                val last = rows.lastOrNull()
+                if (last != null && kotlin.math.abs(cy - last.centerY) <= tolerance) {
+                    last.items.add(line)
+                    last.centerY = (last.centerY * (last.items.size - 1) + cy) / last.items.size
+                } else {
+                    rows.add(Row(cy).apply { items.add(line) })
+                }
+            }
+            return when (order) {
+                "ltr" -> rows.flatMap { it.items.sortedBy { l -> l.boundingBox.left } }
+                "vertical" -> lines.sortedBy { it.boundingBox.top }
+                else -> rows.flatMap { it.items.sortedByDescending { l -> l.boundingBox.right } }
+            }
+        }
 
         /**
          * Чистка OCR-мусора ВНУТРИ реплики (по скриншотам пользователя:
@@ -632,10 +749,13 @@ class AutoReadEngine(
                 return singleWord
             }
             // OCR часто путает буквы с цифрами («4» вместо «а», «1» вместо «л»).
-            // Убираем цифровые обрывки (числа без буквенного соседства):
-            // «4а», «eS la 4», случайные «7» в середине текста.
+            // Убираем только ЦИФРЫ, слипшиеся с буквой (4а, а4, eS la 4) — это
+            // типичная ошибка OCR. Самостоятельные числа («1», «глава 1», «5»)
+            // НЕ трогаем: пользователь просил, чтобы цифры озвучивались
+            // («он цифры не говорит почему-то»). Чисто числовые строки-мусор
+            // («2/89», «7») отсекаются ниже по isMeaningfulRow (нет букв).
             val rows = rawRows.map { row ->
-                row.replace(Regex("(?<![\\p{L}0-9])[0-9]+(?![\\p{L}])"), " ")
+                row.replace(Regex("(?<=[\\p{L}])[0-9]+|[0-9]+(?=[\\p{L}])"), " ")
                     .replace(Regex("\\s+"), " ").trim()
             }.filter { it.isNotBlank() }
             if (rows.isEmpty()) return ""
@@ -656,8 +776,8 @@ class AutoReadEngine(
             // Палки, скобки, стрелки, точки: буквы < 40% строки — мусор
             if (letters == 0) return false
             if (letters.toFloat() / total < 0.4f && total >= 3) return false
-            // Одна-две буквы («о», «РУ») — обрывок
-            if (letters <= 2) return false
+            // Одна-две буквы — настоящие русские слова (я, и, в, с, но, не…)
+            if (letters <= 2) return language == "ru" && isShortRussianWord(row)
             when (language) {
                 "ru" -> {
                     val cyr = row.count { it in '\u0400'..'\u04FF' }
@@ -680,10 +800,52 @@ class AutoReadEngine(
         fun isMeaningful(text: String, language: String): Boolean {
             if (text.isBlank()) return false
             if (!matchesLanguage(text, language)) return false
-            // Реплика обязана содержать хотя бы одно слово из 3+ букв
-            return text.split(Regex("\\s+")).any { w -> w.count { it.isLetter() } >= 3 } ||
-                // …или быть короткой осмысленной («Да!», «Ах!», «Нет?»)
+            // Служебная навигация сайта: «— том 1 глава 1 →», «том 1 глава 1»,
+            // «← том 3 глава 5 →». Это шапка/футер манга-ридера, а не реплика;
+            // раньше авточтение постоянно зачитывало эти подписи и стрелки.
+            if (isSiteChromeNoise(text)) return false
+            val words = text.split(Regex("\\s+"))
+            return words.any { w -> w.count { it.isLetter() } >= 3 } ||
+                // Короткие настоящие русские слова (я, и, но, не…) — читаем.
+                (language == "ru" && words.any { isShortRussianWord(it) }) ||
+                // …или короткая осмысленная («Да!», «Ах!», «Нет?»)
                 (text.length in 2..6 && text.count { it.isLetter() } >= 2)
+        }
+
+        /**
+         * Служебная навигация манга-ридера, которую авточтение не должно
+         * зачитывать: подписи «том N глава N», счётчик страниц «N/M» и
+         * строки, состоящие только из стрелок/декора (нет букв).
+         * Возвращает true, если текст — это навигация, а не реплика.
+         */
+        fun isSiteChromeNoise(text: String): Boolean {
+            val t = text.trim()
+            if (t.isBlank()) return false
+            val letters = t.count { it.isLetter() }
+            if (letters > 0) {
+                // «— том 1 глава 1 →», «том 1, глава 2», «← том 3 глава 5 →».
+                // Отсекаем только если после удаления подписи остаётся мало
+                // настоящих букв (это навигация, а не реплика с упоминанием тома).
+                val chapter = Regex("том(а|у|е)?[\\s\\d.,-]*глава[\\s\\d.,-]*", RegexOption.IGNORE_CASE)
+                if (chapter.containsMatchIn(t)) {
+                    val left = chapter.replace(t, "")
+                        .replace(Regex("[→←⇐⇒↔—–-|/\\\\\\d\\s,.\\(\\)«»\\[\\]\\\"']"), "")
+                    if (left.count { it.isLetter() } <= 3) return true
+                }
+                // Оглавление ридера «Том 1», «Т. 12», «Том 2, глава 3» без реплики.
+                if (Regex("^том(а|у|е)?\\.?\\s*\\d+", RegexOption.IGNORE_CASE).containsMatchIn(t) &&
+                    t.count { it.isDigit() } >= 1 && letters <= 6) return true
+                // Счётчик страниц «N / M», «2/89», «стр. 2 из 89».
+                if (Regex("^\\s*[\\d.,\\s]+\\s*(/|из|оф)\\s*[\\d.,\\s]+\\s*$", RegexOption.IGNORE_CASE)
+                        .containsMatchIn(t)) {
+                    return true
+                }
+            }
+            // Строка без букв (стрелки, точки, палки, цифры) — не реплика.
+            if (letters == 0) {
+                return t.any { it in "→←⇐⇒↔<|/\\·•⭐❤⟩⟨" } || t.count { it.isDigit() } >= 2
+            }
+            return false
         }
 
         /**

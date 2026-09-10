@@ -17,6 +17,7 @@ import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import mihon.data.ocr.RuStress
 import mihon.domain.ocr.service.OcrPreferences
+import tachiyomi.core.common.util.system.isNetworkAvailable
 import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -56,6 +57,13 @@ object TtsSpeaker {
     const val ENGINE_GOOGLE_WEB = "google_web"
     const val ENGINE_ELEVENLABS = "eleven_api"
     const val ENGINE_REMOTE = "remote_tts"
+
+    /**
+     * Авто-режим голоса: когда есть сеть — веб-голос (Google Translate без
+     * ключа), когда сети нет — локальный системный. Полезен в веб-вкладке:
+     * пользователь просил «веб-голоса онлайн, локальные оффлайн».
+     */
+    const val ENGINE_AUTO = "auto"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var currentJob: Job? = null
@@ -309,10 +317,19 @@ object TtsSpeaker {
         }.getOrNull()
         val effectiveGender = manual ?: gender ?: SpeechMarkup.genderOf(text)
         val slot = if (speakerSlot != 0) speakerSlot else SpeechMarkup.speakerSlot(text)
-        // Имя говорящего ({имя:Аки}) нужно словарю голосовых ролей, чтобы
+// Имя говорящего ({имя:Аки}) нужно словарю голосовых ролей, чтобы
         // подобрать голос/питч/темп конкретного персонажа.
         val speakerName = SpeechMarkup.speakerName(text)
-        when (prefs().voiceEngine().get()) {
+        // v1.9.51: «веб-голоса онлайн, локальные оффлайн». Авто-режим и
+        // онлайн-движки при отсутствии сети честно падают на системный голос,
+        // чтобы озвучка не молчала на оффлайн-странице (жалоба пользователя).
+        val online = isNetworkAvailable(context)
+        val engine = when (val want = prefs().voiceEngine().get()) {
+            ENGINE_AUTO -> if (online) ENGINE_GOOGLE_WEB else ENGINE_SYSTEM
+            ENGINE_GOOGLE_WEB, ENGINE_ELEVENLABS -> if (online) want else ENGINE_SYSTEM
+            else -> want
+        }
+        when (engine) {
             ENGINE_GOOGLE_WEB -> speakGoogleWeb(context, spoken)
             ENGINE_ELEVENLABS -> speakElevenLabs(context, spoken)
             // legacy-значения pref_voice_engine со сборок с ONNX:

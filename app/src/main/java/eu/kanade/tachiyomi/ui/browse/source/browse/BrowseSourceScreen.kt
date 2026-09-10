@@ -51,10 +51,11 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.browse.extension.details.SourcePreferencesScreen
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreenModel.Listing
 import eu.kanade.tachiyomi.ui.category.CategoryScreen
+import eu.kanade.tachiyomi.ui.home.HomeScreen
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
-import eu.kanade.tachiyomi.ui.webview.WebViewScreen
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import mihon.feature.migration.dialog.MigrateMangaDialog
@@ -124,13 +125,15 @@ data class BrowseSourceScreen(
         val onHelpClick = { uriHandler.openUri(LocalSource.HELP_URL) }
         val onWebViewClick = f@{
             val source = screenModel.source as? HttpSource ?: return@f
-            navigator.push(
-                WebViewScreen(
-                    url = source.getHomeUrl(),
-                    initialTitle = source.name,
-                    sourceId = source.id,
-                ),
-            )
+            // Открыть сайт источника во вкладке «Браузер» (web), а не во
+            // встроенном полноэкранном WebView-экране.
+            navigator.popUntilRoot()
+            scope.launch {
+                HomeScreen.openTab(
+                    HomeScreen.Tab.Browser(url = source.getHomeUrl(), title = source.name),
+                )
+            }
+            Unit
         }
 
         LaunchedEffect(screenModel.source) {

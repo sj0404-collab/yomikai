@@ -68,10 +68,69 @@ object SettingsAiScreen : SearchableSettings {
             }.getOrDefault(0 to 0)
         }
 
+        // Свои провайдеры из реестра AiProviders (файлы в workspace/providers):
+        // добавляются в список выбора провайдера в группе «Модели и ключи».
+        val userProviders = remember(context) {
+            eu.kanade.tachiyomi.data.ai.AiProviders.list(context)
+        }
+
         return listOf(
             getBackendsGroup(statuses = statuses, selected = backend),
+            getModelKeyGroup(prefs = prefs, userProviders = userProviders),
             getWorkspaceGroup(plugins = workspace.first, files = workspace.second),
             getAccessGroup(prefs = prefs, context = context, navigator = navigator),
+        )
+    }
+
+    /**
+     * «Модели и ключи»: провайдер, модель Zen, ключ и модель OpenRouter.
+     * Пишет в те же преференсы (`aiProvider`, `zenModel`, `openrouterApiKey`,
+     * `openrouterFreeModel`), что и настройки AI-чата и модель-пикер в читалке,
+     * поэтому расхождений между экранами нет.
+     */
+    @Composable
+    private fun getModelKeyGroup(
+        prefs: OcrPreferences,
+        userProviders: List<eu.kanade.tachiyomi.data.ai.AiProviders.Spec>,
+    ): Preference.PreferenceGroup {
+        val providerEntries = buildMap {
+            put(eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_ZEN, "Zen (без ключа)")
+            put(eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_OPENROUTER, "OpenRouter")
+            // Свои провайдеры (id -> название) добавляются как обычный элемент
+            // списка, потому что aiProvider хранит именно их id.
+            userProviders.forEach { spec ->
+                put(spec.id, spec.title.ifBlank { spec.id })
+            }
+        }
+        return Preference.PreferenceGroup(
+            title = "Модели и ключи",
+            preferenceItems = listOf(
+                Preference.PreferenceItem.ListPreference(
+                    preference = prefs.aiProvider(),
+                    entries = providerEntries,
+                    title = "Провайдер",
+                    subtitle = "Провайдер: %s",
+                ),
+                Preference.PreferenceItem.ListPreference(
+                    preference = prefs.zenModel(),
+                    entries = eu.kanade.tachiyomi.data.ai.AiAssistant.ZEN_MODELS.associateWith { it },
+                    title = "Модель Zen",
+                    subtitle = "Модель: %s",
+                ),
+                Preference.PreferenceItem.EditTextPreference(
+                    preference = prefs.openrouterApiKey(),
+                    title = "OpenRouter API-ключ",
+                    subtitle = "Ключ: %s",
+                ),
+                Preference.PreferenceItem.EditTextPreference(
+                    preference = prefs.openrouterFreeModel(),
+                    title = "OpenRouter модель (:free)",
+                    subtitle = "Модель: %s",
+                ),
+                Preference.PreferenceItem.InfoPreference(
+                    title = "Без ключа работают бесплатные модели Zen. Для OpenRouter нужен ключ; модель можно выбрать из списка :free.",
+                ),
+            ),
         )
     }
 

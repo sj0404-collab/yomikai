@@ -49,28 +49,27 @@ fun OcrSelectionOverlay(
                 val width = abs(endPoint.x - startPoint.x)
                 val height = abs(endPoint.y - startPoint.y)
 
+                // Рамка/фигура БЕЗ заливки и с тонкими краями (запрос пользователя):
+                // страница остаётся читаемой, виден только контур выбранной области.
                 if (shape == mihon.data.ocr.ScanShape.RECT) {
-                    // Draw selection rectangle
                     drawRect(
-                        color = Color.White.copy(alpha = 0.3f),
+                        color = Color.Transparent,
                         topLeft = Offset(left, top),
                         size = Size(width, height),
                     )
-
-                    // Draw border
                     drawRect(
                         color = Color.White,
                         topLeft = Offset(left, top),
                         size = Size(width, height),
-                        style = Stroke(width = 3f),
+                        style = Stroke(width = 2f),
                     )
                 } else {
-                    // Фигурная рамка: путь фигуры вписан в выделенные пользователем границы
+                    // Фигурная рамка (круг, ромб, …): путь вписан в выделенные границы.
                     val shapePath = shape
                         .buildPath(android.graphics.RectF(left, top, left + width, top + height))
                         .asComposePath()
-                    drawPath(path = shapePath, color = Color.White.copy(alpha = 0.3f))
-                    drawPath(path = shapePath, color = Color.White, style = Stroke(width = 3f))
+                    drawPath(path = shapePath, color = Color.Transparent)
+                    drawPath(path = shapePath, color = Color.White, style = Stroke(width = 2f))
                 }
             }
         }

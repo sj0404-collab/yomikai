@@ -151,6 +151,18 @@ class ReaderActivity : BaseActivity() {
             }
         }
 
+        /**
+         * Читалка, которая сразу начинает авточтение (для фонового скан-чтения
+         * главы). Не зависит от сохранённой опции «автостарт чтения», чтобы
+         * сценарий «сканируй главу → открой и читай» работал предсказуемо и
+         * не менял постоянные настройки пользователя.
+         */
+        fun newAutoReadIntent(context: Context, mangaId: Long?, chapterId: Long?): Intent {
+            return newIntent(context, mangaId, chapterId).apply {
+                putExtra("autoread_start", true)
+            }
+        }
+
         fun newIntent(context: Context, uri: android.net.Uri): Intent {
             return Intent(context, ReaderActivity::class.java).apply {
                 data = uri
@@ -315,10 +327,28 @@ class ReaderActivity : BaseActivity() {
 
         binding = ReaderActivityBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        // v1.9.40: long-press на странице читалки = выбор области скана (как в вебе)
+        // v1.9.40: long-press на странице читалки = выбор области скана (как в вебе).
+        // v1.9.46: если включено авто-сканирование — удержание сразу выделяет,
+        // распознаёт и озвучивает область вокруг точки касания (autoclick с
+        // удержанием), запоминая её; иначе — обычный ручной выбор области.
         binding.root.setOnLongClickListener {
-            runCatching { enterOcrMode() }
-            true
+            val wantAuto = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+                .autoReadAutoStart().get()
+            if (wantAuto) {
+                val ev = lastTouchEvent
+                if (ev == null) {
+                    runCatching { enterOcrMode() }
+                    return@setOnLongClickListener true
+                }
+                val loc = IntArray(2)
+                binding.root.getLocationOnScreen(loc)
+                val local = android.graphics.PointF(ev.rawX - loc[0], ev.rawY - loc[1])
+                captureAndSpeakRegion(holdRegionAround(local))
+                true
+            } else {
+                runCatching { enterOcrMode() }
+                true
+            }
         }
         binding.setComposeOverlay()
 
@@ -414,9 +444,18 @@ class ReaderActivity : BaseActivity() {
                         clearActiveOcrOverlaySession()
                         toast(MR.strings.ocr_initialization_error)
                     }
-                    ReaderViewModel.Event.OcrError -> {
+                    is ReaderViewModel.Event.OcrError -> {
                         clearActiveOcrOverlaySession()
-                        toast(MR.strings.error_unknown)
+                        // Показываем реальную причину (если есть), а не глухое
+                        // «Unknown OCR Error Occurred». Это помогает сообщить,
+                        // что именно упало в оффлайн-сканировании.
+                        val detail = event.message?.takeIf { it.isNotBlank() }
+                        if (detail != null) {
+                            logcat(LogPriority.ERROR) { "OCR error surfaced to UI: $detail" }
+                            toast("Ошибка OCR: $detail")
+                        } else {
+                            toast(MR.strings.error_unknown)
+                        }
                     }
                 }
             }
@@ -426,6 +465,20 @@ class ReaderActivity : BaseActivity() {
     private fun ReaderActivityBinding.setComposeOverlay(): Unit = composeOverlay.setComposeContent {
         val state by viewModel.state.collectAsState()
         val showPageNumber by readerPreferences.showPageNumber.collectAsState()
+
+        // Авто-чтение при открытии главы (опция «Автостарт чтения»). Один раз на
+        // главу: как только вьювер готов и выбран первый кадр, запускаем
+        // автопрокрутку со сканом и озвучкой. Повторно на том же кадре не
+        // стартуем (autoReadActive), чтобы не спамить озвучкой при поворотах.
+        val autoStartChapter by remember { mutableStateOf(
+            uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>().autoReadAutoStart().get() ||
+                intent.getBooleanExtra("autoread_start", false),
+        ) }
+        androidx.compose.runtime.LaunchedEffect(state.currentChapter?.chapter?.id, state.viewer) {
+            if (autoStartChapter && state.viewer != null && !autoReadActive) {
+                startAutoReadLoop()
+            }
+        }
         val settingsScreenModel = remember {
             ReaderSettingsScreenModel(
                 readerState = viewModel.state,
@@ -724,6 +777,19 @@ class ReaderActivity : BaseActivity() {
             Box(modifier = Modifier.fillMaxSize()) {
                 val isHttpSource = viewModel.getSource() is HttpSource
                 var showTtsDialog by remember { mutableStateOf(false) }
+                // Быстрая смена AI-модели (по требованию пользователя): верхняя
+                // AI-кнопка теперь открывает «Сменить AI-модель», а из него уже
+                // можно попасть в полный диалог озвучки.
+                var showModelPicker by remember { mutableStateOf(false) }
+                if (showModelPicker) {
+                    eu.kanade.presentation.reader.AiModelPickerDialog(
+                        onDismissRequest = { showModelPicker = false },
+                        onOpenVoiceSettings = {
+                            showModelPicker = false
+                            showTtsDialog = true
+                        },
+                    )
+                }
                 // AI-чат перенесён из читалки в отдельную вкладку «AI»
                 // нижней навигации (по требованию пользователя).
                 if (showTtsDialog) {
@@ -830,10 +896,10 @@ class ReaderActivity : BaseActivity() {
                     },
                     onClickSettings = viewModel::openSettingsDialog,
                     onClickOcrSettings = {
-                        // Верхняя AI-кнопка теперь открывает настройки озвучки
-                        // прямо в читалке (раньше дублировала плавающую кнопку
-                        // и уводила из читалки).
-                        showTtsDialog = true
+                        // Верхняя AI-кнопка: быстрая смена модели. Полная
+                        // озвучка/голоса доступны из этого диалога одной кнопкой
+                        // («Голос и озвучка…»).
+                        showModelPicker = true
                     },
                     onClickOcr = ::enterOcrMode,
                 )
@@ -870,9 +936,30 @@ class ReaderActivity : BaseActivity() {
                 var manualVoiceGender by androidx.compose.runtime.remember {
                     androidx.compose.runtime.mutableStateOf(ocrPrefsForVoice.manualVoiceGender().get())
                 }
+                // Значки 🔊 на репликах: показываются по переключателю.
+                var voiceIconsEnabled by androidx.compose.runtime.remember {
+                    androidx.compose.runtime.mutableStateOf(ocrPrefsForVoice.voiceIcons().get())
+                }
+                // Рамки распознанных реплик текущего кадра (для значков).
+                val frameRegions by autoReadEngine.frameRegions.collectAsState()
+                // Идёт ли чтение/озвучка — для состояния кнопки «Стоп чтения».
+                val readingActive by autoReadEngine.isReading.collectAsState()
+
+                // Значки 🔊 на рамках реплик: показываются по переключателю.
+                if (voiceIconsEnabled && frameRegions.isNotEmpty()) {
+                    eu.kanade.presentation.reader.components.OcrBubbleVoiceOverlay(
+                        regions = frameRegions,
+                        onSpeakRegion = { text, _ ->
+                            autoReadEngine.speakSingle(text)
+                        },
+                        perBubble = true,
+                        draggable = true,
+                    )
+                }
 
                 eu.kanade.presentation.reader.components.ReaderFloatingControls(
                     visible = state.menuVisible && state.dialog == null,
+                    readingActive = readingActive,
                     manualVoiceMode = manualVoiceMode,
                     manualVoiceGender = manualVoiceGender,
                     onVoiceModeChange = { manual ->
@@ -900,6 +987,12 @@ class ReaderActivity : BaseActivity() {
                     onStopSpeak = {
                         stopAutoReadLoop()
                         viewModel.stopAutoSpeak()
+                    },
+                    voiceIconsEnabled = voiceIconsEnabled,
+                    onVoiceIconsToggle = { enabled ->
+                        voiceIconsEnabled = enabled
+                        ocrPrefsForVoice.voiceIcons().set(enabled)
+                        toast(if (enabled) "Значки озвучки реплик включены" else "Значки озвучки реплик выключены")
                     },
                     onReadingOrderChange = { order ->
                         uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
@@ -1471,7 +1564,10 @@ class ReaderActivity : BaseActivity() {
                         withUIContext {
                             when (val viewer = viewModel.state.value.viewer) {
                                 is eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer ->
-                                    viewer.scrollDown() // вебтун: скролл на почти-экран
+                                    // Вебтун: листаем на ~35% высоты экрана, а не на 3/4.
+                                    // Перекрытие держит автопрокрутку, пока кадр не прочитан,
+                                    // и не пропускает реплики на границе вьюпорта (фикс «рывка»).
+                                    viewer.scrollDownByFraction(0.35f)
                                 is eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer ->
                                     viewer.moveToNext() // постранично, с учётом RTL/LTR
                                 else -> {}
@@ -1508,6 +1604,67 @@ class ReaderActivity : BaseActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * «Автоклик с удержанием»: долгое касание по странице автоматически выделяет
+     * область вокруг точки касания, распознаёт её и сразу озвучивает, а сам
+     * прямоугольник запоминается для повторного использования. Это делает
+     * интерактивным авто-сканирование: пользователю не нужно открывать режим
+     * выделения — просто удерживает палец там, где текст.
+     */
+    private fun captureAndSpeakRegion(rect: android.graphics.RectF) {
+        lifecycleScope.launchIO {
+            try {
+                val croppedBitmap = requireCurrentSelectionBitmap(
+                    rect = rect,
+                    failureLogMessage = "Hold-to-speak region unavailable for OCR",
+                    failureMessageRes = MR.strings.warn_ocr_image_decode,
+                ) ?: return@launchIO
+                val text = try {
+                    viewModel.recognizeRegionText(croppedBitmap)
+                } finally {
+                    if (!croppedBitmap.isRecycled) croppedBitmap.recycle()
+                }.trim()
+                if (text.isBlank()) {
+                    withUIContext { toast(MR.strings.no_results_found) }
+                    return@launchIO
+                }
+                withUIContext {
+                    // Запоминаем выделенную область, чтобы повторно не выбирать.
+                    val pageRect = runCatching {
+                        viewModel.state.value.viewer?.displayedPageRect()
+                    }.getOrNull()
+                    if (pageRect != null) {
+                        viewModel.rememberOcrRegion(
+                            mihon.domain.ocr.model.OcrBoundingBox(
+                                left = (rect.left - pageRect.left) / pageRect.width().coerceAtLeast(1f),
+                                top = (rect.top - pageRect.top) / pageRect.height().coerceAtLeast(1f),
+                                right = (rect.right - pageRect.left) / pageRect.width().coerceAtLeast(1f),
+                                bottom = (rect.bottom - pageRect.top) / pageRect.height().coerceAtLeast(1f),
+                            ),
+                        )
+                    }
+                    autoReadEngine.speakSingle(text)
+                }
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e) { "Failed to capture-and-speak region" }
+                withUIContext {
+                    toast("Ошибка озвучки: ${e.message ?: "не удалось распознать область"}")
+                }
+            }
+        }
+    }
+
+    /** Регион вокруг точки касания (autoclick с удержанием) по центру вьюпорта. */
+    private fun holdRegionAround(point: android.graphics.PointF): android.graphics.RectF {
+        val root = binding.root
+        val w = root.width.toFloat()
+        val h = root.height.toFloat()
+        val size = minOf(w, h) * 0.5f
+        val left = (point.x - size / 2f).coerceIn(0f, (w - size).coerceAtLeast(0f))
+        val top = (point.y - size / 2f).coerceIn(0f, (h - size).coerceAtLeast(0f))
+        return android.graphics.RectF(left, top, left + size.coerceAtMost(w), top + size.coerceAtMost(h))
     }
 
     private suspend fun requireCurrentSelectionBitmap(

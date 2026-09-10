@@ -32,15 +32,22 @@ import eu.kanade.presentation.util.formattedMessage
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.model.Download
+import eu.kanade.tachiyomi.data.ocr.OcrChapterScanner
+import eu.kanade.tachiyomi.data.ocr.OcrPageSourceResolver
+import eu.kanade.tachiyomi.data.ocr.OcrScanFailure
 import eu.kanade.tachiyomi.data.ocr.OcrScanManager
 import eu.kanade.tachiyomi.data.track.EnhancedTracker
+import eu.kanade.tachiyomi.data.tts.ChapterOcrTranscript
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
 import eu.kanade.tachiyomi.util.system.toast
+import java.io.File
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
@@ -52,6 +59,9 @@ import kotlinx.coroutines.launch
 import logcat.LogPriority
 import mihon.domain.chapter.interactor.FilterChaptersForDownload
 import mihon.domain.ocr.interactor.GetCachedChapterIdsOcr
+import mihon.domain.ocr.interactor.GetCachedPageOcr
+import mihon.domain.ocr.model.OcrModel
+import mihon.domain.ocr.service.OcrPreferences
 import mihon.domain.source.interactor.UpdateMangaFromRemote
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.preference.CheckboxState
@@ -737,6 +747,137 @@ class MangaScreenModel(
         }
     }
 
+    // ---- Фоновое авто-сканирование главы + транскрипт + открытие читалки ----
+
+    private val ocrChapterScanner by lazy { Injekt.get<OcrChapterScanner>() }
+    private val ocrPageSourceResolver by lazy { Injekt.get<OcrPageSourceResolver>() }
+    private val getCachedPageOcr by lazy { Injekt.get<GetCachedPageOcr>() }
+    private val ocrPreferences by lazy { Injekt.get<OcrPreferences>() }
+
+    private val _chapterAutoRead = MutableStateFlow(ChapterAutoReadState())
+    val chapterAutoRead = _chapterAutoRead.asStateFlow()
+
+    /** Выбранный движок для скан-чтения (по умолчанию — уже настроенный в приложении). */
+    var autoReadEngine: OcrModel = ocrPreferences.ocrModel().get()
+
+    /** Формат экспортируемого транскрипта: "md" | "txt" | "pdf" | "docx". */
+    private var autoReadFormat: String = "md"
+
+    /**
+     * Запускает фоновый скан одной главы с прогрессом «стр. N из M» (через уже
+     * существующий [OcrChapterScanner]), по завершении собирает транскрипт со
+     * спикерами в документ и сигналит UI, чтобы тот открыл читалку в авточтении.
+     */
+    fun scanAndAutoReadChapter(chapter: Chapter) {
+        if (_chapterAutoRead.value.running) return
+        val manga = successState?.manga
+        if (manga == null) {
+            _chapterAutoRead.value = ChapterAutoReadState(error = "Манга не загружена")
+            return
+        }
+        screenModelScope.launchIO {
+            _chapterAutoRead.value = ChapterAutoReadState(running = true, title = chapter.name, total = 0)
+            try {
+                val ok = ocrChapterScanner.scanChapter(
+                    chapterId = chapter.id,
+                    onProgress = { p ->
+                        _chapterAutoRead.value = _chapterAutoRead.value.copy(
+                            running = true,
+                            processed = p.processedPages,
+                            total = p.totalPages,
+                            title = p.chapterName,
+                        )
+                    },
+                    onComplete = { p ->
+                        _chapterAutoRead.value = _chapterAutoRead.value.copy(
+                            running = true,
+                            processed = p.processedPages,
+                            total = p.totalPages,
+                        )
+                    },
+                    onError = { e ->
+                        _chapterAutoRead.value = _chapterAutoRead.value.copy(
+                            running = false,
+                            error = when (e.failure) {
+                                OcrScanFailure.ChapterNotFound -> "Глава не найдена"
+                                OcrScanFailure.MangaNotFound -> "Манга не найдена"
+                                OcrScanFailure.NoPages -> "В главе нет страниц"
+                                is OcrScanFailure.Unexpected -> e.failure.message ?: "Ошибка сканирования"
+                            },
+                        )
+                    },
+                )
+                if (ok) {
+                    val file = buildChapterTranscript(manga, chapter)
+                    _chapterAutoRead.value = _chapterAutoRead.value.copy(
+                        running = false,
+                        processed = _chapterAutoRead.value.total,
+                        error = null,
+                        exportFile = file?.absolutePath,
+                        openChapterId = chapter.id,
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e) { "scanAndAutoReadChapter failed" }
+                _chapterAutoRead.value = _chapterAutoRead.value.copy(
+                    running = false,
+                    error = e.message ?: "Ошибка сканирования",
+                )
+            }
+        }
+    }
+
+    /** Читает кэшированные результаты скана и собирает транскрипт в документ. */
+    private suspend fun buildChapterTranscript(
+        manga: Manga,
+        chapter: Chapter,
+    ): File? {
+        return try {
+            val resolved = ocrPageSourceResolver.resolve(manga, chapter)
+            val results = resolved.use { pages ->
+                pages.pages.mapNotNull { page -> getCachedPageOcr.await(chapter.id, page.pageIndex) }
+            }
+            if (results.isEmpty()) return null
+            val blocks = ChapterOcrTranscript.build(results, chapter.name)
+            ChapterOcrTranscript.write(
+                context = context,
+                blocks = blocks,
+                title = "${manga.title} — ${chapter.name}",
+                format = autoReadFormat,
+            )
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, e) { "buildChapterTranscript failed" }
+            null
+        }
+    }
+
+    /** Выбрать движок OCR для скан-чтения (offline / Glens / GitHub-раннер). */
+    fun setAutoReadEngine(engine: AutoReadEngineChoice) {
+        val model = when (engine) {
+            AutoReadEngineChoice.OFFLINE -> OcrModel.CYRILLIC
+            AutoReadEngineChoice.GLENS -> OcrModel.GLENS
+            AutoReadEngineChoice.GITHUB_RUNNER -> OcrModel.OPENROUTER
+        }
+        autoReadEngine = model
+        ocrPreferences.ocrModel().set(model)
+    }
+
+    fun setAutoReadFormat(format: String) {
+        autoReadFormat = format
+    }
+
+    /** UI открыл читалку — сбрасываем одноразовую команду открытия. */
+    fun clearAutoReadOpen() {
+        _chapterAutoRead.value = _chapterAutoRead.value.copy(openChapterId = null)
+    }
+
+    /** Скрыть диалог ошибки сканирования. */
+    fun dismissAutoReadError() {
+        _chapterAutoRead.value = _chapterAutoRead.value.copy(error = null)
+    }
+
     private fun cancelDownload(chapterId: Long) {
         val activeDownload = downloadManager.getQueuedDownloadOrNull(chapterId) ?: return
         downloadManager.cancelQueuedDownloads(listOf(activeDownload))
@@ -1215,6 +1356,25 @@ class MangaScreenModel(
             }
         }
     }
+}
+
+/** Состояние фонового скан-чтения главы (прогресс + одноразовая команда открытия). */
+@Immutable
+data class ChapterAutoReadState(
+    val running: Boolean = false,
+    val processed: Int = 0,
+    val total: Int = 0,
+    val title: String = "",
+    val error: String? = null,
+    val exportFile: String? = null,
+    val openChapterId: Long? = null,
+)
+
+/** Три предлагаемых OCR-движка для скан-чтения. */
+enum class AutoReadEngineChoice {
+    OFFLINE,
+    GLENS,
+    GITHUB_RUNNER,
 }
 
 @Immutable

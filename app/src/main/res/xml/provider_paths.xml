@@ -12,6 +12,14 @@
     <external-files-path
         name="ext_files"
         path="." />
+    <!-- AI-workspace может лежать во внутреннем хранилище (files/ai_workspace),
+         когда внешнее SD/основное хранилище недоступно/размонтировано. Без
+         files-path FileProvider не может построить content:// URI для файлов
+         из internal files и крашится при «Поделиться» (IllegalArgumentException:
+         Failed to find configured root). -->
+    <files-path
+        name="files_ai_workspace"
+        path="ai_workspace/" />
     <!--suppress AndroidElementNotAllowed -->
     <root-path
         name="ext_storage"

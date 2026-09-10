@@ -38,7 +38,10 @@ object WebStore {
     val marks = MutableStateFlow<List<Mark>>(emptyList())
     val history = MutableStateFlow<List<Hist>>(emptyList())
     val tabs = MutableStateFlow<List<TabItem>>(emptyList())
-    // v1.9.40: PiP-режим (мини-плеер): активности прячут всё, кроме веба
+    // v1.9.40: режим, при котором активности прячут всё, кроме веба.
+    // v1.9.56: единственный плавающий мини-плеер — системный
+    // (MiniOverlayService, поверх всех приложений) с собственным WebView,
+    // поэтому флаги «мини-плеер внутри приложения» больше не нужны.
     val pipMode = mutableStateOf(false)
     // v1.9.40: какая вкладка сейчас открыта (раньше писали всегда в последнюю)
     val activeTabId = MutableStateFlow<String?>(null)

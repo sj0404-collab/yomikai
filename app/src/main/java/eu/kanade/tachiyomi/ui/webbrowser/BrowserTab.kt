@@ -50,6 +50,7 @@ import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -59,6 +60,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.RadioButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -95,6 +97,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Fullscreen
@@ -179,11 +182,17 @@ data object BrowserTab : Tab {
         val js = """
             (function() {
                 var vh = window.innerHeight, vw = window.innerWidth;
-                var minArea = vw * vh * 0.10; // картинка занимает >=10% экрана
+                var minArea = vw * vh * 0.08; // картинка >=8% экрана
                 var top = vh, bottom = 0, left = vw, right = 0, found = false;
-                var nodes = document.querySelectorAll('img, canvas');
+                // Старница манги часто рисуется не только <img>/<canvas>, но и
+                // <div> с background-image (полноэкранные/вебтун-ридеры). Ловим
+                // и такие узлы, иначе зона не находится и сканируется весь экран
+                // вместе с шапкой/подвалом сайта (жалоба пользователя).
+                var nodes = document.querySelectorAll('img, canvas, [style*="background-image"], [data-src]');
                 for (var i = 0; i < nodes.length; i++) {
-                    var r = nodes[i].getBoundingClientRect();
+                    var el = nodes[i];
+                    var r = el.getBoundingClientRect();
+                    if (r.width < 1 || r.height < 1) continue;
                     var visW = Math.min(r.right, vw) - Math.max(r.left, 0);
                     var visH = Math.min(r.bottom, vh) - Math.max(r.top, 0);
                     if (visW <= 0 || visH <= 0) continue;
@@ -194,8 +203,37 @@ data object BrowserTab : Tab {
                     left = Math.min(left, Math.max(r.left, 0));
                     right = Math.max(right, Math.min(r.right, vw));
                 }
-                if (!found) return "";
-                return (left / vw) + "," + (top / vh) + "," + (right / vw) + "," + (bottom / vh);
+                // Вычесть фиксированные шапку/подвал ридера (навигация «— том N
+                // глава M →», счётчик «N/M»): они обычно position:fixed/sticky.
+                function shrinkToContent() {
+                    // head = нижняя граница верхней панели (контент ниже её),
+                    // foot = верхняя граница нижней панели (контент выше её).
+                    var head = 0, foot = vh;
+                    var chrome = document.querySelectorAll('header, footer, nav, [class*="header"], [class*="footer"], [class*="toolbar"], [class*="reader-top"], [class*="reader-bottom"]');
+                    for (var k = 0; k < chrome.length; k++) {
+                        var c = chrome[k];
+                        var cs = window.getComputedStyle(c);
+                        if (cs.position !== 'fixed' && cs.position !== 'sticky' && cs.position !== 'absolute') continue;
+                        var cr = c.getBoundingClientRect();
+                        if (cr.height < 10 || cr.height > vh * 0.35) continue;
+                        if (cr.top >= 0 && cr.top < vh * 0.5) head = Math.max(head, Math.min(cr.bottom, vh));
+                        if (cr.bottom <= vh && cr.bottom > vh * 0.5) foot = Math.min(foot, Math.max(cr.top, 0));
+                    }
+                    return [head, foot];
+                }
+                var hf = shrinkToContent();
+                if (found) {
+                    top = Math.max(top, hf[0]);
+                    bottom = Math.min(bottom, hf[1]);
+                    if (bottom - top > vh * 0.10) {
+                        return (left / vw) + "," + (top / vh) + "," + (right / vw) + "," + (bottom / vh);
+                    }
+                } else if (hf[1] - hf[0] > vh * 0.30) {
+                    // Зона не нашлась, но есть фиксированная шапка/подвал ридера —
+                    // отдаём полосу контента между ними, а не весь экран.
+                    return "0," + (hf[0] / vh) + ",1," + (hf[1] / vh);
+                }
+                return "";
             })()
         """.trimIndent()
         return kotlinx.coroutines.suspendCancellableCoroutine { cont ->
@@ -372,6 +410,30 @@ data object BrowserTab : Tab {
         }
     }
 
+    /**
+     * Отдать живой WebView активной вкладки в произвольный контейнер
+     * (например, в плавающий мини-плеер). Вкладка остаётся в пуле, страница
+     * и скролл НЕ перезапускаются — вьюха просто переезжает в другой
+     * FrameLayout. Возвращает webview, либо null если вкладок нет.
+     */
+    @SuppressLint("ViewConstructor")
+    fun attachActiveWebView(container: ViewGroup): WebView? {
+        val ctx = container.context
+        val tabId = WebStore.activeTabId.value ?: WebStore.tabs.value.lastOrNull()?.id ?: return null
+        val item = WebStore.tabs.value.firstOrNull { it.id == tabId }
+        val wv = webViewForTab(ctx, tabId, item?.url ?: HOME_URL)
+        sharedWebView = wv
+        if (wv.parent === container) return wv
+        runCatching { (wv.parent as? ViewGroup)?.removeView(wv) }
+        container.removeAllViews()
+        container.addView(wv, android.widget.FrameLayout.LayoutParams(-1, -1))
+        wv.onResume()
+        canGoBackState.value = wv.canGoBack()
+        canGoForwardState.value = wv.canGoForward()
+        wv.url?.let { urlState.value = it }
+        return wv
+    }
+
     /** Живой WebView вкладки: открытые ранее вкладки НЕ пересоздаются. */
     private fun webViewForTab(context: Context, tabId: String, url: String): WebView {
         webViewPool[tabId]?.let { return it }
@@ -446,6 +508,7 @@ data object BrowserTab : Tab {
         var histOpen by remember { mutableStateOf(false) }
         var tabsOpen by remember { mutableStateOf(false) }
         var cacheOpen by remember { mutableStateOf(false) }
+        var voiceOpen by remember { mutableStateOf(false) }
         var webBookmarked by remember { mutableStateOf(false) }
         val webPages by WebStore.pages.collectAsState()
         val webMarks by WebStore.marks.collectAsState()
@@ -602,6 +665,12 @@ data object BrowserTab : Tab {
 
         val readEngine = remember { autoReadEngine ?: AutoReadEngine(ctx.applicationContext).also { autoReadEngine = it } }
         val currentRegion by readEngine.currentRegion.collectAsState()
+        // Рамки распознанных реплик кадра — для per-bubble значков 🔊.
+        val frameRegions by readEngine.frameRegions.collectAsState()
+        val voicePrefs = remember { Injekt.get<mihon.domain.ocr.service.OcrPreferences>() }
+        val roleMode by voicePrefs.voiceMode().changes().collectAsState(initial = voicePrefs.voiceMode().get())
+        val voiceEngine by voicePrefs.voiceEngine().changes().collectAsState(initial = voicePrefs.voiceEngine().get())
+        val voiceIcons by voicePrefs.voiceIcons().changes().collectAsState(initial = voicePrefs.voiceIcons().get())
 
         // Цикл авточтения:
         // • кадр = ПОЛНЫЙ видимый вьюпорт;
@@ -757,14 +826,23 @@ data object BrowserTab : Tab {
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
-            AndroidView(
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .weight(1f),
+            ) {
+            AndroidView(
+                modifier = Modifier
+                    .fillMaxSize(),
                 factory = { ctx -> android.widget.FrameLayout(ctx) },
                 update = { fl ->
                     // v1.9.41: вкладка = свой живой WebView: переключение только
                     // переставляет вьюху, страница и скролл НЕ перезапускаются.
+                    // v1.9.56: вкладка ВСЕГДА держит свой WebView — отдельный
+                    // мини-браузер внутри приложения. Единственный плавающий
+                    // мини-плеер — системный (MiniOverlayService, поверх всех
+                    // приложений) с СОБСТВЕННЫМ WebView, поэтому конфликтов
+                    // «двух панелей за один WebView» больше нет.
                     val tabId = activeTabId ?: webTabs.lastOrNull()?.id ?: return@AndroidView
                     val item = webTabs.firstOrNull { it.id == tabId }
                     val wv = webViewForTab(fl.context, tabId, item?.url ?: HOME_URL)
@@ -783,11 +861,40 @@ data object BrowserTab : Tab {
                     (fl as? android.widget.FrameLayout)?.removeAllViews()
                 },
             )
+            }
         }
 
         // Линейка чтения (как в AlReader): подсветка текущей реплики
         currentRegion?.let { region ->
             eu.kanade.presentation.reader.components.AutoReadHighlight(region = region, engine = readEngine)
+        }
+
+        // Per-bubble значки 🔊 на рамках распознанных реплик. Тап — озвучить
+        // именно этот текст (жёлоба: «голосовой значок не работает в вебе»).
+        // Показываются по тому же переключателю, что и в читалке.
+        if (voiceIcons && frameRegions.isNotEmpty()) {
+            eu.kanade.presentation.reader.components.OcrBubbleVoiceOverlay(
+                regions = frameRegions,
+                onSpeakRegion = { text, _ ->
+                    readEngine.speakSingle(text)
+                },
+                perBubble = true,
+                draggable = true,
+            )
+        }
+
+        // Выбор голосов и ролей прямо в браузере: 1 / 2 / много голосов и
+        // движок (Авто = веб онлайн / локальный оффлайн).
+        if (voiceOpen) {
+            VoiceQuickDialog(
+                onDismiss = { voiceOpen = false },
+                roleMode = roleMode,
+                voiceEngine = voiceEngine,
+                voiceIcons = voiceIcons,
+                onRoleMode = { m -> voicePrefs.voiceMode().set(m) },
+                onVoiceEngine = { e -> voicePrefs.voiceEngine().set(e) },
+                onVoiceIcons = { b -> voicePrefs.voiceIcons().set(b) },
+            )
         }
 
         // Плавающее SAO-меню браузера: автоскролл, наверх, закрыть
@@ -855,6 +962,15 @@ data object BrowserTab : Tab {
                                 }
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Голоса  ", style = MaterialTheme.typography.labelMedium)
+                                SmallFloatingActionButton(onClick = {
+                                    menuOpen = false
+                                    voiceOpen = true
+                                }) {
+                                    Icon(Icons.Outlined.RecordVoiceOver, contentDescription = "Голоса")
+                                }
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("Сохранить HTML  ", style = MaterialTheme.typography.labelMedium)
                                 SmallFloatingActionButton(onClick = { saveHtmlPage() }) {
                                     if (saving) CircularProgressIndicator(modifier = Modifier.width(16.dp).height(16.dp))
@@ -913,15 +1029,19 @@ data object BrowserTab : Tab {
                         TextButton(onClick = { moreOpen = false; saveHtmlPage() }) { Text("Сохранить страницу (HTML)") }
                         TextButton(onClick = {
                             moreOpen = false
-                            runCatching {
-                                (ctx as? android.app.Activity)?.enterPictureInPictureMode(
-                                    android.app.PictureInPictureParams.Builder()
-                                        .setAspectRatio(android.util.Rational(9, 16))
-                                        .setSeamlessResizeEnabled(true)
-                                        .build(),
-                                )
+                            // v1.9.55: плавающий мини-плеер ПОВЕРХ ВСЕХ приложений —
+                            // настоящее окно поверх любого приложения. Если разрешение
+                            // «Показ поверх других приложений» не выдано, открываем
+                            // системные настройки; иначе запускаем foreground-сервис.
+                            val url = sharedWebView?.url ?: urlBar
+                            if (MiniOverlayService.canDrawOverlays(ctx)) {
+                                MiniOverlayService.start(ctx, url)
+                                ctx.toast("Мини-плеер поверх всех приложений")
+                            } else {
+                                MiniOverlayService.requestPermission(ctx)
+                                ctx.toast("Разрешите показ поверх других приложений")
                             }
-                        }) { Text("Плавающий плеер (PiP)") }
+                        }) { Text("Мини-плеер поверх всех приложений") }
                         if (!hiddenM.contains("b_urlscan")) {
                             TextButton(onClick = { moreOpen = false; manualScan() }) { Text("Скан текста (OCR)") }
                         }
@@ -1307,3 +1427,89 @@ private fun ocrFixedRegions(
         .map { it.boundingBox to mihon.data.ocr.CyrillicTranslitFixer.autoFixCyrillic(it.text).trim() }
         .filter { it.second.isNotBlank() }
 
+
+/**
+ * Быстрый выбор голосов в мини-браузере: роли (1 / 2 / много голосов), движок
+ * (Авто — веб онлайн / локальный оффлайн) и значки 🔊 на репликах. Пишет в те же
+ * преференсы, что и настройки озвучки читалки, поэтому выбор согласован.
+ */
+@Composable
+private fun VoiceQuickDialog(
+    onDismiss: () -> Unit,
+    roleMode: String,
+    voiceEngine: String,
+    voiceIcons: Boolean,
+    onRoleMode: (String) -> Unit,
+    onVoiceEngine: (String) -> Unit,
+    onVoiceIcons: (Boolean) -> Unit,
+) {
+    val modeOptions = listOf(
+        eu.kanade.tachiyomi.data.tts.VoiceModeResolver.Mode.SINGLE to "Один голос",
+        eu.kanade.tachiyomi.data.tts.VoiceModeResolver.Mode.DUAL to "Два голоса",
+        eu.kanade.tachiyomi.data.tts.VoiceModeResolver.Mode.MULTI to "Много голосов",
+    )
+    val engineOptions = listOf(
+        eu.kanade.tachiyomi.data.tts.TtsSpeaker.ENGINE_AUTO to "Авто (веб онлайн / локально оффлайн)",
+        eu.kanade.tachiyomi.data.tts.TtsSpeaker.ENGINE_GOOGLE_WEB to "Веб (Google, без ключа)",
+        eu.kanade.tachiyomi.data.tts.TtsSpeaker.ENGINE_SYSTEM to "Локально (системные)",
+    )
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Готово") } },
+        title = { Text("Голоса в браузере") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .heightIn(max = 460.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text("Роли", style = MaterialTheme.typography.labelLarge)
+                modeOptions.forEach { (m, label) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onRoleMode(m.id) },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = roleMode == m.id, onClick = { onRoleMode(m.id) })
+                        Text(label, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                Text(
+                    "Движок",
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+                engineOptions.forEach { (e, label) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onVoiceEngine(e) },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = voiceEngine == e, onClick = { onVoiceEngine(e) })
+                        Text(label, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                Text(
+                    "Значки озвучки",
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onVoiceIcons(!voiceIcons) },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(selected = voiceIcons, onClick = { onVoiceIcons(!voiceIcons) })
+                    Text(
+                        if (voiceIcons) "Показывать 🔊 на репликах" else "Значки выключены",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+        },
+    )
+}

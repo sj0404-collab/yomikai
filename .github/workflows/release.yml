@@ -56,27 +56,10 @@ jobs:
         with:
           cache-key-prefix: yomikai-v1-
 
-      - name: Verify SQLDelight migrations
-        run: ./gradlew verifySqlDelightMigration
-
-      - name: Run local Cyrillic OCR regression tests
-        run: ./gradlew :data:testDebugUnitTest --tests mihon.data.ocr.OcrTextCleanerTest
-
-      - name: Run CTC scoring regression tests
-        run: ./gradlew :data:testDebugUnitTest --tests mihon.data.ocr.CtcScoringTest
-
-      - name: Run unit tests
-        run: ./gradlew test
-
-      - name: Upload test report
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: test-report-${{ github.sha }}
-          path: |
-            app/build/reports/tests
-            data/build/reports/tests
-            domain/build/reports/tests
+      # v1.9.55: пользователь просил собирать релиз БЕЗ прогонов OCR/тестов —
+      # сразу APK по тегу. Блокирующих тестов в релизе больше нет, чтобы сборка
+      # шла быстро и не зависела от инфраструктуры. Качество кода по-прежнему
+      # проверяется CI-гейтом (workflow «Tests») на pull-request.
 
       - name: Build the single release APK
         run: ./gradlew assembleRelease -Penable-updater --stacktrace
