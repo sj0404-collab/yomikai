@@ -175,12 +175,12 @@ object SettingsDictionaryScreen : Screen {
                 RecommendedDictionary(
                     title = stringResource(MR.strings.recommended_dict_ru_explanatory_title),
                     description = stringResource(MR.strings.recommended_dict_ru_explanatory_description),
-                    url = "https://github.com/sj0404-collab/yomihon-custom/raw/main/dictionaries/Russian_Explanatory.zip",
+                    url = "https://github.com/sj0404-collab/yomikai/raw/main/dictionaries/Russian_Explanatory.zip",
                 ),
                 RecommendedDictionary(
                     title = stringResource(MR.strings.recommended_dict_lat_cyr_title),
                     description = stringResource(MR.strings.recommended_dict_lat_cyr_description),
-                    url = "https://github.com/sj0404-collab/yomihon-custom/raw/main/dictionaries/Latin_to_Cyrillic.zip",
+                    url = "https://github.com/sj0404-collab/yomikai/raw/main/dictionaries/Latin_to_Cyrillic.zip",
                 ),
                 RecommendedDictionary(
                     title = stringResource(MR.strings.recommended_dict_jitendex_title),

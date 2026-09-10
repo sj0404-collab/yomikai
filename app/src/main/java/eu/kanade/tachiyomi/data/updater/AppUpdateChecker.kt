@@ -39,9 +39,9 @@ val GITHUB_REPO: String by lazy {
     // Обновления берём из нашего форка — раньше чекер смотрел на yomihon/yomihon,
     // где наших релизов нет, поэтому "обновления не появлялись".
     if (isPreviewBuildType) {
-        "sj0404-collab/yomihon-custom"
+        "sj0404-collab/yomikai"
     } else {
-        "sj0404-collab/yomihon-custom"
+        "sj0404-collab/yomikai"
     }
 }
 

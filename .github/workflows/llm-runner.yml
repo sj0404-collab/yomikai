@@ -101,7 +101,7 @@ jobs:
               --progress-bar "$URL" -o model.gguf.part
             mv model.gguf.part model.gguf
           fi
-          SIZE=$(stat -c%s model.gguf)
+          SIZE=$(wc -c < model.gguf | tr -d ' ')
           test "$SIZE" -gt 52428800 || { echo "Downloaded model is too small: $SIZE bytes"; exit 1; }
           echo "Model ready: $(( SIZE / 1048576 )) MB"
 
@@ -262,7 +262,7 @@ jobs:
               --progress-bar "$URL" -o model.gguf.part
             mv model.gguf.part model.gguf
           fi
-          SIZE=$(stat -c%s model.gguf)
+          SIZE=$(wc -c < model.gguf | tr -d ' ')
           test "$SIZE" -gt 52428800 || { echo "Downloaded model is too small: $SIZE bytes"; exit 1; }
           echo "Model ready: $(( SIZE / 1048576 )) MB"
 

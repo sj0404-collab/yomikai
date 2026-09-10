@@ -53,7 +53,7 @@ object RunnerLlm {
         Triple("gemma3-1b", "Gemma 3 1B (GGUF Q4) — компактная от Google", 768),
     )
 
-    private const val REPO = "sj0404-collab/yomihon-custom"
+    private const val REPO = "sj0404-collab/yomikai"
     private const val WORKFLOW = "llm-runner.yml"
 
     private fun prefs(): OcrPreferences = Injekt.get()
