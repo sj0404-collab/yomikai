@@ -30,9 +30,10 @@ fun getChapterSort(
             false -> { c1, c2 -> c1.name.compareToWithCollator(c2.name) }
         }
         else -> {
-            "ChapterSort: Invalid sorting method: ${manga.sorting}, defaulting to source order"
-                .let { msg -> logcat { msg } }
-            { c1, c2 -> c1.sourceOrder.compareTo(c2.sourceOrder) }
+            val message = "ChapterSort: Invalid sorting method: ${manga.sorting}, defaulting to source order"
+            message.logcat(message = { message })
+            val defaultSort: (Chapter, Chapter) -> Int = { c1, c2 -> c1.sourceOrder.compareTo(c2.sourceOrder) }
+            defaultSort
         }
     }
 }
