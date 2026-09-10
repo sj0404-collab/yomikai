@@ -6,6 +6,7 @@ import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.domain.source.interactor.GetEnabledSources
 import eu.kanade.domain.source.interactor.ToggleSource
 import eu.kanade.domain.source.interactor.ToggleSourcePin
+import eu.kanade.domain.source.model.ContentType
 import eu.kanade.presentation.browse.SourceUiModel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.catch
@@ -22,6 +23,7 @@ import uy.kohesive.injekt.api.get
 import java.util.TreeMap
 
 class SourcesScreenModel(
+    private val contentType: ContentType = ContentType.MANGA,
     private val getEnabledSources: GetEnabledSources = Injekt.get(),
     private val toggleSource: ToggleSource = Injekt.get(),
     private val toggleSourcePin: ToggleSourcePin = Injekt.get(),
@@ -42,9 +44,16 @@ class SourcesScreenModel(
     }
 
     private fun collectLatestSources(sources: List<Source>) {
+        // Фильтрация по типу контента: русские = манга/ранобэ, английские = аниме/манга
+        val filtered = when (contentType) {
+            ContentType.MANGA -> sources.filter { it.lang in listOf("ru", "all", "en", "ja") }
+            ContentType.ANIME -> sources.filter { it.lang in listOf("ru", "en", "ja", "all") }
+            ContentType.RANOBE -> sources.filter { it.lang in listOf("ru", "en") }
+            ContentType.BOOKS -> sources.filter { it.lang in listOf("ru", "en") }
+        }
+
         mutableState.update { state ->
             val map = TreeMap<String, MutableList<Source>> { d1, d2 ->
-                // Sources without a lang defined will be placed at the end
                 when {
                     d1 == LAST_USED_KEY && d2 != LAST_USED_KEY -> -1
                     d2 == LAST_USED_KEY && d1 != LAST_USED_KEY -> 1
@@ -55,7 +64,7 @@ class SourcesScreenModel(
                     else -> d1.compareTo(d2)
                 }
             }
-            val byLang = sources.groupByTo(map) {
+            val byLang = filtered.groupByTo(map) {
                 when {
                     it.isUsedLast -> LAST_USED_KEY
                     Pin.Actual in it.pin -> PINNED_KEY

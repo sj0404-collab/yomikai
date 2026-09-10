@@ -394,10 +394,12 @@ object HomeScreen : Screen() {
                 }
             },
         ) {
-            Icon(
-                painter = tab.options.icon!!,
-                contentDescription = tab.options.title,
-            )
+            tab.options.icon?.let { icon ->
+                Icon(
+                    painter = icon,
+                    contentDescription = tab.options.title,
+                )
+            }
         }
     }
 
