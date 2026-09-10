@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.data.track.bangumi.dto
 import eu.kanade.tachiyomi.data.track.bangumi.Bangumi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import tachiyomi.core.common.util.system.logcat
 
 @Serializable
 // Incomplete DTO with only our needed attributes
@@ -22,7 +23,10 @@ data class BGMCollectionResponse(
         3 -> Bangumi.READING
         4 -> Bangumi.ON_HOLD
         5 -> Bangumi.DROPPED
-        else -> throw NotImplementedError("Unknown status: $type")
+        else -> {
+            logcat { "Bangumi: Unknown collection status type: $type, defaulting to READING" }
+            Bangumi.READING
+        }
     }
 }
 

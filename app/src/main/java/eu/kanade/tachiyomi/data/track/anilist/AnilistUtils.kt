@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.data.track.anilist
 
 import eu.kanade.domain.track.service.TrackPreferences
 import eu.kanade.tachiyomi.data.database.models.Track
+import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.injectLazy
 import tachiyomi.domain.track.model.Track as DomainTrack
 
@@ -12,7 +13,10 @@ fun Track.toApiStatus() = when (status) {
     Anilist.DROPPED -> "DROPPED"
     Anilist.PLAN_TO_READ -> "PLANNING"
     Anilist.REREADING -> "REPEATING"
-    else -> throw NotImplementedError("Unknown status: $status")
+    else -> {
+        logcat { "Anilist: Unknown status: $status, defaulting to READING" }
+        "CURRENT"
+    }
 }
 
 private val preferences: TrackPreferences by injectLazy()
@@ -40,5 +44,8 @@ fun DomainTrack.toApiScore(): String = when (preferences.anilistScoreType.get())
     }
     // 10 point decimal
     "POINT_10_DECIMAL" -> (score / 10).toString()
-    else -> throw NotImplementedError("Unknown score type")
+    else -> {
+        logcat { "Anilist: Unknown score type: ${preferences.anilistScoreType.get()}, defaulting to 100 point" }
+        score.toInt().toString()
+    }
 }

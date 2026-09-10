@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.data.track.anilist.Anilist
 import eu.kanade.tachiyomi.data.track.anilist.AnilistApi
 import eu.kanade.tachiyomi.data.track.model.TrackSearch
 import eu.kanade.tachiyomi.util.lang.htmlDecode
+import tachiyomi.core.common.util.system.logcat
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -77,6 +78,9 @@ data class ALUserManga(
         "DROPPED" -> Anilist.DROPPED
         "PLANNING" -> Anilist.PLAN_TO_READ
         "REPEATING" -> Anilist.REREADING
-        else -> throw NotImplementedError("Unknown status: $listStatus")
+        else -> {
+            logcat { "Anilist: Unknown list status: $listStatus, defaulting to READING" }
+            Anilist.READING
+        }
     }
 }

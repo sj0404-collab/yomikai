@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.data.track.hikka
 
 import eu.kanade.tachiyomi.data.database.models.Track
+import tachiyomi.core.common.util.system.logcat
 import java.util.UUID
 
 fun Track.toApiStatus() = when (status) {
@@ -10,7 +11,10 @@ fun Track.toApiStatus() = when (status) {
     Hikka.DROPPED -> "dropped"
     Hikka.PLAN_TO_READ -> "planned"
     Hikka.REREADING -> "reading"
-    else -> throw NotImplementedError("Hikka: Unknown status: $status")
+    else -> {
+        logcat { "Hikka: Unknown API status: $status, defaulting to reading" }
+        "reading"
+    }
 }
 
 fun toTrackStatus(status: String) = when (status) {
@@ -19,7 +23,10 @@ fun toTrackStatus(status: String) = when (status) {
     "on_hold" -> Hikka.ON_HOLD
     "dropped" -> Hikka.DROPPED
     "planned" -> Hikka.PLAN_TO_READ
-    else -> throw NotImplementedError("Hikka: Unknown status: $status")
+    else -> {
+        logcat { "Hikka: Unknown track status: $status, defaulting to READING" }
+        Hikka.READING
+    }
 }
 
 fun stringToNumber(input: String): Long {

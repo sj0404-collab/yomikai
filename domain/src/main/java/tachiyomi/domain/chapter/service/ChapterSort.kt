@@ -1,6 +1,7 @@
 package tachiyomi.domain.chapter.service
 
 import tachiyomi.core.common.util.lang.compareToWithCollator
+import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 
@@ -28,6 +29,9 @@ fun getChapterSort(
             true -> { c1, c2 -> c2.name.compareToWithCollator(c1.name) }
             false -> { c1, c2 -> c1.name.compareToWithCollator(c2.name) }
         }
-        else -> throw NotImplementedError("Invalid chapter sorting method: ${manga.sorting}")
+        else -> {
+            logcat { "ChapterSort: Invalid sorting method: ${manga.sorting}, defaulting to source order" }
+            { c1, c2 -> c1.sourceOrder.compareTo(c2.sourceOrder) }
+        }
     }
 }
