@@ -28,8 +28,8 @@ jobs:
   build:
     if: github.repository == 'sj0404-collab/yomihon-custom' || github.repository == 'sj0404-collab/yomikai' || github.repository == 'yomihon/yomihon'
     name: Build
-    runs-on: 'ubuntu-24.04'
-    timeout-minutes: 50
+    runs-on: windows-2025
+    timeout-minutes: 90
     needs: [get_tag]
     outputs:
       version_name: ${{ steps.version.outputs.version_name }}
@@ -51,6 +51,9 @@ jobs:
           java-version-file: .github/.java-version
           distribution: temurin
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
         with:
@@ -62,7 +65,8 @@ jobs:
       # проверяется CI-гейтом (workflow «Tests») на pull-request.
 
       - name: Build the single release APK
-        run: ./gradlew assembleRelease -Penable-updater --stacktrace
+        shell: bash
+        run: sh gradlew assembleRelease -Penable-updater --stacktrace
         env:
           RELEASE_TAG: ${{ needs.get_tag.outputs.tag }}
           storeFileBase64: ${{ secrets.SIGNING_KEY }}

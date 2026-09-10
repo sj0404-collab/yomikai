@@ -54,8 +54,8 @@ jobs:
           echo "version_name=$version_name" >> "$GITHUB_OUTPUT"
 
   build:
-    runs-on: 'ubuntu-24.04'
-    timeout-minutes: 60
+    runs-on: windows-2025
+    timeout-minutes: 90
     needs: [get_version]
     outputs:
       version_name: ${{ steps.version.outputs.version_name }}
@@ -75,13 +75,17 @@ jobs:
           java-version-file: .github/.java-version
           distribution: temurin
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
         with:
           cache-key-prefix: yomikai-universal-v1-
 
       - name: Build universal (all-ABI) release APK
-        run: ./gradlew assembleRelease -Penable-updater --stacktrace
+        shell: bash
+        run: sh gradlew assembleRelease -Penable-updater --stacktrace
         env:
           RELEASE_TAG: ${{ needs.get_version.outputs.release_tag }}
           SPLIT_ALL_ABI: "true"
