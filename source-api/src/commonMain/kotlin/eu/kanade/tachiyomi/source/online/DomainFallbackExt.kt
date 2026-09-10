@@ -24,12 +24,13 @@ fun Request.withDomainFallback(
     mirrors: List<String>,
     onDomainSwitched: ((oldDomain: String, newDomain: String) -> Unit)? = null,
 ): Request {
-    return this.tag(
-        DomainFallbackInterceptor.DomainFallbackConfig::class.java,
-        DomainFallbackInterceptor.DomainFallbackConfig(
-            primaryDomain = primary,
-            mirrorDomains = mirrors,
-            onDomainSwitched = onDomainSwitched,
-        ),
-    )
+    return this.newBuilder()
+        .tag(
+            DomainFallbackInterceptor.DomainFallbackConfig(
+                primaryDomain = primary,
+                mirrorDomains = mirrors,
+                onDomainSwitched = onDomainSwitched,
+            ),
+        )
+        .build()
 }
