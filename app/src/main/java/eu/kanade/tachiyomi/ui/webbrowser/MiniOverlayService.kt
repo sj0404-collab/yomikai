@@ -441,7 +441,7 @@ class MiniOverlayService : Service() {
     private var dragBubbleDownTime = 0L
 
     /** Свернуть в плавающий пузырёк (WebView остаётся живым и играет дальше). */
-    private fun collapseNow() {
+     private fun collapseNow() {
         val lp = params ?: return
         if (isCollapsed) return
         // Запоминаем текущий развёрнутый размер, чтобы вернуть его обратно.
@@ -454,9 +454,9 @@ class MiniOverlayService : Service() {
         bubble?.visibility = View.VISIBLE
         clampToScreen(lp)
         root?.let { runCatching { wm.updateViewLayout(it, lp) } }
-        // WebView остаётся видимым (только уменьшенным), поэтому страница не
-        // уходит в «hidden» и аудио/видео продолжает играть.
-        webView?.let { it.visibility = View.VISIBLE; it.onResume() }
+        // Пауза WebView: останавливаем видео/аудио при сворачивании в пузырёк.
+        // Visibility оставляем VISIBLE чтобы WebView не пересоздавался при развороте.
+        webView?.onPause()
     }
 
     /** Развернуть пузырёк обратно в полноценный плеер. */
