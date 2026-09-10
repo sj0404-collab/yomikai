@@ -454,9 +454,9 @@ class MiniOverlayService : Service() {
         bubble?.visibility = View.VISIBLE
         clampToScreen(lp)
         root?.let { runCatching { wm.updateViewLayout(it, lp) } }
-        // Пауза WebView: останавливаем видео/аудио при сворачивании в пузырёк.
-        // Visibility оставляем VISIBLE чтобы WebView не пересоздавался при развороте.
-        webView?.onPause()
+        // WebView остаётся видимым и в resumed — видео/аудио продолжает играть
+        // в фоне, пока пользователь слушает свёрнутый плеер.
+        webView?.let { it.visibility = View.VISIBLE; it.onResume() }
     }
 
     /** Развернуть пузырёк обратно в полноценный плеер. */
