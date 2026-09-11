@@ -95,6 +95,47 @@ class AutoReadEngine(
     val frameRegions = _frameRegions.asStateFlow()
 
     /**
+     * Слоты голосов ВСЕЙ сессии чтения: пол → последний выданный слот.
+     * Не сбрасываются между кадрами (только в [stop]), поэтому персонаж,
+     * начавший реплику в одном кадре и продолживший в следующем (перекрытие
+     * вебтуна), звучит тем же голосом, а каждый НОВЫЙ персонаж того же пола
+     * получает следующий свободный голос.
+     */
+    private val speakerSlots = mutableMapOf<String, Int>()
+
+    /** Полы реплик прошлого кадра (в порядке чтения) — для определения
+     *  продолжения одного персонажа через границу кадров. */
+    private var prevFrameGenders: List<String?> = emptyList()
+
+    /**
+     * Слот голоса для реплики в режиме «много голосов» / «свой голос
+     * персонажу». frameOccurrence — сколько реплик БОЛЬШЕ ТОГО же пола уже
+     * прочитано в этом кадре (0 = первый персонаж этого пола в сцене).
+     *
+     * Правило:
+     *  • null-пол (нарратор) → слот 0 (свой голос нарратора);
+     *  • продолжение реплики прошлого кадра (текст похож на прошлый кадр,
+     *    это обычное 65%-перекрытие вебтуна) → ТОТ ЖЕ слот, что и раньше;
+     *  • иначе (новый персонаж или следующая реплика того же пола) →
+     *    следующий свободный слот сессии.
+     */
+    private fun voiceSlotFor(gender: String?, text: String, frameOccurrence: Int): Int {
+        val key = gender ?: return 0
+        val current = speakerSlots[key] ?: -1
+        val continuesPrev = frameOccurrence == 0 &&
+            prevFrameGenders.lastOrNull() == gender &&
+            prevFrameLines.any { prev ->
+                trigramSimilarity(
+                    prev.lowercase().filter { it.isLetterOrDigit() },
+                    text.lowercase().filter { it.isLetterOrDigit() },
+                ) >= 0.45f
+            }
+        val next = if (continuesPrev) current else current + 1
+        speakerSlots[key] = next
+        return next
+    }
+
+    /**
      * Зона книги внутри вьюпорта (доли 0..1) — если кадр перед OCR был
      * обрезан до неё, оверлей обязан пересчитать box'ы обратно.
      */
@@ -141,7 +182,13 @@ class AutoReadEngine(
      * История прочитанного с НЕЧЁТКИМ сравнением: OCR той же реплики при
      * смещённом кадре даёт слегка другой текст (обрезанные края, дрожание),
      * поэтому точный хэш пропускал дубли. Храним нормализованные строки и
-     * сравниваем по включению/похожести 3-граммами (порог 0.75).
+     * сравниваем по включению/похожести 3-граммами (порог 0.6).
+     *
+     * Вебтун листает кадр на ~35% высоты: хвост прошлой страницы остаётся
+     * вверху следующего кадра и OCR может дать его текст с искажением. Порог
+     * понижен, чтобы такой хвост не читался во второй раз (жалоба: «сначала
+     * середину, потом верх прошлой реплики»), ценой редкого пропуска настоящей
+     * реплики-повтора на той же странице.
      */
     private val spokenTexts = ArrayDeque<String>()
 
@@ -154,7 +201,7 @@ class AutoReadEngine(
         if (norm.length < 4) return false
         for (old in spokenTexts) {
             if (old.contains(norm) || norm.contains(old)) return true
-            if (trigramSimilarity(old, norm) >= 0.75f) return true
+            if (trigramSimilarity(old, norm) >= 0.6f) return true
         }
         spokenTexts.addLast(norm)
         while (spokenTexts.size > HISTORY_LIMIT) spokenTexts.removeFirst()
@@ -358,6 +405,9 @@ class AutoReadEngine(
                 if (ordered.isNotEmpty()) {
                     lastFrameText = ordered.joinToString("\n") { it.text }
                 }
+                // Полы текущего кадра — для слотов голосов следующего кадра
+                // (продолжение персонажа через перекрытие вебтуна).
+                prevFrameGenders = (0 until ordered.size).map { genders.get(it) }
 
                 // 3.7) перевод ВСЕЙ страницы одним запросом (раньше был
                 // отдельный HTTP-запрос на каждую реплику — на 15 бабблах
@@ -443,15 +493,17 @@ class AutoReadEngine(
                         marks = marks,
                     )
 
-                    // Слот говорящего: два персонажа одного пола в сцене
-                    // получают разные голоса. Считаем по индексам, а не через
-                    // indexOf: одинаковые реплики иначе дали бы один и тот же
-                    // слот. В режиме «много голосов» это всегда включено.
+                    // Слот говорящего: каждый персонаж одного пола в сцене
+                    // получает свой голос. Слоты сессионные (переживают кадры):
+                    // продолжение реплики прошлого кадра звучит тем же голосом,
+                    // новый персонаж — следующим свободным. В режиме «много
+                    // голосов» и при «свой голос персонажу» всегда включено.
                     val slot = if (
                         roleMode == VoiceModeResolver.Mode.MULTI ||
                         prefs.perSpeakerVoices().get()
                     ) {
-                        (0 until i).count { genders.get(it) == gender }
+                        val occurrence = (0 until i).count { genders.get(it) == gender }
+                        voiceSlotFor(gender, region.text, occurrence)
                     } else {
                         0
                     }
@@ -480,6 +532,8 @@ class AutoReadEngine(
 
     fun stop() {
         spokenLines.clear()
+        speakerSlots.clear()
+        prevFrameGenders = emptyList()
         generation++ // инвалидируем все pending-колбэки
         job?.cancel()
         job = null
@@ -698,34 +752,31 @@ class AutoReadEngine(
         /**
          * Упорядочивает реплики кадра в читаемый порядок.
          *
-         * Раньше строки делились фиксированными 12% полосами по `top`: баблы
-         * одной строки, чуть смещённые по вертикали, попадали в разные полосы
-         * и читались «лесенкой». Теперь баблы группируются в строки по близости
-         * вертикальных ЦЕНТРОВ (допуск = 0.7 медианной высоты), строки идут
-         * сверху вниз, внутри строки — по направлению чтения (ltr/rlt/vertical).
+         * Раньше реплики группировались в «строки» по близости вертикальных
+         * центров (допуск 0.7 медианной высоты), строки шли сверху вниз, внутри
+         * строки — по направлению чтения. На манге и при наклонных/разновысоких
+         * панелях этот допуск раскалывал реплики одной строки по разным
+         * «строкам» (лесенка), а на вебтуне из-за перекрытия кадров текст
+         * читался «середину → хвост прошлой страницы → низ».
+         *
+         * Теперь порядок — как читает человек: КОЛОНКАМИ по направлению чтения.
+         *  • манга (RTL): сначала самая правая колонка сверху вниз, затем левее;
+         *  • комикс (LTR): колонка за колонкой слева направо, сверху вниз;
+         *  • вебтун/манхва (vertical): строго сверху вниз, одной колонкой.
+         * Так реплики читаются в том порядке, где физически расположены на
+         * кадре, и не путаются ни на манге, ни на перекрывающихся кадрах.
          */
         fun orderRegions(lines: List<Line>, order: String): List<Line> {
             if (lines.size <= 1) return lines
-            val heights = lines.map { it.boundingBox.bottom - it.boundingBox.top }.sorted()
-            val medianH = heights[heights.size / 2].coerceAtLeast(0.001f)
-            val tolerance = (medianH * 0.7f).coerceAtLeast(0.025f)
-
-            data class Row(var centerY: Float, val items: MutableList<Line> = mutableListOf())
-            val rows = mutableListOf<Row>()
-            for (line in lines.sortedBy { it.boundingBox.top }) {
-                val cy = (line.boundingBox.top + line.boundingBox.bottom) / 2f
-                val last = rows.lastOrNull()
-                if (last != null && kotlin.math.abs(cy - last.centerY) <= tolerance) {
-                    last.items.add(line)
-                    last.centerY = (last.centerY * (last.items.size - 1) + cy) / last.items.size
-                } else {
-                    rows.add(Row(cy).apply { items.add(line) })
-                }
-            }
             return when (order) {
-                "ltr" -> rows.flatMap { it.items.sortedBy { l -> l.boundingBox.left } }
+                "ltr" -> lines.sortedWith(
+                    compareBy<Line> { it.boundingBox.left }.thenBy { it.boundingBox.top },
+                )
                 "vertical" -> lines.sortedBy { it.boundingBox.top }
-                else -> rows.flatMap { it.items.sortedByDescending { l -> l.boundingBox.right } }
+                else -> lines.sortedWith(
+                    compareByDescending<Line> { it.boundingBox.right }
+                        .thenBy { it.boundingBox.top },
+                )
             }
         }
 
