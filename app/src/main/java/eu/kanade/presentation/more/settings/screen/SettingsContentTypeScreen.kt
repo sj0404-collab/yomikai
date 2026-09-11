@@ -37,11 +37,11 @@ object SettingsContentTypeScreen : SearchableSettings {
             Preference.PreferenceItem.TextPreference(
                 title = "${type.icon} ${type.displayName}",
                 subtitle = when (type) {
-                    ContentType.MANGA -> "Вкладка «Обзор»: источники RU/EN/JA. Остальные вкладки не меняются."
-                    ContentType.ANIME -> "Вкладка «Обзор»: источники RU/EN/JA (видео). Остальные вкладки не меняются."
-                    ContentType.RANOBE -> "Вкладка «Обзор»: источники RU/EN. Остальные вкладки не меняются."
-                    ContentType.BOOKS -> "Вкладка «Обзор»: источники RU/EN (аудиокниги). Остальные вкладки не меняются."
-                    ContentType.DRAMAS -> "Вкладка «Обзор»: источники RU/JA/EN (видео). Остальные вкладки не меняются."
+                    ContentType.MANGA -> "Источники RU/EN/JA. Типовой вкладки нет — работает текущая библиотека; «Браузер» и «AI» не меняются."
+                    ContentType.ANIME -> "Источники RU/EN/JA; появляется вкладка «Кинозал» (видео). «Браузер» и «AI» не меняются."
+                    ContentType.RANOBE -> "Источники RU/EN; появляется вкладка «Ранобэ». «Браузер» и «AI» не меняются."
+                    ContentType.BOOKS -> "Источники RU/EN; появляется вкладка «Аудиокниги». «Браузер» и «AI» не меняются."
+                    ContentType.DRAMAS -> "Источники RU/JA/EN; появляется вкладка «Кинозал» (дорамы). «Браузер» и «AI» не меняются."
                 },
                 widget = {
                     if (current == type) {

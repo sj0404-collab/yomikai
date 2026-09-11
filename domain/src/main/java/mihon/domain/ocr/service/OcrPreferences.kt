@@ -190,7 +190,7 @@ class OcrPreferences(
     // Вкладка «AI» в нижней навигации: показать/скрыть. Агент при скрытой
     // вкладке остаётся доступен из внешнего браузера (порт 8765), если
     // включён встроенный сервер.
-    fun aiTabVisible() = preferenceStore.getBoolean("pref_ai_tab_visible", true)
+    fun aiTabVisible() = preferenceStore.getBoolean("pref_ai_tab_visible", false)
 
     // Встроенный HTTP-сервер агента (http://127.0.0.1:8765 и по Wi-Fi)
     fun aiHttpServer() = preferenceStore.getBoolean("pref_ai_http_server", false)
