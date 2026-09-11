@@ -41,6 +41,7 @@ object SettingsContentTypeScreen : SearchableSettings {
                     ContentType.ANIME -> "Вкладка «Обзор»: источники RU/EN/JA (видео). Остальные вкладки не меняются."
                     ContentType.RANOBE -> "Вкладка «Обзор»: источники RU/EN. Остальные вкладки не меняются."
                     ContentType.BOOKS -> "Вкладка «Обзор»: источники RU/EN (аудиокниги). Остальные вкладки не меняются."
+                    ContentType.DRAMAS -> "Вкладка «Обзор»: источники RU/JA/EN (видео). Остальные вкладки не меняются."
                 },
                 widget = {
                     if (current == type) {

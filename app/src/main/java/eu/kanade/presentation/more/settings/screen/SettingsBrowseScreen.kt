@@ -43,7 +43,7 @@ object SettingsBrowseScreen : SearchableSettings {
                 preferenceItems = listOf(
                     Preference.PreferenceItem.TextPreference(
                         title = stringResource(MR.strings.content_type),
-                        subtitle = "Манга · Аниме · Ранобэ · Книги",
+                        subtitle = "Манга · Аниме · Ранобэ · Книги · Дорамы",
                         onClick = { navigator.push(SettingsContentTypeScreen) },
                     ),
                     Preference.PreferenceItem.SwitchPreference(

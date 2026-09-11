@@ -50,6 +50,7 @@ class SourcesScreenModel(
             ContentType.ANIME -> sources.filter { it.lang in listOf("ru", "en", "ja", "all") }
             ContentType.RANOBE -> sources.filter { it.lang in listOf("ru", "en") }
             ContentType.BOOKS -> sources.filter { it.lang in listOf("ru", "en") }
+            ContentType.DRAMAS -> sources.filter { it.lang in listOf("ru", "ja", "en") }
         }
 
         mutableState.update { state ->
