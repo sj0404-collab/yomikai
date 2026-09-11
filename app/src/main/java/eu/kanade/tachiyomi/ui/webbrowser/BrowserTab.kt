@@ -554,6 +554,7 @@ data object BrowserTab : Tab {
         var histOpen by remember { mutableStateOf(false) }
         var tabsOpen by remember { mutableStateOf(false) }
         var cacheOpen by remember { mutableStateOf(false) }
+        var downloadsOpen by remember { mutableStateOf(false) }
         var voiceOpen by remember { mutableStateOf(false) }
         var webBookmarked by remember { mutableStateOf(false) }
         val webPages by WebStore.pages.collectAsState()
@@ -834,18 +835,24 @@ data object BrowserTab : Tab {
                     singleLine = true,
                     textStyle = MaterialTheme.typography.bodySmall,
                     placeholder = { Text("Адрес или поиск", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    leadingIcon = {
+                        IconButton(onClick = { loadUrlInput(urlBar) }) {
+                            Icon(Icons.Outlined.Language, contentDescription = "Перейти")
+                        }
+                    },
                     trailingIcon = {
+                        val isCurrentUrl = sharedWebView?.url?.trim() == urlBar.trim()
                         IconButton(onClick = {
-                            // v1.9.44: та же ссылка = обновить САЙТ (reload);
-                            // другой ввод = переход/поиск.
-                            val wv = sharedWebView
-                            if (wv != null && urlBar.trim() == (wv.url ?: "").trim()) {
-                                wv.reload()
+                            if (isCurrentUrl) {
+                                sharedWebView?.reload()
                             } else {
                                 loadUrlInput(urlBar)
                             }
                         }) {
-                            Icon(Icons.Outlined.Refresh, contentDescription = "Обновить страницу")
+                            Icon(
+                                if (isCurrentUrl) Icons.Outlined.Refresh else Icons.Outlined.ArrowForward,
+                                contentDescription = if (isCurrentUrl) "Обновить" else "Перейти",
+                            )
                         }
                     },
                 )
@@ -1087,6 +1094,7 @@ data object BrowserTab : Tab {
                         TextButton(onClick = { moreOpen = false; marksOpen = true }) { Text("Закладки (${webMarks.size})") }
                         TextButton(onClick = { moreOpen = false; libOpen = true }) { Text("Библиотека веб-страниц (${webPages.size})") }
                         TextButton(onClick = { moreOpen = false; histOpen = true }) { Text("История просмотра") }
+                        TextButton(onClick = { moreOpen = false; downloadsOpen = true }) { Text("Загрузки") }
                         TextButton(onClick = { moreOpen = false; cacheOpen = true }) { Text("Кэш и данные") }
                         TextButton(onClick = { moreOpen = false; saveHtmlPage() }) { Text("Сохранить страницу (HTML)") }
                         TextButton(onClick = {
@@ -1268,6 +1276,58 @@ data object BrowserTab : Tab {
                             String.format(java.util.Locale.getDefault(), "%.1f МБ", WebStore.cacheSizeBytes(ctx) / 1048576.0) +
                             "\nОчистка не трогает веб-библиотеку и закладки.",
                     )
+                },
+            )
+        }
+        if (downloadsOpen) {
+            val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+            val files = remember {
+                downloadsDir.listFiles()?.sortedByDescending { it.lastModified() }?.take(100) ?: emptyList()
+            }
+            AlertDialog(
+                onDismissRequest = { downloadsOpen = false },
+                confirmButton = { TextButton(onClick = { downloadsOpen = false }) { Text("Закрыть") } },
+                title = { Text("Загрузки (${files.size})") },
+                text = {
+                    if (files.isEmpty()) {
+                        Text("Папка Download пуста")
+                    } else {
+                        Column(
+                            modifier = Modifier
+                                .verticalScroll(rememberScrollState())
+                                .heightIn(max = 400.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            files.forEach { f ->
+                                val sizeKb = f.length() / 1024
+                                val sizeStr = if (sizeKb > 1024) String.format("%.1f МБ", sizeKb / 1024.0) else "$sizeKb КБ"
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            runCatching {
+                                                val uri = androidx.core.content.FileProvider.getUriForFile(
+                                                    ctx, "${ctx.packageName}.provider", f,
+                                                )
+                                                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                                                    setDataAndType(uri, ctx.contentResolver.getType(uri) ?: "*/*")
+                                                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                }
+                                                ctx.startActivity(intent)
+                                            }
+                                        }
+                                        .padding(vertical = 6.dp, horizontal = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(f.name, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        Text(sizeStr, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Icon(Icons.Outlined.OpenInNew, contentDescription = "Открыть", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                    }
                 },
             )
         }
