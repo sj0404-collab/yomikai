@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
@@ -337,6 +336,7 @@ data object BrowserTab : Tab {
         }
 
     override suspend fun onReselect(navigator: Navigator) {
+        sharedWebView?.evaluateJavascript("window.scrollTo(0,0);true", null)
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -423,10 +423,22 @@ data object BrowserTab : Tab {
             webViewClient = object : WebViewClient() {
                 override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                     if (view !== sharedWebView) return
-                    // Адресная строка сразу показывает новую ссылку: раньше она
-                    // держала предыдущий сайт до onPageFinished («зашёл на ютуб,
-                    // а в строке всё ещё mangabuff»).
                     if (!url.isNullOrBlank()) urlState.value = url
+                }
+                override fun onReceivedError(view: WebView, request: android.webkit.WebResourceRequest, error: android.webkit.WebResourceError) {
+                    if (view !== sharedWebView) return
+                    if (request.isForMainFrame) {
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            ctx.toast("Ошибка загрузки: ${error.description}")
+                        }
+                    }
+                }
+                override fun onReceivedSslError(view: WebView, handler: android.webkit.SslErrorHandler, error: android.net.http.SslError) {
+                    handler.cancel()
+                    if (view !== sharedWebView) return
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        ctx.toast("SSL-ошибка: ${error.primaryError}")
+                    }
                 }
                 override fun onPageFinished(view: WebView, url: String?) {
                     // фоновая вкладка догрузилась — адрес/активную не трогаем
@@ -535,12 +547,6 @@ data object BrowserTab : Tab {
             WebStore.activeTabId.value = WebStore.tabs.value.lastOrNull()?.id
         }
         hostActivity = ctx as? android.app.Activity
-        androidx.compose.runtime.LaunchedEffect(Unit) {
-            if (WebStore.tabs.value.isEmpty()) WebStore.addTab(ctx, HOME_URL, "Новая вкладка")
-            if (WebStore.activeTabId.value == null) {
-                WebStore.activeTabId.value = WebStore.tabs.value.lastOrNull()?.id
-            }
-        }
         var moreOpen by remember { mutableStateOf(false) }
         var sitesOpen by remember { mutableStateOf(false) }
         var libOpen by remember { mutableStateOf(false) }
@@ -903,6 +909,10 @@ data object BrowserTab : Tab {
                     }
                 },
                 onRelease = { fl ->
+                    // Убрать полноэкранное видео при смене вкладки
+                    customViewCallback?.onCustomViewHidden()
+                    customView = null
+                    customViewCallback = null
                     (fl as? android.widget.FrameLayout)?.removeAllViews()
                 },
             )
@@ -943,13 +953,20 @@ data object BrowserTab : Tab {
         }
 
         // Плавающее SAO-меню браузера: автоскролл, наверх, закрыть
-        if (!pip) Box(
+        if (!pip) BoxWithConstraints(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.BottomEnd,
         ) {
+            val maxOffsetX = -(maxWidth - 56.dp).roundToPx()
+            val maxOffsetY = -(maxHeight - 56.dp).roundToPx()
             Column(
                 modifier = Modifier
-                    .offset { IntOffset(fabX.roundToInt(), fabY.roundToInt()) }
+                    .offset {
+                        IntOffset(
+                            fabX.roundToInt().coerceIn(maxOffsetX, 0),
+                            fabY.roundToInt().coerceIn(maxOffsetY, 0),
+                        )
+                    }
                     .padding(16.dp),
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -1046,8 +1063,8 @@ data object BrowserTab : Tab {
                     modifier = Modifier.pointerInput(Unit) {
                         detectDragGestures { change, dragAmount ->
                             change.consume()
-                            fabX = (fabX + dragAmount.x).coerceAtMost(0f)
-                            fabY = (fabY + dragAmount.y).coerceAtMost(0f)
+                            fabX += dragAmount.x
+                            fabY += dragAmount.y
                         }
                     },
                 ) {
