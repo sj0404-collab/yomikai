@@ -38,10 +38,10 @@ object SettingsContentTypeScreen : SearchableSettings {
                 title = "${type.icon} ${type.displayName}",
                 subtitle = when (type) {
                     ContentType.MANGA -> "Источники RU/EN/JA. Типовой вкладки нет — работает текущая библиотека; «Браузер» и «AI» не меняются."
-                    ContentType.ANIME -> "Источники RU/EN/JA; появляется вкладка «Кинозал» (видео). «Браузер» и «AI» не меняются."
-                    ContentType.RANOBE -> "Источники RU/EN; появляется вкладка «Ранобэ». «Браузер» и «AI» не меняются."
-                    ContentType.BOOKS -> "Источники RU/EN; появляется вкладка «Аудиокниги». «Браузер» и «AI» не меняются."
-                    ContentType.DRAMAS -> "Источники RU/JA/EN; появляется вкладка «Кинозал» (дорамы). «Браузер» и «AI» не меняются."
+                    ContentType.ANIME -> "Источники RU/EN/JA; вкладка «Кинозал» — сайты аниме и видеоплеер."
+                    ContentType.RANOBE -> "Источники RU/EN; вкладка «Ранобэ» — сайты ранобэ и чтение."
+                    ContentType.BOOKS -> "Источники RU/EN; вкладка «Аудиокниги» — сайты аудиокниг и прослушивание."
+                    ContentType.DRAMAS -> "Источники RU/JA/EN; вкладка «Кинозал» — сайты дорам и видеоплеер."
                 },
                 widget = {
                     if (current == type) {
