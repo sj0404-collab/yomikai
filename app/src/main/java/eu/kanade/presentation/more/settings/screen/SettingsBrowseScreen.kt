@@ -41,6 +41,11 @@ object SettingsBrowseScreen : SearchableSettings {
             Preference.PreferenceGroup(
                 title = stringResource(MR.strings.label_sources),
                 preferenceItems = listOf(
+                    Preference.PreferenceItem.TextPreference(
+                        title = stringResource(MR.strings.content_type),
+                        subtitle = "Манга · Аниме · Ранобэ · Книги",
+                        onClick = { navigator.push(SettingsContentTypeScreen) },
+                    ),
                     Preference.PreferenceItem.SwitchPreference(
                         preference = sourcePreferences.hideInLibraryItems,
                         title = stringResource(MR.strings.pref_hide_in_library_items),

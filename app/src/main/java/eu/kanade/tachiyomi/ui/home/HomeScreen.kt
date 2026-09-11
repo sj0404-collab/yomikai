@@ -40,7 +40,6 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import cafe.adriel.voyager.navigator.tab.LocalTabNavigator
 import cafe.adriel.voyager.navigator.tab.TabNavigator
-import eu.kanade.domain.source.model.ContentType
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.isTabletUi
@@ -153,10 +152,6 @@ object HomeScreen : Screen() {
         // PWA-оболочка Yomihon удалена: приложение всегда работает в нативном
         // интерфейсе, MangaLib PWA живёт как нативная вкладка с мостами.
         val navigator = LocalNavigator.currentOrThrow
-        val sourcePrefs = remember { Injekt.get<SourcePreferences>() }
-        var contentType by remember {
-            mutableStateOf(sourcePrefs.contentType.get())
-        }
 
         TabNavigator(
             tab = LibraryTab,
@@ -200,13 +195,6 @@ object HomeScreen : Screen() {
                             .padding(contentPadding)
                             .consumeWindowInsets(contentPadding),
                     ) {
-                        ContentTypeBar(
-                            selected = contentType,
-                            onSelect = { newType ->
-                                contentType = newType
-                                sourcePrefs.contentType.set(newType)
-                            },
-                        )
                         Box(modifier = Modifier.weight(1f)) {
                             AnimatedContent(
                                 targetState = tabNavigator.current,
