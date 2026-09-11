@@ -209,6 +209,37 @@ object TtsSpeaker {
     }
 
     /**
+     * Голоса СИСТЕМНОГО движка по умолчанию (оффлайн): пары «подпись →
+     * спецификация пакет::голос». Спецификация передаётся в [speakWithVoice],
+     * чтобы озвучить текст именно этим голосом (смешивание оффлайн-голосов
+     * с онлайн-голосами Edge TTS).
+     */
+    fun systemVoiceSpecs(context: Context): List<Pair<String, String>> {
+        val app = context.applicationContext
+        val specs = mutableListOf<Pair<String, String>>()
+        runCatching {
+            val ready = CountDownLatch(1)
+            var tts: TextToSpeech? = null
+            tts = TextToSpeech(app) {
+                ready.countDown()
+            }
+            ready.await(ENGINE_QUERY_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            val pkg = runCatching { tts?.defaultEngine }.getOrNull().orEmpty()
+            tts?.voices
+                ?.filter { it.name.isNotBlank() }
+                ?.forEach { v ->
+                    val locale = runCatching { v.locale?.toString().orEmpty() }.getOrDefault("")
+                    val label = if (locale.isBlank()) v.name else "${v.name} • $locale"
+                    specs += label to "${pkg}::${v.name}"
+                }
+            runCatching { tts?.shutdown() }
+        }.onFailure { error ->
+            logcat(LogPriority.WARN, error) { "systemVoiceSpecs failed" }
+        }
+        return specs
+    }
+
+    /**
      * Озвучивает текст выбранным в настройках движком.
      * [onState] — колбэк true=началось / false=закончилось|ошибка.
      */
@@ -254,7 +285,24 @@ object TtsSpeaker {
             setSpeaking(false)
             return
         }
-        ensureSystem(context, voiceSpec.substringBefore("::").ifBlank { null }) { engine ->
+        // Голос роли может быть онлайн-голосом Edge TTS (в т.ч. в смешанном
+        // словаре «онлайн+оффлайн»): маршрутизируем в Edge, а не в системный.
+        val forcedPkg = voiceSpec.substringBefore("::").trim()
+        val voiceName = voiceSpec.substringAfterLast("::").trim()
+        val enginePref = prefs().voiceEngine().get()
+        val edgeName = voiceName.endsWith("Neural", ignoreCase = true) ||
+            voiceName.startsWith("ru-", ignoreCase = true) ||
+            voiceName.startsWith("en-", ignoreCase = true)
+        val wantEdge = if (forcedPkg.isNotBlank()) {
+            forcedPkg.startsWith("edge", ignoreCase = true)
+        } else {
+            enginePref == ENGINE_EDGE_TTS || (edgeName && !voiceSpec.contains("::"))
+        }
+        if (wantEdge) {
+            speakWithEdgeVoice(context, text, voiceName, onState)
+            return
+        }
+        ensureSystem(context, forcedPkg.ifBlank { null }) { engine ->
             if (engine == null) {
                 setSpeaking(false)
                 return@ensureSystem
@@ -285,6 +333,56 @@ object TtsSpeaker {
                 }
             }.onFailure { setSpeaking(false) }
         }
+    }
+
+    /**
+     * Озвучка текста под роль (кнопки ♀/♂/🎙 на карточке распознанного текста).
+     * Если для роли настроен голос (словарь ролей / legacy-слоты) — он
+     * используется напрямую и может быть онлайн (Edge TTS) или оффлайн
+     * (системный) — «совмещение онлайн и оффлайн голосов». Если голос не
+     * настроен — обычная озвучка с учётом пола роли (♀/♂ → разные пресеты).
+     */
+    fun speakRole(
+        context: Context,
+        text: String,
+        role: String,
+        onState: (Boolean) -> Unit = {},
+    ) {
+        val spec = slotVoiceSpec(role)
+        if (spec != null) {
+            speakWithVoice(context, text, spec, onState)
+            return
+        }
+        val gender = when (role.lowercase()) {
+            "female" -> "female"
+            "male" -> "male"
+            else -> null
+        }
+        speakAs(context, text, gender, onState = onState)
+    }
+
+    /**
+     * Проговорить текст КОНКРЕТНЫМ онлайн-голосом Edge TTS (кнопки «Выбрать
+     * голос» в списке выбора и роль-кнопки со смешанным словарём).
+     */
+    fun speakWithEdgeVoice(
+        context: Context,
+        text: String,
+        voice: String,
+        onState: (Boolean) -> Unit = {},
+    ) {
+        if (voice.isBlank()) {
+            speak(context, text, onState)
+            return
+        }
+        stop()
+        onStateChange = onState
+        val spoken = SpeechMarkup.forSpeech(SpeechMarkup.strip(text))
+        if (spoken.isBlank()) {
+            setSpeaking(false)
+            return
+        }
+        speakEdgeTts(context, spoken, voice)
     }
 
     /**
@@ -768,9 +866,10 @@ object TtsSpeaker {
      * редактором выбран мультиязычный голос, он читает любой язык.
      * Скорость/высота берутся из обычных настроек озвучки.
      */
-    private fun speakEdgeTts(context: Context, text: String) {
+    private fun speakEdgeTts(context: Context, text: String, voiceName: String? = null) {
         val p = prefs()
-        val voice = p.edgeVoice().get().ifBlank { EdgeTts.DEFAULT_VOICE }
+        val voice = voiceName?.takeIf { it.isNotBlank() }
+            ?: p.edgeVoice().get().ifBlank { EdgeTts.DEFAULT_VOICE }
         val ratePercent = ((p.speechRate().get().coerceIn(0.5f, 2f) - 1f) * 100).toInt().coerceIn(-50, 100)
         val pitchHz = ((p.speechPitch().get().coerceIn(0.5f, 2f) - 1f) * 40).toInt().coerceIn(-50, 50)
         currentJob = scope.launch {

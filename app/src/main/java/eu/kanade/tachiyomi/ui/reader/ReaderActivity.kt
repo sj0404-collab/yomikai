@@ -1094,6 +1094,7 @@ class ReaderActivity : BaseActivity() {
                     }
                     is ReaderViewModel.Dialog.OcrResult -> {
                         val searchState by dictionarySearchScreenModel.state.collectAsState()
+                        var showVoicePicker by remember { mutableStateOf(false) }
                         LaunchedEffect(activeOcrOverlaySession?.selection, searchState.results?.highlightRange) {
                             updateActiveOcrOverlayHighlight(
                                 activeOcrOverlaySession?.selection?.displayText?.let {
@@ -1151,13 +1152,13 @@ class ReaderActivity : BaseActivity() {
                                 )
                             },
                             onSpeakRole = { role ->
-                                eu.kanade.tachiyomi.data.tts.TtsSpeaker.speakWithVoice(
+                                eu.kanade.tachiyomi.data.tts.TtsSpeaker.speakRole(
                                     this@ReaderActivity,
                                     dialog.queryText,
-                                    eu.kanade.tachiyomi.data.tts.TtsSpeaker.slotVoiceSpec(role),
+                                    role,
                                 )
                             },
-                            onChooseVoice = { showTtsDialog = true },
+                            onChooseVoice = { showVoicePicker = true },
                             onAddToDictionary = {
                                 val added = mihon.data.ocr.OcrVocabulary.addFromText(
                                     dialog.queryText,
@@ -1176,11 +1177,32 @@ class ReaderActivity : BaseActivity() {
                                         dialog.queryText,
                                     )
                                 },
-                                onChooseVoice = { showTtsDialog = true },
+                                onChooseVoice = { showVoicePicker = true },
                                 modifier = Modifier
                                     .align(Alignment.BottomCenter)
                                     .navigationBarsPadding(),
                             )
+                            if (showVoicePicker) {
+                                eu.kanade.presentation.reader.TtsVoicePickerDialog(
+                                    onDismissRequest = { showVoicePicker = false },
+                                    onPickSystem = { spec ->
+                                        showVoicePicker = false
+                                        eu.kanade.tachiyomi.data.tts.TtsSpeaker.speakWithVoice(
+                                            this@ReaderActivity,
+                                            dialog.queryText,
+                                            spec,
+                                        )
+                                    },
+                                    onPickEdge = { voice ->
+                                        showVoicePicker = false
+                                        eu.kanade.tachiyomi.data.tts.TtsSpeaker.speakWithEdgeVoice(
+                                            this@ReaderActivity,
+                                            dialog.queryText,
+                                            voice,
+                                        )
+                                    },
+                                )
+                            }
                         }
                     }
                     null -> {}

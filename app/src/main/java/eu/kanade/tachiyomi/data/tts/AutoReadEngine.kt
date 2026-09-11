@@ -331,6 +331,13 @@ class AutoReadEngine(
                 }
                 if (!bitmap.isRecycled) bitmap.recycle()
 
+                // Локальный OCR (Cyrillic PP-OCR) отдаёт регион на КАЖДУЮ
+                // строку: реплика из двух строк распадалась на два разных
+                // «текста», и перенос слова читался как два разных слова.
+                // Строки одного облачка (сильное перекрытие по X, малый зазор)
+                // склеиваются в одну реплику. Полностраничные фолбэки не трогаем.
+                if (!wholePage) lines = mergeBubbleLines(lines)
+
                 // 1) фильтр мусора OCR (обрывки «eS la 4», «| | > |», «о»)
                 //    + фильтр по языку; 2) отсев уже прочитанного
                 val fresh = lines
@@ -671,9 +678,26 @@ class AutoReadEngine(
         if (bubbles.isEmpty()) return emptyList()
 
         val out = mutableListOf<Line>()
-        for (r in bubbles) {
+        for ((index, r) in bubbles.withIndex()) {
             if (job?.isActive != true) break
-            // Поля 6%: рамка YOLO бывает впритык к тексту
+            // 1) Широкая рамка (ширина > 1.6 высоты) часто обнимает ДВА круглых
+            //    облачка, совмещённых вплотную, с разным текстом. Прогоняем по
+            //    ней панельный детектор ещё раз и распознаём ВЕСЬ текст,
+            //    разбив его по найденным облачкам.
+            if (r.width() > 1.6f * r.height()) {
+                val subLines = readBubbleSplits(
+                    bitmap = bitmap,
+                    chapterId = chapterId,
+                    pageIndex = pageIndex,
+                    rect = r,
+                    index = index,
+                    direction = direction,
+                )
+                out += subLines
+                continue
+            }
+            // 2) Обычное облачко: поля 6%, круглая форма маскируется эллипсом,
+            //    чтобы углы квадратного кадрирования не тащили текст соседа.
             val padX = (r.width() * 0.06f).toInt()
             val padY = (r.height() * 0.06f).toInt()
             val left = (r.left - padX).coerceAtLeast(0)
@@ -681,15 +705,30 @@ class AutoReadEngine(
             val right = (r.right + padX).coerceAtMost(bitmap.width)
             val bottom = (r.bottom + padY).coerceAtMost(bitmap.height)
             if (right - left < 16 || bottom - top < 16) continue
-            val crop = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
-            val text = try {
-                val cropPixels = IntArray(crop.width * crop.height)
-                crop.getPixels(cropPixels, 0, crop.width, 0, 0, crop.width, crop.height)
-                bubbleOcr.getText(OcrImage(crop.width, crop.height, cropPixels))
-            } finally {
-                if (!crop.isRecycled) crop.recycle()
+            var text = ocrCroppedRegion(
+                bitmap,
+                left,
+                top,
+                right,
+                bottom,
+                maskRound = (right - left).toFloat() / (bottom - top) in 0.7f..1.4f,
+            )
+            var clean = normalizeOcrTextForDisplay(text).trim()
+            // 3) Пустой/куцый результат (углы коснулись соседнего облачка или
+            //    рамка съехала) — повторяем по ужатому центру рамки.
+            if (clean.count { it.isLetter() } < 3 && bottom - top > 32) {
+                val dx = ((right - left) * 0.14f).toInt()
+                val dy = ((bottom - top) * 0.14f).toInt()
+                text = ocrCroppedRegion(
+                    bitmap,
+                    left + dx,
+                    top + dy,
+                    right - dx,
+                    bottom - dy,
+                    maskRound = false,
+                )
+                clean = normalizeOcrTextForDisplay(text).trim()
             }
-            val clean = normalizeOcrTextForDisplay(text).trim()
             if (clean.isNotBlank()) {
                 out += Line(
                     text = clean,
@@ -703,6 +742,150 @@ class AutoReadEngine(
             }
         }
         return out
+    }
+
+    /**
+     * Два круглых облачка вплотную внутри одной широкой рамки: повторный
+     * панельный детектор на кадрированном фрагменте находит их по отдельности,
+     * каждый распознаётся со своей репликой. Если детектор не нашёл ничего —
+     * распознаём всю широкую рамку целиком.
+     */
+    private suspend fun readBubbleSplits(
+        bitmap: Bitmap,
+        chapterId: Long,
+        pageIndex: Int,
+        rect: android.graphics.Rect,
+        index: Int,
+        direction: tachiyomi.core.common.util.system.ReadingDirection,
+    ): List<Line> {
+        val out = mutableListOf<Line>()
+        val padX = (rect.width() * 0.04f).toInt()
+        val padY = (rect.height() * 0.04f).toInt()
+        val left = (rect.left - padX).coerceAtLeast(0)
+        val top = (rect.top - padY).coerceAtLeast(0)
+        val right = (rect.right + padX).coerceAtMost(bitmap.width)
+        val bottom = (rect.bottom + padY).coerceAtMost(bitmap.height)
+        if (right - left < 16 || bottom - top < 16) return out
+        val crop = Bitmap.createBitmap(bitmap, left, top, right - left, bottom - top)
+        val kids = try {
+            detectPanels.await(
+                cacheKey = "bubble_split_${chapterId}_${pageIndex}_$index",
+                image = crop,
+                originalWidth = crop.width,
+                originalHeight = crop.height,
+                direction = direction,
+            ).debugBubbles.map { it.rect }
+                .filter {
+                    it.width() > 16 && it.height() > 16 &&
+                        (it.width() * it.height()) >= 0.13f * crop.width * crop.height
+                }
+        } catch (t: Throwable) {
+            logcat(LogPriority.WARN, t) { "bubble split detect failed" }
+            emptyList()
+        } finally {
+            if (!crop.isRecycled) crop.recycle()
+        }
+        if (kids.size < 2) {
+            // Детектор не увидел отдельных облачков — читаем всю рамку как есть.
+            val text = ocrCroppedRegion(bitmap, left, top, right, bottom, maskRound = false)
+            val clean = normalizeOcrTextForDisplay(text).trim()
+            if (clean.isNotBlank()) {
+                out += Line(
+                    text = clean,
+                    boundingBox = normalizeBox(left, top, right, bottom, bitmap),
+                )
+            }
+            return out
+        }
+        for (kid in kids.take(MAX_BUBBLES_PER_FRAME)) {
+            if (job?.isActive != true) break
+            val kPadX = (kid.width() * 0.05f).toInt()
+            val kPadY = (kid.height() * 0.05f).toInt()
+            val kl = (left + kid.left - kPadX).coerceAtLeast(0)
+            val kt = (top + kid.top - kPadY).coerceAtLeast(0)
+            val kr = (left + kid.right + kPadX).coerceAtMost(bitmap.width)
+            val kb = (top + kid.bottom + kPadY).coerceAtMost(bitmap.height)
+            if (kr - kl < 16 || kb - kt < 16) continue
+            val text = ocrCroppedRegion(
+                bitmap,
+                kl,
+                kt,
+                kr,
+                kb,
+                maskRound = (kr - kl).toFloat() / (kb - kt) in 0.7f..1.4f,
+            )
+            val clean = normalizeOcrTextForDisplay(text).trim()
+            if (clean.isNotBlank()) {
+                out += Line(clean, normalizeBox(kl, kt, kr, kb, bitmap))
+            }
+        }
+        return out
+    }
+
+    /** Обрезка + (по желанию) круглая маска + OCR одной области. */
+    private suspend fun ocrCroppedRegion(
+        bitmap: Bitmap,
+        left: Int,
+        top: Int,
+        right: Int,
+        bottom: Int,
+        maskRound: Boolean,
+    ): String {
+        val w = right - left
+        val h = bottom - top
+        if (w < 16 || h < 16) return ""
+        val crop = Bitmap.createBitmap(bitmap, left, top, w, h)
+        return try {
+            val ocrBitmap = if (maskRound) maskCircle(crop) else crop
+            val pixels = IntArray(ocrBitmap.width * ocrBitmap.height)
+            ocrBitmap.getPixels(pixels, 0, ocrBitmap.width, 0, 0, ocrBitmap.width, ocrBitmap.height)
+            bubbleOcr.getText(OcrImage(ocrBitmap.width, ocrBitmap.height, pixels))
+        } finally {
+            if (!crop.isRecycled) crop.recycle()
+        }
+    }
+
+    /** Нормализация области кадрирования в доли стороны кадра. */
+    private fun normalizeBox(
+        left: Int,
+        top: Int,
+        right: Int,
+        bottom: Int,
+        bitmap: Bitmap,
+    ) = OcrBoundingBox(
+        left = left.toFloat() / bitmap.width,
+        top = top.toFloat() / bitmap.height,
+        right = right.toFloat() / bitmap.width,
+        bottom = bottom.toFloat() / bitmap.height,
+    )
+
+    /** Круглая маска: углы квадратного облачка убираются (пустые), текст
+     *  соседнего облачка в углах кадрирования не попадает в распознавание. */
+    private fun maskCircle(src: Bitmap): Bitmap {
+        val masked = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(masked)
+        canvas.drawBitmap(src, 0f, 0f, null)
+        val erase = android.graphics.Paint().apply {
+            isAntiAlias = true
+            xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR)
+        }
+        canvas.drawOval(
+            android.graphics.RectF(0f, 0f, src.width.toFloat(), src.height.toFloat()),
+            erase,
+        )
+        // Полностью прозрачные углы заливаем белым: для OCR чёрный/прозрачный
+        // фон в углах вреднее белого.
+        val px = IntArray(masked.width * masked.height)
+        masked.getPixels(px, 0, masked.width, 0, 0, masked.width, masked.height)
+        var changed = false
+        for (i in px.indices) {
+            if (px[i] and -0x1000000 == 0) {
+                px[i] = android.graphics.Color.WHITE
+                changed = true
+            }
+        }
+        if (changed) masked.setPixels(px, 0, masked.width, 0, 0, masked.width, masked.height)
+        return masked
     }
 
     /**
@@ -720,6 +903,82 @@ class AutoReadEngine(
     }
 
     // endregion
+
+    // region Склейка строк одной реплики
+
+    /**
+     * Склеивает соседние строки OCR, принадлежащие ОДНОЙ реплике / облачку,
+     * в одну реплику.
+     *
+     * Локальный движок (Cyrillic PP-OCR) отдаёт регион на КАЖДУЮ строку
+     * текста: реплика из двух строк распадалась на два разных «текста»,
+     * а перенос слова (понеде- / льник) читался как два разных слова.
+     */
+    private fun mergeBubbleLines(lines: List<Line>): List<Line> {
+        if (lines.size <= 1) return lines
+        val sorted = lines.sortedBy { it.boundingBox.top }
+        val merged = mutableListOf<Line>()
+        var current: Line? = null
+        for (line in sorted) {
+            val cur = current
+            if (cur != null && sameBubble(cur, line)) {
+                current = Line(
+                    text = joinBubbleText(cur.text, line.text),
+                    boundingBox = union(cur.boundingBox, line.boundingBox),
+                )
+            } else {
+                current?.let { merged += it }
+                current = line
+            }
+        }
+        current?.let { merged += it }
+        return merged
+    }
+
+    /** Обе строки выровнены (одна колонка/облачко) и стоят вплотную. */
+    private fun sameBubble(a: Line, b: Line): Boolean {
+        val ab = a.boundingBox
+        val bb = b.boundingBox
+        val aW = ab.right - ab.left
+        val bW = bb.right - bb.left
+        if (aW <= 0f || bW <= 0f) return false
+        // Перекрытие по горизонтали ≥ 50% ширины меньшей строки — один «столбец».
+        val overlap = kotlin.math.min(ab.right, bb.right) - kotlin.math.max(ab.left, bb.left)
+        if (overlap <= 0f) return false
+        if (overlap / kotlin.math.min(aW, bW) < 0.5f) return false
+        // Зазор между строками одного облачка много меньше зазора между
+        // облачками (у диалогов и рамок есть пустое поле между ними).
+        val aH = ab.bottom - ab.top
+        val bH = bb.bottom - bb.top
+        if (aH <= 0f || bH <= 0f) return false
+        val gap = bb.top - ab.bottom
+        if (gap < 0f || gap > kotlin.math.max(aH, bH) * 0.55f) return false
+        // Вертикальные японские колонки (узкие и высокие) не склеиваем.
+        if (aH > aW * 2f || bH > bW * 2f) return false
+        return true
+    }
+
+    /** Перенос слова в конце строки склеивается вплотную, иначе пробел. */
+    private fun joinBubbleText(a: String, b: String): String {
+        val aT = a.trim()
+        val bT = b.trim()
+        if (aT.isBlank()) return bT
+        if (bT.isBlank()) return aT
+        return if (aT.endsWith("-")) {
+            aT.dropLast(1) + bT
+        } else {
+            "$aT $bT"
+        }
+    }
+
+    private fun union(a: OcrBoundingBox, b: OcrBoundingBox) = OcrBoundingBox(
+        left = minOf(a.left, b.left),
+        top = minOf(a.top, b.top),
+        right = maxOf(a.right, b.right),
+        bottom = maxOf(a.bottom, b.bottom),
+    )
+
+    // endregion Склейка строк одной реплики
 
     // region Чистка мусора OCR
 
@@ -817,7 +1076,20 @@ class AutoReadEngine(
                 val best = rows.maxByOrNull { r -> r.count { it.isLetter() } }
                 return if (best != null && best.count { it.isLetter() } >= 4) best else ""
             }
-            return kept.joinToString(" ").replace(Regex("\\s+"), " ").trim()
+            // Склейка строк с учётом переноса слова в конце строки:
+            // «понеде-» + «льник» → «понедельник», иначе обычный пробел.
+            val joined = StringBuilder()
+            for (row in kept) {
+                if (joined.isNotEmpty()) {
+                    if (joined.lastOrNull() == '-') {
+                        joined.deleteCharAt(joined.length - 1)
+                    } else {
+                        joined.append(' ')
+                    }
+                }
+                joined.append(row)
+            }
+            return joined.toString().replace(Regex("\\s+"), " ").trim()
         }
 
         /** Похожа ли строка на осмысленный текст (не обрывок/не мусор). */

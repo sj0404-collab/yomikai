@@ -133,17 +133,11 @@ fun ReaderFloatingControls(
     val scanActive = ocrStage.stage == mihon.data.ocr.OcrStageBus.Stage.DETECTING ||
         ocrStage.stage == mihon.data.ocr.OcrStageBus.Stage.RECOGNIZING
     if (scanActive) {
-        var flip by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
-        androidx.compose.runtime.LaunchedEffect(ocrStage.stage) {
-            while (true) {
-                flip = !flip
-                kotlinx.coroutines.delay(700)
-            }
-        }
-        Icon(
-            if (flip) Icons.Outlined.HourglassTop else Icons.Outlined.HourglassBottom,
-            contentDescription = "Сканирование",
-            tint = MaterialTheme.colorScheme.primary,
+        // Часики изолированы в ОТДЕЛЬНУЮ самодельную компосабл: анимация
+        // переворота рекомпозирует только крошечную иконку, а НЕ всё плавающее
+        // меню дважды в секунду (что на слабых устройствах отъедало UI-поток
+        // и замедляло захват кадра рядом с OCR).
+        ScanHourglassStateIcon(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(10.dp),
@@ -486,3 +480,27 @@ fun ReaderFloatingControls(
             }
         }
     }
+
+/**
+ * Маленькие «часики» статуса OCR, изолированные от родителя: переворот
+ * иконки дважды в секунду рекомпозирует ТОЛЬКО эту иконку, а не всё
+ * плавающее меню, поэтому onUi-поток не проседает рядом с OCR.
+ */
+@Composable
+private fun ScanHourglassStateIcon(
+    modifier: Modifier = Modifier,
+) {
+    var flip by androidx.compose.runtime.remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        while (true) {
+            flip = !flip
+            kotlinx.coroutines.delay(700)
+        }
+    }
+    Icon(
+        imageVector = if (flip) Icons.Outlined.HourglassTop else Icons.Outlined.HourglassBottom,
+        contentDescription = "Сканирование",
+        tint = MaterialTheme.colorScheme.primary,
+        modifier = modifier,
+    )
+}
