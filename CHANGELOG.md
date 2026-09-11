@@ -171,23 +171,23 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 - OCR selection mode (long-tap to select regions) and added OCR result UI sheet.
 
 ### Changed
-- Rebranded to **Yomihon** (app name, logos, links, Firebase and related assets).
+- Rebranded to **Yomikai** (app name, logos, links, Firebase and related assets).
 - Added C++ (this'll probably be removed with the new model next update) for running OCR.
 
 ### Other
-- Initial release of **Yomihon** (based on Mihon v0.19.1).
+- Initial release of **Yomikai** (based on Mihon v0.19.1).
 - The full changelog for Mihon releases is available in their [repository](https://github.com/mihonapp/mihon/blob/main/CHANGELOG.md).
 
 
-[unreleased]: https://github.com/yomihon/yomihon/compare/v0.4.0...main
-[v0.4.0]: https://github.com/yomihon/yomihon/compare/v0.3.2...v0.4.0
-[v0.3.2]: https://github.com/yomihon/yomihon/compare/v0.3.1...v0.3.2
-[v0.3.1]: https://github.com/yomihon/yomihon/compare/v0.3.0...v0.3.1
-[v0.3.0]: https://github.com/yomihon/yomihon/compare/v0.2.5...v0.3.0
-[v0.2.5]: https://github.com/yomihon/yomihon/compare/v0.2.4...v0.2.5
-[v0.2.4]: https://github.com/yomihon/yomihon/compare/v0.2.2...v0.2.4
-[v0.2.2]: https://github.com/yomihon/yomihon/compare/v0.2.1...v0.2.2
-[v0.2.1]: https://github.com/yomihon/yomihon/compare/v0.2.0...v0.2.1
-[v0.2.0]: https://github.com/yomihon/yomihon/compare/v0.1.1...v0.2.0
-[v0.1.1]: https://github.com/yomihon/yomihon/compare/v0.1.0...v0.1.1
-[v0.1.0]: https://github.com/yomihon/yomihon/compare/c856f12...v0.1.0
+[unreleased]: https://github.com/sj0404-collab/yomikai/compare/v0.4.0...main
+[v0.4.0]: https://github.com/sj0404-collab/yomikai/compare/v0.3.2...v0.4.0
+[v0.3.2]: https://github.com/sj0404-collab/yomikai/compare/v0.3.1...v0.3.2
+[v0.3.1]: https://github.com/sj0404-collab/yomikai/compare/v0.3.0...v0.3.1
+[v0.3.0]: https://github.com/sj0404-collab/yomikai/compare/v0.2.5...v0.3.0
+[v0.2.5]: https://github.com/sj0404-collab/yomikai/compare/v0.2.4...v0.2.5
+[v0.2.4]: https://github.com/sj0404-collab/yomikai/compare/v0.2.2...v0.2.4
+[v0.2.2]: https://github.com/sj0404-collab/yomikai/compare/v0.2.1...v0.2.2
+[v0.2.1]: https://github.com/sj0404-collab/yomikai/compare/v0.2.0...v0.2.1
+[v0.2.0]: https://github.com/sj0404-collab/yomikai/compare/v0.1.1...v0.2.0
+[v0.1.1]: https://github.com/sj0404-collab/yomikai/compare/v0.1.0...v0.1.1
+[v0.1.0]: https://github.com/sj0404-collab/yomikai/compare/c856f12...v0.1.0

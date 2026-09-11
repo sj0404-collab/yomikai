@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   get_tag:
-    if: github.repository == 'sj0404-collab/yomihon-custom' || github.repository == 'sj0404-collab/yomikai' || github.repository == 'yomihon/yomihon'
+    if: github.repository == 'sj0404-collab/yomikai'
     name: Extract tag name
     runs-on: 'ubuntu-24.04'
     outputs:
@@ -26,7 +26,7 @@ jobs:
         run: echo "tag=${GITHUB_REF/refs\/tags\//}" >> $GITHUB_OUTPUT
 
   build:
-    if: github.repository == 'sj0404-collab/yomihon-custom' || github.repository == 'sj0404-collab/yomikai' || github.repository == 'yomihon/yomihon'
+    if: github.repository == 'sj0404-collab/yomikai'
     name: Build
     runs-on: windows-2025
     timeout-minutes: 90
@@ -284,7 +284,7 @@ jobs:
             Подробный состав, ограничения и чек-лист проверки на устройстве — в
             прикреплённом отчёте (`OCR-QUALITY-REPORT-*.md`) и в
             `docs/ocr-releases/CURRENT.md`.
-            Прошлые релизные заметки: [yomihon/yomihon releases](https://github.com/yomihon/yomihon/releases).
+            Прошлые релизные заметки: [sj0404-collab/yomikai releases](https://github.com/sj0404-collab/yomikai/releases).
           files: |
             ${{ steps.payload.outputs.apk }}
             ${{ steps.payload.outputs.report }}

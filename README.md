@@ -8,9 +8,9 @@ Discover and read manga, webtoons, comics, and more – easier than ever on your
 
 
 [![Discord server](https://img.shields.io/discord/1464063546257182876.svg?label=&labelColor=6A7EC2&color=7389D8&logo=discord&logoColor=FFFFFF)](https://discord.com/invite/TXvTZdBuQa)
-[![GitHub downloads](https://img.shields.io/github/downloads/yomihon/yomihon/total?label=downloads&labelColor=27303D&color=0D1117&logo=github&logoColor=FFFFFF&style=flat)](https://yomihon.github.io/download)
+[![GitHub downloads](https://img.shields.io/github/downloads/sj0404-collab/yomikai/total?label=downloads&labelColor=27303D&color=0D1117&logo=github&logoColor=FFFFFF&style=flat)](https://github.com/sj0404-collab/yomikai/releases)
 
-[![CI](https://img.shields.io/github/actions/workflow/status/yomihon/yomihon/build.yml?labelColor=27303D)](https://github.com/yomihon/yomihon/actions/workflows/build_push.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/sj0404-collab/yomikai/build.yml?labelColor=27303D)](https://github.com/sj0404-collab/yomikai/actions/workflows/build.yml)
 [![License: Apache-2.0](https://img.shields.io/github/license/mihonapp/mihon?labelColor=27303D&color=0877d2)](/LICENSE)
 <!--
 [![Translation status](https://img.shields.io/weblate/progress/mihon?labelColor=27303D&color=946300)](https://hosted.weblate.org/engage/mihon/)
@@ -19,14 +19,14 @@ Discover and read manga, webtoons, comics, and more – easier than ever on your
 ## Download
 
 
-[![Yomihon Stable](https://img.shields.io/github/release/yomihon/yomihon.svg?maxAge=3600&label=Stable&labelColor=06599d&color=043b69)](https://yomihon.github.io/download)
+[![Yomikai Stable](https://img.shields.io/github/release/sj0404-collab/yomikai.svg?maxAge=3600&label=Stable&labelColor=06599d&color=043b69)](https://github.com/sj0404-collab/yomikai/releases)
 <!--
 [![Mihon Beta](https://img.shields.io/github/v/release/mihonapp/mihon-preview.svg?maxAge=3600&label=Beta&labelColor=2c2c47&color=1c1c39)](https://mihon.app/download)
 -->
 
 *Requires Android 8.0 or higher.*
 
-New to Yomihon? Check out our [**Getting Started Guide**](https://yomihon.github.io/docs/guides/getting-started) to set up your library.
+New to Yomikai? Check out our [**Getting Started Guide**](https://github.com/sj0404-collab/yomikai#readme) to set up your library.
 
 ---
 </div>
@@ -57,7 +57,7 @@ Core Reader Features:
 
 Feature requests, bug reports, and pull requests are welcome. For major changes, please open an issue or join our [discord](https://discord.com/invite/TXvTZdBuQa) to discuss what you would like to change.
 
-Before opening an issue, please check the [FAQ](https://yomihon.github.io/docs/faq/general) and search [existing issues](https://github.com/yomihon/yomihon/issues).
+Before opening an issue, please check the [FAQ](https://github.com/sj0404-collab/yomikai#readme) and search [existing issues](https://github.com/sj0404-collab/yomikai/issues).
 
 [Code of conduct](./CODE_OF_CONDUCT.md) · [Contributing guide](./CONTRIBUTING.md)
 
@@ -65,7 +65,7 @@ Model and dataset attribution for externally fetched ML assets is documented in 
 
 ## Credits
 
-Yomihon is a community-driven fork of the [Mihon](https://github.com/mihonapp/mihon) project. Thank you to all the people who have contributed.
+Yomikai is a community-driven fork of the [Mihon](https://github.com/mihonapp/mihon) project. Thank you to all the people who have contributed.
 
 > Note: this project is unaffiliated with the official Mihon Organization.
 
