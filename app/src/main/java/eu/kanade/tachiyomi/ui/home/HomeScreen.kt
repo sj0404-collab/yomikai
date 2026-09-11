@@ -100,8 +100,6 @@ object HomeScreen : Screen() {
         UiTab.BROWSE to BrowseTab,
         UiTab.BROWSER to eu.kanade.tachiyomi.ui.webbrowser.BrowserTab,
         UiTab.AI to eu.kanade.tachiyomi.ui.aichat.AiChatTab,
-        // DictionaryTab скрыт из нижней навигации («в дальний ящик»):
-        // словарь доступен из Ещё → Настройки → Словарь
         UiTab.MORE to MoreTab,
     )
 

@@ -71,7 +71,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.core.model.rememberScreenModel
-import cafe.adriel.voyager.core.screen.Screen
+import eu.kanade.presentation.util.Screen
 import cafe.adriel.voyager.navigator.LocalNavigator
 import eu.kanade.domain.dictionary.DictionaryPreferences
 import eu.kanade.domain.dictionary.OcrResultPresentation
