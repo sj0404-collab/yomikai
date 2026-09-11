@@ -299,6 +299,36 @@ fun TtsSettingsDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                Text("Авточтение: автолистание вебтуна", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+                val arSpeed = prefs.autoReadWebtoonSpeed().get()
+                Row(modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    listOf(
+                        "phrase" to "Плавно пофразно",
+                        "slow" to "Медленно",
+                        "normal" to "Обычно",
+                        "fast" to "Быстрее",
+                        "max" to "Максимум",
+                    ).forEach { (id, label) ->
+                        FilterChip(
+                            selected = arSpeed == id,
+                            onClick = { prefs.autoReadWebtoonSpeed().set(id) },
+                            label = { Text(label) },
+                            modifier = Modifier.padding(end = 6.dp),
+                        )
+                    }
+                }
+                Text(
+                    when (arSpeed) {
+                        "phrase" -> "Плавно: после каждой реплики экран опускается ровно на её высоту — следующая реплика уже внизу, границы кадров не перечитываются."
+                        "slow" -> "Медленно: шаг ~15% экрана, большое перекрытие кадров (чаще повторное распознавание)."
+                        "fast" -> "Быстрее: шаг ~55% экрана, меньше перекрытия."
+                        "max" -> "Максимально: шаг ~80% экрана, почти без перекрытия."
+                        else -> "Обычно: шаг ~35% экрана, с перекрытием — реплики на границе вьюпорта не пропускаются."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
                 Text("Голоса по ролям (пресеты озвучки)", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
                 val slotsJsonNow = prefs.voiceSlots().get()
                 val slotsNow = remember(slotsJsonNow) {

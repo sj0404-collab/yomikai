@@ -1578,28 +1578,65 @@ class ReaderActivity : BaseActivity() {
                 val chapterId = viewModel.getCurrentChapter()?.chapter?.id ?: -1L
                 val pageIndex = (viewModel.state.value.currentPage - 1).coerceAtLeast(0)
 
-                autoReadEngine.readFrame(bitmap, chapterId, pageIndex) {
-                    if (!thenAdvance || !autoReadActive) return@readFrame
-                    // Страница дочитана целиком — ТОЛЬКО теперь листаем
-                    lifecycleScope.launchIO {
-                        kotlinx.coroutines.delay(350)
-                        if (!autoReadActive) return@launchIO
-                        withUIContext {
-                            when (val viewer = viewModel.state.value.viewer) {
-                                is eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer ->
-                                    // Вебтун: листаем на ~35% высоты экрана, а не на 3/4.
-                                    // Перекрытие держит автопрокрутку, пока кадр не прочитан,
-                                    // и не пропускает реплики на границе вьюпорта (фикс «рывка»).
-                                    viewer.scrollDownByFraction(0.35f)
-                                is eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer ->
-                                    viewer.moveToNext() // постранично, с учётом RTL/LTR
-                                else -> {}
+                // Скорость автолистания вебтуна в авточтении (настройка в
+                // «Озвучка» → Авточтение): плавно пофразно / медленно / обычно /
+                // быстрее / максимально.
+                val scrollSpeed = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+                    .autoReadWebtoonSpeed().get()
+                val webtoonFraction = when (scrollSpeed) {
+                    "phrase" -> 0f // плавно: каждая реплика прокрутилась сама
+                    "slow" -> 0.15f
+                    "normal" -> 0.35f
+                    "fast" -> 0.55f
+                    "max" -> 0.8f
+                    else -> 0.35f
+                }
+
+                autoReadEngine.readFrame(
+                    bitmap = bitmap,
+                    chapterId = chapterId,
+                    pageIndex = pageIndex,
+                    onLineSpoken = if (scrollSpeed == "phrase") { box ->
+                        // Плавный ПОФРАЗНЫЙ прокрут вебтуна: реплика дочитана —
+                        // проматываю ровно на её высоту, следующая уже внизу
+                        // вьюпорта (границы кадра не перечитываются вовсе).
+                        lifecycleScope.launchIO {
+                            if (!autoReadActive) return@launchIO
+                            withUIContext {
+                                val v = viewModel.state.value.viewer
+                                if (v is eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer) {
+                                    val hF = (box.bottom - box.top).coerceAtLeast(0.03f)
+                                    val dy = (box.bottom - 0.08f).coerceAtLeast(hF + 0.05f).coerceAtMost(0.85f)
+                                    v.scrollDownByFraction(dy)
+                                }
                             }
                         }
-                        kotlinx.coroutines.delay(900) // дать странице отрисоваться
-                        if (autoReadActive) readCurrentPage(thenAdvance = true)
-                    }
-                }
+                    } else null,
+                    onPageFinished = {
+                        // Страница дочитана целиком — ТОЛЬКО теперь листаем
+                        if (thenAdvance && autoReadActive) {
+                            lifecycleScope.launchIO {
+                                kotlinx.coroutines.delay(350)
+                                if (!autoReadActive) return@launchIO
+                                withUIContext {
+                                    when (val viewer = viewModel.state.value.viewer) {
+                                        is eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer ->
+                                            // Вебтун: шаг зависит от скорости автолистания.
+                                            // Обычный шаг с перекрытием держит автопрокрутку,
+                                            // пока кадр не прочитан, и не пропускает реплики
+                                            // на границе вьюпорта (фикс «рывка»).
+                                            if (webtoonFraction > 0f) viewer.scrollDownByFraction(webtoonFraction)
+                                        is eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer ->
+                                            viewer.moveToNext() // постранично, с учётом RTL/LTR
+                                        else -> {}
+                                    }
+                                }
+                                kotlinx.coroutines.delay(900) // дать странице отрисоваться
+                                if (autoReadActive) readCurrentPage(thenAdvance = true)
+                            }
+                        }
+                    },
+                )
             } catch (e: Exception) {
                 logcat(LogPriority.ERROR, e) { "readCurrentPage failed" }
             }

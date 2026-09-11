@@ -234,6 +234,7 @@ class AutoReadEngine(
         chapterId: Long,
         pageIndex: Int,
         onPageFinished: () -> Unit,
+        onLineSpoken: ((OcrBoundingBox) -> Unit)? = null,
     ) {
         job?.cancel()
         TtsSpeaker.stop()
@@ -516,7 +517,13 @@ class AutoReadEngine(
                     }
 
                     speakAndAwait(SpeechMarkup.strip(speakTextRaw), gender, slot)
-                spokenLines.add(lineKey(region.text))
+                    // Плавный режим вебтуна: реплика дочитана — прокрутить ровно
+                    // на её высоту, чтобы следующая была уже внизу вьюпорта.
+                    if (onLineSpoken != null) {
+                        runCatching { onLineSpoken(region.boundingBox) }
+                            .onFailure { logcat(LogPriority.WARN, it) { "onLineSpoken failed" } }
+                    }
+                    spokenLines.add(lineKey(region.text))
                 }
             } catch (e: CancellationException) {
                 throw e

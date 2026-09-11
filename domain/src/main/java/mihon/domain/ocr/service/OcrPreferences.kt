@@ -310,6 +310,18 @@ class OcrPreferences(
     /** Форма рамки сканирования: rect | circle | diamond | hexagon | octagon | figure8 | free */
     fun scanShape() = preferenceStore.getString("pref_scan_shape", "rect")
 
+    // ---- Авточтение: скорость автолистания вебтуна ----
+    /**
+     * Скорость автолистания в авточтении вебтуна:
+     *  - phrase — плавно ПОФРАЗНО: прочитал реплику — прокрутил ровно на её
+     *    высоту, внизу уже следующая (нет перечитывания границ кадров);
+     *  - slow — медленно (~15% экрана за шаг);
+     *  - normal — обычно (~35% экрана за шаг, с перекрытием кадра);
+     *  - fast — быстрее (~55%);
+     *  - max — максимально (~80%).
+     */
+    fun autoReadWebtoonSpeed() = preferenceStore.getString("pref_autoread_webtoon_speed", "normal")
+
     // ---- Веб: сохранение как локальная глава ----
     /** Сохранять веб-страницы как локальные главы с изоляцией по сайту */
     fun webSavePerSiteFolder() = preferenceStore.getBoolean("pref_web_per_site_folder", true)

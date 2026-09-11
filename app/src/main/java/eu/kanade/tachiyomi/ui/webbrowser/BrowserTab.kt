@@ -745,7 +745,12 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
                 val bmp = cropToZone(raw, zone)
 
                 var finished = false
-                readEngine.readFrame(bmp, chapterId = -1L, pageIndex = wv.scrollY) { finished = true }
+                readEngine.readFrame(
+                    bitmap = bmp,
+                    chapterId = -1L,
+                    pageIndex = wv.scrollY,
+                    onPageFinished = { finished = true },
+                )
                 while (!finished && isAutoRead) delay(120)
                 if (!isAutoRead) break
 
