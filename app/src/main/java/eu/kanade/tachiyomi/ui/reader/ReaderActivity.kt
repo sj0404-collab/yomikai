@@ -799,6 +799,7 @@ class ReaderActivity : BaseActivity() {
                             showTtsDialog = false
                             val intent = android.content.Intent(this@ReaderActivity, eu.kanade.tachiyomi.ui.main.MainActivity::class.java).apply {
                                 putExtra("open_ocr_settings", true)
+                                addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
                             }
                             startActivity(intent)
                         },
