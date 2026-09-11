@@ -50,7 +50,7 @@ import tachiyomi.presentation.core.components.material.Scaffold
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
-class FeedScreen : Screen {
+class FeedScreen : Screen() {
 
     @Composable
     override fun Content() {

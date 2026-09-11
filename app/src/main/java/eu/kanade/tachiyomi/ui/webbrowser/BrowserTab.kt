@@ -73,6 +73,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -429,16 +430,16 @@ data object BrowserTab : Tab {
                     if (view !== sharedWebView) return
                     if (request.isForMainFrame) {
                         android.os.Handler(android.os.Looper.getMainLooper()).post {
-                            ctx.toast("Ошибка загрузки: ${error.description}")
+                            context.toast("Ошибка загрузки: ${error.description}")
                         }
                     }
                 }
                 override fun onReceivedSslError(view: WebView, handler: android.webkit.SslErrorHandler, error: android.net.http.SslError) {
                     handler.cancel()
                     if (view !== sharedWebView) return
-                    android.os.Handler(android.os.Looper.getMainLooper()).post {
-                        ctx.toast("SSL-ошибка: ${error.primaryError}")
-                    }
+android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            context.toast("SSL-ошибка: ${error.primaryError}")
+                        }
                 }
                 override fun onPageFinished(view: WebView, url: String?) {
                     // фоновая вкладка догрузилась — адрес/активную не трогаем
@@ -964,8 +965,8 @@ data object BrowserTab : Tab {
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.BottomEnd,
         ) {
-            val maxOffsetX = -(maxWidth - 56.dp).roundToPx()
-            val maxOffsetY = -(maxHeight - 56.dp).roundToPx()
+            val maxOffsetX = with(LocalDensity.current) { -(maxWidth - 56.dp).roundToPx() }
+            val maxOffsetY = with(LocalDensity.current) { -(maxHeight - 56.dp).roundToPx() }
             Column(
                 modifier = Modifier
                     .offset {
@@ -1616,6 +1617,7 @@ private fun VoiceQuickDialog(
     val engineOptions = listOf(
         eu.kanade.tachiyomi.data.tts.TtsSpeaker.ENGINE_AUTO to "Авто (веб онлайн / локально оффлайн)",
         eu.kanade.tachiyomi.data.tts.TtsSpeaker.ENGINE_GOOGLE_WEB to "Веб (Google, без ключа)",
+        eu.kanade.tachiyomi.data.tts.TtsSpeaker.ENGINE_EDGE_TTS to "Edge TTS (Microsoft, без ключа)",
         eu.kanade.tachiyomi.data.tts.TtsSpeaker.ENGINE_SYSTEM to "Локально (системные)",
     )
     AlertDialog(

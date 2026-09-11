@@ -79,12 +79,12 @@ object VoiceModeResolver {
                     "male" -> p.voiceMale().get().ifBlank { p.voiceName().get() }
                     else -> p.voiceFemale().get().ifBlank { p.voiceName().get() }
                 }
-                ResolvedVoice(
+ResolvedVoice(
                     gender = g,
                     engine = engine,
                     voiceName = name,
                     isLocal = engine == TtsSpeaker.ENGINE_SYSTEM || engine == TtsSpeaker.ENGINE_REMOTE,
-                    isOnline = engine == TtsSpeaker.ENGINE_GOOGLE_WEB || engine == TtsSpeaker.ENGINE_ELEVENLABS,
+                    isOnline = engine == TtsSpeaker.ENGINE_GOOGLE_WEB || engine == TtsSpeaker.ENGINE_EDGE_TTS,
                 )
             }
             Mode.DUAL -> {
@@ -99,7 +99,7 @@ object VoiceModeResolver {
                     engine = effEngine.ifBlank { TtsSpeaker.ENGINE_SYSTEM },
                     voiceName = name,
                     isLocal = effEngine == TtsSpeaker.ENGINE_SYSTEM || effEngine == TtsSpeaker.ENGINE_REMOTE,
-                    isOnline = effEngine == TtsSpeaker.ENGINE_GOOGLE_WEB,
+                    isOnline = effEngine == TtsSpeaker.ENGINE_GOOGLE_WEB || effEngine == TtsSpeaker.ENGINE_EDGE_TTS,
                 )
             }
             Mode.TRIPLE -> {
@@ -133,7 +133,7 @@ object VoiceModeResolver {
                     engine = effEngine.ifBlank { TtsSpeaker.ENGINE_SYSTEM },
                     voiceName = name,
                     isLocal = effEngine == TtsSpeaker.ENGINE_SYSTEM || effEngine == TtsSpeaker.ENGINE_REMOTE,
-                    isOnline = effEngine == TtsSpeaker.ENGINE_GOOGLE_WEB,
+                    isOnline = effEngine == TtsSpeaker.ENGINE_GOOGLE_WEB || effEngine == TtsSpeaker.ENGINE_EDGE_TTS,
                 )
             }
         }

@@ -57,7 +57,7 @@ import tachiyomi.presentation.core.components.material.Scaffold
  * Всё хранится декларативно в `workspace/ui/` (id и значения), исполняемого
  * кода пользователь не добавляет — эффекты выбираются из замкнутого списка.
  */
-object SettingsConstructorScreen : Screen {
+object SettingsConstructorScreen : Screen() {
 
     private val READER_MODULES = listOf(
         "r_scan" to "Читалка: строка «OCR скан»",

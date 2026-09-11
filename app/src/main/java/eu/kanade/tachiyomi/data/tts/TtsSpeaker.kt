@@ -55,6 +55,7 @@ object TtsSpeaker {
 
     const val ENGINE_SYSTEM = "system_tts"
     const val ENGINE_GOOGLE_WEB = "google_web"
+    const val ENGINE_EDGE_TTS = "edge_tts"
     const val ENGINE_ELEVENLABS = "eleven_api"
     const val ENGINE_REMOTE = "remote_tts"
 
@@ -326,11 +327,12 @@ object TtsSpeaker {
         val online = isNetworkAvailable(context)
         val engine = when (val want = prefs().voiceEngine().get()) {
             ENGINE_AUTO -> if (online) ENGINE_GOOGLE_WEB else ENGINE_SYSTEM
-            ENGINE_GOOGLE_WEB, ENGINE_ELEVENLABS -> if (online) want else ENGINE_SYSTEM
+            ENGINE_GOOGLE_WEB, ENGINE_EDGE_TTS, ENGINE_ELEVENLABS -> if (online) want else ENGINE_SYSTEM
             else -> want
         }
         when (engine) {
             ENGINE_GOOGLE_WEB -> speakGoogleWeb(context, spoken)
+            ENGINE_EDGE_TTS -> speakEdgeTts(context, spoken)
             ENGINE_ELEVENLABS -> speakElevenLabs(context, spoken)
             // legacy-значения pref_voice_engine со сборок с ONNX:
             // нейроголоса теперь живут на сервере, маршрутизируем туда же.
@@ -751,6 +753,68 @@ object TtsSpeaker {
             } catch (e: Exception) {
                 logcat(LogPriority.WARN, e) { "Google Web TTS failed" }
             } finally {
+                setSpeaking(false)
+            }
+        }
+    }
+
+    // endregion
+
+    // region EDGE TTS (Microsoft, без ключа)
+
+    /**
+     * Озвучка онлайн-голосами Microsoft Edge (edge-tts). Бесплатно, без
+     * API-ключа, нужен интернет. Выбранный голос — pref_edge_voice; если
+     * редактором выбран мультиязычный голос, он читает любой язык.
+     * Скорость/высота берутся из обычных настроек озвучки.
+     */
+    private fun speakEdgeTts(context: Context, text: String) {
+        val p = prefs()
+        val voice = p.edgeVoice().get().ifBlank { EdgeTts.DEFAULT_VOICE }
+        val ratePercent = ((p.speechRate().get().coerceIn(0.5f, 2f) - 1f) * 100).toInt().coerceIn(-50, 100)
+        val pitchHz = ((p.speechPitch().get().coerceIn(0.5f, 2f) - 1f) * 40).toInt().coerceIn(-50, 50)
+        currentJob = scope.launch {
+            setSpeaking(true)
+            try {
+                for (sentence in splitSentences(text)) {
+                    if (currentJob?.isActive != true) break
+                    val file = EdgeTts.synthesizeToFile(
+                        context,
+                        sentence,
+                        voice = voice,
+                        ratePercent = ratePercent,
+                        pitchHz = pitchHz,
+                    ) ?: continue
+                    playFileBlocking(file)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logcat(LogPriority.WARN, e) { "Edge TTS failed" }
+            } finally {
+                setSpeaking(false)
+            }
+        }
+    }
+
+    /** Проба конкретного голоса Edge TTS (кнопка «Проба» в списке голосов). */
+    fun speakEdgeVoiceTest(context: Context, voice: String) {
+        stop()
+        currentJob = scope.launch {
+            setSpeaking(true)
+            try {
+                val file = EdgeTts.synthesizeToFile(
+                    context,
+                    "Привет! Это тест голоса $voice.",
+                    voice = voice.ifBlank { EdgeTts.DEFAULT_VOICE },
+                )
+                if (file != null) {
+                    playFileBlocking(file)
+                } else {
+                    setSpeaking(false)
+                }
+            } catch (e: Exception) {
+                logcat(LogPriority.WARN, e) { "Edge voice test failed" }
                 setSpeaking(false)
             }
         }

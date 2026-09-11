@@ -36,6 +36,9 @@ enum class VoiceBackend(val id: String) {
     /** Веб-озвучка Google Translate: без ключа, но нужен интернет. */
     GOOGLE_WEB(TtsSpeaker.ENGINE_GOOGLE_WEB),
 
+    /** Онлайн-голоса Microsoft Edge (edge-tts): без ключа, нужен интернет. */
+    EDGE_TTS(TtsSpeaker.ENGINE_EDGE_TTS),
+
     /** ElevenLabs по API-ключу. */
     ELEVEN_API(TtsSpeaker.ENGINE_ELEVENLABS),
 
@@ -165,6 +168,16 @@ object VoicePlugins {
         offline = false,
     )
 
+    val EDGE_TTS = VoicePluginDescriptor(
+        id = VoiceBackend.EDGE_TTS.id,
+        backend = VoiceBackend.EDGE_TTS,
+        title = "Edge TTS (без ключа)",
+        summary = "Онлайн-голоса Microsoft Edge: ~300 голосов, включая мультиязычные. Без API-ключа.",
+        requirements = setOf(VoiceRequirement.NETWORK),
+        supportsMultipleVoices = true,
+        offline = false,
+    )
+
     val ELEVEN_API = VoicePluginDescriptor(
         id = VoiceBackend.ELEVEN_API.id,
         backend = VoiceBackend.ELEVEN_API,
@@ -186,7 +199,7 @@ object VoicePlugins {
         offline = false,
     )
 
-    val ALL = listOf(SYSTEM_TTS, GOOGLE_WEB, ELEVEN_API, REMOTE_TTS)
+    val ALL = listOf(SYSTEM_TTS, GOOGLE_WEB, EDGE_TTS, ELEVEN_API, REMOTE_TTS)
 
     private val BY_ID = ALL.associateBy { it.id }
 
@@ -239,6 +252,16 @@ object VoicePlugins {
             }
 
             VoiceBackend.SYSTEM_TTS -> systemVoiceSources(prefs)
+
+            VoiceBackend.EDGE_TTS -> listOf(
+                prefs.edgeVoice().get().ifBlank { eu.kanade.tachiyomi.data.tts.EdgeTts.DEFAULT_VOICE }
+            ).map { id ->
+                Voice(
+                    id = id,
+                    name = "Edge TTS: $id",
+                    gender = if (id.contains("Female")) "female" else if (id.contains("Male")) "male" else "neutral",
+                )
+            }
 
             VoiceBackend.ELEVEN_API -> listOfNotNull(
                 prefs.elevenVoiceId().get().takeIf(String::isNotBlank)?.let {

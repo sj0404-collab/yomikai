@@ -97,7 +97,7 @@ import java.util.Date
 import java.util.Locale
 import tachiyomi.presentation.core.util.collectAsState as collectPreferenceAsState
 
-object SettingsDictionaryScreen : Screen {
+object SettingsDictionaryScreen : Screen() {
 
     @Composable
     override fun Content() {

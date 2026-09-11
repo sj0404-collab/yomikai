@@ -57,6 +57,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import eu.kanade.domain.source.service.SourcePreferences
 import mihon.data.ui.UiTab
 import mihon.data.ui.UiTabs
 import soup.compose.material.motion.animation.materialFadeThroughIn

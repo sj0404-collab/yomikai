@@ -718,6 +718,7 @@ object OcrQueueScreen : Screen() {
                 title = "Источник голоса",
                 subtitle = when (voiceEngine) {
                     TtsSpeaker.ENGINE_GOOGLE_WEB -> "Онлайн: Google Translate, без API-ключа"
+                    TtsSpeaker.ENGINE_EDGE_TTS -> "Онлайн: Microsoft Edge, без API-ключа"
                     TtsSpeaker.ENGINE_ELEVENLABS -> "Онлайн: ElevenLabs, нужен API-ключ"
                     TtsSpeaker.ENGINE_REMOTE -> "Сервер: sherpa-onnx/Piper на вашем ПК или ранере"
                     else -> "Системный TTS: офлайн- и онлайн-голоса устройства"
@@ -727,6 +728,7 @@ object OcrQueueScreen : Screen() {
                     TtsSpeaker.ENGINE_SYSTEM to "📱 Системный TTS (офлайн + онлайн)",
                     TtsSpeaker.ENGINE_REMOTE to "🖥 TTS-сервер (нейроголоса на ПК/ранере)",
                     TtsSpeaker.ENGINE_GOOGLE_WEB to "☁ Google Web (онлайн, без ключа)",
+                    TtsSpeaker.ENGINE_EDGE_TTS to "☁ Edge TTS (онлайн, без ключа)",
                     TtsSpeaker.ENGINE_ELEVENLABS to "☁ ElevenLabs (онлайн, по ключу)",
                 ),
                 onValueChange = voiceEnginePref::set,

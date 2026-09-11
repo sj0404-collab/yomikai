@@ -71,6 +71,14 @@ fun TtsSettingsDialog(
     var orModels by remember { mutableStateOf<List<String>>(emptyList()) }
     var showAiLog by remember { mutableStateOf(false) }
 
+    // Edge TTS (Microsoft, без ключа): голос + фильтр языка в списке.
+    var edgeVoice by remember { mutableStateOf(prefs.edgeVoice().get()) }
+    var edgeLanguage by remember { mutableStateOf(prefs.edgeLanguage().get()) }
+    var edgeVoices by remember { mutableStateOf<List<eu.kanade.tachiyomi.data.tts.EdgeTts.EdgeVoice>>(emptyList()) }
+    var edgeLoading by remember { mutableStateOf(false) }
+    var edgeVoicesLoaded by remember { mutableStateOf(false) }
+    var edgeProbingVoice by remember { mutableStateOf<String?>(null) }
+
     // Живой список :free моделей OpenRouter (фолбэк при оффлайне)
     androidx.compose.runtime.LaunchedEffect(aiProvider) {
         if (aiProvider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_OPENROUTER && orModels.isEmpty()) {
@@ -83,6 +91,17 @@ fun TtsSettingsDialog(
     var showAddSlot by remember { mutableStateOf(false) }
     var addSlotRole by remember { mutableStateOf<String?>(null) }
     var sysReady by remember { mutableStateOf(false) }
+
+    // Живой список голосов Edge TTS (Microsoft, без ключа): тянется при первом
+    // открытии, фильтруется по языку, мультиязычные голоса помечены 🌐.
+    androidx.compose.runtime.LaunchedEffect(engine) {
+        if (engine == TtsSpeaker.ENGINE_EDGE_TTS && !edgeVoicesLoaded) {
+            edgeLoading = true
+            edgeVoices = eu.kanade.tachiyomi.data.tts.EdgeTts.fetchVoices()
+            edgeVoicesLoaded = true
+            edgeLoading = false
+        }
+    }
 
     // Словари голосовых ролей и интонаций (JSON в настройках). Редактируются
     // здесь, сохраняются сразу же — как legacy-слоты голосов выше.
@@ -250,6 +269,12 @@ fun TtsSettingsDialog(
                         selected = engine == TtsSpeaker.ENGINE_GOOGLE_WEB,
                         onClick = { engine = TtsSpeaker.ENGINE_GOOGLE_WEB },
                         label = { Text("Веб") },
+                        modifier = Modifier.padding(end = 6.dp),
+                    )
+                    FilterChip(
+                        selected = engine == TtsSpeaker.ENGINE_EDGE_TTS,
+                        onClick = { engine = TtsSpeaker.ENGINE_EDGE_TTS },
+                        label = { Text("Edge TTS") },
                         modifier = Modifier.padding(end = 6.dp),
                     )
                     FilterChip(
@@ -726,6 +751,136 @@ fun TtsSettingsDialog(
                                 .padding(top = 8.dp),
                         )
                     }
+                    TtsSpeaker.ENGINE_EDGE_TTS -> {
+                        Text(
+                            "Онлайн-голоса Microsoft Edge (edge-tts) — без API-ключа, нужен интернет. " +
+                                "Выберите голос; мультиязычные (🌐) читают текст любого языка.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        when {
+                            edgeLoading -> Text(
+                                "Загрузка списка голосов Microsoft Edge…",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 8.dp),
+                            )
+                            edgeVoices.isEmpty() -> Text(
+                                "Список голосов не загрузился. Проверьте интернет и повторите позже.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 8.dp),
+                            )
+                            else -> {
+                                val languages = remember(edgeVoices) {
+                                    eu.kanade.tachiyomi.data.tts.EdgeTts.languagesOf(edgeVoices)
+                                }
+                                val multilingual = remember(edgeVoices) {
+                                    eu.kanade.tachiyomi.data.tts.EdgeTts.multilingualVoices(edgeVoices)
+                                }
+                                val selectedLang = remember(edgeVoice, edgeVoices) {
+                                    edgeVoices.firstOrNull { it.shortName == edgeVoice }?.language ?: "ru"
+                                }
+                                val currentFilter: String = remember(edgeLanguage, selectedLang, languages) {
+                                    when {
+                                        edgeLanguage == "" -> ""
+                                        edgeLanguage == "🌐" -> "🌐"
+                                        edgeLanguage in languages -> edgeLanguage
+                                        else -> selectedLang
+                                    }
+                                }
+                                Row(
+                                    modifier = Modifier
+                                        .padding(top = 8.dp)
+                                        .horizontalScroll(rememberScrollState()),
+                                ) {
+                                    FilterChip(
+                                        selected = edgeLanguage == "auto" || edgeLanguage.isBlank(),
+                                        onClick = { edgeLanguage = "auto" },
+                                        label = { Text("✨ Авто (язык голоса)") },
+                                        modifier = Modifier.padding(end = 4.dp),
+                                    )
+                                    FilterChip(
+                                        selected = currentFilter == "",
+                                        onClick = { edgeLanguage = "" },
+                                        label = { Text("Все языки") },
+                                        modifier = Modifier.padding(end = 4.dp),
+                                    )
+                                    FilterChip(
+                                        selected = currentFilter == "🌐",
+                                        onClick = { edgeLanguage = "🌐" },
+                                        label = { Text("🌐 Мультиязычные") },
+                                        modifier = Modifier.padding(end = 4.dp),
+                                    )
+                                    languages.forEach { lang ->
+                                        FilterChip(
+                                            selected = currentFilter == lang,
+                                            onClick = { edgeLanguage = lang },
+                                            label = { Text(lang.uppercase()) },
+                                            modifier = Modifier.padding(end = 4.dp),
+                                        )
+                                    }
+                                }
+                                val filtered = remember(edgeVoices, currentFilter) {
+                                    when (currentFilter) {
+                                        "🌐" -> multilingual
+                                        "" -> edgeVoices
+                                        else -> edgeVoices.filter { it.language == currentFilter }
+                                    }.sortedWith(compareBy({ it.multilingual }, { it.gender }, { it.shortName }))
+                                }
+                                if (currentFilter == "🌐") {
+                                    Text(
+                                        "Все мультиязычные голоса: читают текст любого языка автоматически.",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(top = 4.dp, bottom = 2.dp),
+                                    )
+                                }
+                                Column(
+                                    modifier = Modifier
+                                        .heightIn(max = 260.dp)
+                                        .verticalScroll(rememberScrollState()),
+                                ) {
+                                    filtered.forEach { v ->
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable { edgeVoice = v.shortName },
+                                        ) {
+                                            RadioButton(
+                                                selected = edgeVoice == v.shortName,
+                                                onClick = { edgeVoice = v.shortName },
+                                            )
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    v.shortName,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                )
+                                                Text(
+                                                    "${v.genderIcon} ${v.locale}" +
+                                                        if (v.multilingual) " • 🌐 мультиязычный" else "",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                            }
+                                            TextButton(
+                                                enabled = edgeProbingVoice == null,
+                                                onClick = {
+                                                    edgeProbingVoice = v.shortName
+                                                    eu.kanade.tachiyomi.data.tts.TtsSpeaker.speakEdgeVoiceTest(
+                                                        context,
+                                                        v.shortName,
+                                                    )
+                                                    edgeProbingVoice = null
+                                                },
+                                            ) { Text("Проба") }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     TtsSpeaker.ENGINE_ELEVENLABS -> {
                         Text(
                             "Нейроголоса ElevenLabs. Нужен API-ключ с elevenlabs.io. " +
@@ -771,6 +926,8 @@ fun TtsSettingsDialog(
                     prefs.ttsWebLanguage().set(webLang.trim().ifBlank { "ru" })
                     prefs.elevenApiKey().set(elevenKey.trim())
                     prefs.elevenVoiceId().set(elevenVoice.trim())
+                    prefs.edgeVoice().set(edgeVoice.trim())
+                    prefs.edgeLanguage().set(edgeLanguage.trim())
                     context.toast("Настройки озвучки сохранены")
                     onDismissRequest()
                 },
@@ -787,6 +944,8 @@ fun TtsSettingsDialog(
                         prefs.ttsWebLanguage().set(webLang.trim().ifBlank { "ru" })
                         prefs.elevenApiKey().set(elevenKey.trim())
                         prefs.elevenVoiceId().set(elevenVoice.trim())
+                        prefs.edgeVoice().set(edgeVoice.trim())
+                        prefs.edgeLanguage().set(edgeLanguage.trim())
                         TtsSpeaker.speak(context, "Проверка выбранного голоса Ёмикай.")
                     },
                 ) { Text("Проба") }

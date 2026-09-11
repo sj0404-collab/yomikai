@@ -110,6 +110,15 @@ class OcrPreferences(
     fun elevenApiKey() = preferenceStore.getString("pref_eleven_api_key", "")
     fun elevenVoiceId() = preferenceStore.getString("pref_eleven_voice_id", "")
 
+    // Edge TTS (Microsoft): онлайн-голоса без API-ключа. Голос — ShortName из
+    // публичного списка edge-tts (напр. ru-RU-SvetlanaNeural, en-US-EmmaMultilingualNeural).
+    fun edgeVoice() = preferenceStore.getString("pref_edge_voice", "ru-RU-SvetlanaNeural")
+
+    // Фильтр языка в списке голосов Edge TTS:
+    // "auto" = язык выбранного голоса, "" = все языки, "🌐" = мультиязычные,
+    // иначе двухбуквенный код языка.
+    fun edgeLanguage() = preferenceStore.getString("pref_edge_language", "auto")
+
     // Пресеты голосов: отдельно женский и мужской системные голоса.
     // При автоозвучке реплики могут чередоваться по полу говорящего.
     fun voiceFemale() = preferenceStore.getString("pref_voice_female", "")
