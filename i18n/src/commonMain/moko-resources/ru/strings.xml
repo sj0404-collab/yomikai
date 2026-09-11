@@ -331,6 +331,8 @@
     <string name="channel_ext_updates">Обновления расширений</string>
     <string name="action_menu">Меню</string>
     <string name="label_sources">Источники</string>
+    <string name="content_type">Тип контента</string>
+    <string name="content_type_summary">Переключение источника (манга, аниме, ранобэ, книги). Состояния вкладок сохраняются, кеш не сбрасывается.</string>
     <string name="pref_category_reading">Чтение</string>
     <string name="pref_skip_filtered_chapters">Пропускать отфильтрованные главы</string>
     <string name="action_select_inverse">Выбрать наоборот</string>

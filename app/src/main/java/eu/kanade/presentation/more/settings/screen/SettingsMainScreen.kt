@@ -16,6 +16,7 @@ import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.GetApp
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.RecordVoiceOver
 import androidx.compose.material.icons.outlined.Security
@@ -234,6 +235,12 @@ object SettingsMainScreen : Screen() {
             subtitleRes = MR.strings.pref_browse_summary,
             icon = Icons.Outlined.Explore,
             screen = SettingsBrowseScreen,
+        ),
+        Item(
+            titleRes = MR.strings.content_type,
+            subtitleRes = MR.strings.content_type_summary,
+            icon = Icons.Outlined.Public,
+            screen = SettingsContentTypeScreen,
         ),
         Item(
             titleRes = MR.strings.constructor,

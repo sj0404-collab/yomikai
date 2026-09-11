@@ -45,13 +45,16 @@ import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.isTabletUi
 import eu.kanade.tachiyomi.data.ui.UiTabRegistry
+import eu.kanade.tachiyomi.ui.audiobookplayer.AudiobooksTab
 import eu.kanade.tachiyomi.ui.browse.BrowseTab
 import eu.kanade.tachiyomi.ui.download.DownloadQueueScreen
 import eu.kanade.tachiyomi.ui.history.HistoryTab
 import eu.kanade.tachiyomi.ui.library.LibraryTab
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.more.MoreTab
+import eu.kanade.tachiyomi.ui.ranobe.RanobeTab
 import eu.kanade.tachiyomi.ui.updates.UpdatesTab
+import eu.kanade.tachiyomi.ui.videoplayer.KinoHallTab
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
@@ -120,6 +123,8 @@ object HomeScreen : Screen() {
     private fun visibleTabs(): List<eu.kanade.presentation.util.Tab> {
         val prefs = remember { Injekt.get<mihon.domain.ocr.service.OcrPreferences>() }
         val aiVisible by prefs.aiTabVisible().collectAsState()
+        val sourcePrefs = remember { Injekt.get<SourcePreferences>() }
+        val contentType by sourcePrefs.contentType.collectAsState()
         val context = LocalContext.current
         val version by UiTabRegistry.version.collectAsState()
         val ctorVersion by eu.kanade.tachiyomi.data.ui.UiConstructorStore.version.collectAsState()
@@ -132,7 +137,7 @@ object HomeScreen : Screen() {
             hidden = h
             order = o
         }
-        return TABS
+        val tabs = TABS
             .filterNot { (tab, _) -> tab == UiTab.AI && !aiVisible }
             .filterNot { (tab, _) -> UiTabs.isHidden(tab.id, hidden) }
             .let { list ->
@@ -146,6 +151,24 @@ object HomeScreen : Screen() {
                 }
             }
             .map { (_, screen) -> screen }
+            .toMutableList()
+        // Вкладка по назначению выбранного типа контента: «Кинозал» для
+        // видео (аниме/дорамы), «Ранобэ», «Аудиокниги». Браузер и AI тип
+        // не трогает — они всегда на месте (AI управляется в настройках).
+        val contentTypeTab = when (contentType) {
+            ContentType.MANGA -> null
+            ContentType.ANIME, ContentType.DRAMAS -> KinoHallTab
+            ContentType.RANOBE -> RanobeTab
+            ContentType.BOOKS -> AudiobooksTab
+        }
+        if (contentTypeTab != null) {
+            val insertAt = tabs.indexOfFirst { it == BrowseTab }
+                .takeIf { it >= 0 }
+                ?.plus(1)
+                ?: tabs.size
+            tabs.add(insertAt, contentTypeTab)
+        }
+        return tabs
     }
 
     @Composable
@@ -153,10 +176,6 @@ object HomeScreen : Screen() {
         // PWA-оболочка Yomihon удалена: приложение всегда работает в нативном
         // интерфейсе, MangaLib PWA живёт как нативная вкладка с мостами.
         val navigator = LocalNavigator.currentOrThrow
-        val sourcePrefs = remember { Injekt.get<SourcePreferences>() }
-        var contentType by remember {
-            mutableStateOf(sourcePrefs.contentType.get())
-        }
 
         TabNavigator(
             tab = LibraryTab,
@@ -200,13 +219,6 @@ object HomeScreen : Screen() {
                             .padding(contentPadding)
                             .consumeWindowInsets(contentPadding),
                     ) {
-                        ContentTypeBar(
-                            selected = contentType,
-                            onSelect = { newType ->
-                                contentType = newType
-                                sourcePrefs.contentType.set(newType)
-                            },
-                        )
                         Box(modifier = Modifier.weight(1f)) {
                             AnimatedContent(
                                 targetState = tabNavigator.current,
