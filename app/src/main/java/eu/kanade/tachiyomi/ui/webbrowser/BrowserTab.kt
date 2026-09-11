@@ -28,6 +28,7 @@ import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
@@ -128,6 +129,37 @@ import kotlin.math.roundToInt
 data object BrowserTab : Tab {
 
     private const val HOME_URL = "https://mangabuff.ru"
+
+    private data class CatalogSite(val name: String, val desc: String, val url: String)
+    private data class CatalogGroup(val title: String, val sites: List<CatalogSite>)
+
+    // Каталог сайтов (меню «Сайты» в тулбаре): манга — по умолчанию, аниме/
+    // дорамы/ранобэ/аудиокниги открываются здесь, во вкладке «Браузер». Отдельных
+    // тип-вкладок больше нет.
+    private val siteCatalog = listOf(
+        CatalogGroup("Манга", listOf(
+            CatalogSite("MangaBuff", "Домашняя страница манги", "https://mangabuff.ru"),
+        )),
+        CatalogGroup("Аниме / Дорамы", listOf(
+            CatalogSite("Anilibria", "Аниме онлайн + официальное API", "https://anilibria.tv"),
+            CatalogSite("Kodik", "Плеер и API для встраивания видео", "https://kodik.info"),
+            CatalogSite("Shikimori", "База аниме/манги, расписание", "https://shikimori.one"),
+            CatalogSite("DoramaLive", "Дорамы с субтитрами", "https://dorama.live"),
+            CatalogSite("Dorama.kim", "Дорамы на русском", "https://dorama.kim"),
+        )),
+        CatalogGroup("Ранобэ", listOf(
+            CatalogSite("RanobeLib", "Ранобэ на русском: каталог и чтение", "https://ranobelib.me"),
+            CatalogSite("LibRead", "Книги и ранобэ на русском", "https://libread.me"),
+            CatalogSite("Novel Updates", "Индекс новелл (EN)", "https://www.novelupdates.com"),
+            CatalogSite("ReadNovelFull", "Сборник новелл (EN)", "https://readnovelfull.com"),
+        )),
+        CatalogGroup("Аудиокниги", listOf(
+            CatalogSite("ЛитРес", "Легальные аудиокниги", "https://www.litres.ru"),
+            CatalogSite("АКнига", "Клуб аудиокниг онлайн", "https://akniga.org"),
+            CatalogSite("Audioteka", "Аудиокниги на русском", "https://audioteka.ru"),
+            CatalogSite("LibriVox", "Свободные аудиокниги (EN)", "https://librivox.org"),
+        )),
+    )
 
     @SuppressLint("StaticFieldLeak") // applicationContext — утечки нет
     private var sharedWebView: WebView? = null
@@ -389,6 +421,13 @@ data object BrowserTab : Tab {
                 }
             }
             webViewClient = object : WebViewClient() {
+                override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                    if (view !== sharedWebView) return
+                    // Адресная строка сразу показывает новую ссылку: раньше она
+                    // держала предыдущий сайт до onPageFinished («зашёл на ютуб,
+                    // а в строке всё ещё mangabuff»).
+                    if (!url.isNullOrBlank()) urlState.value = url
+                }
                 override fun onPageFinished(view: WebView, url: String?) {
                     // фоновая вкладка догрузилась — адрес/активную не трогаем
                     if (view !== sharedWebView) return
@@ -503,6 +542,7 @@ data object BrowserTab : Tab {
             }
         }
         var moreOpen by remember { mutableStateOf(false) }
+        var sitesOpen by remember { mutableStateOf(false) }
         var libOpen by remember { mutableStateOf(false) }
         var marksOpen by remember { mutableStateOf(false) }
         var histOpen by remember { mutableStateOf(false) }
@@ -525,7 +565,9 @@ data object BrowserTab : Tab {
                 input.contains('.') && !input.contains(' ') -> "https://$input"
                 else -> "https://www.google.com/search?q=" + java.net.URLEncoder.encode(input, "UTF-8")
             }
-            WebStore.addTab(ctx, target, target)
+            urlBar = target
+            WebStore.touchTab(ctx, target, target)
+            sharedWebView?.loadUrl(target)
         }
         fun saveHtmlPage() {
             val wv = sharedWebView ?: return
@@ -811,6 +853,9 @@ data object BrowserTab : Tab {
                         Text(webTabs.size.toString(), style = MaterialTheme.typography.labelSmall)
                     }
                 }
+                IconButton(onClick = { sitesOpen = true }) {
+                    Icon(Icons.Outlined.Menu, contentDescription = "Каталог сайтов")
+                }
                 IconButton(onClick = {
                     webBookmarked = WebStore.toggleBookmark(ctx, urlBar, sharedWebView?.title ?: urlBar)
                 }) {
@@ -1047,6 +1092,49 @@ data object BrowserTab : Tab {
                         }
                         if (!hiddenM.contains("b_urlfull")) {
                             TextButton(onClick = { moreOpen = false; immersive = true }) { Text("Полный экран") }
+                        }
+                    }
+                },
+            )
+        }
+        if (sitesOpen) {
+            AlertDialog(
+                onDismissRequest = { sitesOpen = false },
+                confirmButton = { TextButton(onClick = { sitesOpen = false }) { Text("Закрыть") } },
+                title = { Text("Каталог сайтов") },
+                text = {
+                    Column(
+                        modifier = Modifier.verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        siteCatalog.forEach { group ->
+                            Text(
+                                group.title,
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.padding(top = 10.dp, bottom = 2.dp),
+                            )
+                            group.sites.forEach { site ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            sitesOpen = false
+                                            loadUrlInput(site.url)
+                                        }
+                                        .padding(vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(site.name, style = MaterialTheme.typography.bodyMedium)
+                                        Text(site.desc, style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    Icon(
+                                        Icons.Outlined.OpenInNew,
+                                        contentDescription = "Открыть",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                            }
                         }
                     }
                 },
