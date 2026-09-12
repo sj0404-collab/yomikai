@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import android.provider.OpenableColumns
 import com.hippo.unifile.UniFile
 import java.io.File
+import java.io.FileOutputStream
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 

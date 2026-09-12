@@ -292,6 +292,65 @@ object BookParser {
         return countMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
     }
 
+    private fun extractEpubMetadata(bytes: ByteArray): BookMetadata {
+        val tmp = File.createTempFile("book_", ".epub").apply { deleteOnExit() }
+        tmp.writeBytes(bytes)
+        return try {
+            ZipFile(tmp).use { zip ->
+                val containerEntry = zip.getEntry("META-INF/container.xml")
+                    ?: zip.getEntry("meta-inf/container.xml")
+                    ?: return@use BookMetadata(title = "Книга")
+                val container = Jsoup.parse(
+                    zip.getInputStream(containerEntry).readBytes().toString(Charsets.UTF_8),
+                    "", Parser.xmlParser(),
+                )
+                val opfPath = decodeHref(container.selectFirst("rootfile")?.attr("full-path") ?: return@use BookMetadata(title = "Книга"))
+                val base = opfPath.substringBeforeLast('/', "")
+                val opfEntry = zip.getEntry(opfPath) ?: return@use BookMetadata(title = "Книга")
+                val opf = Jsoup.parse(
+                    zip.getInputStream(opfEntry).readBytes().toString(Charsets.UTF_8),
+                    "", Parser.xmlParser(),
+                )
+                val coverId = opf.selectFirst("metadata meta[name=cover]")?.attr("content")
+                    ?: opf.selectFirst("manifest item[properties*=cover-image]")?.attr("id")
+                val coverImage = coverId?.let { findEpubImage(zip, base, it, opf) }
+                val meta = opf.selectFirst("metadata") ?: return@use BookMetadata(title = "Книга")
+                val title = meta.children()
+                    ?.firstOrNull { it.normalName().equals("title", ignoreCase = true) }
+                    ?.text()?.trim()?.takeIf { it.isNotBlank() } ?: "Книга"
+                val creator = meta.children()
+                    ?.firstOrNull { it.normalName().equals("creator", ignoreCase = true) }
+                    ?.text()?.trim()?.takeIf { it.isNotBlank() }
+                val description = meta.children()
+                    ?.firstOrNull { it.normalName().equals("description", ignoreCase = true) }
+                    ?.text()?.trim()?.takeIf { it.isNotBlank() }
+                val language = meta.children()
+                    ?.firstOrNull { it.normalName().equals("language", ignoreCase = true) }
+                    ?.text()?.trim()?.takeIf { it.isNotBlank() }
+                val publisher = meta.children()
+                    ?.firstOrNull { it.normalName().equals("publisher", ignoreCase = true) }
+                    ?.text()?.trim()?.takeIf { it.isNotBlank() }
+                val date = meta.children()
+                    ?.firstOrNull { it.normalName().equals("date", ignoreCase = true) }
+                    ?.text()?.trim()?.takeIf { it.isNotBlank() }
+                val year = date?.let { Regex("""\d{4}""").find(it)?.value?.toIntOrNull() }
+                BookMetadata(
+                    title = title,
+                    author = creator,
+                    description = description,
+                    coverImage = coverImage,
+                    language = language,
+                    publisher = publisher,
+                    year = year,
+                )
+            }
+        } catch (e: Exception) {
+            BookMetadata(title = bytes.toString(Charsets.UTF_8).substringAfterLast('/').substringBeforeLast('.').ifBlank { "Книга" })
+        } finally {
+            tmp.delete()
+        }
+    }
+
     private fun extractPdfMetadata(bytes: ByteArray, name: String): BookMetadata {
         // PDF метаданные извлекаются из byte数组 через простой поиск строк
         val text = String(bytes, StandardCharsets.ISO_8859_1)
