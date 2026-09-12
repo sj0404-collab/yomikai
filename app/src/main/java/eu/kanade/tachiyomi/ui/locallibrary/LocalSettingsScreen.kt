@@ -10,6 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.GTranslate
 import androidx.compose.material.icons.outlined.RecordVoiceOver
+import androidx.compose.material.icons.outlined.SportsEsports
 import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -23,23 +24,30 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.core.screen.Screen
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
+import eu.kanade.presentation.more.settings.screen.OcrHistoryDialog
+import eu.kanade.presentation.more.settings.screen.OcrVocabularyDialog
 import eu.kanade.presentation.more.settings.screen.SettingsDictionaryScreen
-import eu.kanade.presentation.more.settings.screen.SettingsOcrScreen
 import eu.kanade.presentation.more.settings.screen.SettingsOcrPluginsScreen
-import eu.kanade.presentation.more.settings.screen.SettingsVoicePluginsScreen
+import eu.kanade.presentation.more.settings.screen.SettingsOcrScreen
 import eu.kanade.presentation.reader.OcrBubbleSettingsDialog
-import eu.kanade.tachiyomi.ui.overlay.OcrOverlayService
 
 /**
- * Раздел «Настройки» внутри локальной библиотеки — объединяет настройки
- * распознавания, голоса и словарей в одном месте. Делегирует полные
- * экраны настроек уже существующим [SettingsOcrScreen] и др.
+ * Раздел «Настройки» внутри локальной библиотеки: у каждого пункта свой
+ * экран со своими слайдерами и цифрами, без дублей.
+ *
+ *  • Распознавание: баблы (диалог), область и порядок, точная настройка,
+ *    движки, полные настройки;
+ *  • Голоса: общие TTS и отдельно озвучка книг;
+ *  • Словари: словарь OCR, история, настройки словарей;
+ *  • Игры: STT (речь → текст → русские голоса);
+ *  • Приложения: плавающая кнопка-оверлей, область, своя технология.
  */
 object LocalSettingsScreen : Screen {
 
@@ -47,109 +55,112 @@ object LocalSettingsScreen : Screen {
     @Composable
     override fun Content() {
         val navigator = LocalNavigator.currentOrThrow
-        val context = LocalContext.current
         var showBubbleSettings by remember { mutableStateOf(false) }
+        var showVocabulary by remember { mutableStateOf(false) }
+        var showHistory by remember { mutableStateOf(false) }
 
         Column(modifier = Modifier.fillMaxSize()) {
-            TopAppBar(
-                title = { Text("Настройки") },
-            )
+            TopAppBar(title = { Text("Настройки") })
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp),
             ) {
-                // ── Распознавание OCR ──────────────────────────────────
                 item { SettingsHeader("Распознавание OCR") }
                 item {
                     SettingsItem(
                         icon = Icons.Outlined.Tune,
                         title = "Настройки OCR (баблы)",
-                        subtitle = "Тип контента, область сканирования, порядок чтения",
+                        subtitle = "Тип контента, область, порядок, язык",
                     ) { showBubbleSettings = true }
+                }
+                item {
+                    SettingsItem(
+                        icon = Icons.Outlined.DocumentScanner,
+                        title = "Область и порядок",
+                        subtitle = "Часть страницы и направление чтения",
+                    ) { navigator.push(LocalOcrRegionScreen) }
+                }
+                item {
+                    SettingsItem(
+                        icon = Icons.Outlined.Tune,
+                        title = "Точная настройка",
+                        subtitle = "Пороги и лимиты детектора — слайдеры с цифрами",
+                    ) { navigator.push(LocalOcrTuningScreen) }
+                }
+                item {
+                    SettingsItem(
+                        icon = Icons.Outlined.GTranslate,
+                        title = "Движки распознавания",
+                        subtitle = "Плагины, цепочки, языки Glens",
+                    ) { navigator.push(SettingsOcrPluginsScreen) }
                 }
                 item {
                     SettingsItem(
                         icon = Icons.Outlined.DocumentScanner,
                         title = "Полные настройки OCR",
-                        subtitle = "Движки, языки Glens, история",
+                        subtitle = "Всё остальное одним списком",
                     ) { navigator.push(SettingsOcrScreen) }
                 }
-                item {
-                    SettingsItem(
-                        icon = Icons.Outlined.Tune,
-                        title = "Плагины распознавания",
-                    ) { navigator.push(SettingsOcrPluginsScreen) }
-                }
 
-                // ── Озвучка и голоса ───────────────────────────────────
                 item { SettingsHeader("Озвучка и голоса") }
                 item {
                     SettingsItem(
                         icon = Icons.Outlined.RecordVoiceOver,
-                        title = "Настройки голосов",
-                        subtitle = "Движок TTS, голос, громкость",
-                    ) { navigator.push(SettingsVoicePluginsScreen) }
+                        title = "Голоса и озвучка",
+                        subtitle = "Движок TTS, скорость и высота — слайдеры",
+                    ) { navigator.push(LocalVoiceScreen) }
                 }
-
-                // ── Словари ────────────────────────────────────────────
-                item { SettingsHeader("Словари") }
-                item {
-                    SettingsItem(
-                        icon = Icons.Outlined.DocumentScanner,
-                        title = "Настройки словарей",
-                        subtitle = "Предпочтительный словарь, способ показа",
-                    ) { navigator.push(SettingsDictionaryScreen) }
-                }
-                item {
-                    SettingsItem(
-                        icon = Icons.Outlined.Tune,
-                        title = "Правила распознавания (регион)",
-                        subtitle = "Область по умолчанию и порядок чтения для сканера",
-                    ) { showBubbleSettings = true }
-                }
-                item {
-                    SettingsItem(
-                        icon = Icons.Outlined.DocumentScanner,
-                        title = "История авточтения и сканирования",
-                    ) { navigator.push(SettingsOcrScreen) }
-                }
-
-                // ── Управление приложением ──────────────────────────────
-                item { SettingsHeader("Управление") }
-                item {
-                    SettingsItem(
-                        icon = Icons.Outlined.Tune,
-                        title = "Настройки распознавания из сканера",
-                        subtitle = "Сканер запускается в ридере — полные настройки OCR выше.",
-                    ) { navigator.push(SettingsOcrScreen) }
-                }
-                // ── Оверлей для других приложений ────────────────────────
-                item { SettingsHeader("Оверлей поверх приложений") }
                 item {
                     SettingsItem(
                         icon = Icons.Outlined.RecordVoiceOver,
-                        title = "Запустить OCR-оверлей",
-                        subtitle = "Бабл над любым APK: текст из буфера обмена + озвучка",
-                    ) {
-                        if (!OcrOverlayService.canDrawOverlays(context)) {
-                            OcrOverlayService.requestPermission(context)
-                        } else {
-                            OcrOverlayService.start(context)
-                        }
-                    }
+                        title = "Озвучка книг",
+                        subtitle = "Свои скорость, высота и технология для книг",
+                    ) { navigator.push(LocalBookVoiceScreen) }
+                }
+
+                item { SettingsHeader("Словари") }
+                item {
+                    SettingsItem(
+                        icon = Icons.Outlined.Translate,
+                        title = "Словарь OCR",
+                        subtitle = "Свои слова для разбиения и кандидатов",
+                    ) { showVocabulary = true }
                 }
                 item {
                     SettingsItem(
-                        icon = Icons.Outlined.Tune,
-                        title = "Остановить OCR-оверлей",
-                    ) { OcrOverlayService.stop(context) }
+                        icon = Icons.Outlined.DocumentScanner,
+                        title = "История",
+                        subtitle = "Авточтение и сканирование: успехи и сбои",
+                    ) { showHistory = true }
+                }
+                item {
+                    SettingsItem(
+                        icon = Icons.Outlined.Translate,
+                        title = "Настройки словарей",
+                        subtitle = "Словари перевода и показ результата",
+                    ) { navigator.push(SettingsDictionaryScreen) }
+                }
+
+                item { SettingsHeader("Игры") }
+                item {
+                    SettingsItem(
+                        icon = Icons.Outlined.SportsEsports,
+                        title = "Игры и STT",
+                        subtitle = "Речь → текст → русские голоса, своя технология",
+                    ) { navigator.push(LocalGameSttScreen) }
+                }
+
+                item { SettingsHeader("Приложения") }
+                item {
+                    SettingsItem(
+                        icon = Icons.Outlined.RecordVoiceOver,
+                        title = "Оверлей приложений",
+                        subtitle = "Плавающая кнопка, область, своя технология",
+                    ) { navigator.push(LocalAppOverlayScreen) }
                 }
             }
         }
 
-        // Диалог быстрых настроек OCR-баблов (содержание визуально
-        // идентично OcrBubbleSettingsDialog из ридера, но без привязки
-        // к MangaPageController — настройки применяются глобально).
         if (showBubbleSettings) {
             OcrBubbleSettingsDialog(
                 onDismissRequest = { showBubbleSettings = false },
@@ -157,8 +168,14 @@ object LocalSettingsScreen : Screen {
                     showBubbleSettings = false
                     navigator.push(SettingsOcrScreen)
                 },
-                onReadingOrderChange = {}, // без привязки к ридеру — настройка пишется в OcrPreferences
+                onReadingOrderChange = {},
             )
+        }
+        if (showVocabulary) {
+            OcrVocabularyDialog(onDismiss = { showVocabulary = false })
+        }
+        if (showHistory) {
+            OcrHistoryDialog(onDismiss = { showHistory = false })
         }
     }
 
@@ -175,7 +192,7 @@ object LocalSettingsScreen : Screen {
 
     @Composable
     private fun SettingsItem(
-        icon: androidx.compose.ui.graphics.vector.ImageVector,
+        icon: ImageVector,
         title: String,
         subtitle: String? = null,
         onClick: () -> Unit,
@@ -185,7 +202,7 @@ object LocalSettingsScreen : Screen {
                 .fillMaxWidth()
                 .clickable(onClick = onClick)
                 .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
                 imageVector = icon,

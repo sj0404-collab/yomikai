@@ -62,7 +62,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
+import mihon.domain.ocr.service.OcrPreferences
 import tachiyomi.core.common.util.system.logcat
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 /**
  * Простой читатель электронных книг с авточтением (TTS) и
@@ -88,8 +91,11 @@ data class BooksReaderScreen(
         var currentChapterIndex by remember { mutableIntStateOf(0) }
         var currentSentenceIndex by remember { mutableIntStateOf(0) }
         var isPlaying by remember { mutableStateOf(false) }
-        var speechRate by remember { mutableFloatStateOf(1.0f) }
-        var pitch by remember { mutableFloatStateOf(1.0f) }
+        // Свои настройки озвучки книг (экран «Озвучка книг»): читаем префы
+        // при входе, изменения слайдеров пишем обратно.
+        val bookPrefs = remember { Injekt.get<OcrPreferences>() }
+        var speechRate by remember { mutableFloatStateOf(bookPrefs.bookSpeechRate().get()) }
+        var pitch by remember { mutableFloatStateOf(bookPrefs.bookSpeechPitch().get()) }
         var showSettings by remember { mutableStateOf(false) }
         var showChapterList by remember { mutableStateOf(false) }
         var availableVoiceNames by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -350,7 +356,10 @@ data class BooksReaderScreen(
                     )
                     Slider(
                         value = speechRate,
-                        onValueChange = { speechRate = it },
+                        onValueChange = {
+                            speechRate = it
+                            bookPrefs.bookSpeechRate().set(it)
+                        },
                         valueRange = 0.5f..3.0f,
                         steps = 9,
                         modifier = Modifier.fillMaxWidth(),
@@ -359,7 +368,10 @@ data class BooksReaderScreen(
                     Text("Высота: ${String.format("%.1f", pitch)}", style = MaterialTheme.typography.labelMedium)
                     Slider(
                         value = pitch,
-                        onValueChange = { pitch = it },
+                        onValueChange = {
+                            pitch = it
+                            bookPrefs.bookSpeechPitch().set(it)
+                        },
                         valueRange = 0.5f..2.0f,
                         steps = 5,
                         modifier = Modifier.fillMaxWidth(),

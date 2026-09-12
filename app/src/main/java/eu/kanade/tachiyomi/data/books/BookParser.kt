@@ -173,10 +173,16 @@ object BookParser {
             "",
             Parser.xmlParser(),
         )
-        val opfPath = container.selectFirst("rootfile")?.attr("full-path")
+        val opfPathRaw = container.selectFirst("rootfile")?.attr("full-path")
             ?: throw UnsupportedBookException("EPUB без rootfile")
+        // Пути в OPF часто процент-кодированы (%D0%B3%D0%BB... для русских
+        // имён) — без декодирования getEntry не находит файлы и книга
+        // целиком «без текста» (баг с устройства).
+        val opfPath = decodeHref(opfPathRaw)
+        val opfEntry = zip.getEntry(opfPath)
+            ?: throw UnsupportedBookException("EPUB без OPF ($opfPathRaw)")
         val opf = Jsoup.parse(
-            zip.getInputStream(zip.getEntry(opfPath)).readBytes().toString(Charsets.UTF_8),
+            zip.getInputStream(opfEntry).readBytes().toString(Charsets.UTF_8),
             "",
             Parser.xmlParser(),
         )
@@ -186,36 +192,76 @@ object BookParser {
             ?.text()?.trim()?.takeIf { it.isNotBlank() }
             ?: "Книга"
 
-        val manifest = mutableMapOf<String, Pair<String, String>>() // id -> (href, mediaType)
+        // id -> (href, mediaType, properties)
+        val manifest = mutableMapOf<String, Triple<String, String, String>>()
         opf.selectFirst("manifest")?.children()?.forEach { item ->
             val id = item.attr("id")
-            if (id.isNotBlank()) manifest[id] = item.attr("href") to item.attr("media-type")
+            if (id.isNotBlank()) {
+                manifest[id] = Triple(item.attr("href"), item.attr("media-type"), item.attr("properties"))
+            }
         }
-        val spine = opf.selectFirst("spine")?.children()?.mapNotNull { it.attr("idref").takeIf { x -> x.isNotBlank() } }
+        var spine = opf.selectFirst("spine")?.children()
+            ?.mapNotNull { it.attr("idref").takeIf { x -> x.isNotBlank() } }
             ?: emptyList()
+        if (spine.isEmpty()) {
+            // Кривой EPUB без spine: берём все текстовые файлы манифеста.
+            spine = manifest.keys.toList()
+        }
 
         val chapters = mutableListOf<Pair<String, String>>()
         for (idref in spine) {
-            val (hrefRaw, mediaType) = manifest[idref] ?: continue
-            val href = hrefRaw.substringBefore('#').ifBlank { continue }
-            if (mediaType.isNotBlank() && mediaType.startsWith("image/")) continue
-            val name = href.substringAfterLast('/').substringBefore('.')
-            val entryPath = if (base.isEmpty()) href else "$base/$href"
-            val entry = zip.getEntry(entryPath) ?: zip.getEntry(href) ?: continue
-            val entryBytes = zip.getInputStream(entry).readBytes()
-            val doc = Jsoup.parse(decodeText(entryBytes))
-            val docTitle = doc.title().trim().takeIf { it.isNotBlank() }
-            val chunk = htmlToChapters(doc)
-            if (chunk.isEmpty()) {
-                val t = doc.body()?.text()?.trim()
-                if (!t.isNullOrBlank()) chapters += (docTitle ?: name) to t
-            } else {
-                // Первый заголовок файла = название главы, остальное — текст.
-                chapters += (docTitle ?: chunk.first().first) to chunk.joinToString("\n\n") { it.second }
-            }
+            val (hrefRaw, mediaType, properties) = manifest[idref] ?: continue
+            val chunk = runCatching { parseEpubItem(zip, base, hrefRaw, mediaType, properties) }.getOrNull()
+            if (chunk != null) chapters += chunk
         }
         if (chapters.isEmpty()) throw UnsupportedBookException("В EPUB нет текстовых глав")
         return ParsedBook(title, chapters)
+    }
+
+    /** Процент-декодирование href из OPF (русские имена файлов и пробелы). */
+    private fun decodeHref(raw: String): String {
+        return runCatching { java.net.URLDecoder.decode(raw, "UTF-8") }.getOrDefault(raw)
+    }
+
+    /**
+     * Одна запись spine → (название, текст) или null, если файл не текстовый
+     * или не прочитался. Один битый файл больше не убивает всю книгу.
+     */
+    private fun parseEpubItem(
+        zip: ZipFile,
+        base: String,
+        hrefRaw: String,
+        mediaType: String,
+        properties: String,
+    ): Pair<String, String>? {
+        val href = decodeHref(hrefRaw.substringBefore('#')).trim().ifBlank { return null }
+        val lowerHref = href.lowercase()
+        val ext = lowerHref.substringAfterLast('.', "")
+        // Служебные и нетекстовые записи пропускаем: NCX, навигация EPUB3,
+        // картинки/аудио/шрифты.
+        if (mediaType.equals("application/x-dtbncx+xml", ignoreCase = true) || ext == "ncx") return null
+        if ("nav" in properties.split(' ', '\t')) return null
+        val textLike = mediaType.isBlank() ||
+            mediaType.contains("html", ignoreCase = true) ||
+            mediaType.contains("xml", ignoreCase = true) ||
+            mediaType.startsWith("text/", ignoreCase = true) ||
+            ext in setOf("xhtml", "html", "htm", "xml")
+        if (!textLike) return null
+        val name = href.substringAfterLast('/').substringBeforeLast('.').ifBlank { "Глава" }
+        val entry = zip.getEntry(if (base.isEmpty()) href else "$base/$href")
+            ?: zip.getEntry(href)
+            ?: return null
+        val entryBytes = zip.getInputStream(entry).readBytes()
+        val doc = Jsoup.parse(decodeText(entryBytes))
+        val docTitle = doc.title().trim().takeIf { it.isNotBlank() }
+        val chunk = htmlToChapters(doc)
+        if (chunk.isEmpty()) {
+            val t = doc.body()?.text()?.trim()
+            if (t.isNullOrBlank()) return null
+            return (docTitle ?: name) to t
+        }
+        // Первый заголовок файла = название главы, остальное — текст.
+        return (docTitle ?: chunk.first().first) to chunk.joinToString("\n\n") { it.second }
     }
 
     // ---------- DOCX ----------

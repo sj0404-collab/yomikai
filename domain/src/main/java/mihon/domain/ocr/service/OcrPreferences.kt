@@ -16,6 +16,25 @@ class OcrPreferences(
 
     fun ocrModel() = preferenceStore.getEnum("pref_ocr_model", OcrModel.CYRILLIC)
 
+    /** Домен: для чего выбирается технология (игры / книги / приложения). */
+    enum class OcrDomain { GAME, BOOK, APP }
+
+    /**
+     * Своя технология распознавания на домен: игры (скорость важнее),
+     * книги, приложения-оверлей. Манга-конвейер читалки продолжает
+     * использовать общий [ocrModel] — доменные движки подхватывают новые
+     * пути захвата (игры/оверлей) через [engineForDomain].
+     */
+    fun gameOcrEngine() = preferenceStore.getEnum("pref_ocr_engine_game", OcrModel.FAST)
+    fun bookOcrEngine() = preferenceStore.getEnum("pref_ocr_engine_book", OcrModel.CYRILLIC)
+    fun appOcrEngine() = preferenceStore.getEnum("pref_ocr_engine_app", OcrModel.CYRILLIC)
+
+    fun engineForDomain(domain: OcrDomain): OcrModel = when (domain) {
+        OcrDomain.GAME -> gameOcrEngine().get()
+        OcrDomain.BOOK -> bookOcrEngine().get()
+        OcrDomain.APP -> appOcrEngine().get()
+    }
+
     fun scanRegion() = preferenceStore.getEnum("pref_scan_region", ScanRegion.FULL_PAGE)
 
     // ---- Пресеты областей и типа контента ----
@@ -345,4 +364,40 @@ class OcrPreferences(
     fun isMangaOcrDownloaded() = preferenceStore.getBoolean("pref_model_manga_ocr_downloaded", false)
     fun isFastOcrDownloaded() = preferenceStore.getBoolean("pref_model_fast_ocr_downloaded", false)
     fun isPanelDetectorDownloaded() = preferenceStore.getBoolean("pref_model_panel_detector_downloaded", false)
+
+    // ---- STT для игр (речь → текст → русские голоса, реал-тайм) ----
+    /** Слушать микрофон и гнать речь в текст (системный SpeechRecognizer). */
+    fun sttEnabled() = preferenceStore.getBoolean("pref_stt_enabled", false)
+
+    /** Язык речи в игре (BCP-47): игры обычно английские. */
+    fun sttSourceLang() = preferenceStore.getString("pref_stt_source_lang", "en-US")
+
+    /** Переводить распознанное в русский перед озвучкой. */
+    fun sttTranslate() = preferenceStore.getBoolean("pref_stt_translate", true)
+
+    /** Пол голоса для игровых реплик: auto/female/male/narrator. */
+    fun gameVoiceGender() = preferenceStore.getString("pref_game_voice_gender", "auto")
+
+    // ---- Области поверх других приложений (игры/АПК) ----
+    /**
+     * Режим области: auto — весь экран; manual — задать вручную;
+     * fixed — зафиксированная область (реплики игр).
+     */
+    fun overlayRegionMode() = preferenceStore.getString("pref_overlay_region_mode", "auto")
+
+    /** Зафиксированная область «l,t,r,b» в долях экрана 0..1. */
+    fun overlayFixedRegion() = preferenceStore.getString("pref_overlay_fixed_region", "")
+
+    /** Показывать рамку зафиксированной области поверх приложений. */
+    fun overlayShowFrame() = preferenceStore.getBoolean("pref_overlay_show_frame", false)
+
+    /** Самому следить за буфером обмена и озвучивать новое. */
+    fun overlayWatchClipboard() = preferenceStore.getBoolean("pref_overlay_watch_clipboard", false)
+
+    // ---- Озвучка книг (свои настройки, отдельно от читалки манги) ----
+    fun bookSpeechRate() = preferenceStore.getFloat("pref_book_speech_rate", 1.0f)
+    fun bookSpeechPitch() = preferenceStore.getFloat("pref_book_speech_pitch", 1.0f)
+
+    /** Имя TTS-голоса для книг, "" = голос по умолчанию. */
+    fun bookVoiceName() = preferenceStore.getString("pref_book_voice_name", "")
 }

@@ -39,6 +39,9 @@
          не гасился системой. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- v1.9.72: STT для игр — слушаем речь микрофоном (реал-тайм),
+         английские голоса → текст → русские голоса. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <queries>
         <package android:name="com.ichi2.anki" />
