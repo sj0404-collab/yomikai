@@ -299,7 +299,7 @@ object AiHttpServer {
                                     .put("language", metadata.language ?: "")
                                     .put("publisher", metadata.publisher ?: "")
                                     .put("year", metadata.year ?: JSONObject.NULL)
-                                    .put("genre", JSONArray(metadata.genre ?: emptyList()))
+                                    .put("genre", JSONArray(metadata.genre.orEmpty()))
                                     .put("hasCover", metadata.coverImage != null || BooksStore.coverPath(context, file) != null)
                                 respond(out, 200, "application/json; charset=utf-8", json.toString().toByteArray())
                             }
