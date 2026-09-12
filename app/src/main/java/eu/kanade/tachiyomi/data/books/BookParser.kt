@@ -388,8 +388,7 @@ object BookParser {
                 Bitmap.Config.ARGB_8888,
             )
             bitmap.eraseColor(android.graphics.Color.WHITE)
-            val destRect = android.graphics.Rect(0, 0, bitmap.width, bitmap.height)
-            page.render(bitmap, null as android.graphics.Matrix?, destRect, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            page.render(bitmap, null as android.graphics.Rect?, null as android.graphics.Matrix?, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
             page.close()
             renderer.close()
             fd.close()
