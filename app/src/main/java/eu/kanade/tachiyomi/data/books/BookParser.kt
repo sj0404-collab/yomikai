@@ -156,12 +156,12 @@ object BookParser {
     }
 
     private fun looksLikeFb2(bytes: ByteArray): Boolean {
-        val head = bytes.take(minOf(4096, bytes.size)).toString(Charsets.ISO_8859_1).lowercase()
+        val head = String(bytes, 0, minOf(4096, bytes.size), Charsets.ISO_8859_1).lowercase()
         return head.contains("<fictionbook")
     }
 
     private fun looksLikeHtml(bytes: ByteArray): Boolean {
-        val head = bytes.take(minOf(4096, bytes.size)).toString(Charsets.ISO_8859_1).lowercase()
+        val head = String(bytes, 0, minOf(4096, bytes.size), Charsets.ISO_8859_1).lowercase()
         return head.contains("<!doctype html") || head.contains("<html") ||
             (head.startsWith("<?xml") && head.contains("<html"))
     }

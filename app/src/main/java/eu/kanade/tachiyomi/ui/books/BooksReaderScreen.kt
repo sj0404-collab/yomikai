@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.ui.books
 
 import android.graphics.Bitmap
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -156,7 +157,7 @@ data class BooksReaderScreen(
                     logcat(LogPriority.WARN) { "BooksReader: TTS init failed: $status" }
                 }
             }.apply {
-                setOnUtteranceProgressListener(object : TextToSpeech.OnUtteranceProgressListener() {
+                setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {}
                     override fun onDone(utteranceId: String?) {
                         if (expectedUtteranceId.get() == utteranceId) {
