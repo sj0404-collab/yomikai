@@ -26,6 +26,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -68,6 +70,8 @@ object BooksLibraryScreen : Screen {
         val navigator = LocalNavigator.currentOrThrow
         val context = LocalContext.current
         val scope = rememberCoroutineScope()
+        val snackbarHostState = remember { SnackbarHostState() }
+        var importing by remember { mutableStateOf(false) }
         var loading by remember { mutableStateOf(true) }
         var books by remember { mutableStateOf(emptyList<BookItem>()) }
         var showDeleteDialog by remember { mutableStateOf<BookItem?>(null) }
@@ -100,8 +104,18 @@ object BooksLibraryScreen : Screen {
         ) { uri ->
             if (uri == null) return@rememberLauncherForActivityResult
             scope.launch {
-                withIOContext {
-                    BooksStore.importBook(context, uri)
+                importing = true
+                val result = withIOContext { BooksStore.importBook(context, uri) }
+                importing = false
+                // Простая защита от двойного импорта одного и того же файла.
+                if (result is BooksStore.ImportResult.Success) {
+                    snackbarHostState.showSnackbar(
+                        "Добавлена книга «${result.book.name.orEmpty()}»",
+                    )
+                } else {
+                    val reason = (result as? BooksStore.ImportResult.Failure)?.reason
+                        ?: "Неизвестная ошибка"
+                    snackbarHostState.showSnackbar("Не удалось добавить: $reason")
                 }
                 refresh()
             }
@@ -112,6 +126,19 @@ object BooksLibraryScreen : Screen {
                 loading && books.isEmpty() -> {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(modifier = Modifier.size(28.dp))
+                    }
+                }
+
+                importing -> {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator(modifier = Modifier.size(28.dp))
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                "Добавление книги…",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
                     }
                 }
 
@@ -203,6 +230,10 @@ object BooksLibraryScreen : Screen {
                 }
             }
 
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
             ExtendedFloatingActionButton(
                 onClick = { addLauncher.launch(arrayOf("*/*")) },
                 modifier = Modifier.align(Alignment.BottomEnd).padding(24.dp),

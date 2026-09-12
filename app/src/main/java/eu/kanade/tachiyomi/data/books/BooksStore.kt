@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.data.books
 import android.content.Context
 import android.provider.OpenableColumns
 import com.hippo.unifile.UniFile
+import java.io.File
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -26,13 +27,28 @@ object BooksStore {
         val percent: Int = 0,
     )
 
+    /**
+     * Результат добавления книги: либо скопированный файл, либо понятная
+     * причина отказа — иначе пользователь просто не видит книгу в списке.
+     */
+    sealed class ImportResult {
+        data class Success(val book: UniFile) : ImportResult()
+        data class Failure(val reason: String) : ImportResult()
+    }
+
     private const val PROGRESS_PREFS = "yomikai_books_progress"
 
     private fun storageManager(): tachiyomi.domain.storage.service.StorageManager =
         Injekt.get()
 
     fun booksDirectory(context: Context): UniFile? {
-        return storageManager().getBooksDirectory()
+        val primary = storageManager().getBooksDirectory()
+        if (primary != null && primary.exists()) return primary
+        // Фолбэк на приватное хранилище приложения: книга импортируется,
+        // даже если выбранное пользователем root-хранилище недоступно.
+        val folder = File(context.filesDir, "books")
+        if (!folder.exists()) folder.mkdirs()
+        return UniFile.fromFile(folder)
     }
 
     /** Список книг (исключая скрытые файлы), отсортированные по имени. */
@@ -47,37 +63,92 @@ object BooksStore {
     /**
      * Копирует выбранный пользователем файл (SAF URI) в каталог книг.
      * При совпадении имени добавляет суффикс (2), (3)…
-     * Возвращает скопированный файл или null.
+     *
+     * Ни одно SAF-исключение не остаётся «тихим»: любой сбой возвращается
+     * [ImportResult.Failure] с человеко-читаемой причиной.
      */
-    fun importBook(context: Context, uri: android.net.Uri): UniFile? {
-        val dir = booksDirectory(context) ?: return null
-        val name = displayName(context, uri)
-            ?.takeIf { it.isNotBlank() }
-            ?: "book_${System.currentTimeMillis()}"
-        val safeName = name.replace(Regex("[/\\\\:<>|?*\"]"), "_")
+    fun importBook(context: Context, uri: android.net.Uri): ImportResult {
+        val dir = booksDirectory(context) ?: return ImportResult.Failure("Нет каталога для книг")
+        val input = try {
+            context.contentResolver.openInputStream(uri)
+        } catch (e: Exception) {
+            return ImportResult.Failure("Не удалось открыть файл: ${e.message}")
+        } ?: return ImportResult.Failure("Файл открыт, но пуст или недоступен")
 
-        val input = context.contentResolver.openInputStream(uri) ?: return null
         return input.use { stream ->
-            var candidate = safeName
-            var attempt = 0
-            while (dir.findFile(candidate) != null) {
-                attempt++
-                val dot = safeName.lastIndexOf('.')
-                candidate = if (dot > 0) {
-                    safeName.substring(0, dot) + "($attempt)" + safeName.substring(dot)
-                } else {
-                    "$safeName($attempt)"
+            try {
+                val name = displayName(context, uri)
+                    ?.takeIf { it.isNotBlank() }
+                    ?: "book_${System.currentTimeMillis()}"
+                val safeName = name.replace(Regex("[/\\\\:<>|?*\"]"), "_")
+
+                var candidate = safeName
+                var attempt = 0
+                while (dir.findFile(candidate)?.exists() == true) {
+                    attempt++
+                    val dot = safeName.lastIndexOf('.')
+                    candidate = if (dot > 0) {
+                        safeName.substring(0, dot) + "($attempt)" + safeName.substring(dot)
+                    } else {
+                        "$safeName($attempt)"
+                    }
                 }
+                val target = dir.createFile(candidate)
+                    ?: return@use ImportResult.Failure(
+                        "Не удалось создать файл «$candidate» в хранилище",
+                    )
+                val out = try {
+                    target.openOutputStream()
+                } catch (e: Exception) {
+                    return@use ImportResult.Failure("Нет прав на запись: ${e.message}")
+                } ?: return@use ImportResult.Failure("Не удалось открыть файл для записи")
+                out.use { targetOut ->
+                    stream.copyTo(targetOut, 64 * 1024)
+                }
+                val finalFile = dir.findFile(candidate)
+                if (finalFile?.exists() == true) {
+                    ImportResult.Success(finalFile)
+                } else {
+                    ImportResult.Failure("Файл не появился после добавления — проверьте хранилище")
+                }
+            } catch (e: Exception) {
+                ImportResult.Failure("Ошибка добавления: ${e.message ?: e.javaClass.simpleName}")
             }
-            val target = dir.createFile(candidate) ?: return@use null
-            val out = target.openOutputStream() ?: return@use null
-            out.use { stream.copyTo(it, 64 * 1024) }
-            target
         }
     }
 
     fun deleteBook(book: UniFile): Boolean {
         return book.delete()
+    }
+
+    /** Добавляет книгу из готового массива байт (например, скачанной по URL). */
+    fun importBytes(context: Context, fileName: String, content: ByteArray): ImportResult {
+        val dir = booksDirectory(context) ?: return ImportResult.Failure("Нет каталога для книг")
+        try {
+            val safeName = fileName
+                .substringAfterLast('/')
+                .replace(Regex("[/\\\\:<>|?*\"]"), "_")
+                .ifBlank { "book_${System.currentTimeMillis()}" }
+            var candidate = safeName
+            var attempt = 0
+            while (dir.findFile(candidate)?.exists() == true) {
+                attempt++
+                val dot = candidate.lastIndexOf('.')
+                candidate = if (dot > 0) {
+                    candidate.substring(0, dot) + "($attempt)" + candidate.substring(dot)
+                } else {
+                    "$candidate($attempt)"
+                }
+            }
+            val target = dir.createFile(candidate)
+                ?: return ImportResult.Failure("Не удалось создать файл «$candidate»")
+            val out = target.openOutputStream()
+                ?: return ImportResult.Failure("Не удалось открыть файл для записи")
+            out.use { it.write(content) }
+            return ImportResult.Success(target)
+        } catch (e: Exception) {
+            return ImportResult.Failure("Ошибка добавления: ${e.message ?: e.javaClass.simpleName}")
+        }
     }
 
     // ---------- Прогресс чтения ----------

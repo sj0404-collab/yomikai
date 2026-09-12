@@ -38,4 +38,14 @@ class StoragePreferences(
         Preference.appStateKey("local_library_books_mode"),
         false,
     )
+
+    /**
+     * Раздел «Настройки» в локальной библиотеке (OCR, голоса, словари).
+     * Держится отдельно от booksMode и выигрывает над ним: true — показываем
+     * лист настроек вместо манги и книг.
+     */
+    val settingsSection: Preference<Boolean> = preferenceStore.getBoolean(
+        Preference.appStateKey("local_library_settings_section"),
+        false,
+    )
 }

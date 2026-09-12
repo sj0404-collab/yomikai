@@ -250,6 +250,14 @@
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 
+        <!-- v1.9.70: системный OCR-оверлей для других приложений.
+             Плавающий «бабл» поверх любого APK: текст из буфера обмена/ввод,
+             озвучка тем же TTS-движком, что в ридере. -->
+        <service
+            android:name=".ui.overlay.OcrOverlayService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.provider"

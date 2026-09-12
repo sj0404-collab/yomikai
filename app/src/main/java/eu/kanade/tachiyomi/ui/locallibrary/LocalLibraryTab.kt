@@ -25,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -39,6 +40,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.navigator.Navigator
 import cafe.adriel.voyager.navigator.tab.TabOptions
+import eu.kanade.presentation.util.DefaultNavigatorScreenTransition
+import eu.kanade.presentation.util.LocalBackPress
 import eu.kanade.presentation.util.Tab
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
 import eu.kanade.tachiyomi.util.system.toast
@@ -108,9 +111,11 @@ data object LocalLibraryTab : Tab {
         // Сортировка списка: false — по алфавиту (OrderBy.Popular в LocalSource
         // сортирует по названию A→Я), true — сначала новые (OrderBy.Latest).
         var sortByNewest by remember { mutableStateOf(false) }
-        // Переключатель содержимого локальной библиотеки: «Манга» (архивы) или
-        // «Книги» (электронные книги любых форматов). Выбор запоминается.
+        // Переключатель содержимого локальной библиотеки: «Манга» (архивы),
+        // «Книги» (электронные книги любых форматов) или «Настройки» (OCR,
+        // голоса, словари). Выбор запоминается.
         var booksMode by remember { mutableStateOf(storagePreferences.booksMode.get()) }
+        var settingsSection by remember { mutableStateOf(storagePreferences.settingsSection.get()) }
         // Алфавитный указатель: ключ из LibraryIndex.LETTERS или null («все»).
         // Ключ превращается в служебный запрос «#а», который LocalSource
         // разбирает как «название начинается на…».
@@ -138,6 +143,7 @@ data object LocalLibraryTab : Tab {
                     roots = storagePreferences.externalLibraryRoots.get().toList()
                     activeRoot = storagePreferences.externalLibraryActiveRoot.get()
                     booksMode = storagePreferences.booksMode.get()
+                    settingsSection = storagePreferences.settingsSection.get()
                     // Пересканируем ТОЛЬКО если изменился набор папок —
                     // обычный вход на вкладку берёт кэш и не трогает диск
                     val rootsKey = roots.sorted().joinToString("|")
@@ -162,30 +168,65 @@ data object LocalLibraryTab : Tab {
                 .fillMaxSize()
                 .statusBarsPadding(),
         ) {
-            // Переключатель содержимого: «Манга» (архивы по папкам) / «Книги».
+            // Переключатель содержимого: «Манга» (архивы по папкам) /
+            // «Книги» (любые форматы) / «Настройки» (OCR, голоса, словари).
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
             ) {
                 FilterChip(
-                    selected = !booksMode,
+                    selected = !booksMode && !settingsSection,
                     onClick = {
                         booksMode = false
+                        settingsSection = false
                         storagePreferences.booksMode.set(false)
+                        storagePreferences.settingsSection.set(false)
                     },
                     label = { Text("Манга") },
                     modifier = Modifier.padding(end = 6.dp),
                 )
                 FilterChip(
-                    selected = booksMode,
+                    selected = booksMode && !settingsSection,
                     onClick = {
                         booksMode = true
+                        settingsSection = false
                         storagePreferences.booksMode.set(true)
+                        storagePreferences.settingsSection.set(false)
                     },
                     label = { Text("Книги") },
+                    modifier = Modifier.padding(end = 6.dp),
+                )
+                FilterChip(
+                    selected = settingsSection,
+                    onClick = {
+                        settingsSection = true
+                        storagePreferences.settingsSection.set(true)
+                    },
+                    label = { Text("Настройки") },
                 )
             }
-            if (!booksMode) {
+            when {
+                settingsSection -> {
+                    // «Настройки»: OCR (баблы), голоса и словари — всё в одном
+                    // месте, без ухода в длинное меню «Ещё → Настройки».
+                    // Пушнутые сюда SearchableSettings-экраны рисуют свою
+                    // панель с кнопкой «назад» только если в композиции есть
+                    // LocalBackPress — прокидываем pop по стеку вкладки.
+                    Navigator(screen = LocalSettingsScreen) { innerNavigator ->
+                        val pop: () -> Unit = {
+                            if (innerNavigator.canPop) {
+                                innerNavigator.pop()
+                            } else {
+                                settingsSection = false
+                                storagePreferences.settingsSection.set(false)
+                            }
+                        }
+                        CompositionLocalProvider(LocalBackPress provides pop) {
+                            DefaultNavigatorScreenTransition(navigator = innerNavigator)
+                        }
+                    }
+                }
+                else -> if (!booksMode) {
             Surface(
                 // Фон шапки обязан совпадать с темой: surfaceVariant давал
                 // серое пятно на тёмных окрасках (жалоба пользователя).
@@ -372,6 +413,7 @@ data object LocalLibraryTab : Tab {
                 // «Книги»: библиотека файлов любых форматов внутри локальной
                 // библиотеки. Свой Navigator для открытия книги-читалки.
                 Navigator(screen = BooksLibraryScreen)
+            }
             }
         }
     }

@@ -204,6 +204,71 @@ object AiHttpServer {
                         }
                         respond(out, 200, "application/json; charset=utf-8", arr.toString().toByteArray())
                     }
+                    // -- Новые API-роуты внешних инструментов -----------------
+                    method == "GET" && path == "/ocr/settings" -> {
+                        val prefs = Injekt.get<OcrPreferences>()
+                        val json = JSONObject()
+                            .put("contentType", prefs.contentType().get())
+                            .put("autoPreset", prefs.autoPreset().get())
+                            .put("scanRegion", prefs.presetScanRegion().get())
+                            .put("readingOrder", prefs.scanReadingOrder().get())
+                            .put("autoReadLanguage", prefs.autoReadLanguage().get())
+                            .put("autoReadTranslate", prefs.autoReadTranslate().get())
+                            .put("voiceIcons", prefs.voiceIcons().get())
+                            .put("showSpeechNumbers", prefs.showSpeechNumbers().get())
+                            .put("aiGenderVoices", prefs.aiGenderVoices().get())
+                            .put("voiceEngine", prefs.voiceEngine().get())
+                            .put("voiceName", prefs.voiceName().get())
+                            .put("systemTtsEngine", prefs.systemTtsEngine().get())
+                        respond(out, 200, "application/json; charset=utf-8", json.toString().toByteArray())
+                    }
+                    // Внешний инструмент может переключать настройки OCR.
+                    method == "POST" && path == "/ocr/settings" -> {
+                        val prefs = Injekt.get<OcrPreferences>()
+                        val request = runCatching { JSONObject(body) }.getOrDefault(JSONObject())
+                        if (request.has("contentType")) prefs.contentType().set(request.optString("contentType"))
+                        if (request.has("autoPreset")) prefs.autoPreset().set(request.optString("autoPreset"))
+                        if (request.has("scanRegion")) prefs.presetScanRegion().set(request.optString("scanRegion"))
+                        if (request.has("readingOrder")) prefs.scanReadingOrder().set(request.optString("readingOrder"))
+                        if (request.has("autoReadLanguage")) prefs.autoReadLanguage().set(request.optString("autoReadLanguage"))
+                        if (request.has("autoReadTranslate")) prefs.autoReadTranslate().set(request.optBoolean("autoReadTranslate"))
+                        if (request.has("voiceIcons")) prefs.voiceIcons().set(request.optBoolean("voiceIcons"))
+                        respond(out, 200, "application/json", "{\"ok\":true}".toByteArray())
+                    }
+                    method == "GET" && path == "/books/list" -> {
+                        val arr = JSONArray()
+                        eu.kanade.tachiyomi.data.books.BooksStore.listBooks(context).forEach { file ->
+                            val snap = eu.kanade.tachiyomi.data.books.BooksStore.load(context, file)
+                            arr.put(
+                                JSONObject()
+                                    .put("name", file.name.orEmpty())
+                                    .put("uri", file.uri.toString())
+                                    .put("progressPercent", snap.percent),
+                            )
+                        }
+                        respond(out, 200, "application/json; charset=utf-8", arr.toString().toByteArray())
+                    }
+                    method == "POST" && path == "/books/import" -> {
+                        val request = runCatching { JSONObject(body) }.getOrDefault(JSONObject())
+                        val url = request.optString("url").trim()
+                        val name = request.optString("name").trim()
+                        if (url.isBlank()) {
+                            respond(out, 400, "application/json", "{\"error\":\"empty url\"}".toByteArray())
+                        } else {
+                            val result = importBookFromUrl(context, url, name.ifBlank { null })
+                            respond(
+                                out,
+                                if (result is eu.kanade.tachiyomi.data.books.BooksStore.ImportResult.Success) 200 else 400,
+                                "application/json; charset=utf-8",
+                                when (result) {
+                                    is eu.kanade.tachiyomi.data.books.BooksStore.ImportResult.Success ->
+                                        JSONObject().put("ok", true).put("name", result.book.name.orEmpty()).toString()
+                                    is eu.kanade.tachiyomi.data.books.BooksStore.ImportResult.Failure ->
+                                        JSONObject().put("ok", false).put("error", result.reason).toString()
+                                }.toByteArray(),
+                            )
+                        }
+                    }
                     method == "GET" && path == "/file" -> {
                         val rel = query.split('&')
                             .firstOrNull { it.startsWith("p=") }
@@ -236,6 +301,43 @@ object AiHttpServer {
             .firstOrNull { it.substringBefore('=') == name }
             ?.substringAfter('=', "")
             ?.let { URLDecoder.decode(it, "UTF-8") }
+
+    /**
+     * Скачивает книгу по URL (HttpURLConnection, лимит 40 МБ) и добавляет
+     * её в каталог книг той же логикой, что SAF-импорт.
+     */
+    private fun importBookFromUrl(
+        context: Context,
+        url: String,
+        name: String?,
+    ): eu.kanade.tachiyomi.data.books.BooksStore.ImportResult {
+        val bytes = try {
+            val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+            conn.connectTimeout = 15_000
+            conn.readTimeout = 60_000
+            conn.instanceFollowRedirects = true
+            conn.connect()
+            if (conn.responseCode !in 200..299) {
+                return eu.kanade.tachiyomi.data.books.BooksStore.ImportResult.Failure(
+                    "HTTP ${conn.responseCode}",
+                )
+            }
+            conn.inputStream.use { it.readBytes().takeIf { b -> b.size <= 40 * 1024 * 1024 } }
+                ?: return eu.kanade.tachiyomi.data.books.BooksStore.ImportResult.Failure(
+                    "Файл больше 40 МБ",
+                )
+        } catch (e: Exception) {
+            return eu.kanade.tachiyomi.data.books.BooksStore.ImportResult.Failure(
+                "Скачивание не удалось: ${e.message}",
+            )
+        }
+        val fileName = when {
+            !name.isNullOrBlank() -> name
+            else -> java.net.URL(url).path.substringAfterLast('/').ifBlank { null }
+                ?: "book_${System.currentTimeMillis()}"
+        }
+        return eu.kanade.tachiyomi.data.books.BooksStore.importBytes(context, fileName, bytes)
+    }
 
     private fun respond(
         out: OutputStream,
