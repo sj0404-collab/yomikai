@@ -78,6 +78,8 @@ fun ReaderFloatingControls(
     visible: Boolean,
     onTriggerOcr: () -> Unit,
     onOpenOcrSettings: () -> Unit,
+    /** Отдельная кнопка полной настройки «как читать баблы» (OCR). */
+    onOpenFullOcrSettings: () -> Unit = {},
     onOpenAiChat: () -> Unit = {},
     onScanRegionChange: (ScanRegion) -> Unit,
     onAutoscrollToggle: (Boolean, Float) -> Unit,
@@ -398,6 +400,20 @@ fun ReaderFloatingControls(
                                         onOpenOcrSettings()
                                     }) {
                                         Icon(Icons.Outlined.RecordVoiceOver, contentDescription = "Озвучка")
+                                    }
+                                }
+
+                                }
+                                if (!hiddenM.contains("r_ocr_bubbles")) {
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Настройки OCR (баблы)  ", style = MaterialTheme.typography.labelMedium)
+                                    SmallFloatingActionButton(onClick = {
+                                        beepAction()
+                                        menuOpen = false
+                                        onOpenFullOcrSettings()
+                                    }) {
+                                        Icon(Icons.Outlined.Tune, contentDescription = "Настройки OCR")
                                     }
                                 }
 

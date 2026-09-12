@@ -1018,32 +1018,39 @@ class AutoReadEngine(
         /**
          * Упорядочивает реплики кадра в читаемый порядок.
          *
-         * Раньше реплики группировались в «строки» по близости вертикальных
-         * центров (допуск 0.7 медианной высоты), строки шли сверху вниз, внутри
-         * строки — по направлению чтения. На манге и при наклонных/разновысоких
-         * панелях этот допуск раскалывал реплики одной строки по разным
-         * «строкам» (лесенка), а на вебтуне из-за перекрытия кадров текст
-         * читался «середину → хвост прошлой страницы → низ».
-         *
-         * Теперь порядок — как читает человек: КОЛОНКАМИ по направлению чтения.
-         *  • манга (RTL): сначала самая правая колонка сверху вниз, затем левее;
-         *  • комикс (LTR): колонка за колонкой слева направо, сверху вниз;
-         *  • вебтун/манхва (vertical): строго сверху вниз, одной колонкой.
-         * Так реплики читаются в том порядке, где физически расположены на
-         * кадре, и не путаются ни на манге, ни на перекрывающихся кадрах.
+         * Раньше реплики сортировались одним ключом: манга — по правому краю
+         * (самая правая рамка первой), комикс — по левому, вебтун — по верху.
+         * На реальной странице рамки баллонов РАЗНОЙ ширины и высоты (широкий
+         * баллон сверху и узкий справа внизу), и одноключевая сортировка
+         * читала узкий баллон в центре панели раньше верхнего широкого — «верха
+         * пропускает». [ReadingOrderSorter] делит кадр рекурсивным разрезанием:
+         *  • горизонтальный разрез — сверху вниз (первично);
+         *  • вертикальный разрез — справа налево (манга) / слева направо;
+         *  • когда чистого разреза нет (перекрытия вебтуна) — позиционный
+         *    фолбэк, где первичен верх, а не правый край.
+         * Так верхние реплики всегда читаются раньше нижних в любом вложении.
          */
         fun orderRegions(lines: List<Line>, order: String): List<Line> {
             if (lines.size <= 1) return lines
-            return when (order) {
-                "ltr" -> lines.sortedWith(
-                    compareBy<Line> { it.boundingBox.left }.thenBy { it.boundingBox.top },
-                )
-                "vertical" -> lines.sortedBy { it.boundingBox.top }
-                else -> lines.sortedWith(
-                    compareByDescending<Line> { it.boundingBox.right }
-                        .thenBy { it.boundingBox.top },
+            val direction = when (order) {
+                "ltr" -> tachiyomi.core.common.util.system.ReadingDirection.LTR
+                "vertical" -> tachiyomi.core.common.util.system.ReadingDirection.VERTICAL
+                else -> tachiyomi.core.common.util.system.ReadingDirection.RTL
+            }
+            // Рамки хранятся в долях 0..1, а сортировщик работает с целыми
+            // Rect: масштабируем на 100000, геометрия и зазоры сохраняются.
+            val scale = 100_000
+            val rects = lines.map { l ->
+                val b = l.boundingBox
+                android.graphics.Rect(
+                    (b.left * scale).toInt(),
+                    (b.top * scale).toInt(),
+                    (b.right * scale).toInt(),
+                    (b.bottom * scale).toInt(),
                 )
             }
+            val sortedIndices = tachiyomi.core.common.util.system.ReadingOrderSorter.sort(rects, direction)
+            return sortedIndices.map { lines[it] }
         }
 
         /**

@@ -777,6 +777,17 @@ class ReaderActivity : BaseActivity() {
             Box(modifier = Modifier.fillMaxSize()) {
                 val isHttpSource = viewModel.getSource() is HttpSource
                 var showTtsDialog by remember { mutableStateOf(false) }
+                // Полная настройка «как читать баблы» (OCR): отдельная кнопка в
+                // плавающем меню читалки, не уводит из главы.
+                var showOcrBubbleSettings by remember { mutableStateOf(false) }
+                // Порядок чтения реплик (флажок на кнопке в плавающем меню);
+                // объявлен выше, чтобы диалог настроек OCR мог его обновлять.
+                var readingOrderState by androidx.compose.runtime.remember {
+                    androidx.compose.runtime.mutableStateOf(
+                        uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+                            .scanReadingOrder().get(),
+                    )
+                }
                 // Быстрая смена AI-модели (по требованию пользователя): верхняя
                 // AI-кнопка теперь открывает «Сменить AI-модель», а из него уже
                 // можно попасть в полный диалог озвучки.
@@ -798,6 +809,23 @@ class ReaderActivity : BaseActivity() {
                         onOpenFullSettings = {
                             showTtsDialog = false
                             val intent = android.content.Intent(this@ReaderActivity, eu.kanade.tachiyomi.ui.main.MainActivity::class.java).apply {
+                                putExtra("open_ocr_settings", true)
+                                addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                            }
+                            startActivity(intent)
+                        },
+                    )
+                }
+                if (showOcrBubbleSettings) {
+                    eu.kanade.presentation.reader.OcrBubbleSettingsDialog(
+                        onDismissRequest = { showOcrBubbleSettings = false },
+                        onReadingOrderChange = { order -> readingOrderState = order },
+                        onOpenFullSettings = {
+                            showOcrBubbleSettings = false
+                            val intent = android.content.Intent(
+                                this@ReaderActivity,
+                                eu.kanade.tachiyomi.ui.main.MainActivity::class.java,
+                            ).apply {
                                 putExtra("open_ocr_settings", true)
                                 addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
                             }
@@ -905,12 +933,6 @@ class ReaderActivity : BaseActivity() {
                     onClickOcr = ::enterOcrMode,
                 )
 
-                var readingOrderState by androidx.compose.runtime.remember {
-                    androidx.compose.runtime.mutableStateOf(
-                        uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
-                            .scanReadingOrder().get(),
-                    )
-                }
                 // Линейка авточтения: подсветка текущей читаемой реплики
                 run {
                     val autoRegion by autoReadEngine.currentRegion.collectAsState()
@@ -977,6 +999,9 @@ class ReaderActivity : BaseActivity() {
                     onOpenOcrSettings = {
                         // Настройки озвучки — диалог прямо в читалке, никуда не уходим
                         showTtsDialog = true
+                    },
+                    onOpenFullOcrSettings = {
+                        showOcrBubbleSettings = true
                     },
 
                     onScanRegionChange = { region ->
