@@ -29,4 +29,13 @@ class StoragePreferences(
         Preference.appStateKey("external_library_active_root"),
         "",
     )
+
+    /**
+     * Режим локальной библиотеки: false — «Манга» (архивы), true — «Книги»
+     * (электронные книги любых форматов из собственного каталога приложения).
+     */
+    val booksMode: Preference<Boolean> = preferenceStore.getBoolean(
+        Preference.appStateKey("local_library_books_mode"),
+        false,
+    )
 }

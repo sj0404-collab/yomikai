@@ -57,11 +57,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import eu.kanade.domain.source.model.ContentType
 import eu.kanade.domain.source.service.SourcePreferences
-import eu.kanade.tachiyomi.ui.audiobookplayer.AudiobooksTab
-import eu.kanade.tachiyomi.ui.ranobe.RanobeTab
-import eu.kanade.tachiyomi.ui.videoplayer.KinoHallTab
 import mihon.data.ui.UiTab
 import mihon.data.ui.UiTabs
 import soup.compose.material.motion.animation.materialFadeThroughIn
@@ -121,8 +117,6 @@ object HomeScreen : Screen() {
     private fun visibleTabs(): List<eu.kanade.presentation.util.Tab> {
         val prefs = remember { Injekt.get<mihon.domain.ocr.service.OcrPreferences>() }
         val aiVisible by prefs.aiTabVisible().collectAsState()
-        val sourcePrefs = remember { Injekt.get<SourcePreferences>() }
-        val contentType by sourcePrefs.contentType.collectAsState()
         val context = LocalContext.current
         val version by UiTabRegistry.version.collectAsState()
         val ctorVersion by eu.kanade.tachiyomi.data.ui.UiConstructorStore.version.collectAsState()
@@ -149,25 +143,6 @@ object HomeScreen : Screen() {
                 }
             }
             .map { (_, screen) -> screen }
-            .toMutableList()
-            .apply {
-                // Вкладка по назначению выбранного типа контента: «Кинозал» для
-                // видео (аниме/дорамы), «Ранобэ», «Аудиокниги». Браузер и AI тип
-                // не трогает — они всегда на месте (AI управляется в настройках).
-                val contentTypeTab = when (contentType) {
-                    ContentType.MANGA -> null
-                    ContentType.ANIME, ContentType.DRAMAS -> KinoHallTab
-                    ContentType.RANOBE -> RanobeTab
-                    ContentType.BOOKS -> AudiobooksTab
-                }
-                if (contentTypeTab != null) {
-                    val insertAt = indexOfFirst { it == BrowseTab }
-                        .takeIf { it >= 0 }
-                        ?.plus(1)
-                        ?: size
-                    add(insertAt, contentTypeTab)
-                }
-            }
     }
 
     @Composable

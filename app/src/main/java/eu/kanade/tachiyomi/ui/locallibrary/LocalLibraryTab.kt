@@ -108,6 +108,9 @@ data object LocalLibraryTab : Tab {
         // Сортировка списка: false — по алфавиту (OrderBy.Popular в LocalSource
         // сортирует по названию A→Я), true — сначала новые (OrderBy.Latest).
         var sortByNewest by remember { mutableStateOf(false) }
+        // Переключатель содержимого локальной библиотеки: «Манга» (архивы) или
+        // «Книги» (электронные книги любых форматов). Выбор запоминается.
+        var booksMode by remember { mutableStateOf(storagePreferences.booksMode.get()) }
         // Алфавитный указатель: ключ из LibraryIndex.LETTERS или null («все»).
         // Ключ превращается в служебный запрос «#а», который LocalSource
         // разбирает как «название начинается на…».
@@ -134,6 +137,7 @@ data object LocalLibraryTab : Tab {
                 .collectLatest {
                     roots = storagePreferences.externalLibraryRoots.get().toList()
                     activeRoot = storagePreferences.externalLibraryActiveRoot.get()
+                    booksMode = storagePreferences.booksMode.get()
                     // Пересканируем ТОЛЬКО если изменился набор папок —
                     // обычный вход на вкладку берёт кэш и не трогает диск
                     val rootsKey = roots.sorted().joinToString("|")
@@ -158,6 +162,30 @@ data object LocalLibraryTab : Tab {
                 .fillMaxSize()
                 .statusBarsPadding(),
         ) {
+            // Переключатель содержимого: «Манга» (архивы по папкам) / «Книги».
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+            ) {
+                FilterChip(
+                    selected = !booksMode,
+                    onClick = {
+                        booksMode = false
+                        storagePreferences.booksMode.set(false)
+                    },
+                    label = { Text("Манга") },
+                    modifier = Modifier.padding(end = 6.dp),
+                )
+                FilterChip(
+                    selected = booksMode,
+                    onClick = {
+                        booksMode = true
+                        storagePreferences.booksMode.set(true)
+                    },
+                    label = { Text("Книги") },
+                )
+            }
+            if (!booksMode) {
             Surface(
                 // Фон шапки обязан совпадать с темой: surfaceVariant давал
                 // серое пятно на тёмных окрасках (жалоба пользователя).
@@ -339,6 +367,11 @@ data object LocalLibraryTab : Tab {
                         folderKey = folderKey,
                     ),
                 )
+            }
+            } else {
+                // «Книги»: библиотека файлов любых форматов внутри локальной
+                // библиотеки. Свой Navigator для открытия книги-читалки.
+                Navigator(screen = BooksLibraryScreen)
             }
         }
     }

@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.ui.ranobe
+package eu.kanade.tachiyomi.ui.books
 
 import android.speech.tts.TextToSpeech
 import androidx.compose.animation.AnimatedVisibility
@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -28,6 +27,7 @@ import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.SkipNext
 import androidx.compose.material.icons.outlined.SkipPrevious
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -35,7 +35,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -57,21 +56,24 @@ import androidx.compose.ui.unit.sp
 import cafe.adriel.voyager.core.screen.Screen
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
+import eu.kanade.tachiyomi.data.books.BookParser
+import eu.kanade.tachiyomi.data.books.BooksStore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
 /**
- * Экран чтения ранобэ/новелл с TTS авточтением.
+ * Простой читатель электронных книг с авточтением (TTS) и
+ * восстановлением последнего места чтения.
  *
- * @param chapterTexts Список пар (название_главы, текст_главы)
- * @param initialChapterIndex Индекс начальной главы
- * @param title Название произведения
+ * @param bookFileName Имя файла книги (относительно каталога books/).
+ * @param title Название произведения для отображения в шапке.
  */
-data class RanobeReaderScreen(
-    val chapterTexts: List<Pair<String, String>>,
-    val initialChapterIndex: Int = 0,
-    val title: String = "",
+data class BooksReaderScreen(
+    val bookFileName: String,
+    val title: String,
 ) : Screen {
 
     @OptIn(ExperimentalMaterial3Api::class)
@@ -80,9 +82,10 @@ data class RanobeReaderScreen(
         val navigator = LocalNavigator.currentOrThrow
         val context = LocalContext.current
 
-        var currentChapterIndex by remember {
-            mutableIntStateOf(initialChapterIndex.coerceIn(0, chapterTexts.lastIndex.coerceAtLeast(0)))
-        }
+        var loading by remember { mutableStateOf(true) }
+        var errorMessage by remember { mutableStateOf<String?>(null) }
+        var chapterTexts by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+        var currentChapterIndex by remember { mutableIntStateOf(0) }
         var currentSentenceIndex by remember { mutableIntStateOf(0) }
         var isPlaying by remember { mutableStateOf(false) }
         var speechRate by remember { mutableFloatStateOf(1.0f) }
@@ -91,27 +94,52 @@ data class RanobeReaderScreen(
         var showChapterList by remember { mutableStateOf(false) }
         var availableVoiceNames by remember { mutableStateOf<List<String>>(emptyList()) }
         var selectedVoiceIndex by remember { mutableIntStateOf(0) }
-
         val tts = remember { mutableStateOf<TextToSpeech?>(null) }
 
-        // Init TTS
+        // Загрузка и парсинг
         LaunchedEffect(Unit) {
-            tts.value = TextToSpeech(context) { status ->
-                if (status == TextToSpeech.SUCCESS) {
-                    logcat(LogPriority.INFO) { "RanobeReader: TTS init OK" }
-                } else {
-                    logcat(LogPriority.WARN) { "RanobeReader: TTS init failed: $status" }
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val dir = BooksStore.booksDirectory(context) ?: throw IllegalStateException("Нет каталога книг")
+                    val bookFile = dir.findFile(bookFileName)
+                        ?: throw IllegalStateException("Файл книги не найден")
+                    val parsed = BookParser.parse(bookFile)
+                    val saved = BooksStore.load(context, bookFile)
+                    withContext(Dispatchers.Main) {
+                        chapterTexts = parsed.chapters
+                        currentChapterIndex = saved.chapter.coerceIn(0, parsed.chapters.lastIndex.coerceAtLeast(0))
+                        val totalSentences = splitSentences(
+                            parsed.chapters.getOrNull(currentChapterIndex)?.second.orEmpty(),
+                        ).size
+                        currentSentenceIndex = saved.sentence.coerceIn(0, totalSentences.coerceAtLeast(1) - 1)
+                        loading = false
+                    }
+                }.onFailure { e ->
+                    logcat(LogPriority.ERROR, e) { "BooksReader: ошибка чтения $bookFileName" }
+                    withContext(Dispatchers.Main) {
+                        errorMessage = e.message ?: "Не удалось прочитать книгу"
+                        loading = false
+                    }
                 }
             }
         }
 
-        // Список голосов
+        // TTS init
+        LaunchedEffect(Unit) {
+            tts.value = TextToSpeech(context) { status ->
+                if (status == TextToSpeech.SUCCESS) {
+                    logcat(LogPriority.INFO) { "BooksReader: TTS init OK" }
+                } else {
+                    logcat(LogPriority.WARN) { "BooksReader: TTS init failed: $status" }
+                }
+            }
+        }
         LaunchedEffect(tts.value) {
             val engine = tts.value ?: return@LaunchedEffect
             val voices = engine.voices
                 ?.filter { v -> v.locale.language in listOf("ru", "en") }
                 ?.sortedBy { it.name }
-                ?: emptyList()
+                .orEmpty()
             availableVoiceNames = voices.map { "${it.name} (${it.locale.displayLanguage ?: it.locale.language})" }
             if (voices.isNotEmpty()) {
                 val defaultIdx = voices.indexOfFirst { it.locale.language == "ru" }.coerceAtLeast(0)
@@ -124,50 +152,58 @@ data class RanobeReaderScreen(
         LaunchedEffect(isPlaying, currentChapterIndex, currentSentenceIndex, speechRate, pitch, selectedVoiceIndex) {
             if (!isPlaying) return@LaunchedEffect
             val engine = tts.value ?: run { isPlaying = false; return@LaunchedEffect }
-            val chapter = chapterTexts.getOrNull(currentChapterIndex) ?: run { isPlaying = false; return@LaunchedEffect }
+            val chapter = chapterTexts.getOrNull(currentChapterIndex)
+                ?: run { isPlaying = false; return@LaunchedEffect }
             val sentences = splitSentences(chapter.second)
-
             if (sentences.isEmpty()) {
-                // Глава пуста — перейти дальше
                 if (currentChapterIndex < chapterTexts.lastIndex) {
-                    currentChapterIndex++
-                    currentSentenceIndex = 0
+                    currentChapterIndex++; currentSentenceIndex = 0
                 } else {
                     isPlaying = false
                 }
                 return@LaunchedEffect
             }
-
             if (currentSentenceIndex >= sentences.size) {
                 if (currentChapterIndex < chapterTexts.lastIndex) {
-                    currentChapterIndex++
-                    currentSentenceIndex = 0
+                    currentChapterIndex++; currentSentenceIndex = 0
                 } else {
                     isPlaying = false
                 }
                 return@LaunchedEffect
             }
-
-            // Применяем голос
             val voices = engine.voices
             if (voices != null && selectedVoiceIndex < voices.size) {
                 engine.voice = voices.elementAt(selectedVoiceIndex)
             }
             engine.setSpeechRate(speechRate)
             engine.setPitch(pitch)
-
-            val sentence = sentences[currentSentenceIndex]
-            engine.speak(sentence, TextToSpeech.QUEUE_FLUSH, null, "ranobe_${currentSentenceIndex}_$currentChapterIndex")
-
-            // Ждём конца озвучки
-            while (engine.isSpeaking) {
-                delay(150)
-            }
-
+            engine.speak(
+                sentences[currentSentenceIndex],
+                TextToSpeech.QUEUE_FLUSH,
+                null,
+                "book_${currentChapterIndex}_$currentSentenceIndex",
+            )
+            while (engine.isSpeaking) delay(150)
             currentSentenceIndex++
         }
 
-        // Очистка при закрытии
+        // Сохранение прогресса
+        val bookFile = remember {
+            val dir = BooksStore.booksDirectory(context)
+            dir?.findFile(bookFileName)
+        }
+        LaunchedEffect(bookFileName, currentChapterIndex, currentSentenceIndex, chapterTexts.size) {
+            if (chapterTexts.isEmpty() || loading) return@LaunchedEffect
+            val bk = bookFile ?: return@LaunchedEffect
+            val totalSentencesPerChapter = chapterTexts.map { splitSentences(it.second).size }
+            val total = totalSentencesPerChapter.sum().coerceAtLeast(1)
+            val consumedBefore = totalSentencesPerChapter.subList(0, currentChapterIndex).sum() + currentSentenceIndex
+            val percent = ((consumedBefore.toLong() * 100) / total).toInt().coerceIn(0, 100)
+            BooksStore.save(context, bk, BooksStore.Snapshot(currentChapterIndex, currentSentenceIndex, percent))
+        }
+
+        // Очистка при закрытии. Прогресс уже сохраняется LaunchedEffect'ом
+        // на каждый переход по главам/предложениям, здесь — только TTS.
         DisposableEffect(Unit) {
             onDispose {
                 tts.value?.stop()
@@ -175,24 +211,63 @@ data class RanobeReaderScreen(
             }
         }
 
+        // ---------- UI ----------
+
+        if (loading) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(modifier = Modifier.size(36.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("Загрузка…", style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+            return
+        }
+
+        errorMessage?.let { msg ->
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        "Ошибка",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        msg,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(horizontal = 24.dp),
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    IconButton(onClick = { navigator.pop() }) {
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Назад")
+                    }
+                }
+            }
+            return
+        }
+
         if (chapterTexts.isEmpty()) {
-            // Нет глав
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("Нет текста для чтения", style = MaterialTheme.typography.bodyLarge)
             }
             return
         }
 
-        val currentText = chapterTexts.getOrNull(currentChapterIndex)?.second ?: ""
+        val currentText = chapterTexts.getOrNull(currentChapterIndex)?.second.orEmpty()
         val sentences = splitSentences(currentText)
         val scrollState = rememberScrollState()
 
         Column(modifier = Modifier.fillMaxSize()) {
-            // TopBar
             TopAppBar(
                 title = {
                     Column {
-                        Text(text = title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                         Text(
                             text = chapterTexts.getOrNull(currentChapterIndex)?.first ?: "",
                             style = MaterialTheme.typography.bodySmall,
@@ -220,7 +295,6 @@ data class RanobeReaderScreen(
                 },
             )
 
-            // Список глав (выпадающий)
             AnimatedVisibility(visible = showChapterList) {
                 LazyColumn(
                     modifier = Modifier
@@ -240,8 +314,7 @@ data class RanobeReaderScreen(
                                 .background(
                                     if (index == currentChapterIndex)
                                         MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
-                                    else
-                                        MaterialTheme.colorScheme.surface,
+                                    else MaterialTheme.colorScheme.surface,
                                 )
                                 .padding(horizontal = 16.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -264,7 +337,6 @@ data class RanobeReaderScreen(
                 }
             }
 
-            // Настройки TTS
             AnimatedVisibility(visible = showSettings) {
                 Column(
                     modifier = Modifier
@@ -272,7 +344,10 @@ data class RanobeReaderScreen(
                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                         .padding(16.dp),
                 ) {
-                    Text("Скорость: x${String.format("%.1f", speechRate)}", style = MaterialTheme.typography.labelMedium)
+                    Text(
+                        "Скорость: x${String.format("%.1f", speechRate)}",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
                     Slider(
                         value = speechRate,
                         onValueChange = { speechRate = it },
@@ -291,7 +366,10 @@ data class RanobeReaderScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     if (availableVoiceNames.isNotEmpty()) {
-                        Text("Голос (${selectedVoiceIndex + 1}/${availableVoiceNames.size})", style = MaterialTheme.typography.labelMedium)
+                        Text(
+                            "Голос (${selectedVoiceIndex + 1}/${availableVoiceNames.size})",
+                            style = MaterialTheme.typography.labelMedium,
+                        )
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                             modifier = Modifier.fillMaxWidth(),
@@ -323,7 +401,6 @@ data class RanobeReaderScreen(
                 }
             }
 
-            // Текст главы
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -350,21 +427,20 @@ data class RanobeReaderScreen(
                 }
             }
 
-            // Прогресс
             if (sentences.isNotEmpty()) {
                 LinearProgressIndicator(
                     progress = { currentSentenceIndex.toFloat() / sentences.size },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
-                    text = "Глава ${currentChapterIndex + 1}/${chapterTexts.size} · Предложение ${currentSentenceIndex + 1}/${sentences.size}",
+                    text = "Глава ${currentChapterIndex + 1}/${chapterTexts.size} · " +
+                        "Предложение ${currentSentenceIndex + 1}/${sentences.size}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 )
             }
 
-            // Панель управления
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -375,21 +451,15 @@ data class RanobeReaderScreen(
             ) {
                 IconButton(onClick = {
                     if (currentChapterIndex > 0) {
-                        currentChapterIndex--
-                        currentSentenceIndex = 0
+                        currentChapterIndex--; currentSentenceIndex = 0
                     }
                 }) {
                     Icon(Icons.Outlined.SkipPrevious, contentDescription = "Предыдущая глава")
                 }
-
                 IconButton(
                     onClick = {
-                        if (isPlaying) {
-                            tts.value?.stop()
-                            isPlaying = false
-                        } else {
-                            isPlaying = true
-                        }
+                        if (isPlaying) { tts.value?.stop(); isPlaying = false }
+                        else isPlaying = true
                     },
                     modifier = Modifier.size(56.dp),
                 ) {
@@ -399,11 +469,9 @@ data class RanobeReaderScreen(
                         modifier = Modifier.size(32.dp),
                     )
                 }
-
                 IconButton(onClick = {
                     if (currentChapterIndex < chapterTexts.lastIndex) {
-                        currentChapterIndex++
-                        currentSentenceIndex = 0
+                        currentChapterIndex++; currentSentenceIndex = 0
                     }
                 }) {
                     Icon(Icons.Outlined.SkipNext, contentDescription = "Следующая глава")

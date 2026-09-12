@@ -39,6 +39,7 @@ class StorageManager(
                 baseDir?.let { parent ->
                     parent.createDirectory(AUTOMATIC_BACKUPS_PATH)
                     parent.createDirectory(LOCAL_SOURCE_PATH)
+                    parent.createDirectory(BOOKS_PATH)
                     parent.createDirectory(DOWNLOADS_PATH).also {
                         DiskUtil.createNoMediaFile(it, context)
                     }
@@ -77,6 +78,11 @@ class StorageManager(
         return baseDir?.createDirectory(LOCAL_SOURCE_PATH)
     }
 
+    /** Каталог электронных книг (любые форматы, см. BookParser). */
+    fun getBooksDirectory(): UniFile? {
+        return baseDir?.createDirectory(BOOKS_PATH)
+    }
+
     /** Корень выбранного хранилища — для сканирования манги прямо в нём (как CDisplayEx). */
     fun getBaseDirectory(): UniFile? = baseDir
 
@@ -96,3 +102,4 @@ class StorageManager(
 private const val AUTOMATIC_BACKUPS_PATH = "autobackup"
 private const val DOWNLOADS_PATH = "downloads"
 private const val LOCAL_SOURCE_PATH = "local"
+private const val BOOKS_PATH = "books"
