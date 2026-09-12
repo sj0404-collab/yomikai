@@ -1,7 +1,9 @@
 package eu.kanade.tachiyomi.ui.locallibrary
 
+import android.graphics.Bitmap
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,8 +14,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.DeleteOutline
@@ -39,30 +43,40 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.core.screen.Screen
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
+import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.data.books.BookParser
 import eu.kanade.tachiyomi.data.books.BooksStore
 import eu.kanade.tachiyomi.ui.books.BooksReaderScreen
 import kotlinx.coroutines.launch
 import tachiyomi.core.common.util.lang.withIOContext
 
 /**
- * Экран библиотеки книг (внутри [LocalLibraryTab] как переключатель «Книги»).
+ * Экран библиотеки книг с обложками и метаданными.
  *
- * Показывает список импортированных книг (любой формат), позволяет добавить
- * новый файл (SAF picker), удалить и открыть для чтения.
+ * Показывает список импортированных книг (PDF, EPUB, FB2, DOCX, HTML, TXT и др.),
+ * позволяет добавить новый файл (SAF picker), удалить и открыть для чтения.
+ * Каждая книга отображается с обложкой (если доступна), названием из метаданных
+ * и прогрессом чтения.
  */
 object BooksLibraryScreen : Screen {
 
     private data class BookItem(
         val fileName: String,
         val displayTitle: String,
+        val author: String?,
         val ext: String,
         val progressPercent: Int,
+        val coverBitmap: Bitmap?,
     )
 
     @Composable
@@ -82,11 +96,17 @@ object BooksLibraryScreen : Screen {
                     BooksStore.listBooks(context).map { file ->
                         val pct = BooksStore.load(context, file).percent
                         val ext = file.name.orEmpty().substringAfterLast('.', "").uppercase()
+                        val metadata = BooksStore.loadMetadata(context, file)
+                        val cover = BooksStore.loadCover(context, file)
                         BookItem(
                             fileName = file.name.orEmpty(),
-                            displayTitle = file.name.orEmpty().substringBeforeLast('.').ifBlank { "Книга" },
+                            displayTitle = metadata.title.ifBlank {
+                                file.name.orEmpty().substringBeforeLast('.').ifBlank { "Книга" }
+                            },
+                            author = metadata.author,
                             ext = ext,
                             progressPercent = pct,
+                            coverBitmap = cover,
                         )
                     }
                 }
@@ -95,8 +115,6 @@ object BooksLibraryScreen : Screen {
             }
         }
 
-        // Обновляем список и прогресс при первом входе и каждом возврате со
-        // читалки (navigator.lastItem — снапшот-состояние стека).
         LaunchedEffect(navigator.lastItem) { refresh() }
 
         val addLauncher = rememberLauncherForActivityResult(
@@ -107,7 +125,6 @@ object BooksLibraryScreen : Screen {
                 importing = true
                 val result = withIOContext { BooksStore.importBook(context, uri) }
                 importing = false
-                // Простая защита от двойного импорта одного и того же файла.
                 if (result is BooksStore.ImportResult.Success) {
                     snackbarHostState.showSnackbar(
                         "Добавлена книга «${result.book.name.orEmpty()}»",
@@ -154,7 +171,7 @@ object BooksLibraryScreen : Screen {
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                "Добавьте книги любого формата: txt, fb2, epub, html, docx, md…",
+                                "Добавьте книги: PDF, EPUB, FB2, DOCX, HTML, TXT, MD…",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -185,9 +202,44 @@ object BooksLibraryScreen : Screen {
                                             BooksReaderScreen(item.fileName, item.displayTitle),
                                         )
                                     }
-                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
+                                // Обложка
+                                if (item.coverBitmap != null) {
+                                    Image(
+                                        bitmap = item.coverBitmap.asImageBitmap(),
+                                        contentDescription = "Обложка",
+                                        modifier = Modifier
+                                            .size(56.dp, 80.dp)
+                                            .clip(RoundedCornerShape(4.dp)),
+                                        contentScale = ContentScale.Crop,
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                } else {
+                                    // Заглушка для обложки
+                                    Box(
+                                        modifier = Modifier
+                                            .size(56.dp, 80.dp)
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .then(
+                                                Modifier.padding(0.dp)
+                                            ),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                        ) {
+                                            Text(
+                                                text = item.ext,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                }
+
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = item.displayTitle,
@@ -195,6 +247,15 @@ object BooksLibraryScreen : Screen {
                                         maxLines = 2,
                                         overflow = TextOverflow.Ellipsis,
                                     )
+                                    if (item.author != null) {
+                                        Text(
+                                            text = item.author,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(
                                             text = item.ext,

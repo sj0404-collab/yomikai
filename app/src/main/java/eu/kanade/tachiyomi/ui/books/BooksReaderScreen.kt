@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.sp
 import cafe.adriel.voyager.core.screen.Screen
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
+import eu.kanade.tachiyomi.data.books.BookChapter
 import eu.kanade.tachiyomi.data.books.BookParser
 import eu.kanade.tachiyomi.data.books.BooksStore
 import kotlinx.coroutines.Dispatchers
@@ -68,11 +69,10 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
 /**
- * Простой читатель электронных книг с авточтением (TTS) и
- * восстановлением последнего места чтения.
+ * Читатель электронных книг с авточтением (TTS) и восстановлением места чтения.
  *
- * @param bookFileName Имя файла книги (относительно каталога books/).
- * @param title Название произведения для отображения в шапке.
+ * Использует структуру [BookChapter] (аналог manga Chapter) с поддержкой
+ * иерархии: Том → Глава → Подглава.
  */
 data class BooksReaderScreen(
     val bookFileName: String,
@@ -87,12 +87,10 @@ data class BooksReaderScreen(
 
         var loading by remember { mutableStateOf(true) }
         var errorMessage by remember { mutableStateOf<String?>(null) }
-        var chapterTexts by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+        var chapters by remember { mutableStateOf<List<BookChapter>>(emptyList()) }
         var currentChapterIndex by remember { mutableIntStateOf(0) }
         var currentSentenceIndex by remember { mutableIntStateOf(0) }
         var isPlaying by remember { mutableStateOf(false) }
-        // Свои настройки озвучки книг (экран «Озвучка книг»): читаем префы
-        // при входе, изменения слайдеров пишем обратно.
         val bookPrefs = remember { Injekt.get<OcrPreferences>() }
         var speechRate by remember { mutableFloatStateOf(bookPrefs.bookSpeechRate().get()) }
         var pitch by remember { mutableFloatStateOf(bookPrefs.bookSpeechPitch().get()) }
@@ -109,14 +107,13 @@ data class BooksReaderScreen(
                     val dir = BooksStore.booksDirectory(context) ?: throw IllegalStateException("Нет каталога книг")
                     val bookFile = dir.findFile(bookFileName)
                         ?: throw IllegalStateException("Файл книги не найден")
-                    val parsed = BookParser.parse(bookFile)
+                    val parsed = BookParser.parse(bookFile, bookFile.uri.toString())
                     val saved = BooksStore.load(context, bookFile)
                     withContext(Dispatchers.Main) {
-                        chapterTexts = parsed.chapters
+                        chapters = parsed.chapters
                         currentChapterIndex = saved.chapter.coerceIn(0, parsed.chapters.lastIndex.coerceAtLeast(0))
-                        val totalSentences = splitSentences(
-                            parsed.chapters.getOrNull(currentChapterIndex)?.second.orEmpty(),
-                        ).size
+                        val currentCh = parsed.chapters.getOrNull(currentChapterIndex)
+                        val totalSentences = splitSentences(currentCh?.resolvedText.orEmpty()).size
                         currentSentenceIndex = saved.sentence.coerceIn(0, totalSentences.coerceAtLeast(1) - 1)
                         loading = false
                     }
@@ -158,11 +155,11 @@ data class BooksReaderScreen(
         LaunchedEffect(isPlaying, currentChapterIndex, currentSentenceIndex, speechRate, pitch, selectedVoiceIndex) {
             if (!isPlaying) return@LaunchedEffect
             val engine = tts.value ?: run { isPlaying = false; return@LaunchedEffect }
-            val chapter = chapterTexts.getOrNull(currentChapterIndex)
+            val chapter = chapters.getOrNull(currentChapterIndex)
                 ?: run { isPlaying = false; return@LaunchedEffect }
-            val sentences = splitSentences(chapter.second)
+            val sentences = splitSentences(chapter.resolvedText)
             if (sentences.isEmpty()) {
-                if (currentChapterIndex < chapterTexts.lastIndex) {
+                if (currentChapterIndex < chapters.lastIndex) {
                     currentChapterIndex++; currentSentenceIndex = 0
                 } else {
                     isPlaying = false
@@ -170,7 +167,7 @@ data class BooksReaderScreen(
                 return@LaunchedEffect
             }
             if (currentSentenceIndex >= sentences.size) {
-                if (currentChapterIndex < chapterTexts.lastIndex) {
+                if (currentChapterIndex < chapters.lastIndex) {
                     currentChapterIndex++; currentSentenceIndex = 0
                 } else {
                     isPlaying = false
@@ -198,18 +195,16 @@ data class BooksReaderScreen(
             val dir = BooksStore.booksDirectory(context)
             dir?.findFile(bookFileName)
         }
-        LaunchedEffect(bookFileName, currentChapterIndex, currentSentenceIndex, chapterTexts.size) {
-            if (chapterTexts.isEmpty() || loading) return@LaunchedEffect
+        LaunchedEffect(bookFileName, currentChapterIndex, currentSentenceIndex, chapters.size) {
+            if (chapters.isEmpty() || loading) return@LaunchedEffect
             val bk = bookFile ?: return@LaunchedEffect
-            val totalSentencesPerChapter = chapterTexts.map { splitSentences(it.second).size }
+            val totalSentencesPerChapter = chapters.map { splitSentences(it.resolvedText).size }
             val total = totalSentencesPerChapter.sum().coerceAtLeast(1)
             val consumedBefore = totalSentencesPerChapter.subList(0, currentChapterIndex).sum() + currentSentenceIndex
             val percent = ((consumedBefore.toLong() * 100) / total).toInt().coerceIn(0, 100)
             BooksStore.save(context, bk, BooksStore.Snapshot(currentChapterIndex, currentSentenceIndex, percent))
         }
 
-        // Очистка при закрытии. Прогресс уже сохраняется LaunchedEffect'ом
-        // на каждый переход по главам/предложениям, здесь — только TTS.
         DisposableEffect(Unit) {
             onDispose {
                 tts.value?.stop()
@@ -253,14 +248,15 @@ data class BooksReaderScreen(
             return
         }
 
-        if (chapterTexts.isEmpty()) {
+        if (chapters.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("Нет текста для чтения", style = MaterialTheme.typography.bodyLarge)
             }
             return
         }
 
-        val currentText = chapterTexts.getOrNull(currentChapterIndex)?.second.orEmpty()
+        val currentChapter = chapters.getOrNull(currentChapterIndex)
+        val currentText = currentChapter?.resolvedText.orEmpty()
         val sentences = splitSentences(currentText)
         val scrollState = rememberScrollState()
 
@@ -275,7 +271,7 @@ data class BooksReaderScreen(
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            text = chapterTexts.getOrNull(currentChapterIndex)?.first ?: "",
+                            text = currentChapter?.displayTitle ?: currentChapter?.name ?: "",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -305,10 +301,10 @@ data class BooksReaderScreen(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(200.dp)
+                        .height(250.dp)
                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
                 ) {
-                    itemsIndexed(chapterTexts) { index, (name, _) ->
+                    itemsIndexed(chapters) { index, chapter ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -325,18 +321,66 @@ data class BooksReaderScreen(
                                 .padding(horizontal = 16.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
+                            // Индикатор: страница или глава
+                            if (chapter.isPageBased) {
+                                // Для страниц — показываем номер страницы
+                                Column(
+                                    modifier = Modifier.width(48.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                ) {
+                                    val pNum = chapter.pages.firstOrNull()?.pageNumber ?: (index + 1)
+                                    Text(
+                                        text = "стр",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Text(
+                                        text = "$pNum",
+                                        style = MaterialTheme.typography.labelMedium,
+                                    )
+                                }
+                            } else if (chapter.volume != null || chapter.chapter != null) {
+                                // Для текстовых глав с номерами
+                                Column(
+                                    modifier = Modifier.width(48.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                ) {
+                                    if (chapter.volume != null) {
+                                        Text(
+                                            text = "T${chapter.volume}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                    if (chapter.chapter != null) {
+                                        Text(
+                                            text = "G${chapter.chapter}",
+                                            style = MaterialTheme.typography.labelMedium,
+                                        )
+                                    }
+                                }
+                            } else {
+                                Text(
+                                    text = "${index + 1}.",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.width(32.dp),
+                                )
+                            }
                             Text(
-                                text = "${index + 1}.",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.width(32.dp),
-                            )
-                            Text(
-                                text = name,
+                                text = chapter.displayTitle,
                                 style = MaterialTheme.typography.bodyMedium,
-                                maxLines = 1,
+                                maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
                             )
+                            if (chapter.read) {
+                                Text(
+                                    text = "✓",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
                         }
                         HorizontalDivider()
                     }
@@ -429,8 +473,9 @@ data class BooksReaderScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                 } else {
+                    val emptyLabel = if (currentChapter?.isPageBased == true) "Страница пуста" else "Глава пуста"
                     Text(
-                        text = "Глава пуста",
+                        text = emptyLabel,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
@@ -444,9 +489,17 @@ data class BooksReaderScreen(
                     progress = { currentSentenceIndex.toFloat() / sentences.size },
                     modifier = Modifier.fillMaxWidth(),
                 )
+                val isPageBased = currentChapter?.isPageBased == true
+                val statusText = if (isPageBased) {
+                    val pNum = currentChapter.pages.firstOrNull()?.pageNumber ?: (currentChapterIndex + 1)
+                    val pTotal = currentChapter.pages.lastOrNull()?.totalPages ?: chapters.size
+                    "Страница $pNum/$pTotal · Предложение ${currentSentenceIndex + 1}/${sentences.size}"
+                } else {
+                    "Глава ${currentChapterIndex + 1}/${chapters.size} · " +
+                        "Предложение ${currentSentenceIndex + 1}/${sentences.size}"
+                }
                 Text(
-                    text = "Глава ${currentChapterIndex + 1}/${chapterTexts.size} · " +
-                        "Предложение ${currentSentenceIndex + 1}/${sentences.size}",
+                    text = statusText,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
@@ -482,7 +535,7 @@ data class BooksReaderScreen(
                     )
                 }
                 IconButton(onClick = {
-                    if (currentChapterIndex < chapterTexts.lastIndex) {
+                    if (currentChapterIndex < chapters.lastIndex) {
                         currentChapterIndex++; currentSentenceIndex = 0
                     }
                 }) {

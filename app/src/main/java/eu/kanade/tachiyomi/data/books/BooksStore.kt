@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.data.books
 
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.provider.OpenableColumns
 import com.hippo.unifile.UniFile
 import java.io.File
@@ -10,14 +11,10 @@ import uy.kohesive.injekt.api.get
 /**
  * Хранилище локальных электронных книг.
  *
- * Книги лежат в подкаталоге `books/` основного хранилища приложения
- * (см. [tachiyomi.domain.storage.service.StorageManager.getBooksDirectory]),
- * рядом с мангой локального источника. Добавляются ЛЮБЫЕ файлы (любое
- * расширение и MIME) — парсер честно пытается извлечь текст при открытии.
+ * Книги лежат в подкаталоге `books/` основного хранилища приложения.
+ * Поддерживаются: PDF, EPUB, FB2, DOCX, HTML, TXT и другие текстовые форматы.
  *
- * Прогресс чтения (последнее место) хранится в отдельном SharedPreferences
- * по ключу = идентификатор файла; библиотека рисует его полоской прогресса,
- * читалка восстанавливает при открытии.
+ * Прогресс чтения хранится в SharedPreferences, метаданные и обложки — в кэше.
  */
 object BooksStore {
 
@@ -28,8 +25,7 @@ object BooksStore {
     )
 
     /**
-     * Результат добавления книги: либо скопированный файл, либо понятная
-     * причина отказа — иначе пользователь просто не видит книгу в списке.
+     * Результат добавления книги.
      */
     sealed class ImportResult {
         data class Success(val book: UniFile) : ImportResult()
@@ -37,6 +33,8 @@ object BooksStore {
     }
 
     private const val PROGRESS_PREFS = "yomikai_books_progress"
+    private const val METADATA_PREFS = "yomikai_books_metadata"
+    private const val COVER_DIR = "book_covers"
 
     private fun storageManager(): tachiyomi.domain.storage.service.StorageManager =
         Injekt.get()
@@ -44,8 +42,6 @@ object BooksStore {
     fun booksDirectory(context: Context): UniFile? {
         val primary = storageManager().getBooksDirectory()
         if (primary != null && primary.exists()) return primary
-        // Фолбэк на приватное хранилище приложения: книга импортируется,
-        // даже если выбранное пользователем root-хранилище недоступно.
         val folder = File(context.filesDir, "books")
         if (!folder.exists()) folder.mkdirs()
         return UniFile.fromFile(folder)
@@ -62,10 +58,6 @@ object BooksStore {
 
     /**
      * Копирует выбранный пользователем файл (SAF URI) в каталог книг.
-     * При совпадении имени добавляет суффикс (2), (3)…
-     *
-     * Ни одно SAF-исключение не остаётся «тихим»: любой сбой возвращается
-     * [ImportResult.Failure] с человеко-читаемой причиной.
      */
     fun importBook(context: Context, uri: android.net.Uri): ImportResult {
         val dir = booksDirectory(context) ?: return ImportResult.Failure("Нет каталога для книг")
@@ -165,6 +157,9 @@ object BooksStore {
             .edit()
             .remove(book.uri.toString())
             .apply()
+        // Также очищаем кэш метаданных и обложки
+        clearMetadata(context, book)
+        clearCover(context, book)
     }
 
     fun load(context: Context, book: UniFile): Snapshot {
@@ -178,6 +173,113 @@ object BooksStore {
             sentence = parts[1].toIntOrNull()?.coerceAtLeast(0) ?: 0,
             percent = parts[2].toIntOrNull()?.coerceIn(0, 100) ?: 0,
         )
+    }
+
+    // ---------- Метаданные ----------
+
+    /**
+     * Сохраняет метаданные книги в SharedPreferences.
+     * Ключ = URI книги, значение = JSON строка "title|author|description|language|publisher|year".
+     */
+    fun saveMetadata(context: Context, book: UniFile, metadata: BookParser.BookMetadata) {
+        val key = book.uri.toString()
+        val value = listOf(
+            metadata.title,
+            metadata.author.orEmpty(),
+            metadata.description.orEmpty(),
+            metadata.language.orEmpty(),
+            metadata.publisher.orEmpty(),
+            metadata.year?.toString().orEmpty(),
+            metadata.genre?.joinToString(",").orEmpty(),
+        ).joinToString("|||")
+        context.getSharedPreferences(METADATA_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(key, value)
+            .apply()
+    }
+
+    /**
+     * Загружает сохранённые метаданные книги. Если нет — извлекает из файла.
+     */
+    fun loadMetadata(context: Context, book: UniFile): BookParser.BookMetadata {
+        val key = book.uri.toString()
+        val raw = context.getSharedPreferences(METADATA_PREFS, Context.MODE_PRIVATE)
+            .getString(key, null)
+        if (raw != null) {
+            val parts = raw.split("|||")
+            if (parts.size >= 7) {
+                return BookParser.BookMetadata(
+                    title = parts[0].ifBlank { book.name.orEmpty().substringBeforeLast('.') },
+                    author = parts[1].ifBlank { null },
+                    description = parts[2].ifBlank { null },
+                    language = parts[3].ifBlank { null },
+                    publisher = parts[4].ifBlank { null },
+                    year = parts[5].toIntOrNull(),
+                    genre = parts[6].ifBlank { null }?.split(","),
+                )
+            }
+        }
+        // Извлекаем из файла и кэшируем
+        return try {
+            val metadata = BookParser.extractMetadata(book)
+            saveMetadata(context, book, metadata)
+            metadata
+        } catch (e: Exception) {
+            BookParser.BookMetadata(title = book.name.orEmpty().substringBeforeLast('.'))
+        }
+    }
+
+    private fun clearMetadata(context: Context, book: UniFile) {
+        context.getSharedPreferences(METADATA_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .remove(book.uri.toString())
+            .apply()
+    }
+
+    // ---------- Обложки ----------
+
+    private fun coversDir(context: Context): File {
+        val dir = File(context.filesDir, COVER_DIR)
+        if (!dir.exists()) dir.mkdirs()
+        return dir
+    }
+
+    private fun coverFileName(book: UniFile): String {
+        return book.uri.toString()
+            .replace(Regex("[^a-zA-Z0-9]"), "_")
+            .take(128) + ".png"
+    }
+
+    /**
+     * Загружает обложку книги. Если нет в кэше — извлекает из файла.
+     */
+    fun loadCover(context: Context, book: UniFile): android.graphics.Bitmap? {
+        val cacheFile = File(coversDir(context), coverFileName(book))
+        if (cacheFile.exists()) {
+            val bitmap = BitmapFactory.decodeFile(cacheFile.absolutePath)
+            if (bitmap != null) return bitmap
+        }
+        // Извлекаем и кэшируем
+        return try {
+            val coverBytes = BookParser.extractCover(context, book) ?: return null
+            val bitmap = BitmapFactory.decodeByteArray(coverBytes, 0, coverBytes.size) ?: return null
+            FileOutputStream(cacheFile).use { it.write(coverBytes) }
+            bitmap
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Возвращает путь к обложке (или null).
+     */
+    fun coverPath(context: Context, book: UniFile): String? {
+        val cacheFile = File(coversDir(context), coverFileName(book))
+        return if (cacheFile.exists()) cacheFile.absolutePath else null
+    }
+
+    private fun clearCover(context: Context, book: UniFile) {
+        File(coversDir(context), coverFileName(book)).delete()
     }
 
     private fun displayName(context: Context, uri: android.net.Uri): String? {

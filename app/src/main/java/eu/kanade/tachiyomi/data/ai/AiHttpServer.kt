@@ -1,6 +1,8 @@
 package eu.kanade.tachiyomi.data.ai
 
 import android.content.Context
+import eu.kanade.tachiyomi.data.books.BookParser
+import eu.kanade.tachiyomi.data.books.BooksStore
 import eu.kanade.tachiyomi.data.tts.VoiceHelper
 import eu.kanade.tachiyomi.data.tts.VoiceKind
 import kotlinx.coroutines.runBlocking
@@ -21,27 +23,26 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
 /**
- * Мини HTTP-сервер AI-агента: чат доступен ИЗ ВНЕШНЕГО БРАУЗЕРА
- * (на самом телефоне — http://127.0.0.1:8765, с другого устройства той же
- * Wi-Fi сети — http://IP-телефона:8765). Никаких внешних библиотек —
- * чистый ServerSocket.
+ * Мини HTTP-сервер AI-агента и внешних инструментов.
  *
  * Endpoints:
- *  GET  /            — страница чата (HTML+JS, всё встроено)
+ *  GET  /            — страница чата (HTML+JS)
  *  POST /chat        — {"text": "..."} → ответ агента JSON
  *  GET  /files       — список файлов workspace (JSON)
  *  GET  /file?p=rel  — скачать файл workspace
+ *  GET  /tts/voices  — список голосов TTS
+ *  POST /tts/voice   — установить голос
+ *  GET  /ocr/settings — настройки OCR
+ *  POST /ocr/settings — обновить настройки OCR
+ *  GET  /books/list   — список книг с метаданными
+ *  POST /books/import — импорт книги по URL (потоковый, без OOM)
+ *  GET  /books/metadata?uri=... — метаданные книги
+ *  GET  /books/cover?uri=... — обложка книги (PNG)
  */
 object AiHttpServer {
 
     const val PORT = 8765
 
-    /**
-     * Секрет доступа к серверу: генерируется один раз и хранится в настройках.
-     * Каждый запрос обязан передавать ?key=<токен>, иначе 401. Раньше сервер
-     * слушал 0.0.0.0 вообще без авторизации — любой сосед по Wi-Fi мог
-     * пользоваться агентом и читать workspace.
-     */
     fun tokenFor(context: Context): String {
         val prefs = Injekt.get<OcrPreferences>()
         val existing = prefs.aiHttpToken().get()
@@ -65,7 +66,7 @@ object AiHttpServer {
         val ss = ServerSocket()
         ss.reuseAddress = true
         ss.bind(InetSocketAddress("0.0.0.0", PORT))
-        tokenFor(appContext) // ключ должен существовать до первого запроса
+        tokenFor(appContext)
         server = ss
         thread = Thread {
             while (!ss.isClosed) {
@@ -124,7 +125,6 @@ object AiHttpServer {
 
                 val out = s.getOutputStream()
 
-                // Доступ только по ключу ?key=... (см. tokenFor).
                 if (queryParam(fullPath.substringAfter('?', ""), "key") != tokenFor(context)) {
                     respond(
                         out,
@@ -204,7 +204,6 @@ object AiHttpServer {
                         }
                         respond(out, 200, "application/json; charset=utf-8", arr.toString().toByteArray())
                     }
-                    // -- Новые API-роуты внешних инструментов -----------------
                     method == "GET" && path == "/ocr/settings" -> {
                         val prefs = Injekt.get<OcrPreferences>()
                         val json = JSONObject()
@@ -222,7 +221,6 @@ object AiHttpServer {
                             .put("systemTtsEngine", prefs.systemTtsEngine().get())
                         respond(out, 200, "application/json; charset=utf-8", json.toString().toByteArray())
                     }
-                    // Внешний инструмент может переключать настройки OCR.
                     method == "POST" && path == "/ocr/settings" -> {
                         val prefs = Injekt.get<OcrPreferences>()
                         val request = runCatching { JSONObject(body) }.getOrDefault(JSONObject())
@@ -235,15 +233,23 @@ object AiHttpServer {
                         if (request.has("voiceIcons")) prefs.voiceIcons().set(request.optBoolean("voiceIcons"))
                         respond(out, 200, "application/json", "{\"ok\":true}".toByteArray())
                     }
+
+                    // ---- Books API ----
                     method == "GET" && path == "/books/list" -> {
                         val arr = JSONArray()
-                        eu.kanade.tachiyomi.data.books.BooksStore.listBooks(context).forEach { file ->
-                            val snap = eu.kanade.tachiyomi.data.books.BooksStore.load(context, file)
+                        BooksStore.listBooks(context).forEach { file ->
+                            val snap = BooksStore.load(context, file)
+                            val metadata = BooksStore.loadMetadata(context, file)
                             arr.put(
                                 JSONObject()
                                     .put("name", file.name.orEmpty())
                                     .put("uri", file.uri.toString())
-                                    .put("progressPercent", snap.percent),
+                                    .put("title", metadata.title)
+                                    .put("author", metadata.author ?: "")
+                                    .put("ext", file.name.orEmpty().substringAfterLast('.', "").uppercase())
+                                    .put("progressPercent", snap.percent)
+                                    .put("chapter", snap.chapter)
+                                    .put("sentence", snap.sentence),
                             )
                         }
                         respond(out, 200, "application/json; charset=utf-8", arr.toString().toByteArray())
@@ -258,15 +264,68 @@ object AiHttpServer {
                             val result = importBookFromUrl(context, url, name.ifBlank { null })
                             respond(
                                 out,
-                                if (result is eu.kanade.tachiyomi.data.books.BooksStore.ImportResult.Success) 200 else 400,
+                                if (result is BooksStore.ImportResult.Success) 200 else 400,
                                 "application/json; charset=utf-8",
                                 when (result) {
-                                    is eu.kanade.tachiyomi.data.books.BooksStore.ImportResult.Success ->
-                                        JSONObject().put("ok", true).put("name", result.book.name.orEmpty()).toString()
-                                    is eu.kanade.tachiyomi.data.books.BooksStore.ImportResult.Failure ->
+                                    is BooksStore.ImportResult.Success -> {
+                                        val metadata = BooksStore.loadMetadata(context, result.book)
+                                        JSONObject()
+                                            .put("ok", true)
+                                            .put("name", result.book.name.orEmpty())
+                                            .put("title", metadata.title)
+                                            .put("author", metadata.author ?: "")
+                                            .toString()
+                                    }
+                                    is BooksStore.ImportResult.Failure ->
                                         JSONObject().put("ok", false).put("error", result.reason).toString()
                                 }.toByteArray(),
                             )
+                        }
+                    }
+                    method == "GET" && path == "/books/metadata" -> {
+                        val uri = queryParam(query, "uri")?.trim()
+                        if (uri.isNullOrEmpty()) {
+                            respond(out, 400, "application/json", "{\"error\":\"missing uri\"}".toByteArray())
+                        } else {
+                            val file = BooksStore.listBooks(context).find { it.uri.toString() == uri }
+                            if (file == null) {
+                                respond(out, 404, "application/json", "{\"error\":\"book not found\"}".toByteArray())
+                            } else {
+                                val metadata = BooksStore.loadMetadata(context, file)
+                                val json = JSONObject()
+                                    .put("title", metadata.title)
+                                    .put("author", metadata.author ?: "")
+                                    .put("description", metadata.description ?: "")
+                                    .put("language", metadata.language ?: "")
+                                    .put("publisher", metadata.publisher ?: "")
+                                    .put("year", metadata.year ?: JSONObject.NULL)
+                                    .put("genre", JSONArray(metadata.genre ?: emptyList()))
+                                    .put("hasCover", metadata.coverImage != null || BooksStore.coverPath(context, file) != null)
+                                respond(out, 200, "application/json; charset=utf-8", json.toString().toByteArray())
+                            }
+                        }
+                    }
+                    method == "GET" && path == "/books/cover" -> {
+                        val uri = queryParam(query, "uri")?.trim()
+                        if (uri.isNullOrEmpty()) {
+                            respond(out, 400, "text/plain", "missing uri".toByteArray())
+                        } else {
+                            val file = BooksStore.listBooks(context).find { it.uri.toString() == uri }
+                            if (file == null) {
+                                respond(out, 404, "text/plain", "book not found".toByteArray())
+                            } else {
+                                val coverPath = BooksStore.coverPath(context, file)
+                                if (coverPath != null) {
+                                    val coverFile = java.io.File(coverPath)
+                                    if (coverFile.exists()) {
+                                        respond(out, 200, "image/png", coverFile.readBytes())
+                                    } else {
+                                        respond(out, 404, "text/plain", "cover not found".toByteArray())
+                                    }
+                                } else {
+                                    respond(out, 404, "text/plain", "no cover".toByteArray())
+                                }
+                            }
                         }
                     }
                     method == "GET" && path == "/file" -> {
@@ -303,40 +362,69 @@ object AiHttpServer {
             ?.let { URLDecoder.decode(it, "UTF-8") }
 
     /**
-     * Скачивает книгу по URL (HttpURLConnection, лимит 40 МБ) и добавляет
-     * её в каталог книг той же логикой, что SAF-импорт.
+     * Скачивает книгу по URL с потоковым чтением (без OOM).
+     * Лимит: 40 МБ. Проверяет Content-Length и читает по чанкам.
      */
     private fun importBookFromUrl(
         context: Context,
         url: String,
         name: String?,
-    ): eu.kanade.tachiyomi.data.books.BooksStore.ImportResult {
-        val bytes = try {
+    ): BooksStore.ImportResult {
+        val MAX_SIZE = 40 * 1024 * 1024L
+        return try {
             val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
             conn.connectTimeout = 15_000
             conn.readTimeout = 60_000
             conn.instanceFollowRedirects = true
             conn.connect()
+
             if (conn.responseCode !in 200..299) {
-                return eu.kanade.tachiyomi.data.books.BooksStore.ImportResult.Failure(
-                    "HTTP ${conn.responseCode}",
-                )
+                return BooksStore.ImportResult.Failure("HTTP ${conn.responseCode}")
             }
-            conn.inputStream.use { it.readBytes().takeIf { b -> b.size <= 40 * 1024 * 1024 } }
-                ?: return eu.kanade.tachiyomi.data.books.BooksStore.ImportResult.Failure(
-                    "Файл больше 40 МБ",
-                )
+
+            // Проверяем Content-Length до чтения
+            val contentLength = conn.contentLengthLong.takeIf { it > 0 } ?: -1
+            if (contentLength > MAX_SIZE) {
+                conn.disconnect()
+                return BooksStore.ImportResult.Failure("Файл слишком большой (${contentLength / 1024 / 1024} МБ, лимит 40 МБ)")
+            }
+
+            // Потоковое чтение с проверкой размера
+            val baos = java.io.ByteArrayOutputStream()
+            val buffer = ByteArray(8192)
+            var totalRead = 0L
+            conn.inputStream.use { input ->
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    totalRead += read
+                    if (totalRead > MAX_SIZE) {
+                        conn.disconnect()
+                        return BooksStore.ImportResult.Failure("Файл больше 40 МБ")
+                    }
+                    baos.write(buffer, 0, read)
+                }
+            }
+            conn.disconnect()
+
+            val fileName = when {
+                !name.isNullOrBlank() -> name
+                else -> {
+                    // Пытаемся извлечь имя из URL или Content-Disposition
+                    val disposition = conn.getHeaderField("Content-Disposition")
+                    val dispositionName = disposition?.let {
+                        Regex("""filename[*]?="?([^";\s]+)"""").find(it)?.groupValues?.get(1)
+                    }
+                    dispositionName
+                        ?: java.net.URL(url).path.substringAfterLast('/').ifBlank { null }
+                        ?: "book_${System.currentTimeMillis()}"
+                }
+            }
+
+            BooksStore.importBytes(context, fileName, baos.toByteArray())
         } catch (e: Exception) {
-            return eu.kanade.tachiyomi.data.books.BooksStore.ImportResult.Failure(
-                "Скачивание не удалось: ${e.message}",
-            )
+            BooksStore.ImportResult.Failure("Скачивание не удалось: ${e.message}")
         }
-        val fileName = when {
-            !name.isNullOrBlank() -> name
-            else -> java.net.URL(url).path.substringAfterLast('/').ifBlank { null }
-                ?: "book_${System.currentTimeMillis()}"
-        }
-        return eu.kanade.tachiyomi.data.books.BooksStore.importBytes(context, fileName, bytes)
     }
 
     private fun respond(
