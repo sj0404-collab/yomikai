@@ -233,7 +233,7 @@ object BookParser {
                 // Прямая ссылка на страницу
                 refIdx in titleIdx until titleIdx + 200 -> {
                     val refText = text.substring(refIdx, (refIdx + 40).coerceAtMost(text.length))
-                    Regex"""\((\d+)\)""".toRegex().find(refText)?.groupValues?.get(1)?.toIntOrNull()
+                    Regex("""\((\d+)\)""").find(refText)?.groupValues?.get(1)?.toIntOrNull()
                 }
                 else -> null
             }
