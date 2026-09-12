@@ -79,6 +79,14 @@ object BookParser {
         "ini", "conf", "cfg", "csv", "json", "yaml", "yml", "xml", "rtf",
     )
 
+    private val ZIP_EXTS = setOf("epub", "docx")
+
+    private val PDF_MAGIC = byteArrayOf(0x25, 0x50, 0x44, 0x46, 0x2D) // %PDF-
+    private val RTF_MAGIC = byteArrayOf(0x7B, 0x5C, 0x72, 0x74, 0x66) // RTF: {\rtf
+    private val ZIP_LOCAL_MAGIC = byteArrayOf(0x50, 0x4B, 0x03, 0x04) // PK\x03\x04
+    private val ZIP_EMPTY_MAGIC = byteArrayOf(0x50, 0x4B, 0x05, 0x06) // PK\x05\x06
+    private val ZIP_SPANNED_MAGIC = byteArrayOf(0x50, 0x4B, 0x07, 0x08) // PK\x07\x08
+
     fun parse(bookFile: UniFile, bookId: String = bookFile.uri.toString()): ParsedBook {
         val input = bookFile.openInputStream() ?: throw UnsupportedBookException("Не удалось открыть файл книги")
         val bytes = input.use { it.readBytes() }
@@ -88,22 +96,107 @@ object BookParser {
         }
         val name = bookFile.name.orEmpty().substringBeforeLast('.').ifBlank { "Книга" }
         val ext = bookFile.extension().lowercase()
+        // Формат определяется ПО СОДЕРЖИМОМУ, а не по расширению: бинарный
+        // файл с расширением .pdf не должен трактоваться как PDF.
+        val format = detectFormat(ext, bytes)
 
         return try {
-            when (ext) {
+            when (format) {
                 "pdf" -> parsePdf(bytes, name, bookId)
                 "fb2" -> parseFb2(bytes, name, bookId)
-                "htm", "html" -> parseHtml(bytes, name, bookId)
+                "html" -> parseHtml(bytes, name, bookId)
                 "epub" -> parseEpub(bytes, bookId)
                 "docx" -> parseDocx(bytes, name, bookId)
-                else -> parsePlain(bytes, name, bookId)
+                "plain", "rtf" -> parsePlain(bytes, name, bookId)
+                else -> {
+                    if (format == null) {
+                        throw UnsupportedBookException(
+                            "Формат файла не распознан (повреждённый или не книжный бинарный файл)",
+                        )
+                    }
+                    parsePlain(bytes, name, bookId)
+                }
             }
         } catch (e: UnsupportedBookException) {
             throw e
         } catch (e: ZipException) {
-            throw UnsupportedBookException("Повреждённый контейнер ($ext)")
+            throw UnsupportedBookException("Повреждённый контейнер ($format)")
         } catch (e: Exception) {
             throw UnsupportedBookException("Не удалось разобрать файл: ${e.message ?: e.javaClass.simpleName}")
+        }
+    }
+
+    /**
+     * Определяет формат по сигнатуре/содержимому, а не по расширению.
+     * Возвращает "pdf"/"epub"/"docx"/"fb2"/"html"/"rtf"/"plain" или null.
+     */
+    private fun detectFormat(ext: String, bytes: ByteArray): String? {
+        // Строгие сигнатуры важнее расширения.
+        if (startsWith(bytes, PDF_MAGIC)) return "pdf"
+        if (startsWith(bytes, RTF_MAGIC)) return "rtf"
+        if (startsWith(bytes, ZIP_LOCAL_MAGIC) ||
+            startsWith(bytes, ZIP_EMPTY_MAGIC) ||
+            startsWith(bytes, ZIP_SPANNED_MAGIC)
+        ) {
+            sniffZipKind(bytes)?.let { return it }
+            return if (ext in ZIP_EXTS) ext else null
+        }
+        if (looksLikeFb2(bytes)) return "fb2"
+        if (looksLikeHtml(bytes)) return "html"
+        // Расширение обещает контейнер, а содержимое не подтверждает его.
+        if (ext in ZIP_EXTS || ext == "pdf") return null
+        if (ext in TEXT_EXTS || looksLikePlainText(bytes)) return "plain"
+        return null
+    }
+
+    private fun startsWith(bytes: ByteArray, magic: ByteArray, offset: Int = 0): Boolean {
+        if (offset + magic.size > bytes.size) return false
+        for (i in magic.indices) if (bytes[offset + i] != magic[i]) return false
+        return true
+    }
+
+    private fun looksLikeFb2(bytes: ByteArray): Boolean {
+        val head = bytes.take(minOf(4096, bytes.size)).toString(Charsets.ISO_8859_1).lowercase()
+        return head.contains("<fictionbook")
+    }
+
+    private fun looksLikeHtml(bytes: ByteArray): Boolean {
+        val head = bytes.take(minOf(4096, bytes.size)).toString(Charsets.ISO_8859_1).lowercase()
+        return head.contains("<!doctype html") || head.contains("<html") ||
+            (head.startsWith("<?xml") && head.contains("<html"))
+    }
+
+    /** Текстовый ли файл по доле печатных символов в начале (RTF/JSON/CSV и т.п.). */
+    private fun looksLikePlainText(bytes: ByteArray): Boolean {
+        if (bytes.isEmpty()) return false
+        val sample = minOf(bytes.size, 2048)
+        var printable = 0
+        for (i in 0 until sample) {
+            val b = bytes[i].toInt() and 0xFF
+            if (b == 0x09 || b == 0x0A || b == 0x0D || b in 0x20..0x7E || b >= 0x80) printable++
+        }
+        return printable > sample * 95 / 100
+    }
+
+    /** Отличает EPUB от DOCX (и прочих zip-контейнеров) по содержимому. */
+    private fun sniffZipKind(bytes: ByteArray): String? {
+        val tmp = File.createTempFile("book_", ".zip").apply { deleteOnExit() }
+        try {
+            tmp.writeBytes(bytes)
+            return try {
+                ZipFile(tmp).use { zip ->
+                    when {
+                        zip.getEntry("word/document.xml") != null -> "docx"
+                        zip.getEntry("META-INF/container.xml") != null -> "epub"
+                        zip.getEntry("mimetype") != null -> "epub"
+                        else -> null
+                    }
+                }
+            } catch (e: Exception) {
+                null
+            }
+        } finally {
+            tmp.delete()
         }
     }
 
@@ -112,9 +205,13 @@ object BookParser {
      * Возвращает ByteArray PNG или null.
      */
     fun extractCover(context: Context, bookFile: UniFile): ByteArray? {
-        val ext = bookFile.name.orEmpty().substringAfterLast('.', "").lowercase()
+        val bytes = runCatching {
+            val input = bookFile.openInputStream() ?: return null
+            input.use { it.readBytes() }
+        }.getOrNull() ?: return null
+        val format = detectFormat(bookFile.name.orEmpty().substringAfterLast('.', "").lowercase(), bytes)
         return try {
-            when (ext) {
+            when (format) {
                 "epub" -> extractEpubCover(bookFile)
                 "fb2" -> extractFb2Cover(bookFile)
                 "pdf" -> extractPdfCover(context, bookFile)
@@ -130,17 +227,16 @@ object BookParser {
      */
     fun extractMetadata(bookFile: UniFile): BookMetadata {
         val name = bookFile.name.orEmpty().substringBeforeLast('.').ifBlank { "Книга" }
-        val ext = bookFile.name.orEmpty().substringAfterLast('.', "").lowercase()
-        val input = bookFile.openInputStream() ?: return BookMetadata(title = name)
-        val bytes = input.use { it.readBytes() }
+        val bytes = bookFile.openInputStream()?.use { it.readBytes() } ?: return BookMetadata(title = name)
         if (bytes.isEmpty()) return BookMetadata(title = name)
+        val format = detectFormat(bookFile.name.orEmpty().substringAfterLast('.', "").lowercase(), bytes)
         return try {
-            when (ext) {
+            when (format) {
                 "epub" -> extractEpubMetadata(bytes)
                 "fb2" -> extractFb2Metadata(bytes, name)
                 "pdf" -> extractPdfMetadata(bytes, name)
                 "docx" -> extractDocxMetadata(bytes, name)
-                "html", "htm" -> extractHtmlMetadata(bytes, name)
+                "html" -> extractHtmlMetadata(bytes, name)
                 else -> BookMetadata(title = name)
             }
         } catch (e: Exception) {
@@ -181,6 +277,7 @@ object BookParser {
             val text = String(bytes, StandardCharsets.ISO_8859_1)
             val pageCount = extractPdfPageCount(text)
             val outline = extractPdfOutline(text)
+                .filter { it.pageNumber in 1..pageCount.coerceAtLeast(1) }
 
             val chapters = if (outline.isNotEmpty() && pageCount > 0) {
                 // Есть оглавление → создаём главы с диапазонами страниц
@@ -257,10 +354,6 @@ object BookParser {
     ): List<BookChapter> {
         if (outline.isEmpty()) return emptyList()
         val chapters = mutableListOf<BookChapter>()
-        // Определяем количество страниц-обложек (до первой записи оглавления)
-        val firstChapterPage = outline.first().pageNumber.coerceAtLeast(1)
-        val skipPages = (firstChapterPage - 1).coerceAtLeast(0)
-
         for ((idx, entry) in outline.withIndex()) {
             val startPage = entry.pageNumber.coerceIn(1, pageCount)
             val endPage = if (idx < outline.lastIndex) {
@@ -279,7 +372,6 @@ object BookParser {
                 volume = vol,
                 chapter = chap,
                 scanlator = author,
-                skipBefore = if (idx == 0) skipPages else 0,
             )
         }
         return chapters
@@ -398,6 +490,51 @@ object BookParser {
             return baos.toByteArray()
         } catch (e: Exception) {
             return null
+        } finally {
+            tmp.delete()
+        }
+    }
+
+    /**
+     * Рендерит одну страницу PDF в Bitmap (для читалки).
+     * Страницы нумеруются с 1. Рендер по требованию — без загрузки всего файла в память.
+     */
+    fun renderPage(context: Context, bookFile: UniFile, pageNumber: Int): Bitmap? {
+        val tmp = File.createTempFile("book_", ".pdf").apply { deleteOnExit() }
+        return try {
+            val input = bookFile.openInputStream() ?: return null
+            input.use { it.copyTo(FileOutputStream(tmp)) }
+            val fd = ParcelFileDescriptor.open(tmp, ParcelFileDescriptor.MODE_READ_ONLY)
+            try {
+                val renderer = PdfRenderer(fd)
+                try {
+                    if (pageNumber < 1 || pageNumber > renderer.pageCount) return null
+                    val page = renderer.openPage(pageNumber - 1)
+                    try {
+                        val maxWidth = 1700
+                        val maxHeight = 2400
+                        val scale = minOf(
+                            maxWidth.toFloat() / page.width,
+                            maxHeight.toFloat() / page.height,
+                            3.0f,
+                        ).coerceAtLeast(0.5f)
+                        val w = (page.width * scale).toInt()
+                        val h = (page.height * scale).toInt()
+                        val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                        bitmap.eraseColor(android.graphics.Color.WHITE)
+                        page.render(bitmap, null as android.graphics.Rect?, null as android.graphics.Matrix?, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        return bitmap
+                    } finally {
+                        page.close()
+                    }
+                } finally {
+                    renderer.close()
+                }
+            } finally {
+                fd.close()
+            }
+        } catch (e: Exception) {
+            null
         } finally {
             tmp.delete()
         }
@@ -759,10 +896,15 @@ object BookParser {
                     "",
                     Parser.xmlParser(),
                 )
-                val metadata = extractDocxMetadata(bytes, name)
-                val paras = doc.select("p")
-                val text = paras.joinToString("\n\n") { p ->
-                    p.select("t").joinToString("") { it.text() }.trim()
+val metadata = extractDocxMetadata(bytes, name)
+                // Параграфы w:p и явные w:p (namespace у jsoup не снимается)
+                val docxParas = doc.select("*")
+                    .filter { it.tagName().substringAfter(':').equals("p", ignoreCase = true) }
+                val text = docxParas.joinToString("\n\n") { p ->
+                    p.select("*")
+                        .filter { it.tagName().substringAfter(':').equals("t", ignoreCase = true) }
+                        .joinToString("") { it.text().trim() }
+                        .trim()
                 }.trim()
                 if (text.isEmpty()) throw UnsupportedBookException("В DOCX нет текста")
                 val chapters = splitIntoChapters(text)
@@ -789,9 +931,13 @@ object BookParser {
                     zip.getInputStream(coreEntry).readBytes().toString(Charsets.UTF_8),
                     "", Parser.xmlParser(),
                 )
-                val title = doc.select("dc:title, title").firstOrNull()?.text()?.trim()?.takeIf { it.isNotBlank() } ?: name
-                val author = doc.select("dc:creator, creator").firstOrNull()?.text()?.trim()?.takeIf { it.isNotBlank() }
-                val description = doc.select("dc:description, description").firstOrNull()?.text()?.trim()?.takeIf { it.isNotBlank() }
+                fun localText(localName: String): String? =
+                    doc.select("*")
+                        .firstOrNull { it.tagName().substringAfter(':').equals(localName, ignoreCase = true) }
+                        ?.text()?.trim()?.takeIf { it.isNotBlank() }
+                val title = localText("title") ?: name
+                val author = localText("creator")
+                val description = localText("description")
                 BookMetadata(title = title, author = author, description = description)
             }
         } catch (e: Exception) {

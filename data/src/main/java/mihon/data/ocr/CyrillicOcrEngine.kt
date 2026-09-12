@@ -282,8 +282,14 @@ internal class CyrillicOcrEngine(
                 return@withLock recognizeWholeImageFallback(image)
             }
 
+            // Крупный «заголовочный» текст (широкие жирные кропы) часто не
+            // проходит порог уверенности, хотя читается визуально. Если он
+            // молча отбрасывается, верх страницы пропадает («в начале вверху
+            // пропускает»), пока мелкий водяной знак распознаётся нормально.
+            val allLines = recognized + salvageRejectedLines(rejected, recognized)
+
             val rows = mutableListOf<MutableList<Pair<TextBox, String>>>()
-            recognized.forEach { item ->
+            allLines.forEach { item ->
                 val row = rows.firstOrNull { existing ->
                     val center = existing.map { it.first.centerY }.average().toFloat()
                     val height = existing.map { it.first.height }.average().toFloat()
@@ -349,6 +355,37 @@ internal class CyrillicOcrEngine(
     }
 
     /**
+     * Лучшие из отклонённых по уверенности строк, которые всё же выглядят
+     * как читаемая кириллица, добавляются к принятым строкам страницы.
+     *
+     * Раньше rejected использовались только когда НИЧЕГО не распозналось
+     * ([rescueRejectedLines]). Если page детектор находит и большую надпись
+     * вверху, и мелкий водяной знак, знак проходил порог уверенности и
+     * верхняя строка молча пропадала из результата. Спасаем только чистую
+     * кириллицу без дублей — реальный текст не теряется, мусор не оживает.
+     */
+    private fun salvageRejectedLines(
+        rejected: List<Pair<TextBox, Recognition>>,
+        recognized: List<Pair<TextBox, String>>,
+    ): List<Pair<TextBox, String>> {
+        if (rejected.isEmpty()) return emptyList()
+        val acceptedTexts = recognized.mapTo(HashSet()) { it.second }
+        return rejected
+            .map { (box, recognition) -> box to recognition.text.trim() }
+            .filter { (_, text) -> text.isNotBlank() }
+            .filter { (_, text) -> text !in acceptedTexts }
+            .filter { (_, text) ->
+                val normalized = OcrTextCleaner.normalizeLocalCyrillicCaption(text).trim()
+                normalized.count(Char::isLetter) >= 4 &&
+                    !OcrTextCleaner.looksLikeDictionaryRamp(normalized) &&
+                    OcrTextCleaner.isAcceptableCyrillicOcrText(normalized)
+            }
+            .distinctBy { it.second }
+            .sortedByDescending { (_, text) -> text.count(Char::isLetter) }
+            .take(tuning().rescueMaxLines)
+    }
+
+    /**
      * Последний локальный rescue-проход для больших облачков и декоративных
      * шрифтов, которые детектор видит, но построчный путь не принимает. Он
      * возвращает только валидный кириллический результат; это не словарная
@@ -358,6 +395,52 @@ internal class CyrillicOcrEngine(
         val result = recognizeCrop(image)
         if (result.text.isBlank() || !acceptsConfidence(result)) return ""
         return cleanRecognition(textPostprocessor.postprocess(result.text))
+    }
+
+    /**
+     * Нужно ли разрезать кроп по столбцам: только когда при нормальном
+     * масштабе (высота 48px) распознаваемая ширина превышает фиксированный
+     * вход 320x48, иначе кроп ужимается и широкий заголовок не читается.
+     */
+    private fun needsWideChunking(crop: Bitmap): Boolean =
+        crop.width * RECOGNIZER_HEIGHT > crop.height * RECOGNIZER_WIDTH
+
+    /**
+     * Распознавание слишком широкого кропа по горизонтальным кускам.
+     *
+     * Распознаватель принимает фиксированный вход [RECOGNIZER_WIDTH]x
+     * [RECOGNIZER_HEIGHT]; кроп пропорционально шире (заголовок во всю
+     * страницу) ужимался до 320px и превращался в мусор с низкой
+     * уверенностью — такие строки молча пропадали из результата. Здесь кроп
+     * режется на куски, каждый из которых при масштабе 48px по высоте
+     * укладывается во входную ширину, с небольшим перекрытием чтобы буквы,
+     * попавшие на стык, не терялись.
+     */
+    private fun recognizeWideChunks(crop: Bitmap): Recognition {
+        val chunkSourceW = ((RECOGNIZER_WIDTH - 8) * crop.height / RECOGNIZER_HEIGHT).coerceAtLeast(16)
+        val overlap = (chunkSourceW * 0.12f).toInt().coerceAtLeast(8)
+        val pieces = mutableListOf<Recognition>()
+        var x = 0
+        while (x < crop.width) {
+            val right = min(crop.width, x + chunkSourceW)
+            val chunk = Bitmap.createBitmap(crop, x, 0, right - x, crop.height)
+            val piece = try {
+                recognizeCrop(chunk)
+            } finally {
+                chunk.recycle()
+            }
+            if (piece.text.isNotBlank()) pieces += piece
+            if (right >= crop.width) break
+            x = right - overlap + 1
+            if (x >= right) x = right
+        }
+        if (pieces.isEmpty()) return Recognition("", 0f, coverage = 0f)
+        return Recognition(
+            text = pieces.joinToString(" ") { it.text.trim() }.trim(),
+            confidence = pieces.fold(0f) { acc, p -> acc + p.confidence } / pieces.size,
+            model = pieces.maxByOrNull { it.confidence }?.model ?: RecognitionModel.V3,
+            coverage = pieces.fold(0f) { acc, p -> acc + p.coverage } / pieces.size,
+        )
     }
 
     /**
@@ -396,7 +479,19 @@ internal class CyrillicOcrEngine(
         // нарезанными словами: на тонких буквах нарезка может обрезать край
         // глифа и вернуть пустой результат, хотя полный кроп читается верно.
         val wholeLine = recognizeCrop(crop)
-        if (words.size == 1) return wholeLine
+        if (words.size == 1) {
+            // Слишком широкий кроп (заголовок/надпись во всю страницу)
+            // распознаватель ужимает до 320px, и текст становится нечитаемым,
+            // а строка уходит в rejected. Режем кроп по столбцам с небольшим
+            // перекрытием и распознаём куски по отдельности.
+            if (needsWideChunking(crop)) {
+                val chunked = recognizeWideChunks(crop)
+                if (chunked.text.isNotBlank() && candidateQuality(chunked) >= candidateQuality(wholeLine)) {
+                    return chunked
+                }
+            }
+            return wholeLine
+        }
         val sb = StringBuilder()
         var confSum = 0f
         var recognizedCount = 0

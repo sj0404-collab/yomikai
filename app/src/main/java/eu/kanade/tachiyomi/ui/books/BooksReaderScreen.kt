@@ -1,7 +1,9 @@
 package eu.kanade.tachiyomi.ui.books
 
+import android.graphics.Bitmap
 import android.speech.tts.TextToSpeech
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -48,6 +50,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -59,9 +63,10 @@ import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.tachiyomi.data.books.BookChapter
 import eu.kanade.tachiyomi.data.books.BookParser
 import eu.kanade.tachiyomi.data.books.BooksStore
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicReference
 import logcat.LogPriority
 import mihon.domain.ocr.service.OcrPreferences
 import tachiyomi.core.common.util.system.logcat
@@ -99,6 +104,15 @@ data class BooksReaderScreen(
         var availableVoiceNames by remember { mutableStateOf<List<String>>(emptyList()) }
         var selectedVoiceIndex by remember { mutableIntStateOf(0) }
         val tts = remember { mutableStateOf<TextToSpeech?>(null) }
+        val pendingUtterance = remember { AtomicReference<CompletableDeferred<Unit>?>(null) }
+        val expectedUtteranceId = remember { AtomicReference<String?>(null) }
+        var pdfPageIndex by remember { mutableIntStateOf(0) }
+        var pageImage by remember { mutableStateOf<Bitmap?>(null) }
+
+        val bookFile = remember {
+            val dir = BooksStore.booksDirectory(context)
+            dir?.findFile(bookFileName)
+        }
 
         // Загрузка и парсинг
         LaunchedEffect(Unit) {
@@ -115,6 +129,12 @@ data class BooksReaderScreen(
                         val currentCh = parsed.chapters.getOrNull(currentChapterIndex)
                         val totalSentences = splitSentences(currentCh?.resolvedText.orEmpty()).size
                         currentSentenceIndex = saved.sentence.coerceIn(0, totalSentences.coerceAtLeast(1) - 1)
+                        if (currentCh?.isPageBased == true) {
+                            pdfPageIndex = saved.sentence.coerceIn(
+                                0,
+                                currentCh.readablePages.lastIndex.coerceAtLeast(0),
+                            )
+                        }
                         loading = false
                     }
                 }.onFailure { e ->
@@ -135,6 +155,23 @@ data class BooksReaderScreen(
                 } else {
                     logcat(LogPriority.WARN) { "BooksReader: TTS init failed: $status" }
                 }
+            }.apply {
+                setOnUtteranceProgressListener(object : TextToSpeech.OnUtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) {}
+                    override fun onDone(utteranceId: String?) {
+                        if (expectedUtteranceId.get() == utteranceId) {
+                            expectedUtteranceId.set(null)
+                            pendingUtterance.getAndSet(null)?.complete(Unit)
+                        }
+                    }
+                    @Deprecated("Deprecated in Android")
+                    override fun onError(utteranceId: String?) {
+                        if (expectedUtteranceId.get() == utteranceId) {
+                            expectedUtteranceId.set(null)
+                            pendingUtterance.getAndSet(null)?.complete(Unit)
+                        }
+                    }
+                })
             }
         }
         LaunchedEffect(tts.value) {
@@ -158,17 +195,14 @@ data class BooksReaderScreen(
             val chapter = chapters.getOrNull(currentChapterIndex)
                 ?: run { isPlaying = false; return@LaunchedEffect }
             val sentences = splitSentences(chapter.resolvedText)
+            // Страницы без текста (PDF) не озвучиваются — просто останавливаемся
             if (sentences.isEmpty()) {
-                if (currentChapterIndex < chapters.lastIndex) {
-                    currentChapterIndex++; currentSentenceIndex = 0
-                } else {
-                    isPlaying = false
-                }
+                isPlaying = false
                 return@LaunchedEffect
             }
             if (currentSentenceIndex >= sentences.size) {
                 if (currentChapterIndex < chapters.lastIndex) {
-                    currentChapterIndex++; currentSentenceIndex = 0
+                    currentChapterIndex++; currentSentenceIndex = 0; pdfPageIndex = 0
                 } else {
                     isPlaying = false
                 }
@@ -180,35 +214,71 @@ data class BooksReaderScreen(
             }
             engine.setSpeechRate(speechRate)
             engine.setPitch(pitch)
-            engine.speak(
+            val utteranceId = "book_${currentChapterIndex}_$currentSentenceIndex"
+            val promise = CompletableDeferred<Unit>()
+            expectedUtteranceId.set(utteranceId)
+            pendingUtterance.set(promise)
+            val result = engine.speak(
                 sentences[currentSentenceIndex],
-                TextToSpeech.QUEUE_FLUSH,
+                TextToSpeech.QUEUE_ADD,
                 null,
-                "book_${currentChapterIndex}_$currentSentenceIndex",
+                utteranceId,
             )
-            while (engine.isSpeaking) delay(150)
+            if (result == TextToSpeech.ERROR) {
+                expectedUtteranceId.set(null)
+                pendingUtterance.compareAndSet(promise, null)
+                isPlaying = false
+                return@LaunchedEffect
+            }
+            promise.await()
             currentSentenceIndex++
         }
 
         // Сохранение прогресса
-        val bookFile = remember {
-            val dir = BooksStore.booksDirectory(context)
-            dir?.findFile(bookFileName)
-        }
-        LaunchedEffect(bookFileName, currentChapterIndex, currentSentenceIndex, chapters.size) {
+        LaunchedEffect(bookFileName, currentChapterIndex, currentSentenceIndex, pdfPageIndex, chapters.size) {
             if (chapters.isEmpty() || loading) return@LaunchedEffect
             val bk = bookFile ?: return@LaunchedEffect
+            val current = chapters.getOrNull(currentChapterIndex)
+            val saveSentence = if (current?.isPageBased == true) pdfPageIndex else currentSentenceIndex
             val totalSentencesPerChapter = chapters.map { splitSentences(it.resolvedText).size }
             val total = totalSentencesPerChapter.sum().coerceAtLeast(1)
-            val consumedBefore = totalSentencesPerChapter.subList(0, currentChapterIndex).sum() + currentSentenceIndex
+            val consumedBefore = totalSentencesPerChapter.subList(0, currentChapterIndex).sum() + saveSentence
             val percent = ((consumedBefore.toLong() * 100) / total).toInt().coerceIn(0, 100)
-            BooksStore.save(context, bk, BooksStore.Snapshot(currentChapterIndex, currentSentenceIndex, percent))
+            BooksStore.save(context, bk, BooksStore.Snapshot(currentChapterIndex, saveSentence, percent))
+        }
+
+        // Рендер страниц PDF по требованию
+        LaunchedEffect(chapters, currentChapterIndex, pdfPageIndex) {
+            val chapter = chapters.getOrNull(currentChapterIndex)
+            if (chapter?.isPageBased != true) {
+                pageImage?.recycle()
+                pageImage = null
+                return@LaunchedEffect
+            }
+            val page = chapter.readablePages.getOrNull(pdfPageIndex) ?: run {
+                pageImage?.recycle()
+                pageImage = null
+                return@LaunchedEffect
+            }
+            val bmp = withContext(Dispatchers.IO) {
+                val file = bookFile ?: return@withContext null
+                BookParser.renderPage(context, file, page.pageNumber)
+            }
+            // Только если это всё ещё актуальная страница
+            val current = chapters.getOrNull(currentChapterIndex)
+            if (current?.isPageBased == true && current.readablePages.getOrNull(pdfPageIndex)?.pageNumber == page.pageNumber) {
+                pageImage?.recycle()
+                pageImage = bmp
+            } else {
+                bmp?.recycle()
+            }
         }
 
         DisposableEffect(Unit) {
             onDispose {
                 tts.value?.stop()
                 tts.value?.shutdown()
+                pageImage?.recycle()
             }
         }
 
@@ -311,6 +381,7 @@ data class BooksReaderScreen(
                                 .clickable {
                                     currentChapterIndex = index
                                     currentSentenceIndex = 0
+                                    pdfPageIndex = 0
                                     showChapterList = false
                                 }
                                 .background(
@@ -457,53 +528,123 @@ data class BooksReaderScreen(
                 }
             }
 
-            Box(
-                modifier = Modifier
+            val isPageBased = currentChapter?.isPageBased == true
+            val readablePages = currentChapter?.readablePages.orEmpty()
+
+            // Страница PDF — на весь доступный экран (без отступов и прокрутки);
+            // текстовые главы остаются прокручиваемыми с внутренними отступами.
+            val contentModifier = if (isPageBased && pageImage != null) {
+                Modifier.weight(1f)
+            } else {
+                Modifier
                     .weight(1f)
                     .verticalScroll(scrollState)
-                    .padding(16.dp),
-            ) {
-                if (sentences.isNotEmpty()) {
-                    Text(
-                        text = buildAnnotatedText(sentences, currentSentenceIndex),
-                        style = MaterialTheme.typography.bodyLarge.copy(
-                            fontSize = 18.sp,
-                            lineHeight = 28.sp,
-                        ),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                } else {
-                    val emptyLabel = if (currentChapter?.isPageBased == true) "Страница пуста" else "Глава пуста"
-                    Text(
-                        text = emptyLabel,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
-                    )
+                    .padding(16.dp)
+            }
+
+            Box(modifier = contentModifier) {
+                when {
+                    isPageBased && pageImage != null -> {
+                        Image(
+                            bitmap = pageImage!!.asImageBitmap(),
+                            contentDescription = currentChapter?.displayTitle,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Fit,
+                        )
+                    }
+                    isPageBased -> {
+                        val pNum = readablePages.getOrNull(pdfPageIndex)?.pageNumber ?: (currentChapterIndex + 1)
+                        Text(
+                            text = "Страница $pNum — нет изображения",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
+                        )
+                    }
+                    sentences.isNotEmpty() -> {
+                        Text(
+                            text = buildAnnotatedText(sentences, currentSentenceIndex),
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontSize = 18.sp,
+                                lineHeight = 28.sp,
+                            ),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    else -> {
+                        Text(
+                            text = "Глава пуста",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
+                        )
+                    }
                 }
             }
 
-            if (sentences.isNotEmpty()) {
+            if (sentences.isNotEmpty() && !isPageBased) {
                 LinearProgressIndicator(
                     progress = { currentSentenceIndex.toFloat() / sentences.size },
                     modifier = Modifier.fillMaxWidth(),
                 )
-                val isPageBased = currentChapter?.isPageBased == true
-                val statusText = if (isPageBased) {
-                    val pNum = currentChapter.pages.firstOrNull()?.pageNumber ?: (currentChapterIndex + 1)
-                    val pTotal = currentChapter.pages.lastOrNull()?.totalPages ?: chapters.size
-                    "Страница $pNum/$pTotal · Предложение ${currentSentenceIndex + 1}/${sentences.size}"
-                } else {
-                    "Глава ${currentChapterIndex + 1}/${chapters.size} · " +
-                        "Предложение ${currentSentenceIndex + 1}/${sentences.size}"
+            }
+
+            val totalFilePages = chapters.lastOrNull()?.pages?.lastOrNull()?.pageNumber ?: chapters.size
+            val statusText = if (isPageBased) {
+                val pNum = readablePages.getOrNull(pdfPageIndex)?.pageNumber ?: (currentChapterIndex + 1)
+                "Страница $pNum из $totalFilePages"
+            } else {
+                "Глава ${currentChapterIndex + 1}/${chapters.size} · " +
+                    "Предложение ${currentSentenceIndex + 1}/${sentences.size.coerceAtLeast(1)}"
+            }
+            Text(
+                text = statusText,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+
+            if (isPageBased && readablePages.size > 1) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .height(36.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(
+                        onClick = {
+                            if (pdfPageIndex > 0) {
+                                pdfPageIndex--
+                                isPlaying = false
+                                tts.value?.stop()
+                            }
+                        },
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        Icon(Icons.Outlined.SkipPrevious, contentDescription = "Назад")
+                    }
+                    Text(
+                        text = "Страница ${pdfPageIndex + 1}/${readablePages.size} в главе",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    IconButton(
+                        onClick = {
+                            if (pdfPageIndex < readablePages.lastIndex) {
+                                pdfPageIndex++
+                                isPlaying = false
+                                tts.value?.stop()
+                            }
+                        },
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        Icon(Icons.Outlined.SkipNext, contentDescription = "Вперёд")
+                    }
                 }
-                Text(
-                    text = statusText,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                )
             }
 
             Row(
@@ -516,7 +657,7 @@ data class BooksReaderScreen(
             ) {
                 IconButton(onClick = {
                     if (currentChapterIndex > 0) {
-                        currentChapterIndex--; currentSentenceIndex = 0
+                        currentChapterIndex--; currentSentenceIndex = 0; pdfPageIndex = 0
                     }
                 }) {
                     Icon(Icons.Outlined.SkipPrevious, contentDescription = "Предыдущая глава")
@@ -536,7 +677,7 @@ data class BooksReaderScreen(
                 }
                 IconButton(onClick = {
                     if (currentChapterIndex < chapters.lastIndex) {
-                        currentChapterIndex++; currentSentenceIndex = 0
+                        currentChapterIndex++; currentSentenceIndex = 0; pdfPageIndex = 0
                     }
                 }) {
                     Icon(Icons.Outlined.SkipNext, contentDescription = "Следующая глава")

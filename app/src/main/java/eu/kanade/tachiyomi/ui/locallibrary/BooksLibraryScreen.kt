@@ -222,9 +222,7 @@ object BooksLibraryScreen : Screen {
                                         modifier = Modifier
                                             .size(56.dp, 80.dp)
                                             .clip(RoundedCornerShape(4.dp))
-                                            .then(
-                                                Modifier.padding(0.dp)
-                                            ),
+                                            .background(MaterialTheme.colorScheme.surfaceVariant),
                                         contentAlignment = Alignment.Center,
                                     ) {
                                         Column(

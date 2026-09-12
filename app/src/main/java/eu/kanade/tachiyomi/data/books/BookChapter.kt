@@ -10,7 +10,7 @@ package eu.kanade.tachiyomi.data.books
  *    страницы хранится в [BookPage.text].
  *
  * Поддерживает структуру ранобэ/книг:
- *  • Том 1 → Глава 1: Пролог → страницы 1-5 (обложки/титулы, пропускаются)
+ *  • Том 1 → Глава 1: Пролог → страницы 1-5 (обложки/титулы тоже показываются)
  *  • Том 1 → Глава 1: Пролог → страницы 6-12 (текст главы)
  *
  * @param isPageBased true = страницы (PDF), false = текстовые главы (EPUB/FB2/...)
@@ -18,6 +18,7 @@ package eu.kanade.tachiyomi.data.books
  * @param chapter Номер главы (null если нет нумерации).
  * @param subChapter Подглава / секция.
  * @param skipPages Количество страниц для пропуска в начале (обложки/титулы).
+ *                  Оставлено для совместимости; страницы показываются все.
  */
 data class BookChapter(
     val id: Long,
@@ -44,9 +45,9 @@ data class BookChapter(
     /** Количество страниц в главе (для page-based). */
     val pageCount: Int get() = pages.size
 
-    /** Страницы без пропущенных (обложки/титулы). */
+    /** Страницы главы (обложки/титулы тоже показываются, не пропускаются). */
     val readablePages: List<BookPage>
-        get() = pages.drop(skipPages)
+        get() = pages
 
     /** Текст главы: для text-based берётся из [text], для page-based конкатенируется из страниц. */
     val resolvedText: String
@@ -87,9 +88,8 @@ data class BookChapter(
                 } else {
                     // Нет оглавления — просто номер страницы
                     val p = pages.firstOrNull()?.pageNumber ?: (id.toInt() + 1)
-                    append("Страница $p")
-                    val total = pages.lastOrNull()?.pageNumber
-                    if (total != null && total > p) append("–$total")
+                    val total = pages.firstOrNull()?.totalPages ?: p
+                    append("Страница $p из $total")
                 }
             } else {
                 // Текстовые главы
@@ -111,7 +111,7 @@ data class BookChapter(
                 displayTitle
             } else {
                 val p = pages.firstOrNull()?.pageNumber ?: (id.toInt() + 1)
-                val total = pages.lastOrNull()?.pageNumber ?: p
+                val total = pages.firstOrNull()?.totalPages ?: p
                 "Страница $p из $total"
             }
         } else {
@@ -184,7 +184,6 @@ data class BookChapter(
          *
          * @param startPage Первая страница главы (1-based).
          * @param endPage Последняя страница главы (включительно).
-         * @param skipBefore Сколько страниц пропустить до этой главы (обложки).
          */
         fun createSection(
             index: Int,

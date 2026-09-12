@@ -320,10 +320,10 @@ object AiHttpServer {
                                     if (coverFile.exists()) {
                                         respond(out, 200, "image/png", coverFile.readBytes())
                                     } else {
-                                        respond(out, 404, "text/plain", "cover not found".toByteArray())
+                                        serveCoverFromMetadata(out, context, file)
                                     }
                                 } else {
-                                    respond(out, 404, "text/plain", "no cover".toByteArray())
+                                    serveCoverFromMetadata(out, context, file)
                                 }
                             }
                         }
@@ -360,6 +360,22 @@ object AiHttpServer {
             .firstOrNull { it.substringBefore('=') == name }
             ?.substringAfter('=', "")
             ?.let { URLDecoder.decode(it, "UTF-8") }
+
+    /** Отдаёт обложку из метаданных книги (если файл-кэш ещё не создан). */
+    private fun serveCoverFromMetadata(
+        out: OutputStream,
+        context: Context,
+        book: com.hippo.unifile.UniFile,
+    ) {
+        val meta = BooksStore.loadMetadata(context, book)
+        val bytes = meta.coverImage
+        if (bytes != null) {
+            BooksStore.saveCover(context, book, bytes)
+            respond(out, 200, "image/png", bytes)
+        } else {
+            respond(out, 404, "text/plain", "no cover".toByteArray())
+        }
+    }
 
     /**
      * Скачивает книгу по URL с потоковым чтением (без OOM).
@@ -405,18 +421,25 @@ object AiHttpServer {
                     baos.write(buffer, 0, read)
                 }
             }
+
+            // Заголовки и итоговый URL сохраняем ДО disconnect
+            val disposition = conn.getHeaderField("Content-Disposition")
+            val finalUrl = conn.url
             conn.disconnect()
 
             val fileName = when {
                 !name.isNullOrBlank() -> name
                 else -> {
-                    // Пытаемся извлечь имя из URL или Content-Disposition
-                    val disposition = conn.getHeaderField("Content-Disposition")
                     val dispositionName = disposition?.let {
-                        Regex("""filename[*]?="?([^";\s]+)"""").find(it)?.groupValues?.get(1)
+                        Regex("""filename[*]?=(?:"|UTF-8'')?([^"\s]+)""")
+                            .find(it)?.groupValues?.get(1)
+                            ?.let { raw ->
+                                runCatching { URLDecoder.decode(raw, "UTF-8") }.getOrDefault(raw)
+                                    .trim('"')
+                            }
                     }
                     dispositionName
-                        ?: java.net.URL(url).path.substringAfterLast('/').ifBlank { null }
+                        ?: finalUrl.path.substringAfterLast('/').ifBlank { null }
                         ?: "book_${System.currentTimeMillis()}"
                 }
             }

@@ -283,6 +283,15 @@ object BooksStore {
         File(coversDir(context), coverFileName(book)).delete()
     }
 
+    /** Сохраняет обложку (PNG/JPEG байты) в кэш, чтобы её можно было отдать по пути. */
+    fun saveCover(context: Context, book: UniFile, bytes: ByteArray) {
+        try {
+            FileOutputStream(File(coversDir(context), coverFileName(book))).use { it.write(bytes) }
+        } catch (e: Exception) {
+            // кэш не критичен
+        }
+    }
+
     private fun displayName(context: Context, uri: android.net.Uri): String? {
         context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) {
