@@ -73,7 +73,7 @@ object BookAmbience {
     fun generateWav(mood: Mood): ByteArray {
         val chords = CHORDS[mood] ?: CHORDS[Mood.NEUTRAL]!!
         val totalSamples = LOOP_SEC * SAMPLE_RATE
-        val chordSamples = CHORD_SEC * SAMPLE_RATE
+        val chordSamples = (CHORD_SEC * SAMPLE_RATE).toInt()
         val buf = DoubleArray(totalSamples)
 
         chords.forEachIndexed { ci, notes ->
