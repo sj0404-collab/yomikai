@@ -56,6 +56,9 @@ object RunnerLlm {
     private const val REPO = "sj0404-collab/yomikai"
     private const val WORKFLOW = "llm-runner.yml"
     private const val WORKFLOW_OPENCODE = "opencode.yml"
+    // Прототип: opencode.yml живёт на этой ветке (agent/, npm-hub/, tools/).
+    // При слиянии в main сменить на "main".
+    private const val OPENCODE_REF = "prototype-opencode-agent"
 
     private fun prefs(): OcrPreferences = Injekt.get()
 
@@ -605,7 +608,7 @@ object RunnerLlm {
 
         onStatus("Отправляем запуск OpenCode в GitHub Actions…")
         val dispatchBody = JSONObject()
-            .put("ref", "main")
+            .put("ref", OPENCODE_REF)
             .put(
                 "inputs",
                 JSONObject()
