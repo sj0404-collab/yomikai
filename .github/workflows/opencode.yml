@@ -1,0 +1,449 @@
+name: OpenCode Agent
+
+# OpenCode serve + oc-gateway (mobile chat web UI) + npm-hub (xterm терминал,
+# дашборд, файлы, git status/diff/log) on a GitHub runner, published through a
+# cloudflared quick tunnel. The app starts it with the "OpenCode-агент" button
+# (одна сессия = один run), then reads the endpoint artifact same way as
+# llm-runner.yml: url=web-чат, terminal=npm-hub, одна сессия = один run.
+#
+# GH_TOKEN берётся из YP_AGENT_TOKEN (PAT аккаунта) — так opencode и npm-hub
+# видят ВСЕ репозитории/файлы/коммиты/логи аккаунта и могут коммитить,
+# собирать APK и т.п., а не только этот репозиторий.
+
+on:
+  workflow_dispatch:
+    inputs:
+      session:
+        description: "Session id (random, from the app)"
+        required: true
+        type: string
+      os:
+        description: "Runner OS"
+        required: false
+        default: "linux"
+        type: choice
+        options:
+          - linux
+          - windows
+      ui:
+        description: "Web interface: original SPA (web) or lightweight mobile chat (mobile)"
+        required: false
+        default: "mobile"
+        type: choice
+        options:
+          - web
+          - mobile
+      branch:
+        description: "Working branch (created if absent)"
+        required: false
+        default: "opencode-work"
+        type: string
+      prompt:
+        description: "Optional first prompt, sent once the web UI is up"
+        required: false
+        default: ""
+        type: string
+
+run-name: "OpenCode ${{ inputs.os }}/${{ inputs.ui }} (${{ inputs.session }})"
+
+permissions:
+  contents: write
+
+jobs:
+  serve-linux:
+    if: inputs.os == 'linux'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fork
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Prepare working branch
+        working-directory: fork
+        run: |
+          git config user.email "opencode@yomikai"
+          git config user.name  "OpenCode"
+          BRANCH="${{ inputs.branch }}"
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            git branch -f "$BRANCH" HEAD
+            git checkout -q "$BRANCH"
+            git push -q --force-with-lease origin "$BRANCH" || git push -q -f origin "$BRANCH"
+          else
+            git checkout -q -b "$BRANCH" && git push -q -u origin "$BRANCH"
+          fi
+          echo "WORK_BRANCH=$BRANCH" >> "$GITHUB_ENV"
+
+      - name: Install OpenCode
+        run: |
+          set -e
+          export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
+          if ! command -v opencode >/dev/null 2>&1; then
+            curl -fsSL https://opencode.ai/install | bash || true
+          fi
+          if ! command -v opencode >/dev/null 2>&1; then
+            npm install -g opencode-ai
+          fi
+          command -v opencode
+          opencode --version || true
+
+      - name: Configure OpenCode
+        env:
+          GH_TOKEN: ${{ secrets.YP_AGENT_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
+          mkdir -p "$HOME/.config/opencode"
+          cat > "$HOME/.config/opencode/opencode.json" <<'JSON'
+          { "permission": { "*": "allow" } }
+          JSON
+          cp "$HOME/.config/opencode/opencode.json" opencode.json || true
+          # git: агент коммитит/пушит PAT-ом во все репозитории аккаунта
+          B64=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0 || printf 'x-access-token:%s' "$GH_TOKEN" | base64)
+          git config --global --replace-all "http.https://github.com/.extraheader" "AUTHORIZATION: basic ${B64}"
+          git config --global credential.helper store
+          if [ -n "$GH_TOKEN" ]; then echo "https://x-access-token:$GH_TOKEN@github.com" >> "$HOME/.git-credentials"; chmod 600 "$HOME/.git-credentials"; fi
+          gh auth status 2>&1 | head -3 || true
+
+      - name: Install npm-hub deps
+        working-directory: fork/npm-hub
+        run: |
+          set -e
+          if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
+
+      - name: Start OpenCode serve, npm-hub and tunnels
+        env:
+          GH_TOKEN: ${{ secrets.YP_AGENT_TOKEN || secrets.GITHUB_TOKEN }}
+          FIRST_PROMPT: ${{ inputs.prompt }}
+          OC_UI: ${{ inputs.ui }}
+          SESSION_ID: ${{ inputs.session }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          DEFAULT_MODEL: ${{ secrets.DEFAULT_MODEL }}
+        run: |
+          set -e
+          export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
+          cd "$GITHUB_WORKSPACE/fork"
+
+          # Headless opencode serve + лёгкий мобильный чат через oc-gateway
+          nohup opencode serve --port 4096 --hostname 127.0.0.1 --cors '*' \
+            > /tmp/opencode.log 2>&1 &
+          echo $! > /tmp/opencode.pid
+
+          up=0
+          for i in $(seq 1 40); do
+            if curl -sf -o /dev/null -m 4 "http://127.0.0.1:4096/global/health" \
+              || curl -sf -o /dev/null -m 4 "http://127.0.0.1:4096/session"; then
+              up=1; break
+            fi
+            sleep 2
+          done
+          if [ "$up" != 1 ]; then
+            echo "::error::OpenCode serve did not start."
+            tail -50 /tmp/opencode.log
+            exit 1
+          fi
+          echo "OpenCode serve is up on 4096"
+
+          # npm-hub: xterm-терминал, дашборд, файлы, логи сборки, git status/diff/log
+          (cd npm-hub && PORT=8090 GH_TOKEN="$GH_TOKEN" nohup node src/server.js \
+            > /tmp/npm-hub.log 2>&1 &)
+          echo $! > /tmp/npm-hub.pid
+          hub=0
+          for i in $(seq 1 30); do
+            if curl -sf -o /dev/null -m 4 "http://127.0.0.1:8090/api/info"; then hub=1; break; fi
+            sleep 1
+          done
+          if [ "$hub" != 1 ]; then
+            echo "::warning::npm-hub did not start; terminal/files unavailable."
+            tail -30 /tmp/npm-hub.log
+          else
+            echo "npm-hub is up on 8090"
+          fi
+
+          # oc-gateway -> opencode (веб-чат на 4100)
+          OC_UI="$OC_UI" nohup node "$GITHUB_WORKSPACE/fork/agent/oc-gateway.js" \
+            > /tmp/oc-gateway.log 2>&1 &
+          echo $! > /tmp/oc-gateway.pid
+          gw=0
+          for i in $(seq 1 20); do
+            if curl -sf -o /dev/null -m 4 "http://127.0.0.1:4100/"; then gw=1; break; fi
+            sleep 1
+          done
+          if [ "$gw" != 1 ]; then
+            echo "::error::oc-gateway did not start."
+            tail -40 /tmp/oc-gateway.log
+            exit 1
+          fi
+
+          URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 4100 /tmp/oc-tunnel.log)
+          if [ -z "$URL" ]; then
+            echo "::error::no tunnel came up for opencode."
+            tail -25 /tmp/oc-tunnel.log
+            exit 1
+          fi
+          HUBURL=""
+          if [ "$hub" = 1 ]; then
+            HUBURL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8090 /tmp/hub-tunnel.log)
+            if [ -z "$HUBURL" ]; then
+              echo "::warning::no tunnel for npm-hub."
+              tail -25 /tmp/hub-tunnel.log
+            fi
+          fi
+
+          if [ -n "$FIRST_PROMPT" ]; then
+            python3 "$GITHUB_WORKSPACE/fork/tools/oc_first_prompt.py" \
+              || echo "::warning::first prompt failed; the chat is still up"
+          fi
+
+          # Endpoint артефакт — тот же контракт, что llm-runner (app ждёт его).
+          python3 - <<'PY'
+          import json, os
+          env = os.environ
+          data = {
+              "url": env.get("URL", ""),
+              "api_key": "",
+              "model": "opencode",
+              "session": env.get("SESSION_ID", ""),
+              "terminal": (env.get("HUBURL", "") + "/m") if env.get("HUBURL") else "",
+              "terminal_user": "yomikai",
+              "os": "linux",
+              "ui": env.get("OC_UI", "mobile"),
+              "branch": env.get("WORK_BRANCH", ""),
+          }
+          with open("endpoint.json", "w", encoding="utf-8") as f:
+              json.dump(data, f)
+          PY
+          curl -fsS -m 20 "$URL/" > /dev/null || true
+          echo "endpoint: $URL | hub: ${HUBURL:-unavailable}"
+
+      - name: Upload endpoint artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: endpoint-${{ inputs.session }}
+          path: fork/endpoint.json
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Keep session alive
+        env:
+          OC_UI: ${{ inputs.ui }}
+        run: |
+          echo "Running until cancelled, or for six hours."
+          export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
+          for i in $(seq 1 1400); do
+            sleep 15
+            if curl -sf -o /dev/null -m 8 "http://127.0.0.1:4096/global/health" \
+              && curl -sf -o /dev/null -m 8 "http://127.0.0.1:4100/"; then
+              continue
+            fi
+            echo "::warning::OpenCode stopped answering; restarting serve + gateway."
+            nohup opencode serve --port 4096 --hostname 127.0.0.1 --cors '*' \
+              > /tmp/opencode2.log 2>&1 &
+            sleep 4
+            OC_UI="$OC_UI" node "$GITHUB_WORKSPACE/fork/agent/oc-gateway.js" > /tmp/oc-gateway2.log 2>&1 &
+            sleep 6
+          done
+
+      - name: Final save
+        run: |
+          cd "$GITHUB_WORKSPACE/fork" || exit 0
+          if [ -n "$(git status --porcelain)" ]; then
+            git add -A
+            git commit -q -m "opencode final save $(date -u '+%Y-%m-%d %H:%M')" || true
+            git push -q origin HEAD || true
+          fi
+
+  serve-windows:
+    if: inputs.os == 'windows'
+    runs-on: windows-2025
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: fork
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Prepare working branch
+        working-directory: fork
+        run: |
+          git config user.email "opencode@yomikai"
+          git config user.name  "OpenCode"
+          BRANCH="${{ inputs.branch }}-windows"
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            git branch -f "$BRANCH" HEAD
+            git checkout -q "$BRANCH"
+            git push -q --force-with-lease origin "$BRANCH" || git push -q -f origin "$BRANCH"
+          else
+            git checkout -q -b "$BRANCH" && git push -q -u origin "$BRANCH"
+          fi
+          echo "WORK_BRANCH=$BRANCH" >> "$GITHUB_ENV"
+
+      - name: Install OpenCode
+        run: |
+          npm install -g opencode-ai
+          opencode --version || true
+
+      - name: Configure OpenCode
+        env:
+          GH_TOKEN: ${{ secrets.YP_AGENT_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p "$USERPROFILE/.config/opencode"
+          printf '{\n  "permission": { "*": "allow" }\n}\n' > "$USERPROFILE/.config/opencode/opencode.json"
+          cp "$USERPROFILE/.config/opencode/opencode.json" opencode.json || true
+          B64=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0 || printf 'x-access-token:%s' "$GH_TOKEN" | base64)
+          git config --global --replace-all "http.https://github.com/.extraheader" "AUTHORIZATION: basic ${B64}"
+          git config --global credential.helper store
+          if [ -n "$GH_TOKEN" ]; then echo "https://x-access-token:$GH_TOKEN@github.com" >> "$USERPROFILE/.git-credentials"; fi
+
+      - name: Install npm-hub deps
+        working-directory: fork/npm-hub
+        run: |
+          if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
+
+      - name: Start OpenCode serve, npm-hub and tunnels
+        env:
+          GH_TOKEN: ${{ secrets.YP_AGENT_TOKEN || secrets.GITHUB_TOKEN }}
+          FIRST_PROMPT: ${{ inputs.prompt }}
+          OC_UI: ${{ inputs.ui }}
+          SESSION_ID: ${{ inputs.session }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          DEFAULT_MODEL: ${{ secrets.DEFAULT_MODEL }}
+        run: |
+          set -e
+          cd "$GITHUB_WORKSPACE/fork"
+
+          # cmd /c start — процесс не умрёт по концу шага
+          cmd /c start "" /b opencode serve --port 4096 --hostname 127.0.0.1 --cors "*" "1>$TEMP\opencode.log" "2>$TEMP\opencode.err"
+          up=0
+          for i in $(seq 1 40); do
+            if curl -sf -o /dev/null -m 4 "http://127.0.0.1:4096/global/health" \
+              || curl -sf -o /dev/null -m 4 "http://127.0.0.1:4096/session"; then
+              up=1; break
+            fi
+            sleep 2
+          done
+          if [ "$up" != 1 ]; then
+            echo "::error::OpenCode serve did not start."
+            tail -50 "$TEMP/opencode.log" "$TEMP/opencode.err" 2>/dev/null || true
+            exit 1
+          fi
+          echo "OpenCode serve is up on 4096"
+
+          (cd npm-hub && PORT=8090 GH_TOKEN="$GH_TOKEN" node src/server.js > "$TEMP/npm-hub.log" 2>&1 &)
+          hub=0
+          for i in $(seq 1 30); do
+            if curl -sf -o /dev/null -m 4 "http://127.0.0.1:8090/api/info"; then hub=1; break; fi
+            sleep 1
+          done
+          if [ "$hub" != 1 ]; then
+            echo "::warning::npm-hub did not start; terminal/files unavailable."
+            tail -30 "$TEMP/npm-hub.log" 2>/dev/null || true
+          else
+            echo "npm-hub is up on 8090"
+          fi
+
+          OC_UI="$OC_UI" node "$GITHUB_WORKSPACE/fork/agent/oc-gateway.js" > "$TEMP/oc-gateway.log" 2>&1 &
+          gw=0
+          for i in $(seq 1 20); do
+            if curl -sf -o /dev/null -m 4 "http://127.0.0.1:4100/"; then gw=1; break; fi
+            sleep 1
+          done
+          if [ "$gw" != 1 ]; then
+            echo "::error::oc-gateway did not start."
+            tail -40 "$TEMP/oc-gateway.log" 2>/dev/null || true
+            exit 1
+          fi
+
+          URL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 4100 /tmp/oc-tunnel.log)
+          if [ -z "$URL" ]; then
+            echo "::error::no tunnel came up for opencode."
+            tail -25 /tmp/oc-tunnel.log
+            exit 1
+          fi
+          HUBURL=""
+          if [ "$hub" = 1 ]; then
+            HUBURL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8090 /tmp/hub-tunnel.log)
+            if [ -z "$HUBURL" ]; then
+              echo "::warning::no tunnel for npm-hub."
+              tail -25 /tmp/hub-tunnel.log
+            fi
+          fi
+
+          if [ -n "$FIRST_PROMPT" ]; then
+            python "$GITHUB_WORKSPACE/fork/tools/oc_first_prompt.py" || echo "::warning::first prompt failed"
+          fi
+
+          python - <<'PY'
+          import json, os
+          env = os.environ
+          data = {
+              "url": env.get("URL", ""),
+              "api_key": "",
+              "model": "opencode",
+              "session": env.get("SESSION_ID", ""),
+              "terminal": (env.get("HUBURL", "") + "/m") if env.get("HUBURL") else "",
+              "terminal_user": "yomikai",
+              "os": "windows",
+              "ui": env.get("OC_UI", "mobile"),
+              "branch": env.get("WORK_BRANCH", ""),
+          }
+          with open("endpoint.json", "w", encoding="utf-8") as f:
+              json.dump(data, f)
+          PY
+          curl -fsS -m 20 "$URL/" > /dev/null || true
+          echo "endpoint: $URL | hub: ${HUBURL:-unavailable}"
+
+      - name: Upload endpoint artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: endpoint-${{ inputs.session }}
+          path: fork/endpoint.json
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Keep session alive
+        env:
+          OC_UI: ${{ inputs.ui }}
+        run: |
+          echo "Running until cancelled, or for six hours."
+          for i in $(seq 1 1400); do
+            sleep 15
+            if curl -sf -o /dev/null -m 8 "http://127.0.0.1:4096/global/health" \
+              && curl -sf -o /dev/null -m 8 "http://127.0.0.1:4100/"; then
+              continue
+            fi
+            echo "::warning::OpenCode stopped answering; restarting serve + gateway."
+            cmd /c start "" /b opencode serve --port 4096 --hostname 127.0.0.1 --cors "*" "1>$TEMP\opencode2.log" "2>$TEMP\opencode2.err"
+            sleep 4
+            OC_UI="$OC_UI" node "$GITHUB_WORKSPACE/fork/agent/oc-gateway.js" > "$TEMP/oc-gateway2.log" 2>&1 &
+            sleep 10
+          done
+
+      - name: Final save
+        run: |
+          cd "$GITHUB_WORKSPACE/fork" || exit 0
+          if [ -n "$(git status --porcelain)" ]; then
+            git add -A
+            git commit -q -m "opencode final save $(date -u '+%Y-%m-%d %H:%M')" || true
+            git push -q origin HEAD || true
+          fi

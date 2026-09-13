@@ -163,6 +163,10 @@ data object AiChatTab : Tab {
     private val runnerStatusFlow = kotlinx.coroutines.flow.MutableStateFlow("")
     private val runnerStartingFlow = kotlinx.coroutines.flow.MutableStateFlow(false)
 
+    // Статус запуска OpenCode-агента — отдельно от GGUF-ранера
+    private val ocStatusFlow = kotlinx.coroutines.flow.MutableStateFlow("")
+    private val ocStartingFlow = kotlinx.coroutines.flow.MutableStateFlow(false)
+
     @Composable
     override fun Content() {
         val context = LocalContext.current
@@ -170,6 +174,10 @@ data object AiChatTab : Tab {
 
         var tab by rememberSaveable { mutableStateOf(0) } // 0=чат, 1=workspace, 2=настройки
         var terminalSession by remember {
+            mutableStateOf<eu.kanade.tachiyomi.data.ai.RunnerLlm.Session?>(null)
+        }
+        // Отдельная вкладка для веб-чата OpenCode-агента (url, не терминал)
+        var ocWebSession by remember {
             mutableStateOf<eu.kanade.tachiyomi.data.ai.RunnerLlm.Session?>(null)
         }
         val messages by historyFlow.collectAsState()
@@ -331,6 +339,13 @@ data object AiChatTab : Tab {
                         label = { Text("🖥 Терминал ${session.os}") },
                     )
                 }
+                ocWebSession?.let {
+                    FilterChip(
+                        selected = tab == 5,
+                        onClick = { tab = 5 },
+                        label = { Text("🤖 OpenCode") },
+                    )
+                }
                 if (tab == 0) {
                     ModelChip()
                     FilterChip(
@@ -451,6 +466,10 @@ data object AiChatTab : Tab {
                         terminalSession = session
                         tab = 4
                     },
+                    onOpenAgent = { session ->
+                        ocWebSession = session
+                        tab = 5
+                    },
                 )
                 3 -> PluginsBody(modifier = Modifier.weight(1f))
                 4 -> terminalSession?.let { session ->
@@ -459,6 +478,17 @@ data object AiChatTab : Tab {
                         modifier = Modifier.weight(1f),
                         onClose = {
                             terminalSession = null
+                            tab = 2
+                        },
+                    )
+                }
+                5 -> ocWebSession?.let { session ->
+                    RunnerTerminalBody(
+                        session = session,
+                        urlOverride = session.url,
+                        modifier = Modifier.weight(1f),
+                        onClose = {
+                            ocWebSession = null
                             tab = 2
                         },
                     )
@@ -532,9 +562,10 @@ data object AiChatTab : Tab {
         session: eu.kanade.tachiyomi.data.ai.RunnerLlm.Session,
         modifier: Modifier = Modifier,
         onClose: () -> Unit,
+        urlOverride: String? = null,
     ) {
         val context = LocalContext.current
-        val url = session.terminalUrl.orEmpty()
+        val url = urlOverride ?: session.terminalUrl.orEmpty()
         var loading by remember(session.id) { mutableStateOf(true) }
         val webView = remember(session.id, url) {
             WebView(context).apply {
@@ -580,8 +611,13 @@ data object AiChatTab : Tab {
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    "${if (session.os == "windows") "Windows" else "Linux"} • ${session.model}" +
-                        if (loading) " • подключение…" else " • терминал",
+                    if (urlOverride != null) {
+                        "🤖 OpenCode-агент • " +
+                            (if (loading) "подключение…" else "чат")
+                    } else {
+                        "${if (session.os == "windows") "Windows" else "Linux"} • ${session.model}" +
+                            if (loading) " • подключение…" else " • терминал"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.weight(1f),
                 )
@@ -606,6 +642,7 @@ data object AiChatTab : Tab {
     private fun SettingsBody(
         modifier: Modifier = Modifier,
         onOpenTerminal: (eu.kanade.tachiyomi.data.ai.RunnerLlm.Session) -> Unit,
+        onOpenAgent: (eu.kanade.tachiyomi.data.ai.RunnerLlm.Session) -> Unit,
     ) {
         val context = LocalContext.current
         val prefs = remember { Injekt.get<OcrPreferences>() }
@@ -1072,6 +1109,13 @@ data object AiChatTab : Tab {
                                 label = { Text("🖥 Терминал (${s.os})") },
                             )
                         }
+                        if (s.model == "opencode" && s.url != null) {
+                            FilterChip(
+                                selected = false,
+                                onClick = { onOpenAgent(s) },
+                                label = { Text("🤖 Чат") },
+                            )
+                        }
                         FilterChip(
                             selected = false,
                             onClick = {
@@ -1082,6 +1126,81 @@ data object AiChatTab : Tab {
                         )
                     }
                 }
+            }
+
+            // ---- OpenCode-агент (веб + терминал/файлы на GitHub-ранере) ----
+            Text("OpenCode-агент (веб + терминал/файлы)", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Запускает opencode serve на GitHub-ранере и открывает к нему два интерфейса: " +
+                    "чат с агентом (мобильный или полный веб) и npm-hub — xterm-терминал, файлы, " +
+                    "логи, git status/diff/log. Агент работает вашим PAT аккаунта, поэтому видит и " +
+                    "меняет ВСЕ репозитории, коммиты и логи аккаунта, собирает APK и т.п.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            val ocStarting by ocStartingFlow.collectAsState()
+            val ocStatus by ocStatusFlow.collectAsState()
+            var ocOs by rememberSaveable { mutableStateOf("linux") }
+            var ocUi by rememberSaveable { mutableStateOf("mobile") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = ocOs == "linux",
+                    onClick = { ocOs = "linux" },
+                    label = { Text("🐧 Linux") },
+                )
+                FilterChip(
+                    selected = ocOs == "windows",
+                    onClick = { ocOs = "windows" },
+                    label = { Text("🪟 Windows") },
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = ocUi == "mobile",
+                    onClick = { ocUi = "mobile" },
+                    label = { Text("📱 Мобильный чат") },
+                )
+                FilterChip(
+                    selected = ocUi == "web",
+                    onClick = { ocUi = "web" },
+                    label = { Text("🖥 Полный веб") },
+                )
+            }
+            androidx.compose.material3.FilledTonalButton(
+                enabled = !ocStarting,
+                onClick = {
+                    ocStartingFlow.value = true
+                    ocStatusFlow.value = "⏳ Запуск OpenCode-агента…"
+                    val appCtx = context.applicationContext
+                    chatScope.launch {
+                        val s = eu.kanade.tachiyomi.data.ai.RunnerLlm.startOpenCode(
+                            appCtx, { st -> ocStatusFlow.value = st },
+                            os = ocOs, ui = ocUi,
+                        )
+                        withContext(Dispatchers.Main) {
+                            ocStartingFlow.value = false
+                            if (s != null) {
+                                sessions = eu.kanade.tachiyomi.data.ai.RunnerLlm.listSessions(context)
+                                onOpenAgent(s)
+                            }
+                        }
+                    }
+                },
+            ) { Text("▶ Запустить OpenCode-агента") }
+            if (ocStatus.isNotBlank()) {
+                var ocElapsed by remember { mutableStateOf(0L) }
+                LaunchedEffect(ocStarting) {
+                    ocElapsed = 0
+                    while (ocStarting) {
+                        kotlinx.coroutines.delay(1000)
+                        ocElapsed++
+                    }
+                }
+                Text(
+                    if (ocStarting) "$ocStatus • ${ocElapsed / 60}:${"%02d".format(ocElapsed % 60)}"
+                    else ocStatus,
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
