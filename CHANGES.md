@@ -2,6 +2,9 @@
 
 ## v1.9.75 — Критические баги + TTS в читалке книг
 
+### Fix: Сборка релиза (BooksLibraryScreen.kt)
+- Закрыта незакрытая скобка блока `if (coverPath != null)`: без неё `Column`, кнопка удаления и `ExtendedFloatingActionButton` попадали внутрь блока, ломая `when {}` и компиляцию (`else` не последний, unresolved `ExtendedFloatingActionButton`/`onClick`/`modifier`, missing `}`). Теперь список книг компилируется и обложка корректно отделяется от текста.
+
 ### Fix: Критические баги (коммит 2f0ea92)
 
 #### BookParser.kt — Утечки ресурсов
