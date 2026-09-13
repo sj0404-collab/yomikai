@@ -159,6 +159,27 @@ class OcrTextCleanerTest {
     }
 
     @Test
+    fun `pure latin junk is dropped by the final gate instead of read out loud`() {
+        // Регрессия: модель читала «ШУМ» как латиницу (v i m / V I M), и русский
+        // TTS диктовал её по буквам. Чистая не-whitelist латынь теперь не выводится.
+        OcrTextCleaner.acceptableAfterSalvage("v i m") shouldBe ""
+        OcrTextCleaner.acceptableAfterSalvage("OPEN") shouldBe ""
+        OcrTextCleaner.acceptableAfterSalvage("PEILENIE") shouldBe ""
+    }
+
+    @Test
+    fun `whitelisted latin tokens survive the final gate`() {
+        OcrTextCleaner.acceptableAfterSalvage("SOS") shouldBe "SOS"
+        OcrTextCleaner.acceptableAfterSalvage("Wi-Fi ПОМОГИТЕ") shouldBe "Wi-Fi ПОМОГИТЕ"
+    }
+
+    @Test
+    fun `cyrillic caption with one garbage token survives the final gate`() {
+        OcrTextCleaner.acceptableAfterSalvage("И ПАЛ Tele'axect.E ПОД ЛЕЗВИЕМ") shouldBe
+            "И ПАЛ ПОД ЛЕЗВИЕМ"
+    }
+
+    @Test
     fun `uncertain mixed-script lines are never partially salvaged`() {
         // «cлишком» — смешанный токен: строка остаётся как есть, а не
         // собирается заново из уцелевших слов.

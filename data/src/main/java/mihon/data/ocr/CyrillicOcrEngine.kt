@@ -98,7 +98,60 @@ internal class CyrillicOcrEngine(
          * букв. См. [CtcScoring.innerBlankCoverage].
          */
         val coverage: Float = 0f,
+        /**
+         * Доля тёмных «чернил» в исходном кропе (по порогу Оцу). Полупрозрачный
+         * мелкий водяной знак почти не оставляет тёмных пикселей, поэтому при
+         * низком [inkRatio] результат не принимается даже при высокой
+         * уверенности распознавателя.
+         */
+        val inkRatio: Float = 0f,
     )
+
+    /**
+     * Доля тёмных пикселей кропа по порогу Оцу. Водяные знаки рисуются
+     * полупрозрачной краской и после Оцу оставляют лишь единичные тёмные
+     * пиксели, тогда как печатный текст даёт заметную долю «чернил».
+     * Используется [recognizeCrop] для отказа от контрастного прогона и
+     * [acceptsConfidence] для отклонения кропа.
+     */
+    private fun computeCropInkRatio(crop: Bitmap): Float {
+        val w = crop.width
+        val h = crop.height
+        if (w < 2 || h < 2) return 0f
+        val total = (w * h).toLong()
+        val pixels = IntArray(w * h)
+        crop.getPixels(pixels, 0, w, 0, 0, w, h)
+        val gray = IntArray(w * h)
+        val hist = IntArray(256)
+        for (i in pixels.indices) {
+            val lum = (77 * ((pixels[i] shr 16) and 0xFF) + 150 * ((pixels[i] shr 8) and 0xFF) + 29 * (pixels[i] and 0xFF)) shr 8
+            gray[i] = lum
+            hist[lum]++
+        }
+        var sumAll = 0L
+        for (v in 0..255) sumAll += v * hist[v]
+        var sumB = 0L
+        var wB = 0L
+        var otsu = 127
+        var maxBetween = -1.0
+        for (v in 0..255) {
+            wB += hist[v]
+            if (wB == 0L) continue
+            val wF = total - wB
+            if (wF == 0L) break
+            sumB += v * hist[v]
+            val mB = sumB.toDouble() / wB
+            val mF = (sumAll - sumB).toDouble() / wF
+            val between = wB.toDouble() * wF * (mB - mF) * (mB - mF)
+            if (between > maxBetween) {
+                maxBetween = between
+                otsu = v
+            }
+        }
+        var ink = 0L
+        for (g in gray) if (g < otsu) ink++
+        return ink.toFloat() / total
+    }
 
     suspend fun ensureInitialized() {
         if (initialized) return
@@ -333,6 +386,8 @@ internal class CyrillicOcrEngine(
     private fun rescueRejectedLines(rejected: List<Pair<TextBox, Recognition>>): String {
         if (rejected.isEmpty()) return ""
         val candidates = rejected
+            // Полупрозрачный водяной знак не должен «оживать» в rescue-эшелоне.
+            .filter { (_, recognition) -> recognition.inkRatio >= tuning().minCropInkRatio }
             .map { (box, recognition) -> box to recognition.text.trim() }
             .filter { (_, text) -> text.isNotBlank() }
             .sortedByDescending { (_, text) -> text.count(Char::isLetter) }
@@ -372,6 +427,7 @@ internal class CyrillicOcrEngine(
         if (rejected.isEmpty()) return emptyList()
         val acceptedTexts = recognized.mapTo(HashSet()) { it.second }
         return rejected
+            .filter { (_, recognition) -> recognition.inkRatio >= tuning().minCropInkRatio }
             .map { (box, recognition) -> box to recognition.text.trim() }
             .filter { (_, text) -> text.isNotBlank() }
             .filter { (_, text) -> text !in acceptedTexts }
@@ -382,7 +438,13 @@ internal class CyrillicOcrEngine(
                     OcrTextCleaner.isAcceptableCyrillicOcrText(normalized)
             }
             .distinctBy { it.second }
-            .sortedByDescending { (_, text) -> text.count(Char::isLetter) }
+            // Крупный заголовочный текст (широкие боксы) часто получает низкую
+            // уверенность и уходит в rejected. Сортируем по «объёму буквы» —
+            // число букв × площадь бокса — чтобы крупные надписи не затерялись
+            // среди мелкого шума.
+            .sortedByDescending { (box, text) ->
+                text.count(Char::isLetter) * box.rect.width().toLong() * box.rect.height().toLong()
+            }
             .take(tuning().rescueMaxLines)
     }
 
@@ -441,6 +503,7 @@ internal class CyrillicOcrEngine(
             confidence = pieces.fold(0f) { acc, p -> acc + p.confidence } / pieces.size,
             model = pieces.maxByOrNull { it.confidence }?.model ?: RecognitionModel.V3,
             coverage = pieces.fold(0f) { acc, p -> acc + p.coverage } / pieces.size,
+            inkRatio = pieces.fold(0f) { acc, p -> acc + p.inkRatio } / pieces.size,
         )
     }
 
@@ -495,12 +558,14 @@ internal class CyrillicOcrEngine(
         }
         val sb = StringBuilder()
         var confSum = 0f
+        var inkSum = 0f
         var recognizedCount = 0
         for (piece in words) {
             try {
                 val r = recognizeCrop(piece)
                 if (r.text.isNotBlank()) {
                     confSum += r.confidence
+                    inkSum += r.inkRatio
                     recognizedCount++
                     if (sb.isNotEmpty()) sb.append(' ')
                     sb.append(r.text)
@@ -514,6 +579,7 @@ internal class CyrillicOcrEngine(
             confidence = if (recognizedCount == 0) 0f else confSum / recognizedCount,
             model = wholeLine.model,
             coverage = wholeLine.coverage,
+            inkRatio = if (recognizedCount == 0) 0f else inkSum / recognizedCount,
         )
         return selectLineRecognition(wholeLine, segmented)
     }
@@ -664,6 +730,9 @@ internal class CyrillicOcrEngine(
         } else {
             tuning().minAcceptConfidence
         }
+        // Полупрозрачный мелкий водяной знак почти не оставляет «чернил»:
+        // даже с высокой уверенностью распознавателя его нельзя читать вслух.
+        if (result.inkRatio < tuning().minCropInkRatio) return false
         // Пропущенные в середине слова шаги (blank) понижают уверенность:
         // «лжн вбинен» вместо «ЛОЖНО ОБВИНЁН» больше не проходит как хороший
         // результат только потому, что уцелевшие буквы были прочитаны чётко.
@@ -678,9 +747,10 @@ internal class CyrillicOcrEngine(
         val cleaned = OcrTextCleaner.normalizeLocalCyrillicCaption(text).trim()
         if (cleaned.isEmpty() || OcrTextCleaner.looksLikeDictionaryRamp(cleaned)) return ""
         if (OcrTextCleaner.isAcceptableCyrillicOcrText(cleaned)) return cleaned
-        // Один мусорный токен больше не обнуляет всю подпись: чистая
-        // кириллица сохраняется, а сомнительные строки остаются как есть.
-        return OcrTextCleaner.filterGarbageTokens(cleaned)
+        // Один мусорный токен не обнуляет всю подпись: чистая кириллица
+        // сохраняется, оставшаяся латынь проходит только из белого списка —
+        // «v i m» вместо «ШУМ» читать вслух нельзя.
+        return OcrTextCleaner.acceptableAfterSalvage(cleaned)
     }
 
     private fun detectTextBoxes(image: Bitmap): List<TextBox> {
@@ -929,10 +999,15 @@ internal class CyrillicOcrEngine(
     }
 
     private fun recognizeCrop(crop: Bitmap): Recognition {
+        val inkRatio = computeCropInkRatio(crop)
+        // Контрастный retry усиливает полупрозрачные водяные знаки так же
+        // уверенно, как печатный текст; для кропа почти без чернил он лишь
+        // делает водяной знак «надёжным» и тот начинает читаться вслух.
+        val allowContrastRetry = inkRatio >= tuning().contrastSkipInkThreshold
         val candidates = mutableListOf(
             runRecognizer(crop, primary, primaryInput, primaryOutput, primaryChars, RecognitionModel.V3),
         )
-        if (candidates.last().confidence < tuning().contrastRetryConfidence) {
+        if (allowContrastRetry && candidates.last().confidence < tuning().contrastRetryConfidence) {
             val contrast = createHighContrast(crop)
             try {
                 val alternate = runRecognizer(
@@ -968,7 +1043,7 @@ internal class CyrillicOcrEngine(
                 RecognitionModel.V5,
             )
             candidates += verifierResult
-            if (verifierResult.confidence < tuning().contrastRetryConfidence) {
+            if (allowContrastRetry && verifierResult.confidence < tuning().contrastRetryConfidence) {
                 val contrast = createHighContrast(crop)
                 try {
                     candidates += runRecognizer(
@@ -984,7 +1059,9 @@ internal class CyrillicOcrEngine(
                 }
             }
         }
-        return candidates.maxByOrNull(::candidateQuality) ?: Recognition("", 0f)
+        return candidates.maxByOrNull(::candidateQuality)
+            ?.let { it.copy(inkRatio = inkRatio) }
+            ?: Recognition("", 0f, inkRatio = inkRatio)
     }
 
     /**

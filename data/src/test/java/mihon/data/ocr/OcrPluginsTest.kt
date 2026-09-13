@@ -10,17 +10,17 @@ import org.junit.jupiter.api.Test
  * Реестр OCR-плагинов и пресеты типа контента.
  *
  * Обе сущности — чистые данные, поэтому проверяются без Android и без
- * загрузки моделей. Отдельно зафиксировано, что пресет BALANCED в точности
- * повторяет прежние константы CyrillicOcrEngine: это гарантия того, что
- * пользователь, не выбиравший пресет, не получает изменённое распознавание.
+ * загрузки моделей. Значения BALANCED зафиксированы как актуальные умолчания
+ * движка: пользователь, не выбиравший пресет, получает поведение v1.9.76
+ * (фильтр водяных знаков по доле чернил, более высокие пороги уверенности).
  */
 class OcrPluginsTest {
 
     @Test
-    fun `balanced preset repeats the previous engine constants`() {
+    fun `balanced preset repeats the engine defaults`() {
         val balanced = OcrTuning.preset(OcrContentType.BALANCED)
         balanced.detectorThreshold shouldBe 0.20f
-        balanced.minComponentArea shouldBe 16
+        balanced.minComponentArea shouldBe 24
         balanced.maxTextBoxes shouldBe 96
         balanced.mergeOverlapYFactor shouldBe 0.55f
         balanced.mergeGapXFactor shouldBe 0.55f
@@ -28,14 +28,24 @@ class OcrPluginsTest {
         balanced.wordGapFactor shouldBe 1.7f
         balanced.minWordGapPx shouldBe 5
         balanced.contrastRetryConfidence shouldBe 0.90f
-        balanced.minAcceptConfidence shouldBe 0.25f
-        balanced.shortTextMinConfidence shouldBe 0.12f
+        balanced.minAcceptConfidence shouldBe 0.32f
+        balanced.shortTextMinConfidence shouldBe 0.18f
         balanced.minCoverage shouldBe 0.12f
+        balanced.minCropInkRatio shouldBe 0.03f
+        balanced.contrastSkipInkThreshold shouldBe 0.02f
         balanced.verifierCyrillicBonus shouldBe 0.20f
         balanced.wholeLineBoundaryBonus shouldBe 0.08f
         balanced.rescueMaxLines shouldBe 6
         balanced.readingOrder shouldBe "rtl"
         balanced.scanRegion shouldBe ScanRegion.FULL_PAGE
+    }
+
+    @Test
+    fun `ink filters are tightened for manga and manhwa`() {
+        OcrTuning.preset(OcrContentType.MANGA).minCropInkRatio shouldBe 0.025f
+        OcrTuning.preset(OcrContentType.MANGA).contrastRetryConfidence shouldBe 0.88f
+        OcrTuning.preset(OcrContentType.MANHWA).minComponentArea shouldBe 28
+        OcrTuning.preset(OcrContentType.COMIC).minComponentArea shouldBe 26
     }
 
     @Test

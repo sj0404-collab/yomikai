@@ -82,7 +82,7 @@ data class OcrTuning(
     val detectorThreshold: Float = 0.20f,
 
     /** Минимальная площадь связной области в пикселях карты 736x736. */
-    val minComponentArea: Int = 16,
+    val minComponentArea: Int = 24,
 
     /** Сколько боксов максимум берётся со страницы. */
     val maxTextBoxes: Int = 96,
@@ -108,10 +108,26 @@ data class OcrTuning(
     val contrastRetryConfidence: Float = 0.90f,
 
     /** Пол строки/кропа отбрасывается ниже этой уверенности. */
-    val minAcceptConfidence: Float = 0.25f,
+    val minAcceptConfidence: Float = 0.32f,
 
     /** Более мягкий порог для коротких реплик («а», «а!», «а-а-а»). */
-    val shortTextMinConfidence: Float = 0.12f,
+    val shortTextMinConfidence: Float = 0.18f,
+
+    /**
+     * Минимальная доля «чернил» (тёмных пикселей по порогу Оцу) в кропе.
+     * Полупрозрачный мелкий водяной знак почти не оставляет тёмных пикселей,
+     * поэтому ниже этого значения кроп отвергается, даже если распознаватель
+     * выдал высокую уверенность.
+     */
+    val minCropInkRatio: Float = 0.03f,
+
+    /**
+     * Кроп с долей чернил ниже этого порога НЕ распознаётся повторно с
+     * усиленным контрастом: `createHighContrast()` делает полупрозрачный
+     * водяной знак таким же «надёжным», как настоящий текст, и тот начинает
+     * читаться вслух.
+     */
+    val contrastSkipInkThreshold: Float = 0.02f,
 
     /** Доля пропущенных CTC-шагов, после которой уверенность снижается. */
     val minCoverage: Float = 0.12f,
@@ -148,6 +164,8 @@ data class OcrTuning(
         require(contrastRetryConfidence in 0.05f..1f) { "contrastRetryConfidence вне диапазона 0.05..1" }
         require(minAcceptConfidence in 0f..1f) { "minAcceptConfidence вне диапазона 0..1" }
         require(shortTextMinConfidence in 0f..1f) { "shortTextMinConfidence вне диапазона 0..1" }
+        require(minCropInkRatio in 0f..0.5f) { "minCropInkRatio вне диапазона 0..0.5" }
+        require(contrastSkipInkThreshold in 0f..0.5f) { "contrastSkipInkThreshold вне диапазона 0..0.5" }
         require(minCoverage in 0f..0.9f) { "minCoverage вне диапазона 0..0.9" }
         require(rescueMaxLines in 0..64) { "rescueMaxLines вне диапазона 0..64" }
         require(dictionaryCoverageBonus in 0f..0.5f) { "dictionaryCoverageBonus вне диапазона 0..0.5" }
@@ -174,14 +192,15 @@ data class OcrTuning(
 
                 OcrContentType.MANGA -> DEFAULT.copy(
                     detectorThreshold = 0.17f,
-                    minComponentArea = 12,
+                    minComponentArea = 18,
                     maxTextBoxes = 128,
                     mergeOverlapYFactor = 0.60f,
                     mergeGapXFactor = 0.45f,
                     wordGapFactor = 1.5f,
                     minWordGapPx = 4,
                     contrastRetryConfidence = 0.88f,
-                    minAcceptConfidence = 0.22f,
+                    minAcceptConfidence = 0.28f,
+                    minCropInkRatio = 0.025f,
                     rescueMaxLines = 8,
                     readingOrder = "rtl",
                     scanRegion = scanRegion,
@@ -189,14 +208,14 @@ data class OcrTuning(
 
                 OcrContentType.MANHWA -> DEFAULT.copy(
                     detectorThreshold = 0.18f,
-                    minComponentArea = 20,
+                    minComponentArea = 28,
                     maxTextBoxes = 64,
                     mergeOverlapYFactor = 0.45f,
                     mergeGapXFactor = 0.80f,
                     splitMinWidthPx = 40,
                     wordGapFactor = 2.0f,
                     minWordGapPx = 7,
-                    minAcceptConfidence = 0.26f,
+                    minAcceptConfidence = 0.34f,
                     rescueMaxLines = 5,
                     readingOrder = "vertical",
                     scanRegion = scanRegion,
@@ -204,13 +223,13 @@ data class OcrTuning(
 
                 OcrContentType.COMIC -> DEFAULT.copy(
                     detectorThreshold = 0.22f,
-                    minComponentArea = 18,
+                    minComponentArea = 26,
                     maxTextBoxes = 96,
                     mergeOverlapYFactor = 0.58f,
                     mergeGapXFactor = 0.50f,
                     wordGapFactor = 1.6f,
                     minWordGapPx = 5,
-                    minAcceptConfidence = 0.24f,
+                    minAcceptConfidence = 0.30f,
                     readingOrder = "ltr",
                     scanRegion = scanRegion,
                 )

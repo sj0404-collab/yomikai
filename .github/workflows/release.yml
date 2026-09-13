@@ -28,7 +28,7 @@ jobs:
   build:
     if: github.repository == 'sj0404-collab/yomikai'
     name: Build
-    runs-on: windows-2025
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     needs: [get_tag]
     outputs:
@@ -54,10 +54,11 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      # Caching of Gradle User Home (зависимости, wrapper, локальный build-cache)
+      # включён по умолчанию в setup-gradle v6; на Linux-раннере kofée builds в
+      # среднем заметно быстрее, чем на windows-2025.
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
-        with:
-          cache-key-prefix: yomikai-v1-
 
       # v1.9.55: пользователь просил собирать релиз БЕЗ прогонов OCR/тестов —
       # сразу APK по тегу. Блокирующих тестов в релизе больше нет, чтобы сборка
@@ -181,7 +182,7 @@ jobs:
 
   release:
     name: Create GitHub Release
-    runs-on: windows-2025
+    runs-on: ubuntu-24.04
     needs: [get_tag, build]
     permissions:
       contents: write

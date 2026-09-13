@@ -54,7 +54,7 @@ jobs:
           echo "version_name=$version_name" >> "$GITHUB_OUTPUT"
 
   build:
-    runs-on: windows-2025
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     needs: [get_version]
     outputs:
@@ -78,10 +78,9 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      # Caching of Gradle User Home включён по умолчанию в setup-gradle v6.
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
-        with:
-          cache-key-prefix: yomikai-universal-v1-
 
       - name: Build universal (all-ABI) release APK
         shell: bash
@@ -160,7 +159,7 @@ jobs:
 
   release:
     name: Create Universal GitHub Release
-    runs-on: windows-2025
+    runs-on: ubuntu-24.04
     needs: [get_version, build]
     permissions:
       contents: write
