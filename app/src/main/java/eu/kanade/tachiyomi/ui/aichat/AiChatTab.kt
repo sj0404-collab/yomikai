@@ -266,9 +266,9 @@ data object AiChatTab : Tab {
         DisposableEffect(webView) {
             onDispose {
                 runCatching {
-                    (webView.parent as? android.view.ViewGroup)?.removeView(webView)
-                    webView.stopLoading()
-                    webView.destroy()
+                    (webView?.parent as? android.view.ViewGroup)?.removeView(webView)
+                    webView?.stopLoading()
+                    webView?.destroy()
                 }
             }
         }
