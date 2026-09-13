@@ -398,6 +398,15 @@ class OcrPreferences(
     fun bookSpeechRate() = preferenceStore.getFloat("pref_book_speech_rate", 1.0f)
     fun bookSpeechPitch() = preferenceStore.getFloat("pref_book_speech_pitch", 1.0f)
 
-    /** Имя TTS-голоса для книг, "" = голос по умолчанию. */
+    /** Движок TTS для книг: "system" или "edge". */
+    fun bookTtsEngine() = preferenceStore.getString("pref_book_tts_engine", "system")
+
+    /** Спецификация голоса: для системного "пакет::имя", для Edge — shortName. */
+    fun bookVoiceSpec() = preferenceStore.getString("pref_book_voice_spec", "")
+
+    /** Отображаемое имя голоса для UI. */
+    fun bookVoiceLabel() = preferenceStore.getString("pref_book_voice_label", "")
+
+    /** Имя TTS-голоса для книг, "" = голос по умолчанию. (legacy) */
     fun bookVoiceName() = preferenceStore.getString("pref_book_voice_name", "")
 }
