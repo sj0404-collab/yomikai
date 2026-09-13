@@ -191,6 +191,7 @@ data class BookChapter(
             title: String,
             startPage: Int,
             endPage: Int,
+            totalPages: Int = endPage,
             volume: Int? = null,
             chapter: Int? = null,
             subChapter: Int? = null,
@@ -203,7 +204,7 @@ data class BookChapter(
                 else -> index.toDouble()
             }
             val pageList = (startPage..endPage).map { p ->
-                BookPage(pageNumber = p, totalPages = endPage)
+                BookPage(pageNumber = p, totalPages = totalPages)
             }
             return BookChapter(
                 id = index.toLong(),

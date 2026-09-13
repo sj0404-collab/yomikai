@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.locallibrary
 
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -77,7 +78,7 @@ object BooksLibraryScreen : Screen {
         val author: String?,
         val ext: String,
         val progressPercent: Int,
-        val coverBitmap: Bitmap?,
+        val coverPath: String?,
     )
 
     @Composable
@@ -98,7 +99,7 @@ object BooksLibraryScreen : Screen {
                         val pct = BooksStore.load(context, file).percent
                         val ext = file.name.orEmpty().substringAfterLast('.', "").uppercase()
                         val metadata = BooksStore.loadMetadata(context, file)
-                        val cover = BooksStore.loadCover(context, file)
+                        val cPath = BooksStore.coverPath(context, file)
                         BookItem(
                             fileName = file.name.orEmpty(),
                             displayTitle = metadata.title.ifBlank {
@@ -107,7 +108,7 @@ object BooksLibraryScreen : Screen {
                             author = metadata.author,
                             ext = ext,
                             progressPercent = pct,
-                            coverBitmap = cover,
+                            coverPath = cPath,
                         )
                     }
                 }
@@ -124,18 +125,21 @@ object BooksLibraryScreen : Screen {
             if (uri == null) return@rememberLauncherForActivityResult
             scope.launch {
                 importing = true
-                val result = withIOContext { BooksStore.importBook(context, uri) }
-                importing = false
-                if (result is BooksStore.ImportResult.Success) {
-                    snackbarHostState.showSnackbar(
-                        "Добавлена книга «${result.book.name.orEmpty()}»",
-                    )
-                } else {
-                    val reason = (result as? BooksStore.ImportResult.Failure)?.reason
-                        ?: "Неизвестная ошибка"
-                    snackbarHostState.showSnackbar("Не удалось добавить: $reason")
+                try {
+                    val result = withIOContext { BooksStore.importBook(context, uri) }
+                    if (result is BooksStore.ImportResult.Success) {
+                        snackbarHostState.showSnackbar(
+                            "Добавлена книга «${result.book.name.orEmpty()}»",
+                        )
+                    } else {
+                        val reason = (result as? BooksStore.ImportResult.Failure)?.reason
+                            ?: "Неизвестная ошибка"
+                        snackbarHostState.showSnackbar("Не удалось добавить: $reason")
+                    }
+                } finally {
+                    importing = false
+                    refresh()
                 }
-                refresh()
             }
         }
 
@@ -207,37 +211,44 @@ object BooksLibraryScreen : Screen {
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 // Обложка
-                                if (item.coverBitmap != null) {
-                                    Image(
-                                        bitmap = item.coverBitmap.asImageBitmap(),
-                                        contentDescription = "Обложка",
-                                        modifier = Modifier
-                                            .size(56.dp, 80.dp)
-                                            .clip(RoundedCornerShape(4.dp)),
-                                        contentScale = ContentScale.Crop,
-                                    )
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                } else {
-                                    // Заглушка для обложки
-                                    Box(
-                                        modifier = Modifier
-                                            .size(56.dp, 80.dp)
-                                            .clip(RoundedCornerShape(4.dp))
-                                            .background(MaterialTheme.colorScheme.surfaceVariant),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        Column(
-                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                val coverPath = item.coverPath
+                                if (coverPath != null) {
+                                    val bitmap = remember(coverPath) {
+                                        val opts = BitmapFactory.Options().apply {
+                                            inSampleSize = 4 // downsampling 4x для экономии памяти
+                                        }
+                                        BitmapFactory.decodeFile(coverPath, opts)
+                                    }
+                                    if (bitmap != null) {
+                                        Image(
+                                            bitmap = bitmap.asImageBitmap(),
+                                            contentDescription = "Обложка",
+                                            modifier = Modifier
+                                                .size(56.dp, 80.dp)
+                                                .clip(RoundedCornerShape(4.dp)),
+                                            contentScale = ContentScale.Crop,
+                                        )
+                                    } else {
+                                        // Заглушка для обложки
+                                        Box(
+                                            modifier = Modifier
+                                                .size(56.dp, 80.dp)
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .background(MaterialTheme.colorScheme.surfaceVariant),
+                                            contentAlignment = Alignment.Center,
                                         ) {
-                                            Text(
-                                                text = item.ext,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            )
+                                            Column(
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                            ) {
+                                                Text(
+                                                    text = item.ext,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                            }
                                         }
                                     }
                                     Spacer(modifier = Modifier.width(12.dp))
-                                }
 
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(

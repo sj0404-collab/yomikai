@@ -93,8 +93,12 @@ object BooksStore {
                 val out = try {
                     target.openOutputStream()
                 } catch (e: Exception) {
+                    target.delete()
                     return@use ImportResult.Failure("Нет прав на запись: ${e.message}")
-                } ?: return@use ImportResult.Failure("Не удалось открыть файл для записи")
+                } ?: run {
+                    target.delete()
+                    return@use ImportResult.Failure("Не удалось открыть файл для записи")
+                }
                 out.use { targetOut ->
                     stream.copyTo(targetOut, 64 * 1024)
                 }
@@ -259,6 +263,7 @@ object BooksStore {
         if (cacheFile.exists()) {
             val bitmap = BitmapFactory.decodeFile(cacheFile.absolutePath)
             if (bitmap != null) return bitmap
+            cacheFile.delete()
         }
         // Извлекаем и кэшируем
         return try {

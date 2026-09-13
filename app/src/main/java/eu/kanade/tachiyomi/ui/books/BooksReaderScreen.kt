@@ -149,8 +149,8 @@ data class BooksReaderScreen(
         }
 
         // TTS init
-        LaunchedEffect(Unit) {
-            tts.value = TextToSpeech(context) { status ->
+        DisposableEffect(context) {
+            val engine = TextToSpeech(context) { status ->
                 if (status == TextToSpeech.SUCCESS) {
                     logcat(LogPriority.INFO) { "BooksReader: TTS init OK" }
                 } else {
@@ -173,6 +173,12 @@ data class BooksReaderScreen(
                         }
                     }
                 })
+            }
+            tts.value = engine
+            onDispose {
+                engine.stop()
+                engine.shutdown()
+                tts.value = null
             }
         }
         LaunchedEffect(tts.value) {
@@ -252,12 +258,10 @@ data class BooksReaderScreen(
         LaunchedEffect(chapters, currentChapterIndex, pdfPageIndex) {
             val chapter = chapters.getOrNull(currentChapterIndex)
             if (chapter?.isPageBased != true) {
-                pageImage?.recycle()
                 pageImage = null
                 return@LaunchedEffect
             }
             val page = chapter.readablePages.getOrNull(pdfPageIndex) ?: run {
-                pageImage?.recycle()
                 pageImage = null
                 return@LaunchedEffect
             }
@@ -268,8 +272,9 @@ data class BooksReaderScreen(
             // Только если это всё ещё актуальная страница
             val current = chapters.getOrNull(currentChapterIndex)
             if (current?.isPageBased == true && current.readablePages.getOrNull(pdfPageIndex)?.pageNumber == page.pageNumber) {
-                pageImage?.recycle()
+                val old = pageImage
                 pageImage = bmp
+                old?.recycle()
             } else {
                 bmp?.recycle()
             }
@@ -277,8 +282,6 @@ data class BooksReaderScreen(
 
         DisposableEffect(Unit) {
             onDispose {
-                tts.value?.stop()
-                tts.value?.shutdown()
                 pageImage?.recycle()
             }
         }
@@ -375,7 +378,7 @@ data class BooksReaderScreen(
                         .height(250.dp)
                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
                 ) {
-                    itemsIndexed(chapters) { index, chapter ->
+                    itemsIndexed(chapters, key = { idx, ch -> ch.id }) { index, chapter ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -687,10 +690,13 @@ data class BooksReaderScreen(
         }
     }
 
+    private val MULTI_NEWLINE = Regex("\n{2,}")
+    private val SENTENCE_SPLIT = Regex("(?<=[.!?…])\\s+")
+
     private fun splitSentences(text: String): List<String> {
         return text
-            .replace(Regex("\n{2,}"), "\n")
-            .split(Regex("(?<=[.!?…])\\s+"))
+            .replace(MULTI_NEWLINE, "\n")
+            .split(SENTENCE_SPLIT)
             .map { it.trim() }
             .filter { it.isNotBlank() }
     }

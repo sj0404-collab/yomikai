@@ -13,6 +13,7 @@ import com.google.ai.edge.litert.Accelerator
 import com.google.ai.edge.litert.CompiledModel
 import com.google.ai.edge.litert.Environment
 import com.google.ai.edge.litert.TensorBuffer
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
@@ -226,9 +227,9 @@ internal class CyrillicOcrEngine(
 
     override suspend fun recognizeText(image: Bitmap): String {
         ensureInitialized()
-        OcrTextCleanerStats.reset()
         return try {
         mutex.withLock {
+            OcrTextCleanerStats.reset()
             require(!image.isRecycled) { "Input bitmap is recycled" }
             val boxes = detectTextBoxes(image)
             OcrStageBus.post(OcrStageBus.Stage.RECOGNIZING, "боксов: ${boxes.size}")
@@ -1159,7 +1160,7 @@ internal class CyrillicOcrEngine(
     }
 
     override fun close() {
-        closeInternal()
+        runBlocking { mutex.withLock { closeInternal() } }
     }
 
     private fun closeInternal() {

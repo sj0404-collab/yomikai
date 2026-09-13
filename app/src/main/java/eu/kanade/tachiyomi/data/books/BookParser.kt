@@ -89,11 +89,22 @@ object BookParser {
 
     fun parse(bookFile: UniFile, bookId: String = bookFile.uri.toString()): ParsedBook {
         val input = bookFile.openInputStream() ?: throw UnsupportedBookException("Не удалось открыть файл книги")
-        val bytes = input.use { it.readBytes() }
-        if (bytes.isEmpty()) throw UnsupportedBookException("Файл пуст")
-        if (bytes.size > 40_000_000L) {
-            throw UnsupportedBookException("Файл слишком большой для чтения (более 40 МБ)")
+        val bytes = input.use { stream ->
+            val buf = java.io.ByteArrayOutputStream()
+            val tmp = ByteArray(8192)
+            var totalRead = 0L
+            while (true) {
+                val read = stream.read(tmp)
+                if (read < 0) break
+                totalRead += read
+                if (totalRead > 40_000_000L) {
+                    throw UnsupportedBookException("Файл слишком большой для чтения (более 40 МБ)")
+                }
+                buf.write(tmp, 0, read)
+            }
+            buf.toByteArray()
         }
+        if (bytes.isEmpty()) throw UnsupportedBookException("Файл пуст")
         val name = bookFile.name.orEmpty().substringBeforeLast('.').ifBlank { "Книга" }
         val ext = bookFile.extension().lowercase()
         // Формат определяется ПО СОДЕРЖИМОМУ, а не по расширению: бинарный
@@ -369,6 +380,7 @@ object BookParser {
                 title = entry.title,
                 startPage = startPage,
                 endPage = endPage,
+                totalPages = pageCount,
                 volume = vol,
                 chapter = chap,
                 scanlator = author,
@@ -469,25 +481,34 @@ object BookParser {
         val tmp = File.createTempFile("book_", ".pdf").apply { deleteOnExit() }
         try {
             val input = bookFile.openInputStream() ?: return null
-            input.use { it.copyTo(FileOutputStream(tmp)) }
+            FileOutputStream(tmp).use { out -> input.use { it.copyTo(out) } }
             val fd = ParcelFileDescriptor.open(tmp, ParcelFileDescriptor.MODE_READ_ONLY)
-            val renderer = PdfRenderer(fd)
-            if (renderer.pageCount == 0) { renderer.close(); fd.close(); return null }
-            val page = renderer.openPage(0)
-            val bitmap = Bitmap.createBitmap(
-                (page.width * 1.5).toInt().coerceAtMost(800),
-                (page.height * 1.5).toInt().coerceAtMost(1200),
-                Bitmap.Config.ARGB_8888,
-            )
-            bitmap.eraseColor(android.graphics.Color.WHITE)
-            page.render(bitmap, null as android.graphics.Rect?, null as android.graphics.Matrix?, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-            page.close()
-            renderer.close()
-            fd.close()
-            val baos = java.io.ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.PNG, 90, baos)
-            bitmap.recycle()
-            return baos.toByteArray()
+            try {
+                val renderer = PdfRenderer(fd)
+                try {
+                    if (renderer.pageCount == 0) return null
+                    val page = renderer.openPage(0)
+                    try {
+                        val bitmap = Bitmap.createBitmap(
+                            (page.width * 1.5).toInt().coerceAtMost(800),
+                            (page.height * 1.5).toInt().coerceAtMost(1200),
+                            Bitmap.Config.ARGB_8888,
+                        )
+                        bitmap.eraseColor(android.graphics.Color.WHITE)
+                        page.render(bitmap, null as android.graphics.Rect?, null as android.graphics.Matrix?, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        val baos = java.io.ByteArrayOutputStream()
+                        bitmap.compress(Bitmap.CompressFormat.PNG, 90, baos)
+                        bitmap.recycle()
+                        return baos.toByteArray()
+                    } finally {
+                        page.close()
+                    }
+                } finally {
+                    renderer.close()
+                }
+            } finally {
+                fd.close()
+            }
         } catch (e: Exception) {
             return null
         } finally {
@@ -503,7 +524,7 @@ object BookParser {
         val tmp = File.createTempFile("book_", ".pdf").apply { deleteOnExit() }
         return try {
             val input = bookFile.openInputStream() ?: return null
-            input.use { it.copyTo(FileOutputStream(tmp)) }
+            FileOutputStream(tmp).use { out -> input.use { it.copyTo(out) } }
             val fd = ParcelFileDescriptor.open(tmp, ParcelFileDescriptor.MODE_READ_ONLY)
             try {
                 val renderer = PdfRenderer(fd)
@@ -690,7 +711,7 @@ object BookParser {
         val tmp = File.createTempFile("book_", ".epub").apply { deleteOnExit() }
         tmp.writeBytes(bytes)
         return try {
-            parseEpubZip(ZipFile(tmp), bookId)
+            ZipFile(tmp).use { zip -> parseEpubZip(zip, bookId) }
         } finally {
             tmp.delete()
         }
@@ -818,25 +839,24 @@ object BookParser {
         val tmp = File.createTempFile("book_", ".epub").apply { deleteOnExit() }
         try {
             val input = bookFile.openInputStream() ?: return null
-            input.use { it.copyTo(FileOutputStream(tmp)) }
-            val zip = ZipFile(tmp)
-            val containerEntry = zip.getEntry("META-INF/container.xml") ?: run { zip.close(); return null }
-            val container = Jsoup.parse(
-                zip.getInputStream(containerEntry).readBytes().toString(Charsets.UTF_8),
-                "", Parser.xmlParser(),
-            )
-            val opfPath = decodeHref(container.selectFirst("rootfile")?.attr("full-path") ?: return null)
-            val base = opfPath.substringBeforeLast('/', "")
-            val opfEntry = zip.getEntry(opfPath) ?: run { zip.close(); return null }
-            val opf = Jsoup.parse(
-                zip.getInputStream(opfEntry).readBytes().toString(Charsets.UTF_8),
-                "", Parser.xmlParser(),
-            )
-            val coverId = opf.selectFirst("metadata meta[name=cover]")?.attr("content")
-                ?: opf.selectFirst("manifest item[properties*=cover-image]")?.attr("id")
-            val result = coverId?.let { findEpubImage(zip, base, it, opf) }
-            zip.close()
-            return result
+            FileOutputStream(tmp).use { out -> input.use { it.copyTo(out) } }
+            return ZipFile(tmp).use { zip ->
+                val containerEntry = zip.getEntry("META-INF/container.xml") ?: return@use null
+                val container = Jsoup.parse(
+                    zip.getInputStream(containerEntry).use { it.readBytes().toString(Charsets.UTF_8) },
+                    "", Parser.xmlParser(),
+                )
+                val opfPath = decodeHref(container.selectFirst("rootfile")?.attr("full-path") ?: return@use null)
+                val base = opfPath.substringBeforeLast('/', "")
+                val opfEntry = zip.getEntry(opfPath) ?: return@use null
+                val opf = Jsoup.parse(
+                    zip.getInputStream(opfEntry).use { it.readBytes().toString(Charsets.UTF_8) },
+                    "", Parser.xmlParser(),
+                )
+                val coverId = opf.selectFirst("metadata meta[name=cover]")?.attr("content")
+                    ?: opf.selectFirst("manifest item[properties*=cover-image]")?.attr("id")
+                coverId?.let { findEpubImage(zip, base, it, opf) }
+            }
         } catch (e: Exception) {
             return null
         } finally {
