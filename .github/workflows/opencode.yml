@@ -55,10 +55,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
+      # Файлы агента (agent/, npm-hub/, tools/) живут в ветке прототипа,
+      # а сам воркфлоу — в main (GitHub диспатчит только воркфлоу default-ветки).
       - uses: actions/checkout@v4
         with:
           path: fork
           fetch-depth: 0
+          ref: prototype-opencode-agent
 
       - uses: actions/setup-node@v4
         with:
@@ -154,19 +157,19 @@ jobs:
           echo "OpenCode serve is up on 4096"
 
           # npm-hub: xterm-терминал, дашборд, файлы, логи сборки, git status/diff/log
-          (cd npm-hub && PORT=8090 GH_TOKEN="$GH_TOKEN" nohup node src/server.js \
+          (cd npm-hub && PORT=8091 GH_TOKEN="$GH_TOKEN" nohup node src/server.js \
             > /tmp/npm-hub.log 2>&1 &)
           echo $! > /tmp/npm-hub.pid
           hub=0
           for i in $(seq 1 30); do
-            if curl -sf -o /dev/null -m 4 "http://127.0.0.1:8090/api/info"; then hub=1; break; fi
+            if curl -sf -o /dev/null -m 4 "http://127.0.0.1:8091/api/info"; then hub=1; break; fi
             sleep 1
           done
           if [ "$hub" != 1 ]; then
             echo "::warning::npm-hub did not start; terminal/files unavailable."
             tail -30 /tmp/npm-hub.log
           else
-            echo "npm-hub is up on 8090"
+            echo "npm-hub is up on 8091"
           fi
 
           # oc-gateway -> opencode (веб-чат на 4100)
@@ -192,7 +195,7 @@ jobs:
           fi
           HUBURL=""
           if [ "$hub" = 1 ]; then
-            HUBURL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8090 /tmp/hub-tunnel.log)
+            HUBURL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8091 /tmp/hub-tunnel.log)
             if [ -z "$HUBURL" ]; then
               echo "::warning::no tunnel for npm-hub."
               tail -25 /tmp/hub-tunnel.log
@@ -274,6 +277,7 @@ jobs:
         with:
           path: fork
           fetch-depth: 0
+          ref: prototype-opencode-agent
 
       - uses: actions/setup-node@v4
         with:
@@ -349,17 +353,17 @@ jobs:
           fi
           echo "OpenCode serve is up on 4096"
 
-          (cd npm-hub && PORT=8090 GH_TOKEN="$GH_TOKEN" node src/server.js > "$TEMP/npm-hub.log" 2>&1 &)
+          (cd npm-hub && PORT=8091 GH_TOKEN="$GH_TOKEN" node src/server.js > "$TEMP/npm-hub.log" 2>&1 &)
           hub=0
           for i in $(seq 1 30); do
-            if curl -sf -o /dev/null -m 4 "http://127.0.0.1:8090/api/info"; then hub=1; break; fi
+            if curl -sf -o /dev/null -m 4 "http://127.0.0.1:8091/api/info"; then hub=1; break; fi
             sleep 1
           done
           if [ "$hub" != 1 ]; then
             echo "::warning::npm-hub did not start; terminal/files unavailable."
             tail -30 "$TEMP/npm-hub.log" 2>/dev/null || true
           else
-            echo "npm-hub is up on 8090"
+            echo "npm-hub is up on 8091"
           fi
 
           OC_UI="$OC_UI" node "$GITHUB_WORKSPACE/fork/agent/oc-gateway.js" > "$TEMP/oc-gateway.log" 2>&1 &
@@ -382,7 +386,7 @@ jobs:
           fi
           HUBURL=""
           if [ "$hub" = 1 ]; then
-            HUBURL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8090 /tmp/hub-tunnel.log)
+            HUBURL=$(bash "$GITHUB_WORKSPACE/fork/tools/open_tunnel.sh" 8091 /tmp/hub-tunnel.log)
             if [ -z "$HUBURL" ]; then
               echo "::warning::no tunnel for npm-hub."
               tail -25 /tmp/hub-tunnel.log

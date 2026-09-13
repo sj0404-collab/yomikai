@@ -17,7 +17,7 @@ const HOME = os.homedir();
 const safeFilename = (s) => String(s).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
 const WORK_DIR = path.join(HOME, 'hub-work');
 try { fs.mkdirSync(WORK_DIR, { recursive: true }); } catch {}
-const PORT = process.env.PORT || 8090;
+const PORT = process.env.PORT || 8091;
 const HOST = '0.0.0.0';
 const STATE_FILE = path.join(HOME, '.npm-hub-state.json');
 

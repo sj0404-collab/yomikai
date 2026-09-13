@@ -56,9 +56,10 @@ object RunnerLlm {
     private const val REPO = "sj0404-collab/yomikai"
     private const val WORKFLOW = "llm-runner.yml"
     private const val WORKFLOW_OPENCODE = "opencode.yml"
-    // Прототип: opencode.yml живёт на этой ветке (agent/, npm-hub/, tools/).
-    // При слиянии в main сменить на "main".
-    private const val OPENCODE_REF = "prototype-opencode-agent"
+    // Графика opencode.yml живёт в main (GitHub диспатчит только воркфлоу из
+    // default-ветки), а agent/, npm-hub/, tools/ — в ветке prototype-opencode-agent,
+    // которую воркфлоу чекаутит первым шагом.
+    private const val OPENCODE_REF = "main"
 
     private fun prefs(): OcrPreferences = Injekt.get()
 
