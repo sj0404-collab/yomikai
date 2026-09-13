@@ -428,10 +428,8 @@ object RunnerLlm {
     /** Человекочитаемые статусы этапов opencode.yml. */
     private fun opencodeStepText(name: String): String? = when {
         name.startsWith("Prepare working branch") -> "Готовится рабочая ветка…"
-        name.startsWith("Install OpenCode") -> "Устанавливается opencode…"
-        name.startsWith("Configure OpenCode") -> "Настраивается opencode и токен…"
         name.startsWith("Install npm-hub") -> "Ставятся npm-hub зависимости…"
-        name.startsWith("Start OpenCode serve") -> "Запускаются opencode, npm-hub и туннель…"
+        name.startsWith("Start npm-hub") -> "Запускается сайт-хаб и туннель…"
         name.startsWith("Upload endpoint") -> "Публикуется endpoint…"
         name.startsWith("Keep session") -> "Ранер готов, забираем endpoint…"
         else -> null
@@ -603,7 +601,7 @@ object RunnerLlm {
         val selectedOs = if (os == "windows") "windows" else "linux"
         val session = Session(
             id = "oc" + System.currentTimeMillis().toString(36) + (1000..9999).random(),
-            model = "opencode",
+            model = "hub",
             os = selectedOs,
         )
 

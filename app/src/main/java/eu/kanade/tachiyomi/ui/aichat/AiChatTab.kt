@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -42,9 +41,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import cafe.adriel.voyager.navigator.tab.TabOptions
 import eu.kanade.presentation.util.Tab
 import eu.kanade.tachiyomi.data.ai.RunnerLlm
-import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import mihon.domain.ocr.service.OcrPreferences
@@ -53,8 +52,9 @@ import uy.kohesive.injekt.api.get
 
 /**
  * Вкладка «AI»: один слой — токен и запуск. После запуска в этой же вкладке
- * открывается npm-hub (терминал / файлы / дашборд) с GitHub-ранера, где живёт
- * OpenCode-агент. Никаких лишних под-вкладок и настроек.
+ * открывается сайт-хаб npm-hub (дашборд / терминал / файлы / git / инструменты)
+ * с GitHub-ранера, где живут CLI-агенты. Агент НЕ форсится при запуске —
+ * пользователь сам выбирает и устанавливает его внутри хаба (как в оригинале).
  */
 data object AiChatTab : Tab {
 
@@ -70,8 +70,15 @@ data object AiChatTab : Tab {
     private val chatScope = kotlinx.coroutines.CoroutineScope(
         kotlinx.coroutines.SupervisorJob() + Dispatchers.IO,
     )
-    private val hubStatusFlow = kotlinx.coroutines.flow.MutableStateFlow("")
-    private val hubStartingFlow = kotlinx.coroutines.flow.MutableStateFlow(false)
+    private val hubStatusFlow = MutableStateFlow("")
+    private val hubStartingFlow = MutableStateFlow(false)
+    // Fix 5: активная сессия живёт на уровне ОБЪЕКТА, а не в remember —
+    // при переключении вкладки (и обратно) WebView не «теряется».
+    private val hubSessionFlow = MutableStateFlow<RunnerLlm.Session?>(null)
+
+    private fun rememberSession(s: RunnerLlm.Session) {
+        hubSessionFlow.value = s
+    }
 
     @Composable
     override fun Content() {
@@ -80,15 +87,16 @@ data object AiChatTab : Tab {
         val pat by prefs.githubPat().changes().collectAsState(initial = prefs.githubPat().get())
         val starting by hubStartingFlow.collectAsState()
         val status by hubStatusFlow.collectAsState()
-        var sessions by remember { mutableStateOf(RunnerLlm.listSessions(context)) }
-        var openSession by remember {
-            mutableStateOf<RunnerLlm.Session?>(null)
+        val session by hubSessionFlow.collectAsState()
+        var sessions by remember {
+            mutableStateOf(runCatching { RunnerLlm.listSessions(context) }.getOrDefault(emptyList()))
         }
 
+        val openSession = session
         if (openSession != null) {
             HubWebView(
-                session = openSession!!,
-                onClose = { openSession = null },
+                session = openSession,
+                onClose = { hubSessionFlow.value = null },
             )
         } else {
             Column(
@@ -102,9 +110,11 @@ data object AiChatTab : Tab {
             ) {
                 Text("OpenCode-агент", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Запускает opencode + npm-hub (терминал, файлы, дашборд, git) на GitHub-ранере. " +
-                        "Агент работает вашим PAT аккаунта, поэтому видит и меняет ВСЕ репозитории, " +
-                        "коммиты и логи аккаунта. Нужен PAT с правом actions:write.",
+                    "Запускает сайт-хаб (npm-hub) на GitHub-ранере: дашборд, терминал, " +
+                        "файлы, git, инструменты. Нужного CLI-агента (opencode, DeepSeek, UTIM, " +
+                        "AI Shell и др.) вы сами выбираете и устанавливаете прямо внутри хаба. " +
+                        "Ранер работает вашим PAT аккаунта, поэтому видит и меняет ВСЕ репозитории " +
+                        "аккаунта. Нужен PAT с правом actions:write.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -127,20 +137,26 @@ data object AiChatTab : Tab {
                     enabled = !starting && pat.isNotBlank(),
                     onClick = {
                         hubStartingFlow.value = true
-                        hubStatusFlow.value = "⏳ Запуск OpenCode-агента…"
+                        hubStatusFlow.value = "⏳ Запуск хаба npm-hub…"
                         val appCtx = context.applicationContext
                         chatScope.launch {
-                            val s = RunnerLlm.startOpenCode(
-                                appCtx,
-                                { st -> hubStatusFlow.value = st },
-                                os = "linux",
-                                ui = "mobile",
-                            )
+                            val s = runCatching {
+                                RunnerLlm.startOpenCode(
+                                    appCtx,
+                                    { st -> hubStatusFlow.value = st },
+                                    os = "linux",
+                                    ui = "mobile",
+                                )
+                            }.getOrElse {
+                                hubStatusFlow.value = "❌ Ошибка запуска: ${it.message ?: it}"
+                                null
+                            }
                             withContext(Dispatchers.Main) {
                                 hubStartingFlow.value = false
                                 if (s != null) {
-                                    sessions = RunnerLlm.listSessions(context)
-                                    openSession = s
+                                    sessions = runCatching { RunnerLlm.listSessions(context) }
+                                        .getOrDefault(emptyList())
+                                    rememberSession(s)
                                 }
                             }
                         }
@@ -161,22 +177,24 @@ data object AiChatTab : Tab {
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Text(
-                                "${s.model} • ${s.messages.size} сообщ.",
+                                "${s.model} • ${s.messages.size} сообщ. • ${s.os}",
                                 style = MaterialTheme.typography.bodySmall,
                                 modifier = Modifier.weight(1f),
                             )
                             if (s.terminalUrl != null || s.url != null) {
                                 FilterChip(
                                     selected = false,
-                                    onClick = { openSession = s },
+                                    onClick = { rememberSession(s) },
                                     label = { Text("Открыть") },
                                 )
                             }
                             FilterChip(
                                 selected = false,
                                 onClick = {
-                                    RunnerLlm.deleteSession(context, s)
-                                    sessions = RunnerLlm.listSessions(context)
+                                    runCatching {
+                                        RunnerLlm.deleteSession(context, s)
+                                        sessions = RunnerLlm.listSessions(context)
+                                    }
                                 },
                                 label = { Text("✕") },
                             )
@@ -187,7 +205,7 @@ data object AiChatTab : Tab {
         }
     }
 
-    /** npm-hub / мобильный веб интерфейс в той же вкладке. */
+    /** Сайт-хаб npm-hub в той же вкладке: loading-экран вместо чёрного + ошибки. */
     @Composable
     @android.annotation.SuppressLint("SetJavaScriptEnabled")
     private fun HubWebView(
@@ -197,40 +215,61 @@ data object AiChatTab : Tab {
         val context = LocalContext.current
         val url = session.terminalUrl ?: session.url.orEmpty()
         var loading by remember(session.id) { mutableStateOf(true) }
+        var error by remember(session.id) { mutableStateOf<String?>(null) }
         val webView = remember(session.id, url) {
-            WebView(context).apply {
-                setBackgroundColor(android.graphics.Color.BLACK)
-                isFocusable = true
-                isFocusableInTouchMode = true
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = true
-                settings.loadWithOverviewMode = false
-                settings.useWideViewPort = false
-                settings.builtInZoomControls = false
-                settings.displayZoomControls = false
-                webViewClient = object : WebViewClient() {
-                    override fun onReceivedHttpAuthRequest(
-                        view: WebView?,
-                        handler: HttpAuthHandler,
-                        host: String?,
-                        realm: String?,
-                    ) {
-                        handler.proceed("yomikai", session.apiKey.orEmpty())
-                    }
+            runCatching {
+                WebView(context).apply {
+                    // На чёрном фоне «протухающий» туннель выглядел как мёртвый экран.
+                    setBackgroundColor(android.graphics.Color.WHITE)
+                    isFocusable = true
+                    isFocusableInTouchMode = true
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.loadWithOverviewMode = false
+                    settings.useWideViewPort = false
+                    settings.builtInZoomControls = false
+                    settings.displayZoomControls = false
+                    settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                    webViewClient = object : WebViewClient() {
+                        override fun onReceivedHttpAuthRequest(
+                            view: WebView?,
+                            handler: HttpAuthHandler,
+                            host: String?,
+                            realm: String?,
+                        ) {
+                            runCatching { handler.proceed("yomikai", session.apiKey.orEmpty()) }
+                        }
 
-                    override fun onPageFinished(view: WebView?, url: String?) {
-                        loading = false
-                        view?.requestFocus()
+                        override fun onPageFinished(view: WebView?, url: String?) {
+                            loading = false
+                            error = null
+                            view?.requestFocus()
+                        }
+
+                        override fun onReceivedError(
+                            view: WebView?,
+                            errorCode: Int,
+                            description: String?,
+                            failingUrl: String?,
+                        ) {
+                            loading = false
+                            error = "Ошибка загрузки ($errorCode): $description"
+                        }
                     }
+                    if (url.isNotBlank()) loadUrl(url)
                 }
-                if (url.isNotBlank()) loadUrl(url)
+            }.getOrElse {
+                error = "WebView не создался: ${it.message ?: it}"
+                null
             }
         }
         DisposableEffect(webView) {
             onDispose {
-                (webView.parent as? android.view.ViewGroup)?.removeView(webView)
-                webView.stopLoading()
-                webView.destroy()
+                runCatching {
+                    (webView.parent as? android.view.ViewGroup)?.removeView(webView)
+                    webView.stopLoading()
+                    webView.destroy()
+                }
             }
         }
 
@@ -242,19 +281,40 @@ data object AiChatTab : Tab {
             ) {
                 Text(
                     "npm-hub • ${session.os}" +
-                        (if (loading) " • подключение…" else " • терминал"),
+                        (if (loading) " • подключение…" else " • сайт"),
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.weight(1f),
                 )
-                IconButton(onClick = { loading = true; webView.reload() }) {
+                IconButton(onClick = {
+                    loading = true
+                    error = null
+                    runCatching { webView?.reload() }
+                }) {
                     Icon(Icons.Outlined.Refresh, contentDescription = "Перезагрузить")
                 }
                 TextButton(onClick = onClose) { Text("Закрыть") }
             }
-            AndroidView(
-                factory = { webView },
-                modifier = Modifier.fillMaxSize(),
-            )
+            if (webView != null && error == null) {
+                AndroidView(
+                    factory = { webView },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(24.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        error ?: "Сайт хаба недоступен. Проверьте, что ранер ещё жив.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    FilledTonalButton(
+                        onClick = { error = null; loading = true; runCatching { webView?.reload() } },
+                    ) { Text("Попробовать снова") }
+                    TextButton(onClick = onClose) { Text("Закрыть и к запуску") }
+                }
+            }
         }
     }
 }
