@@ -663,8 +663,18 @@ object BookParser {
         val headingTags = setOf("h1", "h2", "h3", "h4")
         val order = mutableListOf<Pair<String?, String>>()
         val body = doc.body() ?: return emptyList()
-        for (el in body.select("p,pre,blockquote,h1,h2,h3,h4")) {
+        for (el in body.select("p,pre,blockquote,h1,h2,h3,h4,img")) {
             val tag = el.normalName()
+            if (tag == "img") {
+                // Картинка между абзацами: если у неё есть подпись (alt/title),
+                // сохраняем её в текст главы, чтобы она не терялась и могла
+                // быть озвучена TTS. Чисто декоративные img без alt пропускаются.
+                val alt = el.attr("alt").trim()
+                val title = el.attr("title").trim()
+                val caption = if (alt.isNotBlank()) alt else title
+                if (caption.isNotBlank()) order += null to "(иллюстрация: $caption)"
+                continue
+            }
             if (tag in headingTags) {
                 val t = el.text().trim()
                 if (t.isNotBlank()) order += t to ""

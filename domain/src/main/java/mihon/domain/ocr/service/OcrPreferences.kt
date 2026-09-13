@@ -409,4 +409,19 @@ class OcrPreferences(
 
     /** Имя TTS-голоса для книг, "" = голос по умолчанию. (legacy) */
     fun bookVoiceName() = preferenceStore.getString("pref_book_voice_name", "")
+
+    /** Голоса по ролям: нарратив своим голосом, реплики персонажей — отдельными. */
+    fun bookRoleVoices() = preferenceStore.getBoolean("pref_book_role_voices", true)
+
+    /** Распознавать сканированные страницы (изображения PDF/EPUB) автоматически. */
+    fun bookPageOcr() = preferenceStore.getBoolean("pref_book_page_ocr", true)
+
+    /** Фоновая музыка для погружения при чтении. */
+    fun bookMusicEnabled() = preferenceStore.getBoolean("pref_book_music_enabled", false)
+
+    /** Громкость фоновой музыки (0..1). */
+    fun bookMusicVolume() = preferenceStore.getFloat("pref_book_music_volume", 0.15f)
+
+    /** Читалка во весь экран (прятать панели и системные бары). */
+    fun bookFullscreen() = preferenceStore.getBoolean("pref_book_fullscreen", false)
 }

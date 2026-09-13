@@ -1,5 +1,8 @@
 package eu.kanade.tachiyomi.ui.books
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.graphics.Bitmap
 import android.media.MediaPlayer
 import android.speech.tts.TextToSpeech
@@ -8,7 +11,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +30,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.List
+import androidx.compose.material.icons.outlined.DocumentScanner
+import androidx.compose.material.icons.outlined.FullscreenExit
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Settings
@@ -45,6 +49,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -64,16 +69,25 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import cafe.adriel.voyager.core.screen.Screen
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.reader.TtsVoicePickerDialog
+import eu.kanade.tachiyomi.data.books.BookAmbience
 import eu.kanade.tachiyomi.data.books.BookChapter
+import eu.kanade.tachiyomi.data.books.BookOcr
 import eu.kanade.tachiyomi.data.books.BookParser
+import eu.kanade.tachiyomi.data.books.BookSpeechRole
+import eu.kanade.tachiyomi.data.books.BookSpeechSegment
+import eu.kanade.tachiyomi.data.books.BookTtsScript
 import eu.kanade.tachiyomi.data.books.BooksStore
 import eu.kanade.tachiyomi.data.tts.EdgeTts
 import kotlinx.coroutines.CompletableDeferred
@@ -89,9 +103,14 @@ import uy.kohesive.injekt.api.get
 /**
  * Читатель электронных книг с авточтением (TTS) и восстановлением места чтения.
  *
- * Поддерживает два TTS-движка:
- *  • Системный Android TextToSpeech (оффлайн)
- *  • Microsoft Edge TTS (онлайн, бесплатно)
+ * Профессиональный режим чтения:
+ *  • два TTS-движка: системный Android TextToSpeech (оффлайн) и Edge TTS (онлайн);
+ *  • голоса по ролям: рассказчик своим голосом, персонажи — отдельными (Edge) или
+ *    сдвигом высоты (системный);
+ *  • распознавание сканированных страниц (image-PDF) штатным OCR-движком;
+ *  • фоновая музыка-эмбиент под настроение книги (процедурная, без файлов);
+ *  • полноэкранный режим без панелей и системных баров.
+ * Все тяжёлые операции обёрнуты в runCatching — читалка не падает.
  */
 data class BooksReaderScreen(
     val bookFileName: String,
@@ -118,10 +137,22 @@ data class BooksReaderScreen(
         var showVoicePicker by remember { mutableStateOf(false) }
         var pdfPageIndex by remember { mutableIntStateOf(0) }
         var pageImage by remember { mutableStateOf<Bitmap?>(null) }
+        // Новые профессиональные фичи
+        var roleVoices by remember { mutableStateOf(bookPrefs.bookRoleVoices().get()) }
+        var pageOcrEnabled by remember { mutableStateOf(bookPrefs.bookPageOcr().get()) }
+        var musicEnabled by remember { mutableStateOf(bookPrefs.bookMusicEnabled().get()) }
+        var musicVolume by remember { mutableFloatStateOf(bookPrefs.bookMusicVolume().get()) }
+        var fullscreen by remember { mutableStateOf(bookPrefs.bookFullscreen().get()) }
+        var pageOcrBusy by remember { mutableStateOf(false) }
+        var pageSegments by remember { mutableStateOf(mutableMapOf<Int, List<BookSpeechSegment>>()) }
+        var musicPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
         val scrollState = rememberScrollState()
         val listState = rememberLazyListState()
         val snackbarHostState = remember { SnackbarHostState() }
         val readerScope = rememberCoroutineScope()
+        val chapterSegmentsCache = remember(chapters) {
+            mutableMapOf<Pair<Int, Boolean>, List<BookSpeechSegment>>()
+        }
 
         // --- TTS Engine state ---
         var ttsEngine by remember { mutableStateOf(bookPrefs.bookTtsEngine().get()) }
@@ -138,14 +169,142 @@ data class BooksReaderScreen(
 
         // --- Edge TTS ---
         var edgePlayer by remember { mutableStateOf<MediaPlayer?>(null) }
-        val edgeCompletion = remember { CompletableDeferred<Unit>() }
 
         val bookFile = remember {
             val dir = BooksStore.booksDirectory(context)
             dir?.findFile(bookFileName)
         }
 
-        // Загрузка и парсинг
+        // ---------- Вспомогательные локальные функции ----------
+
+        val stopAll: () -> Unit = {
+            isPlaying = false
+            runCatching { tts.value?.stop() }
+            edgePlayer?.let { if (it.isPlaying) runCatching { it.stop() } }
+            musicPlayer?.let { runCatching { if (it.isPlaying) it.pause() } }
+        }
+
+        val togglePlay: () -> Unit = {
+            if (isPlaying) stopAll() else isPlaying = true
+        }
+
+        fun moodKeywords(): String = buildString {
+            append(title)
+            chapters.getOrNull(currentChapterIndex)?.displayTitle?.let { append(' ').append(it) }
+        }
+
+        val ocrPage: suspend (Int) -> Unit = { pageNumber ->
+            pageOcrBusy = true
+            val bmp = withContext(Dispatchers.IO) {
+                bookFile?.let { BookParser.renderPage(context, it, pageNumber) }
+            }
+            val text = bmp?.let { BookOcr.recognize(it) } ?: ""
+            if (bmp != null && !bmp.isRecycled) bmp.recycle()
+            pageSegments = pageSegments.toMutableMap().apply {
+                put(pageNumber, segmentsForReading(text, roleVoices))
+            }
+            pageOcrBusy = false
+        }
+
+        suspend fun speakSegment(segment: BookSpeechSegment): Boolean {
+            if (isEdgeTts) {
+                val narratorVoice = edgeVoiceName.ifBlank { EdgeTts.DEFAULT_VOICE }
+                val voice = if (roleVoices) {
+                    BookTtsScript.edgeVoiceFor(segment.role, segment.speaker, narratorVoice)
+                } else {
+                    narratorVoice
+                }
+                val ratePercent = ((speechRate - 1.0f) * 100).toInt()
+                val baseHz = ((pitch - 1.0f) * 100).toInt()
+                val roleHz = if (roleVoices) {
+                    BookTtsScript.edgePitchHzFor(segment.role, segment.speaker)
+                } else 0
+                val file = EdgeTts.synthesizeToFile(context, segment.text, voice, ratePercent, baseHz + roleHz)
+                if (file == null) {
+                    readerScope.launch {
+                        snackbarHostState.showSnackbar(
+                            "Edge TTS не озвучил фрагмент (нет сети или сервер недоступен).",
+                        )
+                    }
+                    isPlaying = false
+                    return false
+                }
+                val promise = CompletableDeferred<Unit>()
+                withContext(Dispatchers.Main) {
+                    runCatching {
+                        val old = edgePlayer
+                        edgePlayer = MediaPlayer().apply {
+                            setDataSource(file.absolutePath)
+                            setOnCompletionListener { promise.complete(Unit) }
+                            setOnErrorListener { _, _, _ ->
+                                promise.complete(Unit)
+                                true
+                            }
+                            prepare()
+                            start()
+                        }
+                        old?.release()
+                    }.onFailure { promise.complete(Unit) }
+                }
+                promise.await()
+                return true
+            } else {
+                // --- System TTS ---
+                if (systemTtsInitFailed) {
+                    readerScope.launch {
+                        snackbarHostState.showSnackbar(
+                            "Системный TTS недоступен на этом устройстве (движок не установлен). " +
+                                "Установите голосовой движок в настройках Android или выберите «🌐 Edge TTS».",
+                        )
+                    }
+                    isPlaying = false
+                    return false
+                }
+                val engine = tts.value
+                if (engine == null) {
+                    isPlaying = false
+                    return false
+                }
+                if (selectedVoiceSpec.contains("::")) {
+                    val voiceName = selectedVoiceSpec.substringAfterLast("::")
+                    runCatching {
+                        engine.voices?.firstOrNull { it.name == voiceName }?.let { engine.setVoice(it) }
+                    }
+                }
+                runCatching { engine.setSpeechRate(speechRate) }
+                val factor = if (roleVoices) {
+                    BookTtsScript.systemPitchFactorFor(segment.role, segment.speaker)
+                } else 1f
+                runCatching { engine.setPitch((pitch * factor).coerceIn(0.5f, 2f)) }
+                val utteranceId = "book_${currentChapterIndex}_$currentSentenceIndex"
+                val promise = CompletableDeferred<Unit>()
+                expectedUtteranceId.set(utteranceId)
+                pendingUtterance.set(promise)
+                val result = engine.speak(
+                    segment.text,
+                    TextToSpeech.QUEUE_ADD,
+                    null,
+                    utteranceId,
+                )
+                if (result == TextToSpeech.ERROR) {
+                    expectedUtteranceId.set(null)
+                    pendingUtterance.compareAndSet(promise, null)
+                    readerScope.launch {
+                        snackbarHostState.showSnackbar(
+                            "Системный TTS не озвучил текст. Проверьте голосовой движок " +
+                                "в настройках Android или используйте Edge TTS.",
+                        )
+                    }
+                    isPlaying = false
+                    return false
+                }
+                promise.await()
+                return true
+            }
+        }
+
+        // ---------- Загрузка и парсинг ----------
+
         LaunchedEffect(Unit) {
             withContext(Dispatchers.IO) {
                 runCatching {
@@ -213,11 +372,35 @@ data class BooksReaderScreen(
             }
         }
 
-        // Автоочистка Edge MediaPlayer
+        // Освобождение плееров при закрытии экрана
         DisposableEffect(Unit) {
             onDispose {
-                edgePlayer?.release()
+                runCatching { edgePlayer?.release() }
                 edgePlayer = null
+                runCatching { musicPlayer?.release() }
+                musicPlayer = null
+            }
+        }
+
+        // Полноэкранный режим: прячем системные бары
+        val view = LocalView.current
+        DisposableEffect(fullscreen) {
+            val window = findActivity(view.context)?.window
+            if (window == null) {
+                onDispose {}
+            } else {
+                val controller = WindowCompat.getInsetsController(window, view)
+                val mask = WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+                if (fullscreen) {
+                    controller.systemBarsBehavior =
+                        WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                    runCatching { controller.hide(mask) }
+                } else {
+                    runCatching { controller.show(mask) }
+                }
+                onDispose {
+                    runCatching { controller.show(mask) }
+                }
             }
         }
 
@@ -247,100 +430,105 @@ data class BooksReaderScreen(
             )
         }
 
+        // Фоновая музыка: старт/пауза синхронизированы с чтением
+        LaunchedEffect(isPlaying, musicEnabled, musicVolume, currentChapterIndex) {
+            if (!musicEnabled) {
+                musicPlayer?.let { runCatching { it.pause() } }
+                return@LaunchedEffect
+            }
+            if (!isPlaying) {
+                musicPlayer?.let { runCatching { it.pause() } }
+                return@LaunchedEffect
+            }
+            val mood = BookAmbience.moodFor(moodKeywords())
+            val vol = musicVolume.coerceIn(0f, 1f)
+            val file = withContext(Dispatchers.IO) { BookAmbience.fileFor(context, mood) }
+            if (file == null) return@LaunchedEffect
+            withContext(Dispatchers.Main) {
+                runCatching {
+                    val mp = musicPlayer ?: MediaPlayer().also { musicPlayer = it }
+                    if (mp.isPlaying) {
+                        mp.setVolume(vol, vol)
+                    } else {
+                        mp.reset()
+                        mp.setDataSource(file.absolutePath)
+                        mp.isLooping = true
+                        mp.setVolume(vol, vol)
+                        mp.prepare()
+                        mp.start()
+                    }
+                }
+            }
+        }
+
         // --- Auto-read loop ---
-        LaunchedEffect(isPlaying, currentChapterIndex, currentSentenceIndex, speechRate, pitch, ttsEngine, edgeVoiceName) {
+        LaunchedEffect(
+            isPlaying, currentChapterIndex, currentSentenceIndex, pdfPageIndex,
+            speechRate, pitch, ttsEngine, edgeVoiceName, roleVoices,
+            pageOcrEnabled, pageOcrBusy, pageSegments,
+        ) {
             if (!isPlaying) return@LaunchedEffect
             val chapter = chapters.getOrNull(currentChapterIndex)
                 ?: run { isPlaying = false; return@LaunchedEffect }
-            val sentences = splitSentences(chapter.resolvedText)
-            if (sentences.isEmpty()) {
+
+            if (chapter.isPageBased) {
+                // --- Сканированные страницы: озвучиваем распознанный текст страницы ---
+                if (!pageOcrEnabled) {
+                    readerScope.launch {
+                        snackbarHostState.showSnackbar(
+                            "Включите «Распознавать страницы (OCR)», чтобы озвучивать сканированные страницы.",
+                        )
+                    }
+                    isPlaying = false
+                    return@LaunchedEffect
+                }
+                val page = chapter.readablePages.getOrNull(pdfPageIndex)
+                    ?: run { isPlaying = false; return@LaunchedEffect }
+                val segments = pageSegments[page.pageNumber].orEmpty()
+                if (segments.isEmpty()) {
+                    if (!pageOcrBusy) readerScope.launch { ocrPage(page.pageNumber) }
+                    return@LaunchedEffect
+                }
+                if (currentSentenceIndex >= segments.size) {
+                    if (pdfPageIndex < chapter.readablePages.lastIndex) {
+                        pdfPageIndex++
+                        currentSentenceIndex = 0
+                    } else if (currentChapterIndex < chapters.lastIndex) {
+                        currentChapterIndex++
+                        currentSentenceIndex = 0
+                        pdfPageIndex = 0
+                    } else {
+                        isPlaying = false
+                    }
+                    return@LaunchedEffect
+                }
+                val segment = segments[currentSentenceIndex]
+                if (!speakSegment(segment)) return@LaunchedEffect
+                currentSentenceIndex++
+                return@LaunchedEffect
+            }
+
+            // --- Текстовые главы ---
+            val segments = chapterSegmentsCache.getOrPut(currentChapterIndex to roleVoices) {
+                segmentsForReading(chapter.resolvedText, roleVoices)
+            }
+            if (segments.isEmpty()) {
                 isPlaying = false
                 return@LaunchedEffect
             }
-            if (currentSentenceIndex >= sentences.size) {
+            if (currentSentenceIndex >= segments.size) {
                 if (currentChapterIndex < chapters.lastIndex) {
-                    currentChapterIndex++; currentSentenceIndex = 0; pdfPageIndex = 0
+                    currentChapterIndex++
+                    currentSentenceIndex = 0
+                    pdfPageIndex = 0
                 } else {
                     isPlaying = false
                 }
                 return@LaunchedEffect
             }
-            val sentence = sentences[currentSentenceIndex]
-
-            if (isEdgeTts) {
-                // --- Edge TTS path ---
-                val voice = edgeVoiceName.ifBlank { EdgeTts.DEFAULT_VOICE }
-                val ratePercent = ((speechRate - 1.0f) * 100).toInt()
-                val pitchHz = ((pitch - 1.0f) * 100).toInt()
-                val file = EdgeTts.synthesizeToFile(context, sentence, voice, ratePercent, pitchHz)
-                if (file == null) {
-                    isPlaying = false
-                    return@LaunchedEffect
-                }
-                val promise = CompletableDeferred<Unit>()
-                withContext(Dispatchers.Main) {
-                    edgePlayer?.release()
-                    edgePlayer = MediaPlayer().apply {
-                        setDataSource(file.absolutePath)
-                        setOnCompletionListener {
-                            promise.complete(Unit)
-                        }
-                        setOnErrorListener { _, _, _ ->
-                            promise.complete(Unit)
-                            true
-                        }
-                        prepare()
-                        start()
-                    }
-                }
-                promise.await()
-                currentSentenceIndex++
-            } else {
-                // --- System TTS path ---
-                if (systemTtsInitFailed) {
-                    readerScope.launch {
-                        snackbarHostState.showSnackbar(
-                            "Системный TTS недоступен на этом устройстве (движок не установлен). " +
-                                "Установите голосовой движок в настройках Android или выберите «🌐 Edge TTS».",
-                        )
-                    }
-                    isPlaying = false
-                    return@LaunchedEffect
-                }
-                val engine = tts.value ?: run { isPlaying = false; return@LaunchedEffect }
-                // Apply voice
-                if (selectedVoiceSpec.contains("::")) {
-                    val voiceName = selectedVoiceSpec.substringAfterLast("::")
-                    val pkg = selectedVoiceSpec.substringBefore("::")
-                    engine.voices?.firstOrNull { it.name == voiceName }?.let { engine.setVoice(it) }
-                }
-                engine.setSpeechRate(speechRate)
-                engine.setPitch(pitch)
-                val utteranceId = "book_${currentChapterIndex}_$currentSentenceIndex"
-                val promise = CompletableDeferred<Unit>()
-                expectedUtteranceId.set(utteranceId)
-                pendingUtterance.set(promise)
-                val result = engine.speak(
-                    sentence,
-                    TextToSpeech.QUEUE_ADD,
-                    null,
-                    utteranceId,
-                )
-                if (result == TextToSpeech.ERROR) {
-                    expectedUtteranceId.set(null)
-                    pendingUtterance.compareAndSet(promise, null)
-                    readerScope.launch {
-                        snackbarHostState.showSnackbar(
-                            "Системный TTS не озвучил текст. Проверьте, что в Android " +
-                                "настроен голосовой движок, или используйте Edge TTS.",
-                        )
-                    }
-                    isPlaying = false
-                    return@LaunchedEffect
-                }
-                promise.await()
-                currentSentenceIndex++
-            }
+            val segment = segments[currentSentenceIndex]
+            if (!speakSegment(segment)) return@LaunchedEffect
+            currentSentenceIndex++
         }
 
         // Сохранение прогресса
@@ -353,11 +541,11 @@ data class BooksReaderScreen(
             val total = totalSentencesPerChapter.sum().coerceAtLeast(1)
             val consumedBefore = totalSentencesPerChapter.subList(0, currentChapterIndex).sum() + saveSentence
             val percent = ((consumedBefore.toLong() * 100) / total).toInt().coerceIn(0, 100)
-            BooksStore.save(context, bk, BooksStore.Snapshot(currentChapterIndex, saveSentence, percent))
+            runCatching { BooksStore.save(context, bk, BooksStore.Snapshot(currentChapterIndex, saveSentence, percent)) }
         }
 
         // Рендер страниц PDF по требованию
-        LaunchedEffect(chapters, currentChapterIndex, pdfPageIndex) {
+        LaunchedEffect(chapters, currentChapterIndex, pdfPageIndex, pageSegments) {
             val chapter = chapters.getOrNull(currentChapterIndex)
             if (chapter?.isPageBased != true) {
                 pageImage = null
@@ -367,17 +555,26 @@ data class BooksReaderScreen(
                 pageImage = null
                 return@LaunchedEffect
             }
-            val bmp = withContext(Dispatchers.IO) {
-                val file = bookFile ?: return@withContext null
-                BookParser.renderPage(context, file, page.pageNumber)
-            }
-            val current = chapters.getOrNull(currentChapterIndex)
-            if (current?.isPageBased == true && current.readablePages.getOrNull(pdfPageIndex)?.pageNumber == page.pageNumber) {
-                val old = pageImage
-                pageImage = bmp
-                old?.recycle()
+            // Если страница уже распознана — картинка не нужна, показываем текст
+            if (pageSegments[page.pageNumber].isNullOrEmpty()) {
+                val bmp = withContext(Dispatchers.IO) {
+                    val file = bookFile ?: return@withContext null
+                    BookParser.renderPage(context, file, page.pageNumber)
+                }
+                val current = chapters.getOrNull(currentChapterIndex)
+                if (current?.isPageBased == true &&
+                    current.readablePages.getOrNull(pdfPageIndex)?.pageNumber == page.pageNumber
+                ) {
+                    val old = pageImage
+                    pageImage = bmp
+                    old?.recycle()
+                } else {
+                    bmp?.recycle()
+                }
             } else {
-                bmp?.recycle()
+                val old = pageImage
+                pageImage = null
+                old?.recycle()
             }
         }
 
@@ -398,366 +595,539 @@ data class BooksReaderScreen(
         }
 
         val currentChapter = chapters.getOrNull(currentChapterIndex)
-        val sentences = if (currentChapter != null) splitSentences(currentChapter.resolvedText) else emptyList()
+        val isPageBased = currentChapter?.isPageBased == true
+        val readablePages = currentChapter?.readablePages.orEmpty()
+        val pageNum = readablePages.getOrNull(pdfPageIndex)?.pageNumber
+        val segments = if (currentChapter == null) emptyList() else {
+            if (isPageBased) {
+                pageSegments[pageNum].orEmpty()
+            } else {
+                chapterSegmentsCache.getOrPut(currentChapterIndex to roleVoices) {
+                    segmentsForReading(currentChapter.resolvedText, roleVoices)
+                }
+            }
+        }
+        val headerCount = if (isPageBased && segments.isNotEmpty()) 1 else 0
 
-        // Автопрокрутка к читаемому предложению
-        LaunchedEffect(currentChapterIndex, currentSentenceIndex) {
-            val ch = chapters.getOrNull(currentChapterIndex)
-            if (ch?.isPageBased != true && sentences.isNotEmpty()) {
-                listState.animateScrollToItem(currentSentenceIndex.coerceIn(0, sentences.lastIndex))
+        // Автопрокрутка к читаемому сегменту
+        LaunchedEffect(currentChapterIndex, currentSentenceIndex, isPageBased) {
+            if (segments.isNotEmpty()) {
+                val target = (currentSentenceIndex + headerCount).coerceIn(0, segments.lastIndex + headerCount)
+                listState.animateScrollToItem(target)
             }
         }
 
         Box(modifier = Modifier.fillMaxSize()) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = title,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = { navigator.pop() }) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Назад")
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { showChapterList = !showChapterList }) {
-                        Icon(Icons.AutoMirrored.Outlined.List, contentDescription = "Главы")
-                    }
-                    IconButton(onClick = { showSettings = !showSettings }) {
-                        Icon(Icons.Outlined.Settings, contentDescription = "Настройки")
-                    }
-                },
-            )
-
-            // --- Chapter list ---
-            AnimatedVisibility(visible = showChapterList) {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(200.dp)
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                ) {
-                    itemsIndexed(chapters, key = { _, ch -> ch.id }) { index, chapter ->
-                        Text(
-                            text = chapter.displayTitle,
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = if (index == currentChapterIndex)
-                                MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    currentChapterIndex = index
-                                    currentSentenceIndex = 0
-                                    pdfPageIndex = 0
-                                    isPlaying = false
-                                }
-                                .padding(horizontal = 16.dp, vertical = 8.dp),
-                        )
-                        HorizontalDivider()
-                    }
-                }
-            }
-
-            // --- Settings panel ---
-            AnimatedVisibility(visible = showSettings) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                        .padding(16.dp)
-                        .verticalScroll(rememberScrollState()),
-                ) {
-                    // TTS Engine selector
-                    Text(
-                        "Движок озвучки",
-                        style = MaterialTheme.typography.labelMedium,
-                    )
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.padding(vertical = 4.dp),
-                    ) {
-                        FilterChip(
-                            selected = !isEdgeTts,
-                            onClick = {
-                                ttsEngine = "system"
-                                bookPrefs.bookTtsEngine().set("system")
-                            },
-                            label = { Text("📱 Системный") },
-                        )
-                        FilterChip(
-                            selected = isEdgeTts,
-                            onClick = {
-                                ttsEngine = "edge"
-                                bookPrefs.bookTtsEngine().set("edge")
-                            },
-                            label = { Text("🌐 Edge TTS") },
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    // Voice picker button
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { showVoicePicker = true }
-                            .padding(vertical = 4.dp),
-                    ) {
-                        Text(
-                            text = "Голос: ${selectedVoiceLabel.ifBlank { "По умолчанию" }}",
-                            style = MaterialTheme.typography.labelMedium,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Text(
-                            text = "▸",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Text(
-                        "Скорость: x${String.format("%.1f", speechRate)}",
-                        style = MaterialTheme.typography.labelMedium,
-                    )
-                    Slider(
-                        value = speechRate,
-                        onValueChange = {
-                            speechRate = it
-                            bookPrefs.bookSpeechRate().set(it)
+            Column(modifier = Modifier.fillMaxSize()) {
+                AnimatedVisibility(visible = !fullscreen) {
+                    TopAppBar(
+                        title = {
+                            Text(
+                                text = title,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.titleMedium,
+                            )
                         },
-                        valueRange = 0.5f..3.0f,
-                        steps = 9,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Высота: ${String.format("%.1f", pitch)}", style = MaterialTheme.typography.labelMedium)
-                    Slider(
-                        value = pitch,
-                        onValueChange = {
-                            pitch = it
-                            bookPrefs.bookSpeechPitch().set(it)
+                        navigationIcon = {
+                            IconButton(onClick = { navigator.pop() }) {
+                                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Назад")
+                            }
                         },
-                        valueRange = 0.5f..2.0f,
-                        steps = 5,
-                        modifier = Modifier.fillMaxWidth(),
+                        actions = {
+                            IconButton(onClick = { showChapterList = !showChapterList }) {
+                                Icon(Icons.AutoMirrored.Outlined.List, contentDescription = "Главы")
+                            }
+                            IconButton(onClick = { showSettings = !showSettings }) {
+                                Icon(Icons.Outlined.Settings, contentDescription = "Настройки")
+                            }
+                        },
                     )
-                }
-            }
 
-            val isPageBased = currentChapter?.isPageBased == true
-            val readablePages = currentChapter?.readablePages.orEmpty()
-
-            val contentModifier = Modifier.weight(1f)
-
-            Box(modifier = contentModifier) {
-                when {
-                    isPageBased && pageImage != null -> {
-                        Image(
-                            bitmap = pageImage!!.asImageBitmap(),
-                            contentDescription = currentChapter?.displayTitle,
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Fit,
-                        )
-                    }
-                    isPageBased -> {
-                        val pNum = readablePages.getOrNull(pdfPageIndex)?.pageNumber ?: (currentChapterIndex + 1)
-                        Text(
-                            text = "Страница $pNum — нет изображения",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
-                        )
-                    }
-                    sentences.isNotEmpty() -> {
+                    // --- Chapter list ---
+                    AnimatedVisibility(visible = showChapterList) {
                         LazyColumn(
                             modifier = Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = 16.dp, vertical = 8.dp),
-                            state = listState,
+                                .fillMaxWidth()
+                                .height(200.dp)
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
                         ) {
-                            itemsIndexed(sentences, key = { idx, _ -> idx }) { idx, sentence ->
-                                val isCurrent = idx == currentSentenceIndex
+                            itemsIndexed(chapters, key = { _, ch -> ch.id }) { index, chapter ->
                                 Text(
-                                    text = if (isCurrent) "▸ $sentence" else sentence,
-                                    style = MaterialTheme.typography.bodyLarge.copy(
-                                        fontSize = 18.sp,
-                                        lineHeight = 28.sp,
-                                    ),
-                                    color = if (isCurrent)
-                                        MaterialTheme.colorScheme.onPrimaryContainer
+                                    text = chapter.displayTitle,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    color = if (index == currentChapterIndex)
+                                        MaterialTheme.colorScheme.primary
                                     else MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(
-                                            if (isCurrent)
-                                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
-                                            else Color.Transparent,
-                                        )
-                                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                                        .clickable {
+                                            currentChapterIndex = index
+                                            currentSentenceIndex = 0
+                                            pdfPageIndex = 0
+                                            isPlaying = false
+                                        }
+                                        .padding(horizontal = 16.dp, vertical = 8.dp),
                                 )
+                                HorizontalDivider()
                             }
                         }
                     }
-                    else -> {
-                        Text(
-                            text = "Глава пуста",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
+
+                    // --- Settings panel ---
+                    AnimatedVisibility(visible = showSettings) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                .padding(16.dp)
+                                .verticalScroll(rememberScrollState()),
+                        ) {
+                            Text(
+                                "Движок озвучки",
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.padding(vertical = 4.dp),
+                            ) {
+                                FilterChip(
+                                    selected = !isEdgeTts,
+                                    onClick = {
+                                        ttsEngine = "system"
+                                        bookPrefs.bookTtsEngine().set("system")
+                                    },
+                                    label = { Text("📱 Системный") },
+                                )
+                                FilterChip(
+                                    selected = isEdgeTts,
+                                    onClick = {
+                                        ttsEngine = "edge"
+                                        bookPrefs.bookTtsEngine().set("edge")
+                                    },
+                                    label = { Text("🌐 Edge TTS") },
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Voice picker button
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { showVoicePicker = true }
+                                    .padding(vertical = 4.dp),
+                            ) {
+                                Text(
+                                    text = "Голос: ${selectedVoiceLabel.ifBlank { "По умолчанию" }}",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Text(
+                                    text = "▸",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Text(
+                                "Скорость: x${String.format("%.1f", speechRate)}",
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                            Slider(
+                                value = speechRate,
+                                onValueChange = {
+                                    speechRate = it
+                                    bookPrefs.bookSpeechRate().set(it)
+                                },
+                                valueRange = 0.5f..3.0f,
+                                steps = 9,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Высота: ${String.format("%.1f", pitch)}", style = MaterialTheme.typography.labelMedium)
+                            Slider(
+                                value = pitch,
+                                onValueChange = {
+                                    pitch = it
+                                    bookPrefs.bookSpeechPitch().set(it)
+                                },
+                                valueRange = 0.5f..2.0f,
+                                steps = 5,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            SettingSwitchRow(
+                                label = "Голоса по ролям",
+                                checked = roleVoices,
+                                onCheckedChange = { v ->
+                                    roleVoices = v
+                                    bookPrefs.bookRoleVoices().set(v)
+                                    currentSentenceIndex = 0
+                                    isPlaying = false
+                                },
+                            )
+                            SettingSwitchRow(
+                                label = "Распознавать страницы (OCR)",
+                                checked = pageOcrEnabled,
+                                onCheckedChange = { v ->
+                                    pageOcrEnabled = v
+                                    bookPrefs.bookPageOcr().set(v)
+                                },
+                            )
+                            SettingSwitchRow(
+                                label = "Фоновая музыка",
+                                checked = musicEnabled,
+                                onCheckedChange = { v ->
+                                    musicEnabled = v
+                                    bookPrefs.bookMusicEnabled().set(v)
+                                    if (!v) musicPlayer?.let { runCatching { it.pause() } }
+                                },
+                            )
+                            if (musicEnabled) {
+                                Text(
+                                    "Громкость музыки",
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
+                                Slider(
+                                    value = musicVolume,
+                                    onValueChange = {
+                                        musicVolume = it
+                                        bookPrefs.bookMusicVolume().set(it)
+                                    },
+                                    valueRange = 0.04f..0.8f,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                            SettingSwitchRow(
+                                label = "Во весь экран",
+                                checked = fullscreen,
+                                onCheckedChange = { v ->
+                                    fullscreen = v
+                                    bookPrefs.bookFullscreen().set(v)
+                                    showSettings = false
+                                },
+                            )
+                        }
+                    }
+                }
+
+                val contentModifier = Modifier.weight(1f)
+
+                Box(modifier = contentModifier) {
+                    when {
+                        isPageBased && segments.isNotEmpty() -> {
+                            // Распознанный текст страницы — поверхностный список с подсветкой
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                                state = listState,
+                            ) {
+                                item(key = "__page_header__") {
+                                    Text(
+                                        text = "Страница $pageNum · распознанный текст",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(vertical = 4.dp),
+                                    )
+                                }
+                                itemsIndexed(segments, key = { idx, _ -> idx }) { idx, segment ->
+                                    val isCurrent = idx == currentSentenceIndex
+                                    Text(
+                                        text = if (isCurrent) "▸ ${segment.text}" else segment.text,
+                                        style = MaterialTheme.typography.bodyLarge.copy(
+                                            fontSize = 18.sp,
+                                            lineHeight = 28.sp,
+                                        ),
+                                        color = if (isCurrent)
+                                            MaterialTheme.colorScheme.onPrimaryContainer
+                                        else MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(
+                                                if (isCurrent)
+                                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                                                else Color.Transparent,
+                                            )
+                                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                                    )
+                                }
+                            }
+                        }
+                        isPageBased && pageImage != null -> {
+                            Image(
+                                bitmap = pageImage!!.asImageBitmap(),
+                                contentDescription = currentChapter?.displayTitle,
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Fit,
+                            )
+                        }
+                        isPageBased -> {
+                            val pNum = pageNum ?: (currentChapterIndex + 1)
+                            Column(
+                                modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                Text(
+                                    text = if (pageOcrBusy) {
+                                        "Страница $pNum — распознаю текст…"
+                                    } else {
+                                        "Страница $pNum — нет изображения"
+                                    },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center,
+                                )
+                                if (!pageOcrBusy && !pageOcrEnabled) {
+                                    Text(
+                                        text = "Включите «Распознавать страницы (OCR)» для чтения сканов.",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(top = 8.dp),
+                                    )
+                                }
+                            }
+                        }
+                        segments.isNotEmpty() -> {
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                                state = listState,
+                            ) {
+                                itemsIndexed(segments, key = { idx, _ -> idx }) { idx, segment ->
+                                    val isCurrent = idx == currentSentenceIndex
+                                    Text(
+                                        text = if (isCurrent) "▸ ${segment.text}" else segment.text,
+                                        style = MaterialTheme.typography.bodyLarge.copy(
+                                            fontSize = 18.sp,
+                                            lineHeight = 28.sp,
+                                        ),
+                                        color = if (isCurrent)
+                                            MaterialTheme.colorScheme.onPrimaryContainer
+                                        else MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(
+                                                if (isCurrent)
+                                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                                                else Color.Transparent,
+                                            )
+                                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                                    )
+                                }
+                            }
+                        }
+                        else -> {
+                            Text(
+                                text = "Глава пуста",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth().padding(top = 48.dp),
+                            )
+                        }
+                    }
+                }
+
+                if (!fullscreen && segments.isNotEmpty()) {
+                    LinearProgressIndicator(
+                        progress = { currentSentenceIndex.toFloat() / segments.size },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+
+                val totalFilePages = chapters.lastOrNull()?.pages?.lastOrNull()?.pageNumber ?: chapters.size
+                val statusText = if (isPageBased) {
+                    val pNum = pageNum ?: (currentChapterIndex + 1)
+                    if (segments.isNotEmpty()) {
+                        "Страница $pNum · ${currentSentenceIndex + 1}/${segments.size}"
+                    } else {
+                        "Страница $pNum из $totalFilePages"
+                    }
+                } else {
+                    "Глава ${currentChapterIndex + 1}/${chapters.size} · " +
+                        "Предложение ${currentSentenceIndex + 1}/${segments.size.coerceAtLeast(1)}"
+                }
+                if (!fullscreen) {
+                    Text(
+                        text = statusText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    )
+
+                    if (isPageBased && readablePages.size > 1) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp)
+                                .height(36.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            IconButton(
+                                onClick = {
+                                    if (pdfPageIndex > 0) {
+                                        pdfPageIndex--
+                                        stopAll()
+                                    }
+                                },
+                                modifier = Modifier.size(32.dp),
+                            ) {
+                                Icon(Icons.Outlined.SkipPrevious, contentDescription = "Назад")
+                            }
+                            Text(
+                                text = "Страница ${pdfPageIndex + 1}/${readablePages.size} в главе",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            IconButton(
+                                onClick = {
+                                    if (pdfPageIndex < readablePages.lastIndex) {
+                                        pdfPageIndex++
+                                        stopAll()
+                                    }
+                                },
+                                modifier = Modifier.size(32.dp),
+                            ) {
+                                Icon(Icons.Outlined.SkipNext, contentDescription = "Вперёд")
+                            }
+                        }
+                    }
+
+                    // --- Bottom controls ---
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surface)
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (isPageBased) {
+                            // Ручное распознавание страницы
+                            val cur = chapters.getOrNull(currentChapterIndex)
+                            val pg = cur?.readablePages?.getOrNull(pdfPageIndex)
+                            IconButton(
+                                onClick = {
+                                    val p = pg ?: return@IconButton
+                                    if (!pageSegments.containsKey(p.pageNumber) && !pageOcrBusy) {
+                                        readerScope.launch { ocrPage(p.pageNumber) }
+                                    }
+                                },
+                                modifier = Modifier.size(40.dp),
+                            ) {
+                                Icon(
+                                    Icons.Outlined.DocumentScanner,
+                                    contentDescription = "Распознать страницу",
+                                    modifier = Modifier.size(22.dp),
+                                )
+                            }
+                        }
+                        // Prev chapter
+                        IconButton(onClick = {
+                            if (currentChapterIndex > 0) {
+                                currentChapterIndex--
+                                currentSentenceIndex = 0
+                                pdfPageIndex = 0
+                            }
+                        }) {
+                            Icon(Icons.Outlined.SkipPrevious, contentDescription = "Предыдущая глава")
+                        }
+
+                        // Stop
+                        IconButton(
+                            onClick = stopAll,
+                            modifier = Modifier.size(40.dp),
+                        ) {
+                            Icon(
+                                Icons.Outlined.Stop,
+                                contentDescription = "Стоп",
+                                modifier = Modifier.size(24.dp),
+                            )
+                        }
+
+                        // Play / Pause
+                        IconButton(
+                            onClick = togglePlay,
+                            modifier = Modifier.size(56.dp),
+                        ) {
+                            Icon(
+                                imageVector = if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                                contentDescription = if (isPlaying) "Пауза" else "Читать",
+                                modifier = Modifier.size(32.dp),
+                            )
+                        }
+
+                        // Next chapter
+                        IconButton(onClick = {
+                            if (currentChapterIndex < chapters.lastIndex) {
+                                currentChapterIndex++
+                                currentSentenceIndex = 0
+                                pdfPageIndex = 0
+                            }
+                        }) {
+                            Icon(Icons.Outlined.SkipNext, contentDescription = "Следующая глава")
+                        }
+                    }
+                }
+            }
+
+            // Компактные плавающие кнопки в полноэкранном режиме
+            if (fullscreen) {
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 10.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.9f))
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(onClick = {
+                        fullscreen = false
+                        bookPrefs.bookFullscreen().set(false)
+                    }) {
+                        Icon(Icons.Outlined.FullscreenExit, contentDescription = "Вернуть панели")
+                    }
+                    IconButton(onClick = stopAll, modifier = Modifier.size(40.dp)) {
+                        Icon(Icons.Outlined.Stop, contentDescription = "Стоп", modifier = Modifier.size(22.dp))
+                    }
+                    IconButton(onClick = togglePlay, modifier = Modifier.size(48.dp)) {
+                        Icon(
+                            imageVector = if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                            contentDescription = if (isPlaying) "Пауза" else "Читать",
+                            modifier = Modifier.size(28.dp),
                         )
                     }
                 }
             }
 
-            if (sentences.isNotEmpty() && !isPageBased) {
-                LinearProgressIndicator(
-                    progress = { currentSentenceIndex.toFloat() / sentences.size },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-
-            val totalFilePages = chapters.lastOrNull()?.pages?.lastOrNull()?.pageNumber ?: chapters.size
-            val statusText = if (isPageBased) {
-                val pNum = readablePages.getOrNull(pdfPageIndex)?.pageNumber ?: (currentChapterIndex + 1)
-                "Страница $pNum из $totalFilePages"
-            } else {
-                "Глава ${currentChapterIndex + 1}/${chapters.size} · " +
-                    "Предложение ${currentSentenceIndex + 1}/${sentences.size.coerceAtLeast(1)}"
-            }
-            Text(
-                text = statusText,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-            )
-
-            if (isPageBased && readablePages.size > 1) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .height(36.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    IconButton(
-                        onClick = {
-                            if (pdfPageIndex > 0) {
-                                pdfPageIndex--
-                                isPlaying = false
-                                tts.value?.stop()
-                                edgePlayer?.let { if (it.isPlaying) it.stop() }
-                            }
-                        },
-                        modifier = Modifier.size(32.dp),
-                    ) {
-                        Icon(Icons.Outlined.SkipPrevious, contentDescription = "Назад")
-                    }
-                    Text(
-                        text = "Страница ${pdfPageIndex + 1}/${readablePages.size} в главе",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    IconButton(
-                        onClick = {
-                            if (pdfPageIndex < readablePages.lastIndex) {
-                                pdfPageIndex++
-                                isPlaying = false
-                                tts.value?.stop()
-                                edgePlayer?.let { if (it.isPlaying) it.stop() }
-                            }
-                        },
-                        modifier = Modifier.size(32.dp),
-                    ) {
-                        Icon(Icons.Outlined.SkipNext, contentDescription = "Вперёд")
-                    }
-                }
-            }
-
-            // --- Bottom controls ---
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surface)
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                // Prev chapter
-                IconButton(onClick = {
-                    if (currentChapterIndex > 0) {
-                        currentChapterIndex--; currentSentenceIndex = 0; pdfPageIndex = 0
-                    }
-                }) {
-                    Icon(Icons.Outlined.SkipPrevious, contentDescription = "Предыдущая глава")
-                }
-
-                // Stop
-                IconButton(
-                    onClick = {
-                        isPlaying = false
-                        tts.value?.stop()
-                        edgePlayer?.let { if (it.isPlaying) it.stop() }
-                        currentSentenceIndex = 0
-                    },
-                    modifier = Modifier.size(40.dp),
-                ) {
-                    Icon(
-                        Icons.Outlined.Stop,
-                        contentDescription = "Стоп",
-                        modifier = Modifier.size(24.dp),
-                    )
-                }
-
-                // Play / Pause
-                IconButton(
-                    onClick = {
-                        if (isPlaying) {
-                            isPlaying = false
-                            tts.value?.stop()
-                            edgePlayer?.let { if (it.isPlaying) it.stop() }
-                        } else {
-                            isPlaying = true
-                        }
-                    },
-                    modifier = Modifier.size(56.dp),
-                ) {
-                    Icon(
-                        imageVector = if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                        contentDescription = if (isPlaying) "Пауза" else "Читать",
-                        modifier = Modifier.size(32.dp),
-                    )
-                }
-
-                // Next chapter
-                IconButton(onClick = {
-                    if (currentChapterIndex < chapters.lastIndex) {
-                        currentChapterIndex++; currentSentenceIndex = 0; pdfPageIndex = 0
-                    }
-                }) {
-                    Icon(Icons.Outlined.SkipNext, contentDescription = "Следующая глава")
-                }
-            }
-        }
-
             SnackbarHost(
                 hostState = snackbarHostState,
-                modifier = Modifier.align(Alignment.BottomCenter),
+                modifier = Modifier.align(Alignment.BottomCenter)
+                    .padding(bottom = if (fullscreen) 56.dp else 0.dp),
             )
+        }
+    }
+
+    private fun segmentsForReading(text: String, roleVoices: Boolean): List<BookSpeechSegment> {
+        return if (roleVoices) {
+            BookTtsScript.split(text)
+        } else {
+            splitSentences(text).map { BookSpeechSegment(BookSpeechRole.NARRATOR, 0, it) }
         }
     }
 
@@ -771,4 +1141,29 @@ data class BooksReaderScreen(
             .map { it.trim() }
             .filter { it.isNotBlank() }
     }
+}
+
+@Composable
+private fun SettingSwitchRow(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.weight(1f),
+        )
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+private tailrec fun findActivity(context: Context?): Activity? = when (context) {
+    is Activity -> context
+    is ContextWrapper -> findActivity(context.baseContext)
+    else -> null
 }
