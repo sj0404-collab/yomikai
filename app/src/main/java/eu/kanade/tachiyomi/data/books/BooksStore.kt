@@ -278,10 +278,23 @@ object BooksStore {
 
     /**
      * Возвращает путь к обложке (или null).
+     *
+     * Библиотека читает только этот путь, поэтому обложка обязана появиться
+     * здесь. Раньше метод лишь смотрел в кэш: пока кто-то не вызвал
+     * [loadCover], каждая книга показывалась заведомо «без обложки», хотя
+     * извлечение было бы успешным. Теперь при отсутствии кэша обложка
+     * извлекается и сохраняется на лету.
      */
     fun coverPath(context: Context, book: UniFile): String? {
         val cacheFile = File(coversDir(context), coverFileName(book))
-        return if (cacheFile.exists()) cacheFile.absolutePath else null
+        if (cacheFile.exists()) return cacheFile.absolutePath
+        return try {
+            val coverBytes = BookParser.extractCover(context, book) ?: return null
+            FileOutputStream(cacheFile).use { it.write(coverBytes) }
+            cacheFile.absolutePath
+        } catch (e: Exception) {
+            null
+        }
     }
 
     private fun clearCover(context: Context, book: UniFile) {

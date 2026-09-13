@@ -9,6 +9,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,7 +21,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -40,6 +43,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -50,9 +55,12 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -70,6 +78,7 @@ import eu.kanade.tachiyomi.data.books.BooksStore
 import eu.kanade.tachiyomi.data.tts.EdgeTts
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import mihon.domain.ocr.service.OcrPreferences
@@ -110,6 +119,9 @@ data class BooksReaderScreen(
         var pdfPageIndex by remember { mutableIntStateOf(0) }
         var pageImage by remember { mutableStateOf<Bitmap?>(null) }
         val scrollState = rememberScrollState()
+        val listState = rememberLazyListState()
+        val snackbarHostState = remember { SnackbarHostState() }
+        val readerScope = rememberCoroutineScope()
 
         // --- TTS Engine state ---
         var ttsEngine by remember { mutableStateOf(bookPrefs.bookTtsEngine().get()) }
@@ -120,6 +132,7 @@ data class BooksReaderScreen(
 
         // --- System TTS ---
         val tts = remember { mutableStateOf<TextToSpeech?>(null) }
+        var systemTtsInitFailed by remember { mutableStateOf(false) }
         val pendingUtterance = remember { java.util.concurrent.atomic.AtomicReference<CompletableDeferred<Unit>?>(null) }
         val expectedUtteranceId = remember { java.util.concurrent.atomic.AtomicReference<String?>(null) }
 
@@ -171,6 +184,7 @@ data class BooksReaderScreen(
                 if (status == TextToSpeech.SUCCESS) {
                     logcat(LogPriority.INFO) { "BooksReader: System TTS init OK" }
                 } else {
+                    systemTtsInitFailed = true
                     logcat(LogPriority.WARN) { "BooksReader: System TTS init failed: $status" }
                 }
             }.apply {
@@ -283,6 +297,16 @@ data class BooksReaderScreen(
                 currentSentenceIndex++
             } else {
                 // --- System TTS path ---
+                if (systemTtsInitFailed) {
+                    readerScope.launch {
+                        snackbarHostState.showSnackbar(
+                            "Системный TTS недоступен на этом устройстве (движок не установлен). " +
+                                "Установите голосовой движок в настройках Android или выберите «🌐 Edge TTS».",
+                        )
+                    }
+                    isPlaying = false
+                    return@LaunchedEffect
+                }
                 val engine = tts.value ?: run { isPlaying = false; return@LaunchedEffect }
                 // Apply voice
                 if (selectedVoiceSpec.contains("::")) {
@@ -305,6 +329,12 @@ data class BooksReaderScreen(
                 if (result == TextToSpeech.ERROR) {
                     expectedUtteranceId.set(null)
                     pendingUtterance.compareAndSet(promise, null)
+                    readerScope.launch {
+                        snackbarHostState.showSnackbar(
+                            "Системный TTS не озвучил текст. Проверьте, что в Android " +
+                                "настроен голосовой движок, или используйте Edge TTS.",
+                        )
+                    }
                     isPlaying = false
                     return@LaunchedEffect
                 }
@@ -370,6 +400,15 @@ data class BooksReaderScreen(
         val currentChapter = chapters.getOrNull(currentChapterIndex)
         val sentences = if (currentChapter != null) splitSentences(currentChapter.resolvedText) else emptyList()
 
+        // Автопрокрутка к читаемому предложению
+        LaunchedEffect(currentChapterIndex, currentSentenceIndex) {
+            val ch = chapters.getOrNull(currentChapterIndex)
+            if (ch?.isPageBased != true && sentences.isNotEmpty()) {
+                listState.animateScrollToItem(currentSentenceIndex.coerceIn(0, sentences.lastIndex))
+            }
+        }
+
+        Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
             TopAppBar(
                 title = {
@@ -519,14 +558,7 @@ data class BooksReaderScreen(
             val isPageBased = currentChapter?.isPageBased == true
             val readablePages = currentChapter?.readablePages.orEmpty()
 
-            val contentModifier = if (isPageBased && pageImage != null) {
-                Modifier.weight(1f)
-            } else {
-                Modifier
-                    .weight(1f)
-                    .verticalScroll(scrollState)
-                    .padding(16.dp)
-            }
+            val contentModifier = Modifier.weight(1f)
 
             Box(modifier = contentModifier) {
                 when {
@@ -549,14 +581,35 @@ data class BooksReaderScreen(
                         )
                     }
                     sentences.isNotEmpty() -> {
-                        Text(
-                            text = buildAnnotatedText(sentences, currentSentenceIndex),
-                            style = MaterialTheme.typography.bodyLarge.copy(
-                                fontSize = 18.sp,
-                                lineHeight = 28.sp,
-                            ),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                            state = listState,
+                        ) {
+                            itemsIndexed(sentences, key = { idx, _ -> idx }) { idx, sentence ->
+                                val isCurrent = idx == currentSentenceIndex
+                                Text(
+                                    text = if (isCurrent) "▸ $sentence" else sentence,
+                                    style = MaterialTheme.typography.bodyLarge.copy(
+                                        fontSize = 18.sp,
+                                        lineHeight = 28.sp,
+                                    ),
+                                    color = if (isCurrent)
+                                        MaterialTheme.colorScheme.onPrimaryContainer
+                                    else MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(
+                                            if (isCurrent)
+                                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                                            else Color.Transparent,
+                                        )
+                                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                                )
+                            }
+                        }
                     }
                     else -> {
                         Text(
@@ -700,6 +753,12 @@ data class BooksReaderScreen(
                 }
             }
         }
+
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        }
     }
 
     private val MULTI_NEWLINE = Regex("\n{2,}")
@@ -711,11 +770,5 @@ data class BooksReaderScreen(
             .split(SENTENCE_SPLIT)
             .map { it.trim() }
             .filter { it.isNotBlank() }
-    }
-
-    private fun buildAnnotatedText(sentences: List<String>, currentIndex: Int): String {
-        return sentences.mapIndexed { idx, s ->
-            if (idx == currentIndex) "▸ $s" else s
-        }.joinToString("  ")
     }
 }

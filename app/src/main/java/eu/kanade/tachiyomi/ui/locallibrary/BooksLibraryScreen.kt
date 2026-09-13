@@ -7,6 +7,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -23,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -76,6 +78,7 @@ object BooksLibraryScreen : Screen {
         val fileName: String,
         val displayTitle: String,
         val author: String?,
+        val description: String?,
         val ext: String,
         val progressPercent: Int,
         val coverPath: String?,
@@ -91,6 +94,7 @@ object BooksLibraryScreen : Screen {
         var loading by remember { mutableStateOf(true) }
         var books by remember { mutableStateOf(emptyList<BookItem>()) }
         var showDeleteDialog by remember { mutableStateOf<BookItem?>(null) }
+        var showInfoDialog by remember { mutableStateOf<BookItem?>(null) }
 
         fun refresh() {
             scope.launch {
@@ -106,6 +110,7 @@ object BooksLibraryScreen : Screen {
                                 file.name.orEmpty().substringBeforeLast('.').ifBlank { "Книга" }
                             },
                             author = metadata.author,
+                            description = metadata.description,
                             ext = ext,
                             progressPercent = pct,
                             coverPath = cPath,
@@ -289,6 +294,13 @@ object BooksLibraryScreen : Screen {
                                         )
                                     }
                                 }
+                                IconButton(onClick = { showInfoDialog = item }) {
+                                    Icon(
+                                        Icons.Outlined.Info,
+                                        contentDescription = "О книге",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
                                 IconButton(onClick = { showDeleteDialog = item }) {
                                     Icon(
                                         Icons.Outlined.DeleteOutline,
@@ -314,6 +326,58 @@ object BooksLibraryScreen : Screen {
                 Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(20.dp))
                 Text("  Добавить", style = MaterialTheme.typography.labelMedium)
             }
+        }
+
+        showInfoDialog?.let { item ->
+            val fileSize = remember(item) {
+                runCatching {
+                    BooksStore.booksDirectory(context)?.findFile(item.fileName)?.length()
+                        ?.takeIf { it > 0 }
+                }.getOrNull()
+            }
+            AlertDialog(
+                onDismissRequest = { showInfoDialog = null },
+                title = { Text(item.displayTitle, maxLines = 3, overflow = TextOverflow.Ellipsis) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        item.author?.takeIf { it.isNotBlank() }?.let {
+                            Text("Автор: $it", style = MaterialTheme.typography.bodySmall)
+                        }
+                        Text("Формат: ${item.ext.ifBlank { "—" }}", style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            "Прогресс: ${item.progressPercent}%",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        fileSize?.let { bytes ->
+                            val sizeText = when {
+                                bytes >= 1048576 -> "%.1f МБ".format(bytes / 1048576f)
+                                bytes >= 1024 -> "%.1f КБ".format(bytes / 1024f)
+                                else -> "$bytes Б"
+                            }
+                            Text("Размер: $sizeText", style = MaterialTheme.typography.bodySmall)
+                        }
+                        item.description?.takeIf { it.isNotBlank() }?.let {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showInfoDialog = null
+                        navigator.push(
+                            BooksReaderScreen(item.fileName, item.displayTitle),
+                        )
+                    }) { Text("Открыть") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showInfoDialog = null }) { Text("Закрыть") }
+                },
+            )
         }
 
         showDeleteDialog?.let { item ->
