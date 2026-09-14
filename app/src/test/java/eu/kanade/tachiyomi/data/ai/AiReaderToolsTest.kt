@@ -62,6 +62,7 @@ class AiReaderToolsTest {
             listOf(
                 TtsSpeaker.ENGINE_SYSTEM,
                 TtsSpeaker.ENGINE_GOOGLE_WEB,
+                TtsSpeaker.ENGINE_EDGE_TTS,
                 TtsSpeaker.ENGINE_ELEVENLABS,
                 TtsSpeaker.ENGINE_REMOTE,
             )

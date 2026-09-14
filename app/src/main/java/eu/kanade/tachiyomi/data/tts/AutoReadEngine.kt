@@ -1042,12 +1042,16 @@ class AutoReadEngine(
             val scale = 100_000
             val rects = lines.map { l ->
                 val b = l.boundingBox
-                android.graphics.Rect(
-                    (b.left * scale).toInt(),
-                    (b.top * scale).toInt(),
-                    (b.right * scale).toInt(),
-                    (b.bottom * scale).toInt(),
-                )
+                // Поля Rect заполняем через свойства, а не через конструктор
+                // (left, top, right, bottom): mockable-android jar в юнит-тестах
+                // не пишет значения из этого конструктора, и сортировщик видел
+                // бы вырожденные рамки (0,0,0,0).
+                android.graphics.Rect().apply {
+                    left = (b.left * scale).toInt()
+                    top = (b.top * scale).toInt()
+                    right = (b.right * scale).toInt()
+                    bottom = (b.bottom * scale).toInt()
+                }
             }
             val sortedIndices = tachiyomi.core.common.util.system.ReadingOrderSorter.sort(rects, direction)
             return sortedIndices.map { lines[it] }

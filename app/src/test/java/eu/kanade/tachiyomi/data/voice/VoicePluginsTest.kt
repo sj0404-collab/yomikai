@@ -50,7 +50,7 @@ class VoicePluginsTest {
         VoicePlugins.available(
             networkAvailable = true,
             systemEnginePresent = false,
-        ) shouldContainExactly listOf(VoicePlugins.GOOGLE_WEB)
+        ) shouldContainExactly listOf(VoicePlugins.GOOGLE_WEB, VoicePlugins.EDGE_TTS)
 
         VoicePlugins.available(
             networkAvailable = true,
@@ -59,6 +59,7 @@ class VoicePluginsTest {
         ) shouldContainExactly listOf(
             VoicePlugins.SYSTEM_TTS,
             VoicePlugins.GOOGLE_WEB,
+            VoicePlugins.EDGE_TTS,
             VoicePlugins.ELEVEN_API,
         )
 
@@ -83,6 +84,7 @@ class VoicePluginsTest {
         VoicePlugins.ALL.filterNot { it.offline }.map { it.id } shouldContainExactly
             listOf(
                 VoiceBackend.GOOGLE_WEB.id,
+                VoiceBackend.EDGE_TTS.id,
                 VoiceBackend.ELEVEN_API.id,
                 VoiceBackend.REMOTE_TTS.id,
             )
