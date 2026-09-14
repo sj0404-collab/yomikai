@@ -121,6 +121,9 @@ jobs:
             tail -25 /tmp/hub-tunnel.log
             exit 1
           fi
+          # Экспортируем: python-heredoc читает os.environ["HUBURL"], а не
+          # shell-переменные. Без export был KeyError: 'HUBURL'.
+          export HUBURL
 
           # Endpoint артефакт — тот же контракт, что llm-runner (app ждёт его).
           # url и terminal указывают на хаб; url — корень (/d), terminal — мобильный UI (/m).
@@ -249,6 +252,9 @@ jobs:
             tail -25 /tmp/hub-tunnel.log
             exit 1
           fi
+          # Экспортируем: python-heredoc читает os.environ["HUBURL"], а не
+          # shell-переменные. Без export был KeyError: 'HUBURL'.
+          export HUBURL
 
           python - <<'PY'
           import json, os
