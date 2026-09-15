@@ -498,6 +498,70 @@ class ReaderActivity : BaseActivity() {
                 )
             }
 
+            // ===== Индикатор скриншота в правом верхнем углу =====
+            // Пульсирующая точка + количество распознанных регионов.
+            // Показывается при каждом новом скриншоте, исчезает через 2с.
+            if (uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+                    .screenshotIndicatorEnabled().get()
+            ) {
+                val lastEntry by mihon.data.ocr.OcrScreenshotBuffer.lastEntry.collectAsState()
+                val indicatorVisible = remember { mutableStateOf(false) }
+                val regionCount = remember { mutableStateOf(0) }
+                val pulseAnim = androidx.compose.animation.core.rememberInfiniteTransition(
+                    label = "screenshot_pulse"
+                )
+                val pulseAlpha by pulseAnim.animateFloat(
+                    initialValue = 0.6f,
+                    targetValue = 1f,
+                    animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                        animation = androidx.compose.animation.core.tween(500),
+                        repeatMode = androidx.compose.animation.core.Reverse,
+                    ),
+                    label = "pulse_alpha",
+                )
+                androidx.compose.runtime.LaunchedEffect(lastEntry) {
+                    if (lastEntry != null) {
+                        regionCount.value = lastEntry!!.regions.size
+                        indicatorVisible.value = true
+                        kotlinx.coroutines.delay(2000)
+                        indicatorVisible.value = false
+                    }
+                }
+                if (indicatorVisible.value) {
+                    androidx.compose.foundation.layout.Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 48.dp, end = 12.dp)
+                            .background(
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.primaryContainer
+                                    .copy(alpha = 0.85f * pulseAlpha),
+                                shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                            )
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                    ) {
+                        androidx.compose.foundation.layout.Row(
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp),
+                        ) {
+                            androidx.compose.foundation.Canvas(
+                                modifier = Modifier.size(8.dp),
+                            ) {
+                                drawCircle(
+                                    color = androidx.compose.ui.graphics.Color(0xFF00E5FF),
+                                    radius = size.minDimension / 2,
+                                    alpha = pulseAlpha,
+                                )
+                            }
+                            androidx.compose.material3.Text(
+                                text = "OCR ${regionCount.value}",
+                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        }
+                    }
+                }
+            }
+
             ContentOverlay(state = state)
 
             AppBars(state = state)
