@@ -187,6 +187,10 @@ app.get('/api/info', (req, res) => {
   res.json({ home: HOME, workDir: WORK_DIR, platform: process.platform, ...hubBuildInfo(), ...getAccessInfo(req), state });
 });
 
+// ─── HEALTH — живой ответ для isAlive-пробы Android-приложения ───
+app.get('/health', (req, res) => res.json({ success: true, ok: true }));
+app.get('/healthz', (req, res) => res.json({ success: true, ok: true }));
+
 // ─── NETWORKS — all IPs for phone access ───
 app.get('/api/networks', (req, res) => {
   const nets = os.networkInterfaces();

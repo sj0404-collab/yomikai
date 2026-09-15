@@ -136,6 +136,19 @@ data object AiChatTab : Tab {
                 FilledTonalButton(
                     enabled = !starting && pat.isNotBlank(),
                     onClick = {
+                        val trimmed = pat.trim()
+                        val looksLikePat = trimmed.startsWith("ghp_") ||
+                            trimmed.startsWith("github_pat_") ||
+                            trimmed.startsWith("gho_") ||
+                            trimmed.startsWith("ghs_") ||
+                            trimmed.startsWith("ghr_")
+                        if (!looksLikePat) {
+                            hubStatusFlow.value =
+                                "❌ Токен не похож на GitHub PAT. Нужен токен, " +
+                                "начинающийся на ghp_ / github_pat_ / gho_ (Settings → Developer settings → " +
+                                "Personal access tokens). Вставлен Discord- или другой токен?"
+                            return@FilledTonalButton
+                        }
                         hubStartingFlow.value = true
                         hubStatusFlow.value = "⏳ Запуск хаба npm-hub…"
                         val appCtx = context.applicationContext
@@ -254,6 +267,29 @@ data object AiChatTab : Tab {
                         ) {
                             loading = false
                             error = "Ошибка загрузки ($errorCode): $description"
+                        }
+
+                        override fun onReceivedHttpError(
+                            view: WebView?,
+                            request: android.webkit.WebResourceRequest?,
+                            errorResponse: android.webkit.WebResourceResponse?,
+                        ) {
+                            loading = false
+                            val code = errorResponse?.statusCode ?: 0
+                            val mime = errorResponse?.mimeType.orEmpty()
+                            // Discord api error format leaked through a proxy/token:
+                            // {"success":false,"result":null,"errors":[{"code":10005,...}]}
+                            val body = runCatching {
+                                errorResponse?.data?.bufferedReader()?.use { it.readText() }.orEmpty()
+                            }.getOrDefault("").take(300)
+                            if (code == 405 || body.contains("method not allowed", ignoreCase = true)) {
+                                error = "Ранер ответил $code (Method Not Allowed). Скорее всего в поле " +
+                                    "GitHub PAT вставлен НЕ-GitHub токен (например Discord). Возьмите " +
+                                    "настоящий GitHub PAT (ghp_/github_pat_). Ответ: $body"
+                            } else {
+                                error = "HTTP $code на сайте ранера" +
+                                    body.takeIf { it.isNotBlank() }?.let { "\n$it" }.orEmpty()
+                            }
                         }
                     }
                     if (url.isNotBlank()) loadUrl(url)
