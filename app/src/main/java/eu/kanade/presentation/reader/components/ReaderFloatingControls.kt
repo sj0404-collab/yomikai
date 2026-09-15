@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.AutoMode
+import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.GraphicEq
@@ -85,6 +86,9 @@ fun ReaderFloatingControls(
     onAutoscrollToggle: (Boolean, Float) -> Unit,
     onAutoSpeakPage: () -> Unit = {},
     onStopSpeak: () -> Unit = {},
+    /** Мгновенный скриншот текущего кадра (Glens/любой движок): OCR сейчас,
+     *  не дожидаясь авточтения, и запись в буфер «Скриншоты». */
+    onInstantScreenshot: () -> Unit = {},
     onReadingOrderChange: (String) -> Unit = {},
     readingOrder: String = "rtl",
     onExportChapter: () -> Unit = {},
@@ -289,6 +293,19 @@ fun ReaderFloatingControls(
                                             },
                                         )
                                     }
+                                }
+                                if (!hiddenM.contains("r_instant_sc")) {
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Скриншот сейчас  ", style = MaterialTheme.typography.labelMedium)
+                                    SmallFloatingActionButton(onClick = {
+                                        beepAction()
+                                        onInstantScreenshot()
+                                    }) {
+                                        Icon(Icons.Outlined.CameraAlt, contentDescription = "Скриншот сейчас")
+                                    }
+                                }
+
                                 }
                                 if (!hiddenM.contains("r_voiceicons")) {
 

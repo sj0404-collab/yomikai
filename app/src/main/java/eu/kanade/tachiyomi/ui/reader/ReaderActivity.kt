@@ -1078,6 +1078,7 @@ class ReaderActivity : BaseActivity() {
                         stopAutoReadLoop()
                         viewModel.stopAutoSpeak()
                     },
+                    onInstantScreenshot = ::captureInstantScreenshot,
                     voiceIconsEnabled = voiceIconsEnabled,
                     onVoiceIconsToggle = { enabled ->
                         voiceIconsEnabled = enabled
@@ -1801,6 +1802,34 @@ class ReaderActivity : BaseActivity() {
                 withUIContext {
                     toast("Ошибка озвучки: ${e.message ?: "не удалось распознать область"}")
                 }
+            }
+        }
+    }
+
+    /**
+     * «Скриншот сейчас»: захватить текущий видимый кадр страницы и сохранить
+     * как скриншот в буфер «Скриншоты» (OCR выбранным движком — включая Glens).
+     * Не влияет на авточтение и озвучку.
+     */
+    private fun captureInstantScreenshot() {
+        lifecycleScope.launchIO {
+            try {
+                val root = binding.root
+                val fullRect = android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
+                val bitmap = cropCurrentSelectionBitmap(fullRect) ?: return@launchIO
+                val chapterId = viewModel.getCurrentChapter()?.chapter?.id ?: -1L
+                val pageIndex = (viewModel.state.value.currentPage - 1).coerceAtLeast(0)
+                autoReadEngine.captureInstantScreenshot(
+                    bitmap = bitmap,
+                    chapterId = chapterId,
+                    pageIndex = pageIndex,
+                    scrollFraction = 0f,
+                )
+                if (!bitmap.isRecycled) bitmap.recycle()
+                withUIContext { toast("Скриншот сохранён") }
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e) { "Failed to capture instant screenshot" }
+                withUIContext { toast("Не удалось сделать скриншот") }
             }
         }
     }

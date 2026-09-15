@@ -571,6 +571,63 @@ class AutoReadEngine(
         }
     }
 
+    /**
+     * Мгновенный скриншот: распознать текущий кадр выбранным движком (в т.ч.
+     * Glens) и сохранить в буфер «Скриншоты», НЕ озвучивая и не трогая
+     * состояние авточтения. Вызывается с плавающей кнопки читалки.
+     */
+    fun captureInstantScreenshot(
+        bitmap: Bitmap,
+        chapterId: Long,
+        pageIndex: Int,
+        scrollFraction: Float,
+    ) {
+        if (prefs.autoScreenshotEnabled().get()) {
+            scope.launch {
+                runCatching {
+                    withTimeout(OCR_FRAME_TIMEOUT_MS) {
+                        scanPageOcr.await(chapterId, pageIndex, bitmap.toOcrImage())
+                    }
+                }.onSuccess { result ->
+                    if (result.regions.isEmpty()) return@onSuccess
+                    val ordered = orderRegions(
+                        result.regions.map {
+                            Line(
+                                text = it.text,
+                                boundingBox = it.boundingBox,
+                            )
+                        },
+                        OcrRegionRules.readingOrderFor(prefs),
+                    )
+                    OcrScreenshotBuffer.add(
+                        chapterId = chapterId,
+                        pageIndex = pageIndex,
+                        scrollFraction = scrollFraction,
+                        regions = ordered.mapIndexed { idx, line ->
+                            OcrRegion(
+                                order = idx,
+                                text = line.text,
+                                boundingBox = line.boundingBox,
+                                textOrientation = OcrTextOrientation.Horizontal,
+                            )
+                        },
+                        engineUsed = prefs.ocrModel().get().name.lowercase(),
+                        imageWidth = bitmap.width,
+                        imageHeight = bitmap.height,
+                    )
+                }.onFailure { e ->
+                    logcat(LogPriority.WARN, e) { "Instant screenshot OCR failed" }
+                }
+            }
+        }
+    }
+
+    private fun Bitmap.toOcrImage(): OcrImage {
+        val pixels = IntArray(width * height)
+        getPixels(pixels, 0, width, 0, 0, width, height)
+        return OcrImage(width, height, pixels)
+    }
+
     fun stop() {
         spokenLines.clear()
         speakerSlots.clear()

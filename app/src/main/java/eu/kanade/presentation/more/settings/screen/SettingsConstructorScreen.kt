@@ -64,6 +64,7 @@ object SettingsConstructorScreen : Screen() {
         "r_scan" to "Читалка: строка «OCR скан»",
         "r_autoscroll" to "Читалка: автопрокрутка",
         "r_autoread" to "Читалка: прочитать страницу",
+        "r_instant_sc" to "Читалка: мгновенный скриншот (Glens)",
         "r_export" to "Читалка: сохранить главу в папку",
         "r_order" to "Читалка: порядок чтения",
         "r_tts" to "Читалка: озвучка (TTS)",
