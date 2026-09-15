@@ -54,7 +54,7 @@ class UiTabsTest {
     fun `hidden tabs disappear and the rest keep their order`() {
         val visible = UiTabs.visibleTabs(UiTabs.IDS, setOf("browser", "updates"))
         visible shouldContainExactly listOf(
-            "library", "local_library", "history", "browse", "ai", "more",
+            "library", "local_library", "history", "browse", "ai", "screenshots", "more",
         )
     }
 
@@ -63,7 +63,7 @@ class UiTabsTest {
         // Файл правится руками или сторонним плагином, поэтому защита
         // применяется и на чтении, а не только на записи.
         UiTabs.visibleTabs(UiTabs.IDS, setOf("library", "more", "browser")) shouldContainExactly
-            listOf("library", "local_library", "updates", "history", "browse", "ai", "more")
+            listOf("library", "local_library", "updates", "history", "browse", "ai", "screenshots", "more")
         UiTabs.isHidden("library", setOf("library")) shouldBe false
         UiTabs.isHidden("browser", setOf("browser")) shouldBe true
     }

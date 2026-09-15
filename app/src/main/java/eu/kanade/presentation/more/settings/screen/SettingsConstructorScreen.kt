@@ -2,6 +2,7 @@ package eu.kanade.presentation.more.settings.screen
 
 import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -33,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.util.Screen
+import tachiyomi.presentation.core.util.collectAsState
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.components.AppBar
@@ -48,6 +50,8 @@ import mihon.data.ui.UiPlacement
 import mihon.data.ui.UiTab
 import mihon.data.ui.UiTabs
 import tachiyomi.presentation.core.components.material.Scaffold
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 /**
  * «Конструктор» приложения: вкладки нижней панели (скрыть/переставить),
@@ -63,6 +67,7 @@ object SettingsConstructorScreen : Screen() {
         "r_scan" to "Читалка: строка «OCR скан»",
         "r_autoscroll" to "Читалка: автопрокрутка",
         "r_autoread" to "Читалка: прочитать страницу",
+        "r_instant_sc" to "Читалка: мгновенный скриншот (Glens)",
         "r_export" to "Читалка: сохранить главу в папку",
         "r_order" to "Читалка: порядок чтения",
         "r_tts" to "Читалка: озвучка (TTS)",
@@ -176,6 +181,75 @@ object SettingsConstructorScreen : Screen() {
                         onUp = null,
                         onDown = null,
                     )
+                }
+                item { Header("Скриншоты (авточтение)") }
+                item {
+                    val ocrPrefs = Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+                    val autoScreenshot by ocrPrefs.autoScreenshotEnabled().collectAsState()
+                    val indicatorEnabled by ocrPrefs.screenshotIndicatorEnabled().collectAsState()
+                    val textOverlay by ocrPrefs.screenshotShowTextOverlay().collectAsState()
+                    val bufferSize by ocrPrefs.screenshotBufferSize().collectAsState()
+                    Column {
+                        ModuleRow(
+                            title = "Автоскриншот при каждом кадре авточтения",
+                            checked = autoScreenshot,
+                            enabled = true,
+                            onChecked = { ocrPrefs.autoScreenshotEnabled().set(it) },
+                            onUp = null,
+                            onDown = null,
+                        )
+                        ModuleRow(
+                            title = "Индикатор в углу читалки",
+                            checked = indicatorEnabled,
+                            enabled = true,
+                            onChecked = { ocrPrefs.screenshotIndicatorEnabled().set(it) },
+                            onUp = null,
+                            onDown = null,
+                        )
+                        ModuleRow(
+                            title = "Текстовый оверлей на детальном экране",
+                            checked = textOverlay,
+                            enabled = true,
+                            onChecked = { ocrPrefs.screenshotShowTextOverlay().set(it) },
+                            onUp = null,
+                            onDown = null,
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "Лимит буфера скриншотов: $bufferSize",
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.weight(1f),
+                            )
+                            IconButton(onClick = {
+                                if (bufferSize > 10) {
+                                    val next = bufferSize - 10
+                                    ocrPrefs.screenshotBufferSize().set(next)
+                                    mihon.data.ocr.OcrScreenshotBuffer.maxEntries = next
+                                }
+                            }) {
+                                Text("−")
+                            }
+                            IconButton(onClick = {
+                                if (bufferSize < 200) {
+                                    val next = bufferSize + 10
+                                    ocrPrefs.screenshotBufferSize().set(next)
+                                    mihon.data.ocr.OcrScreenshotBuffer.maxEntries = next
+                                }
+                            }) {
+                                Text("+")
+                            }
+                        }
+                        Text(
+                            text = "Записи лёгкие (~1-5KB, только текст и координаты, без изображений). Хранятся в кольцевом буфере.",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 6.dp),
+                        )
+                    }
                 }
                 item { Header("Мои кнопки действий") }
                 items(actions) { spec ->
@@ -310,7 +384,7 @@ object SettingsConstructorScreen : Screen() {
             onDismissRequest = onDismiss,
             title = { Text(if (initial == null) "Новая кнопка" else "Кнопка «${initial.title}»") },
             text = {
-                androidx.compose.foundation.layout.Column(
+                Column(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Название") })

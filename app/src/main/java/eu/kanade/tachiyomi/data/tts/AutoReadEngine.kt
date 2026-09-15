@@ -3,6 +3,9 @@ package eu.kanade.tachiyomi.data.tts
 import android.content.Context
 import android.graphics.Bitmap
 import kotlinx.coroutines.CoroutineScope
+import mihon.data.ocr.OcrScreenshotBuffer
+import mihon.domain.ocr.model.OcrRegion
+import mihon.domain.ocr.model.OcrTextOrientation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -361,6 +364,30 @@ class AutoReadEngine(
                 // а не по фиксированным 12% полосам — убирает «лесенку»)
                 val ordered = orderRegions(fresh, order)
 
+                // ===== СКРИНШОТ: сохраняем распознанные регионы в буфер =====
+                // Лёгкая запись (~1-5 KB) — только текст + координаты,
+                // без JPEG-файлов. Показывается на вкладке «Скриншоты».
+                if (prefs.autoScreenshotEnabled().get() && ordered.isNotEmpty()) {
+                    val engineName = prefs.ocrModel().get().name.lowercase()
+                    val ocrRegions = ordered.mapIndexed { idx, line ->
+                        OcrRegion(
+                            order = idx,
+                            text = line.text,
+                            boundingBox = line.boundingBox,
+                            textOrientation = OcrTextOrientation.Horizontal,
+                        )
+                    }
+                    OcrScreenshotBuffer.add(
+                        chapterId = chapterId,
+                        pageIndex = pageIndex,
+                        scrollFraction = 0f,
+                        regions = ocrRegions,
+                        engineUsed = engineName,
+                        imageWidth = bitmap.width,
+                        imageHeight = bitmap.height,
+                    )
+                }
+
                 // 3.5) Пол говорящих. Приоритет:
                 //  а) ВСТРОЕННЫЙ локальный AI (LocalSpeakerAi) — морфология
                 //     русского текста, работает без сети и без ключей;
@@ -542,6 +569,63 @@ class AutoReadEngine(
                 }
             }
         }
+    }
+
+    /**
+     * Мгновенный скриншот: распознать текущий кадр выбранным движком (в т.ч.
+     * Glens) и сохранить в буфер «Скриншоты», НЕ озвучивая и не трогая
+     * состояние авточтения. Вызывается с плавающей кнопки читалки.
+     */
+    fun captureInstantScreenshot(
+        bitmap: Bitmap,
+        chapterId: Long,
+        pageIndex: Int,
+        scrollFraction: Float,
+    ) {
+        if (prefs.autoScreenshotEnabled().get()) {
+            scope.launch {
+                runCatching {
+                    withTimeout(OCR_FRAME_TIMEOUT_MS) {
+                        scanPageOcr.await(chapterId, pageIndex, bitmap.toOcrImage())
+                    }
+                }.onSuccess { result ->
+                    if (result.regions.isEmpty()) return@onSuccess
+                    val ordered = orderRegions(
+                        result.regions.map {
+                            Line(
+                                text = it.text,
+                                boundingBox = it.boundingBox,
+                            )
+                        },
+                        OcrRegionRules.readingOrderFor(prefs),
+                    )
+                    OcrScreenshotBuffer.add(
+                        chapterId = chapterId,
+                        pageIndex = pageIndex,
+                        scrollFraction = scrollFraction,
+                        regions = ordered.mapIndexed { idx, line ->
+                            OcrRegion(
+                                order = idx,
+                                text = line.text,
+                                boundingBox = line.boundingBox,
+                                textOrientation = OcrTextOrientation.Horizontal,
+                            )
+                        },
+                        engineUsed = prefs.ocrModel().get().name.lowercase(),
+                        imageWidth = bitmap.width,
+                        imageHeight = bitmap.height,
+                    )
+                }.onFailure { e ->
+                    logcat(LogPriority.WARN, e) { "Instant screenshot OCR failed" }
+                }
+            }
+        }
+    }
+
+    private fun Bitmap.toOcrImage(): OcrImage {
+        val pixels = IntArray(width * height)
+        getPixels(pixels, 0, width, 0, 0, width, height)
+        return OcrImage(width, height, pixels)
     }
 
     fun stop() {
@@ -960,8 +1044,9 @@ class AutoReadEngine(
         if (aH <= 0f || bH <= 0f) return false
         val gap = bb.top - ab.bottom
         if (gap < 0f || gap > kotlin.math.max(aH, bH) * 0.55f) return false
-        // Вертикальные японские колонки (узкие и высокие) не склеиваем.
-        if (aH > aW * 2f || bH > bW * 2f) return false
+        // Вертикальные японские колонки (узкие и очень высокие) не склеиваем.
+        // Порог 4x вместо 2x: у manga-диалогов облачка бывают вытянутыми по высоте.
+        if (aH > aW * 4f || bH > bW * 4f) return false
         return true
     }
 
@@ -971,10 +1056,14 @@ class AutoReadEngine(
         val bT = b.trim()
         if (aT.isBlank()) return bT
         if (bT.isBlank()) return aT
-        return if (aT.endsWith("-")) {
-            aT.dropLast(1) + bT
-        } else {
-            "$aT $bT"
+        // Перенос слова: дефис / короткое тире / длинное тире в конце строки
+        // → склейка без пробела (понеде- / льник → понедельник).
+        return when {
+            aT.endsWith("-") || aT.endsWith("\u2010") || aT.endsWith("\u2011") ->
+                aT.dropLast(1) + bT
+            aT.endsWith("\u2013") || aT.endsWith("\u2014") || aT.endsWith("\u2015") ->
+                aT.dropLast(1) + bT
+            else -> "$aT $bT"
         }
     }
 
@@ -1107,7 +1196,17 @@ class AutoReadEngine(
                 }
                 joined.append(row)
             }
-            return joined.toString().replace(Regex("\\s+"), " ").trim()
+            var result = joined.toString().replace(Regex("\\s+"), " ").trim()
+            // Пост-обработка: убираем «застрявшие» повторы символов, которые OCR
+            // генерирует на шумных кадрах: "!!!!" → "!", "????" → "?", "......" → "…"
+            result = result.replace(Regex("(.)\\1{2,}")) { m ->
+                val ch = m.groupValues[1]
+                when (ch) {
+                    "!", "?", ".", "…", "~" -> ch
+                    else -> m.value
+                }
+            }
+            return result
         }
 
         /** Похожа ли строка на осмысленный текст (не обрывок/не мусор). */

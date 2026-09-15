@@ -27,7 +27,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.Canvas
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
@@ -496,6 +505,68 @@ class ReaderActivity : BaseActivity() {
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding(),
                 )
+            }
+
+            // ===== Индикатор скриншота в правом верхнем углу =====
+            // Пульсирующая точка + количество распознанных регионов.
+            // Показывается при каждом новом скриншоте, исчезает через 2с.
+            if (uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+                    .screenshotIndicatorEnabled().get()
+            ) {
+                val lastEntry by mihon.data.ocr.OcrScreenshotBuffer.lastEntry.collectAsState()
+                val indicatorVisible = remember { mutableStateOf(false) }
+                val regionCount = remember { mutableStateOf(0) }
+                val pulseAnim = rememberInfiniteTransition(label = "screenshot_pulse")
+                val pulseAlpha by pulseAnim.animateFloat(
+                    initialValue = 0.6f,
+                    targetValue = 1f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(500),
+                        repeatMode = RepeatMode.Reverse,
+                    ),
+                    label = "pulse_alpha",
+                )
+                LaunchedEffect(lastEntry) {
+                    if (lastEntry != null) {
+                        regionCount.value = lastEntry!!.regions.size
+                        indicatorVisible.value = true
+                        kotlinx.coroutines.delay(2000)
+                        indicatorVisible.value = false
+                    }
+                }
+                if (indicatorVisible.value) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 48.dp, end = 12.dp)
+                            .background(
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.primaryContainer
+                                    .copy(alpha = 0.85f * pulseAlpha),
+                                shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                            )
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Canvas(
+                                modifier = Modifier.size(8.dp),
+                            ) {
+                                drawCircle(
+                                    color = androidx.compose.ui.graphics.Color(0xFF00E5FF),
+                                    radius = size.minDimension / 2,
+                                    alpha = pulseAlpha,
+                                )
+                            }
+                            androidx.compose.material3.Text(
+                                text = "OCR ${regionCount.value}",
+                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        }
+                    }
+                }
             }
 
             ContentOverlay(state = state)
@@ -1014,6 +1085,7 @@ class ReaderActivity : BaseActivity() {
                         stopAutoReadLoop()
                         viewModel.stopAutoSpeak()
                     },
+                    onInstantScreenshot = ::captureInstantScreenshot,
                     voiceIconsEnabled = voiceIconsEnabled,
                     onVoiceIconsToggle = { enabled ->
                         voiceIconsEnabled = enabled
@@ -1737,6 +1809,34 @@ class ReaderActivity : BaseActivity() {
                 withUIContext {
                     toast("Ошибка озвучки: ${e.message ?: "не удалось распознать область"}")
                 }
+            }
+        }
+    }
+
+    /**
+     * «Скриншот сейчас»: захватить текущий видимый кадр страницы и сохранить
+     * как скриншот в буфер «Скриншоты» (OCR выбранным движком — включая Glens).
+     * Не влияет на авточтение и озвучку.
+     */
+    private fun captureInstantScreenshot() {
+        lifecycleScope.launchIO {
+            try {
+                val root = binding.root
+                val fullRect = android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
+                val bitmap = cropCurrentSelectionBitmap(fullRect) ?: return@launchIO
+                val chapterId = viewModel.getCurrentChapter()?.chapter?.id ?: -1L
+                val pageIndex = (viewModel.state.value.currentPage - 1).coerceAtLeast(0)
+                autoReadEngine.captureInstantScreenshot(
+                    bitmap = bitmap,
+                    chapterId = chapterId,
+                    pageIndex = pageIndex,
+                    scrollFraction = 0f,
+                )
+                if (!bitmap.isRecycled) bitmap.recycle()
+                withUIContext { toast("Скриншот сохранён") }
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e) { "Failed to capture instant screenshot" }
+                withUIContext { toast("Не удалось сделать скриншот") }
             }
         }
     }

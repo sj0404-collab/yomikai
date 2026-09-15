@@ -163,6 +163,13 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
             java.io.File(filesDir, "ocr_vocab.txt").absolutePath,
         )
 
+        // Буфер скриншотов авточтения (вкладка «Скриншоты»): загружает
+        // сохранённые скрины и JPEG-файлы при старте приложения.
+        mihon.data.ocr.OcrScreenshotBuffer.init(applicationContext)
+        // Лимит буфера скриншотов из настроек dev-панели.
+        mihon.data.ocr.OcrScreenshotBuffer.maxEntries = Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+            .screenshotBufferSize().get().coerceIn(10, 200)
+
         // Первый запуск без онбординга: сразу создаём основную папку
         // "Yomikai" на телефоне (как у CDisplayEx) и помечаем онбординг
         // пройденным — приложение открывается прямо в библиотеке.

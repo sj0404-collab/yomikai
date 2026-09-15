@@ -424,4 +424,31 @@ class OcrPreferences(
 
     /** Читалка во весь экран (прятать панели и системные бары). */
     fun bookFullscreen() = preferenceStore.getBoolean("pref_book_fullscreen", false)
+
+    // ---- Скриншоты авточтения ----
+
+    /**
+     * Автоматически делать скриншот текущего кадра при каждом шаге
+     * авточтения. Скриншот сохраняется в буфер и показывается на вкладке
+     * «Скриншоты» с текстовым оверлеем.
+     */
+    fun autoScreenshotEnabled() = preferenceStore.getBoolean("pref_auto_screenshot", true)
+
+    /**
+     * Показывать индикатор в правом верхнем углу читалки при каждом
+     * захвате скриншота (пульсирующая точка + количество регионов).
+     */
+    fun screenshotIndicatorEnabled() = preferenceStore.getBoolean("pref_screenshot_indicator", true)
+
+    /**
+     * Максимальное количество скриншотов в буфере (10..200).
+     * Старые скриншоты удаляются при достижении лимита.
+     */
+    fun screenshotBufferSize() = preferenceStore.getInt("pref_screenshot_buffer_size", 50)
+
+    /**
+     * Сохранять ли распознанный текст на скриншоте (оверлей в галерее).
+     * Выключено = только изображение без текстовых рамок.
+     */
+    fun screenshotShowTextOverlay() = preferenceStore.getBoolean("pref_screenshot_text_overlay", true)
 }
