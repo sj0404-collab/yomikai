@@ -3,6 +3,9 @@ package eu.kanade.tachiyomi.data.tts
 import android.content.Context
 import android.graphics.Bitmap
 import kotlinx.coroutines.CoroutineScope
+import mihon.data.ocr.OcrScreenshotBuffer
+import mihon.domain.ocr.model.OcrRegion
+import mihon.domain.ocr.model.OcrTextOrientation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -360,6 +363,30 @@ class AutoReadEngine(
                 // 3) порядок чтения (группировка в строки по близости центров Y,
                 // а не по фиксированным 12% полосам — убирает «лесенку»)
                 val ordered = orderRegions(fresh, order)
+
+                // ===== СКРИНШОТ: сохраняем распознанные регионы в буфер =====
+                // Лёгкая запись (~1-5 KB) — только текст + координаты,
+                // без JPEG-файлов. Показывается на вкладке «Скриншоты».
+                if (prefs.autoScreenshotEnabled().get() && ordered.isNotEmpty()) {
+                    val engineName = prefs.ocrModel().get().name.lowercase()
+                    val ocrRegions = ordered.mapIndexed { idx, line ->
+                        OcrRegion(
+                            order = idx,
+                            text = line.text,
+                            boundingBox = line.boundingBox,
+                            textOrientation = OcrTextOrientation.Horizontal,
+                        )
+                    }
+                    OcrScreenshotBuffer.add(
+                        chapterId = chapterId,
+                        pageIndex = pageIndex,
+                        scrollFraction = 0f,
+                        regions = ocrRegions,
+                        engineUsed = engineName,
+                        imageWidth = bitmap.width,
+                        imageHeight = bitmap.height,
+                    )
+                }
 
                 // 3.5) Пол говорящих. Приоритет:
                 //  а) ВСТРОЕННЫЙ локальный AI (LocalSpeakerAi) — морфология
