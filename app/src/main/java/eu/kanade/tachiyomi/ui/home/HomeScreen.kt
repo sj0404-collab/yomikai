@@ -96,6 +96,7 @@ object HomeScreen : Screen() {
         UiTab.BROWSE to BrowseTab,
         UiTab.BROWSER to eu.kanade.tachiyomi.ui.webbrowser.BrowserTab,
         UiTab.AI to eu.kanade.tachiyomi.ui.aichat.AiChatTab,
+        UiTab.SCREENSHOTS to eu.kanade.tachiyomi.ui.screenshots.ScreenshotTab,
         UiTab.MORE to MoreTab,
     )
 

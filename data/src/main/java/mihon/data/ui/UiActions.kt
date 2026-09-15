@@ -230,6 +230,7 @@ enum class UiTab(val id: String, val title: String, val pinned: Boolean = false)
     BROWSE("browse", "Каталоги"),
     BROWSER("browser", "Браузер"),
     AI("ai", "AI-чат"),
+    SCREENSHOTS("screenshots", "Скриншоты"),
     MORE("more", "Ещё", pinned = true),
     ;
 
