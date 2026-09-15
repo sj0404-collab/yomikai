@@ -51,9 +51,6 @@ jobs:
           java-version-file: .github/.java-version
           distribution: temurin
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
       # Caching of Gradle User Home (зависимости, wrapper, локальный build-cache)
       # включён по умолчанию в setup-gradle v6; на Linux-раннере kofée builds в
       # среднем заметно быстрее, чем на windows-2025.
