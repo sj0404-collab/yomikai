@@ -987,8 +987,9 @@ class AutoReadEngine(
         if (aH <= 0f || bH <= 0f) return false
         val gap = bb.top - ab.bottom
         if (gap < 0f || gap > kotlin.math.max(aH, bH) * 0.55f) return false
-        // Вертикальные японские колонки (узкие и высокие) не склеиваем.
-        if (aH > aW * 2f || bH > bW * 2f) return false
+        // Вертикальные японские колонки (узкие и очень высокие) не склеиваем.
+        // Порог 4x вместо 2x: у manga-диалогов облачка бывают вытянутыми по высоте.
+        if (aH > aW * 4f || bH > bW * 4f) return false
         return true
     }
 
@@ -998,10 +999,14 @@ class AutoReadEngine(
         val bT = b.trim()
         if (aT.isBlank()) return bT
         if (bT.isBlank()) return aT
-        return if (aT.endsWith("-")) {
-            aT.dropLast(1) + bT
-        } else {
-            "$aT $bT"
+        // Перенос слова: дефис / короткое тире / длинное тире в конце строки
+        // → склейка без пробела (понеде- / льник → понедельник).
+        return when {
+            aT.endsWith("-") || aT.endsWith("\u2010") || aT.endsWith("\u2011") ->
+                aT.dropLast(1) + bT
+            aT.endsWith("\u2013") || aT.endsWith("\u2014") || aT.endsWith("\u2015") ->
+                aT.dropLast(1) + bT
+            else -> "$aT $bT"
         }
     }
 
@@ -1134,7 +1139,17 @@ class AutoReadEngine(
                 }
                 joined.append(row)
             }
-            return joined.toString().replace(Regex("\\s+"), " ").trim()
+            var result = joined.toString().replace(Regex("\\s+"), " ").trim()
+            // Пост-обработка: убираем «застрявшие» повторы символов, которые OCR
+            // генерирует на шумных кадрах: "!!!!" → "!", "????" → "?", "......" → "…"
+            result = result.replace(Regex("(.)\\1{2,}")) { m ->
+                val ch = m.groupValues[1]
+                when (ch) {
+                    "!", "?", ".", "…", "~" -> ch
+                    else -> m.value
+                }
+            }
+            return result
         }
 
         /** Похожа ли строка на осмысленный текст (не обрывок/не мусор). */
