@@ -5,25 +5,24 @@ import mihon.domain.ocr.model.OcrBoundingBox
 import mihon.domain.ocr.model.OcrRegion
 
 /**
- * Метаданные одного скриншота, сделанного во время авточтения.
+ * Метаданные одного «скриншота» авточтения — лёгкая запись (~1-5 KB),
+ * содержащая только распознанный текст с позициями, без картинок.
  *
- * Физический файл JPEG лежит в [imagePath] (абсолютный путь к файлу на
- * диске: `context.filesDir/screenshots/<id>.jpg`). Галерея скринов читает
- * эти файлы и рисует текстовые оверлеи поверх по координатам из [regions].
+ * Вся запись — это JSON с текстовыми регионами. Физических файлов
+ * изображений НЕТ — галерея рисует текст по координатам из [regions],
+ * фонон берёт из кэша загруженных страниц (coil/SSIV).
  *
- * @param id              Уникальный id (timestamp-based, чтобы сортировка = порядок).
+ * @param id              Уникальный id (timestamp, чтобы сортировка = порядок).
  * @param chapterId       Id главы в БД manga.
  * @param pageIndex       Индекс страницы внутри главы (0-based).
- * @param scrollFraction  Доля прокрутки экрана (0..1) при моменте скриншота.
+ * @param scrollFraction  Доля прокрутки экрана (0..1) при моменте захвата.
  * @param timestamp       millis UTC.
- * @param imagePath       Абсолютный путь к JPEG-файлу скриншота.
  * @param regions         Регионы OCR (текст + box) на момент захвата.
  * @param engineUsed      Какой движок OCR дал regions: "local", "glens", "google" и т.д.
  * @param summaryText     Сжатый текст всех регионов для поиска (одна строка).
- * @param imageWidth      Ширина исходного изображения в пикселях.
- * @param imageHeight     Высота исходного изображения в пикселях.
- * @param scanRegion      Тип сканирования: "full", "viewport" — что именно
- *                        было захвачено (вся страница или видимая область).
+ * @param imageWidth      Ширина исходного изображения (координаты regions нормализованы 0..1).
+ * @param imageHeight     Высота исходного изображения.
+ * @param scanRegion      Тип сканирования: "full" (вся страница) или "viewport" (видимая область).
  */
 @Serializable
 data class OcrScreenshotEntry(
@@ -32,7 +31,6 @@ data class OcrScreenshotEntry(
     val pageIndex: Int,
     val scrollFraction: Float = 0f,
     val timestamp: Long,
-    val imagePath: String,
     val regions: List<SerializableOcrRegion> = emptyList(),
     val engineUsed: String = "local",
     val summaryText: String = "",
