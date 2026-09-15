@@ -39,6 +39,8 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.kanade.presentation.util.Screen as YomikaiScreen
+import cafe.adriel.voyager.navigator.LocalNavigator
+import cafe.adriel.voyager.navigator.currentOrThrow
 import mihon.data.ocr.OcrScreenshotBuffer
 import mihon.data.ocr.OcrScreenshotEntry
 import java.text.SimpleDateFormat
@@ -80,7 +82,7 @@ class ScreenshotDetailScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = {
-                        cafe.adriel.voyager.navigator.LocalNavigator.currentOrThrow.pop()
+                        LocalNavigator.currentOrThrow.pop()
                     }) {
                         Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Назад")
                     }
@@ -198,19 +200,21 @@ class ScreenshotDetailScreen(
                         style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5f),
                     )
                     // Номер + текст
+                    paint.color = android.graphics.Color.WHITE
                     drawContext.canvas.nativeCanvas.drawText(
                         "#${idx + 1}",
                         x1 + 3f,
                         y1 + 12f,
-                        paint.apply { this.color = android.graphics.Color.WHITE },
+                        paint,
                     )
                     val textLines = region.text.chunked((w / 5f).toInt().coerceAtLeast(8))
+                    paint.color = android.graphics.Color.DKGRAY
                     textLines.take(3).forEachIndexed { li, line ->
                         drawContext.canvas.nativeCanvas.drawText(
                             line,
                             x1 + 3f,
                             y1 + 24f + li * 13f,
-                            paint.apply { this.color = android.graphics.Color.DKGRAY },
+                            paint,
                         )
                     }
                 }
@@ -348,8 +352,8 @@ class ScreenshotDetailScreen(
                     val paint = android.graphics.Paint().apply {
                         textSize = 10.sp.toPx()
                         isAntiAlias = true
-                        color = android.graphics.Color.DKGRAY
                     }
+                    paint.color = android.graphics.Color.DKGRAY
                     val textLines = region.text.chunked((w / 5f).toInt().coerceAtLeast(8))
                     textLines.take(3).forEachIndexed { li, line ->
                         drawContext.canvas.nativeCanvas.drawText(

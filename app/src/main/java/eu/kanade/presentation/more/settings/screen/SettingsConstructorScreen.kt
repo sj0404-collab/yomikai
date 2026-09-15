@@ -2,6 +2,7 @@ package eu.kanade.presentation.more.settings.screen
 
 import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -49,6 +50,8 @@ import mihon.data.ui.UiPlacement
 import mihon.data.ui.UiTab
 import mihon.data.ui.UiTabs
 import tachiyomi.presentation.core.components.material.Scaffold
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 /**
  * «Конструктор» приложения: вкладки нижней панели (скрыть/переставить),
@@ -181,7 +184,7 @@ object SettingsConstructorScreen : Screen() {
                 }
                 item { Header("Скриншоты (авточтение)") }
                 item {
-                    val ocrPrefs = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+                    val ocrPrefs = Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
                     val autoScreenshot by ocrPrefs.autoScreenshotEnabled().collectAsState()
                     val indicatorEnabled by ocrPrefs.screenshotIndicatorEnabled().collectAsState()
                     val textOverlay by ocrPrefs.screenshotShowTextOverlay().collectAsState()
@@ -373,7 +376,7 @@ object SettingsConstructorScreen : Screen() {
             onDismissRequest = onDismiss,
             title = { Text(if (initial == null) "Новая кнопка" else "Кнопка «${initial.title}»") },
             text = {
-                androidx.compose.foundation.layout.Column(
+                Column(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Название") })

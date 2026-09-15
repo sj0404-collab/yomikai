@@ -27,7 +27,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.Canvas
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
@@ -507,19 +514,17 @@ class ReaderActivity : BaseActivity() {
                 val lastEntry by mihon.data.ocr.OcrScreenshotBuffer.lastEntry.collectAsState()
                 val indicatorVisible = remember { mutableStateOf(false) }
                 val regionCount = remember { mutableStateOf(0) }
-                val pulseAnim = androidx.compose.animation.core.rememberInfiniteTransition(
-                    label = "screenshot_pulse"
-                )
+                val pulseAnim = rememberInfiniteTransition(label = "screenshot_pulse")
                 val pulseAlpha by pulseAnim.animateFloat(
                     initialValue = 0.6f,
                     targetValue = 1f,
-                    animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                    animationSpec = infiniteRepeatable(
                         animation = androidx.compose.animation.core.tween(500),
-                        repeatMode = androidx.compose.animation.core.Reverse,
+                        repeatMode = RepeatMode.Reverse,
                     ),
                     label = "pulse_alpha",
                 )
-                androidx.compose.runtime.LaunchedEffect(lastEntry) {
+                LaunchedEffect(lastEntry) {
                     if (lastEntry != null) {
                         regionCount.value = lastEntry!!.regions.size
                         indicatorVisible.value = true
@@ -528,7 +533,7 @@ class ReaderActivity : BaseActivity() {
                     }
                 }
                 if (indicatorVisible.value) {
-                    androidx.compose.foundation.layout.Box(
+                    Box(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
                             .padding(top = 48.dp, end = 12.dp)
@@ -539,15 +544,15 @@ class ReaderActivity : BaseActivity() {
                             )
                             .padding(horizontal = 8.dp, vertical = 4.dp),
                     ) {
-                        androidx.compose.foundation.layout.Row(
-                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp),
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
-                            androidx.compose.foundation.Canvas(
+                            Canvas(
                                 modifier = Modifier.size(8.dp),
                             ) {
                                 drawCircle(
-                                    color = androidx.compose.ui.graphics.Color(0xFF00E5FF),
+                                    color = Color(0xFF00E5FF),
                                     radius = size.minDimension / 2,
                                     alpha = pulseAlpha,
                                 )
