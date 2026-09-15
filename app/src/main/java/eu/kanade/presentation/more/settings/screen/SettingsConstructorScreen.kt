@@ -226,12 +226,20 @@ object SettingsConstructorScreen : Screen() {
                                 modifier = Modifier.weight(1f),
                             )
                             IconButton(onClick = {
-                                if (bufferSize > 10) ocrPrefs.screenshotBufferSize().set(bufferSize - 10)
+                                if (bufferSize > 10) {
+                                    val next = bufferSize - 10
+                                    ocrPrefs.screenshotBufferSize().set(next)
+                                    mihon.data.ocr.OcrScreenshotBuffer.maxEntries = next
+                                }
                             }) {
                                 Text("−")
                             }
                             IconButton(onClick = {
-                                if (bufferSize < 200) ocrPrefs.screenshotBufferSize().set(bufferSize + 10)
+                                if (bufferSize < 200) {
+                                    val next = bufferSize + 10
+                                    ocrPrefs.screenshotBufferSize().set(next)
+                                    mihon.data.ocr.OcrScreenshotBuffer.maxEntries = next
+                                }
                             }) {
                                 Text("+")
                             }

@@ -27,8 +27,12 @@ import java.io.File
  */
 object OcrScreenshotBuffer {
 
-    private const val MAX_ENTRIES = 50
+    private const val DEFAULT_MAX_ENTRIES = 50
     private const val FILE_NAME = "screenshots.json"
+
+    /** Лимит записей (кольцевой буфер). Меняется через dev-панель. */
+    @kotlin.jvm.Volatile
+    var maxEntries: Int = DEFAULT_MAX_ENTRIES
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; prettyPrint = false }
 
@@ -86,7 +90,8 @@ object OcrScreenshotBuffer {
         )
 
         val current = _entries.value.toMutableList()
-        if (current.size >= MAX_ENTRIES) {
+        val limit = maxEntries.coerceAtLeast(1)
+        if (current.size >= limit) {
             current.removeFirst()
         }
         current.add(entry)

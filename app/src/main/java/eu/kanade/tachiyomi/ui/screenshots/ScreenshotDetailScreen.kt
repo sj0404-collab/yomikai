@@ -66,6 +66,7 @@ class ScreenshotDetailScreen(
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     override fun Content() {
+        val navigator = LocalNavigator.currentOrThrow
         val entries by OcrScreenshotBuffer.entries.collectAsState()
         val entry = entries.firstOrNull { it.id == entryId }
         val compareEntry = compareWithId?.let { id -> entries.firstOrNull { it.id == id } }
@@ -82,7 +83,7 @@ class ScreenshotDetailScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = {
-                        LocalNavigator.currentOrThrow.pop()
+                        navigator.pop()
                     }) {
                         Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Назад")
                     }

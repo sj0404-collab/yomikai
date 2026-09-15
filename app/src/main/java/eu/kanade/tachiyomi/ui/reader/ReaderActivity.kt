@@ -34,7 +34,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.RepeatMode
-import androidx.compose.ui.graphics.Color
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
@@ -519,7 +521,7 @@ class ReaderActivity : BaseActivity() {
                     initialValue = 0.6f,
                     targetValue = 1f,
                     animationSpec = infiniteRepeatable(
-                        animation = androidx.compose.animation.core.tween(500),
+                        animation = tween(500),
                         repeatMode = RepeatMode.Reverse,
                     ),
                     label = "pulse_alpha",
@@ -552,7 +554,7 @@ class ReaderActivity : BaseActivity() {
                                 modifier = Modifier.size(8.dp),
                             ) {
                                 drawCircle(
-                                    color = Color(0xFF00E5FF),
+                                    color = androidx.compose.ui.graphics.Color(0xFF00E5FF),
                                     radius = size.minDimension / 2,
                                     alpha = pulseAlpha,
                                 )
