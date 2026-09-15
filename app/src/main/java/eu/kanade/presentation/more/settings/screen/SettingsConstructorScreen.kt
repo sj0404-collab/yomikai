@@ -33,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.util.Screen
+import tachiyomi.presentation.core.util.collectAsState
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.components.AppBar
@@ -176,6 +177,67 @@ object SettingsConstructorScreen : Screen() {
                         onUp = null,
                         onDown = null,
                     )
+                }
+                item { Header("Скриншоты (авточтение)") }
+                item {
+                    val ocrPrefs = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+                    val autoScreenshot by ocrPrefs.autoScreenshotEnabled().collectAsState()
+                    val indicatorEnabled by ocrPrefs.screenshotIndicatorEnabled().collectAsState()
+                    val textOverlay by ocrPrefs.screenshotShowTextOverlay().collectAsState()
+                    val bufferSize by ocrPrefs.screenshotBufferSize().collectAsState()
+                    Column {
+                        ModuleRow(
+                            title = "Автоскриншот при каждом кадре авточтения",
+                            checked = autoScreenshot,
+                            enabled = true,
+                            onChecked = { ocrPrefs.autoScreenshotEnabled().set(it) },
+                            onUp = null,
+                            onDown = null,
+                        )
+                        ModuleRow(
+                            title = "Индикатор в углу читалки",
+                            checked = indicatorEnabled,
+                            enabled = true,
+                            onChecked = { ocrPrefs.screenshotIndicatorEnabled().set(it) },
+                            onUp = null,
+                            onDown = null,
+                        )
+                        ModuleRow(
+                            title = "Текстовый оверлей на детальном экране",
+                            checked = textOverlay,
+                            enabled = true,
+                            onChecked = { ocrPrefs.screenshotShowTextOverlay().set(it) },
+                            onUp = null,
+                            onDown = null,
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "Лимит буфера скриншотов: $bufferSize",
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.weight(1f),
+                            )
+                            IconButton(onClick = {
+                                if (bufferSize > 10) ocrPrefs.screenshotBufferSize().set(bufferSize - 10)
+                            }) {
+                                Text("−")
+                            }
+                            IconButton(onClick = {
+                                if (bufferSize < 200) ocrPrefs.screenshotBufferSize().set(bufferSize + 10)
+                            }) {
+                                Text("+")
+                            }
+                        }
+                        Text(
+                            text = "Записи лёгкие (~1-5KB, только текст и координаты, без изображений). Хранятся в кольцевом буфере.",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 6.dp),
+                        )
+                    }
                 }
                 item { Header("Мои кнопки действий") }
                 items(actions) { spec ->
