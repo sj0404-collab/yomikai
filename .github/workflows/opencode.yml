@@ -9,9 +9,8 @@ name: OpenCode Agent
 # CLI-агенты видят ВСЕ репозитории/файлы/коммиты/логи аккаунта и могут
 # коммитить, собирать APK и т.п., а не только этот репозиторий.
 #
-# Воркфлоу живёт в main (GitHub диспатчит только воркфлоу default-ветки),
-# а agent/, npm-hub/, tools/ — в ветке prototype-opencode-agent, которую
-# воркфлоу чекаутит первым шагом.
+# Воркфлоу и весь агент (agent/, npm-hub/, tools/, AiChatTab) живут в main —
+# прототип влит в неё, поэтому воркфлоу чекаутит main первым шагом.
 
 on:
   workflow_dispatch:
@@ -57,7 +56,7 @@ jobs:
         with:
           path: fork
           fetch-depth: 0
-          ref: prototype-opencode-agent
+          ref: main
 
       - uses: actions/setup-node@v4
         with:
@@ -192,7 +191,7 @@ jobs:
         with:
           path: fork
           fetch-depth: 0
-          ref: prototype-opencode-agent
+          ref: main
 
       - uses: actions/setup-node@v4
         with:

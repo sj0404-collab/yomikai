@@ -55,6 +55,11 @@ object RunnerLlm {
 
     private const val REPO = "sj0404-collab/yomikai"
     private const val WORKFLOW = "llm-runner.yml"
+    private const val WORKFLOW_OPENCODE = "opencode.yml"
+    // Графика opencode.yml живёт в main (GitHub диспатчит только воркфлоу из
+    // default-ветки), а agent/, npm-hub/, tools/ — в ветке prototype-opencode-agent,
+    // которую воркфлоу чекаутит первым шагом.
+    private const val OPENCODE_REF = "main"
 
     private fun prefs(): OcrPreferences = Injekt.get()
 
@@ -298,11 +303,17 @@ object RunnerLlm {
     }.getOrDefault(body.take(180)).ifBlank { "нет описания" }
 
     /** Реальный статус выбранной job; failure/cancelled являются терминальными. */
-    private fun fetchRunState(token: String, sessionId: String, os: String): RunState {
+    private fun fetchRunState(
+        token: String,
+        sessionId: String,
+        os: String,
+        workflow: String = WORKFLOW,
+        stepText: (String) -> String? = ::llmStepText,
+    ): RunState {
         return runCatching {
             val runsResponse = githubRequest(
                 token,
-                "https://api.github.com/repos/$REPO/actions/workflows/$WORKFLOW/runs" +
+                "https://api.github.com/repos/$REPO/actions/workflows/$workflow/runs" +
                     "?event=workflow_dispatch&per_page=20",
             )
             if (runsResponse.code !in 200..299) {
@@ -391,16 +402,7 @@ object RunnerLlm {
                     val step = steps.getJSONObject(i)
                     if (step.optString("status") == "in_progress") {
                         val name = step.optString("name")
-                        val text = when {
-                            name.startsWith("Restore model cache") -> "Проверяем кэш модели…"
-                            name.startsWith("Download llama.cpp") -> "Скачивается llama.cpp…"
-                            name.startsWith("Download GGUF") -> "Скачивается модель в ранер…"
-                            name.startsWith("Save model cache") -> "Сохраняем модель в кэш…"
-                            name.startsWith("Start server") -> "Запускаются сервер и туннель…"
-                            name.startsWith("Upload endpoint") -> "Публикуется endpoint…"
-                            name.startsWith("Keep session") -> "Ранер готов, забираем endpoint…"
-                            else -> name
-                        }
+                        val text = stepText(name) ?: name
                         return RunState(runId = runId, message = "▶ $text")
                     }
                 }
@@ -409,6 +411,28 @@ object RunnerLlm {
         }.getOrElse {
             RunState(runId = null, message = "Временная ошибка статуса: ${it.message ?: "сеть"}")
         }
+    }
+
+    /** Человекочитаемые статусы этапов llm-runner.yml. */
+    private fun llmStepText(name: String): String? = when {
+        name.startsWith("Restore model cache") -> "Проверяем кэш модели…"
+        name.startsWith("Download llama.cpp") -> "Скачивается llama.cpp…"
+        name.startsWith("Download GGUF") -> "Скачивается модель в ранер…"
+        name.startsWith("Save model cache") -> "Сохраняем модель в кэш…"
+        name.startsWith("Start server") -> "Запускаются сервер и туннель…"
+        name.startsWith("Upload endpoint") -> "Публикуется endpoint…"
+        name.startsWith("Keep session") -> "Ранер готов, забираем endpoint…"
+        else -> null
+    }
+
+    /** Человекочитаемые статусы этапов opencode.yml. */
+    private fun opencodeStepText(name: String): String? = when {
+        name.startsWith("Prepare working branch") -> "Готовится рабочая ветка…"
+        name.startsWith("Install npm-hub") -> "Ставятся npm-hub зависимости…"
+        name.startsWith("Start npm-hub") -> "Запускается сайт-хаб и туннель…"
+        name.startsWith("Upload endpoint") -> "Публикуется endpoint…"
+        name.startsWith("Keep session") -> "Ранер готов, забираем endpoint…"
+        else -> null
     }
 
     /** Ищет endpoint только внутри нужного run, скачивает zip и читает JSON. */
@@ -551,4 +575,102 @@ object RunnerLlm {
         onStatus: (String) -> Unit,
         os: String = "linux",
     ): Session? = startSessionInternal(context, "custom", ggufUrl, onStatus, os)
+
+    /**
+     * Запуск сессии OpenCode-агента (workflow opencode.yml): на GitHub-ранере
+     * поднимаются opencode serve + oc-gateway (веб/мобильный чат) и npm-hub
+     * (xterm-терминал, файлы, логи, git status/diff/log), всё открывается
+     * cloudflared-туннелями. endpoint-артефакт несёт два адреса:
+     *   url       — чат с агентом (oc-gateway);
+     *   terminal  — npm-hub (терминал/файлы/дашборд).
+     * Агент работает PAT-ом аккаунта (YP_AGENT_TOKEN), поэтому видит и меняет
+     * ВСЕ репозитории, коммиты и логи аккаунта, а не только этот репозиторий.
+     */
+    suspend fun startOpenCode(
+        context: Context,
+        onStatus: (String) -> Unit,
+        os: String = "linux",
+        ui: String = "mobile",
+        branch: String = "opencode-work",
+    ): Session? = withContext(Dispatchers.IO) {
+        val token = prefs().githubPat().get()
+        if (token.isBlank()) {
+            onStatus("Нет GitHub-токена: задайте PAT в настройках выше")
+            return@withContext null
+        }
+        val selectedOs = if (os == "windows") "windows" else "linux"
+        val session = Session(
+            id = "oc" + System.currentTimeMillis().toString(36) + (1000..9999).random(),
+            model = "hub",
+            os = selectedOs,
+        )
+
+        onStatus("Отправляем запуск OpenCode в GitHub Actions…")
+        val dispatchBody = JSONObject()
+            .put("ref", OPENCODE_REF)
+            .put(
+                "inputs",
+                JSONObject()
+                    .put("session", session.id)
+                    .put("os", selectedOs)
+                    .put("ui", ui)
+                    .put("branch", branch),
+            )
+        val dispatch = runCatching {
+            githubRequest(
+                token = token,
+                url = "https://api.github.com/repos/$REPO/actions/workflows/$WORKFLOW_OPENCODE/dispatches",
+                method = "POST",
+                body = dispatchBody.toString(),
+            )
+        }.getOrElse {
+            onStatus("Не удалось связаться с GitHub: ${it.message ?: "ошибка сети"}")
+            return@withContext null
+        }
+        if (dispatch.code !in 200..299) {
+            onStatus("GitHub отклонил запуск (${dispatch.code}): ${apiError(dispatch.body)}")
+            return@withContext null
+        }
+
+        val deadline = System.currentTimeMillis() + START_TIMEOUT_MS
+        var lastStatus = ""
+        var runId: Long? = null
+        while (System.currentTimeMillis() < deadline) {
+            val state = fetchRunState(
+                token, session.id, selectedOs,
+                workflow = WORKFLOW_OPENCODE, stepText = ::opencodeStepText,
+            )
+            runId = state.runId ?: runId
+            if (state.message != lastStatus) {
+                onStatus(state.message)
+                lastStatus = state.message
+            }
+
+            runId?.let { id ->
+                fetchEndpointArtifact(token, id, session.id)?.let { endpoint ->
+                    session.url = endpoint.first
+                    session.apiKey = endpoint.second
+                    session.terminalUrl = endpoint.third.ifBlank { null }
+                    saveSession(context, session)
+                    onStatus("✅ OpenCode-агент готов: ${endpoint.first}")
+                    return@withContext session
+                }
+            }
+
+            if (state.terminal) {
+                onStatus(state.message)
+                return@withContext null
+            }
+            delay(POLL_INTERVAL_MS)
+        }
+        onStatus(
+            if (runId == null) {
+                "Таймаут: GitHub не создал запуск за ${START_TIMEOUT_MS / 60_000} минут"
+            } else {
+                "Таймаут: endpoint не появился за ${START_TIMEOUT_MS / 60_000} минут. " +
+                    "Последний статус: ${lastStatus.ifBlank { "неизвестен" }}"
+            },
+        )
+        null
+    }
 }
