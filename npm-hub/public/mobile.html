@@ -13,8 +13,10 @@
   <style>
     *{margin:0;padding:0;box-sizing:border-box}
     :root{--bg0:#0a0e14;--bg1:#0d1117;--bg2:#161b22;--bg3:#1c2128;--bg4:#21262d;--bdr:#30363d;--t1:#e6edf3;--t2:#8b949e;--t3:#484f58;--acc:#58a6ff;--ok:#3fb950;--err:#f85149;--warn:#d29922;--pur:#bc8cff}
-    html{overscroll-behavior:none}
-    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg0);color:var(--t1);height:100dvh;overflow:hidden;display:flex;flex-direction:column;overscroll-behavior:none;touch-action:manipulation}
+    html{height:100%;overscroll-behavior:none}
+    /* height:100vh — fallback: Android WebView в части версий не понимает dvh,
+       из-за чего flex-колонка схлопывалась и нижняя навигация уезжала вверх. */
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg0);color:var(--t1);height:100vh;height:100dvh;min-height:100vh;overflow:hidden;display:flex;flex-direction:column;overscroll-behavior:none;touch-action:manipulation}
 
     /* ===== TOPBAR ===== */
     .topbar{height:48px;background:var(--bg2);display:flex;align-items:center;padding:0 12px;gap:8px;border-bottom:1px solid var(--bdr);flex-shrink:0;padding-top:max(0px,env(safe-area-inset-top))}
@@ -49,12 +51,12 @@
     .drawer-actions .btn{flex:1;text-align:center;padding:10px;font-size:13px}
 
     /* ===== MAIN CONTENT ===== */
-    .main{flex:1;display:flex;flex-direction:column;overflow:hidden}
-    .content{flex:1;display:flex;flex-direction:column;overflow:hidden;-webkit-overflow-scrolling:touch}
+    .main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0}
+    .content{flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0;-webkit-overflow-scrolling:touch}
     .page{display:none;flex:1;overflow-y:auto;padding:14px;-webkit-overflow-scrolling:touch}.page.on{display:flex;flex-direction:column}
 
     /* ===== BOTTOM NAV ===== */
-    .bottom-nav{height:60px;background:var(--bg2);border-top:1px solid var(--bdr);display:flex;flex-shrink:0;padding-bottom:env(safe-area-inset-bottom)}
+    .bottom-nav{height:60px;background:var(--bg2);border-top:1px solid var(--bdr);display:flex;flex-shrink:0;padding-bottom:env(safe-area-inset-bottom);position:sticky;bottom:0;z-index:30}
     .nav-btn{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;background:none;border:none;color:var(--t3);font-size:10px;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:all .1s}
     .nav-btn:active{background:var(--bg4)}
     .nav-btn.on{color:var(--acc)}
@@ -178,7 +180,7 @@
     /* ===== MODAL ===== */
     .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;align-items:flex-end;justify-content:center;cursor:pointer}
     .modal-bg.on{display:flex}
-    .modal{background:var(--bg2);border:1px solid var(--bdr);border-radius:16px 16px 0 0;padding:20px;width:100%;max-height:85dvh;display:flex;flex-direction:column}
+    .modal{background:var(--bg2);border:1px solid var(--bdr);border-radius:16px 16px 0 0;padding:20px;width:100%;max-height:85vh;max-height:85dvh;display:flex;flex-direction:column}
     .modal h2{font-size:18px;font-weight:600;margin-bottom:14px}
     .modal-bar{display:flex;gap:8px;margin-bottom:12px}
     .modal-bar input{flex:1;padding:10px 12px;background:var(--bg0);border:1px solid var(--bdr);border-radius:8px;color:var(--t1);font-size:14px;font-family:monospace;outline:none}

@@ -32,15 +32,29 @@ window.addEventListener('visibilitychange', () => { if (document.visibilityState
 window.addEventListener('focus', () => setTimeout(kickReconnect, 250));
 window.addEventListener('online', kickReconnect);
 
+// Любой /api/* может упасть (пустой туннель, нет сети) — один сбойный ответ
+// не должен опустошать весь хаб. Возвращаем {} и рендерим то, что есть.
+async function safeJson(path) {
+  try {
+    const r = await fetch(path);
+    if (!r.ok) return {};
+    const data = await r.json();
+    return data && typeof data === 'object' ? data : {};
+  } catch (e) {
+    console.error('api', path, e);
+    return {};
+  }
+}
+
 async function init() {
   const [toolsR, infoR, histR, storR, modelsR, netR, tunnelR] = await Promise.all([
-    fetch('/api/tools').then(r => r.json()),
-    fetch('/api/info').then(r => r.json()),
-    fetch('/api/path-history').then(r => r.json()),
-    fetch('/api/storages').then(r => r.json()),
-    fetch('/api/models').then(r => r.json()),
-    fetch('/api/networks').then(r => r.json()),
-    fetch('/api/tunnel').then(r => r.json())
+    safeJson('/api/tools'),
+    safeJson('/api/info'),
+    safeJson('/api/path-history'),
+    safeJson('/api/storages'),
+    safeJson('/api/models'),
+    safeJson('/api/networks'),
+    safeJson('/api/tunnel')
   ]);
   if (toolsR.success) tools = toolsR.tools;
   if (infoR.home) homeDir = infoR.home;
@@ -73,8 +87,12 @@ async function init() {
     if (tUrl) { tUrl.textContent = tunnelR.url; tUrl.style.display = ''; }
     window.__tunnelUrl = tunnelR.url;
   }
-  renderDashboard(); renderSidebar();
-  setTimeout(() => { initFM(); fmBrowse(workDir || homeDir); }, 300);
+  try { renderDashboard(); renderSidebar(); } catch (e) { console.error('render', e); }
+  setTimeout(() => {
+    (async () => {
+      try { await initFM(); await fmBrowse(workDir || homeDir); } catch (e) { console.error('files', e); }
+    })();
+  }, 300);
 }
 
 function updateModelButton() {
@@ -861,7 +879,7 @@ function sendKey(key) {
 
 // ===== FILE MANAGER =====
 async function initFM() {
-  const devR = await fetch('/api/devices').then(r => r.json());
+  const devR = await safeJson('/api/devices');
   if (devR.success) {
     document.getElementById('devices-list').innerHTML = devR.devices.map(d => {
       const icon = d.type === 'phone' ? '📱' : d.type === 'tablet' ? '📟' : '💻';
@@ -869,7 +887,7 @@ async function initFM() {
     }).join('') || '<div style="padding:8px;font-size:12px;color:var(--t3)">Нет устройств</div>';
   }
 
-  const storR = await fetch('/api/storages').then(r => r.json());
+  const storR = await safeJson('/api/storages');
   if (storR.success) {
     storages = storR.storages || [];
     document.getElementById('storages-list').innerHTML = storages.map(s => {
