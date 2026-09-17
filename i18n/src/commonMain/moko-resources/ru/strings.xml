@@ -273,6 +273,12 @@
     <string name="action_open_in_web_view">Открыть в WebView</string>
     <string name="pref_skip_read_chapters">Пропускать прочитанные главы</string>
     <string name="pref_color_filter_mode">Режим светофильтра</string>
+    <string name="pref_category_color_filter">Светофильтр</string>
+    <string name="reader_settings_reset_defaults">Сбросить по умолчанию</string>
+    <string name="reader_settings_reset_done">Настройки читалки сброшены по умолчанию</string>
+    <string name="reader_settings_saved">Настройки читалки сохранены</string>
+    <string name="reader_constructor_save">Сохранить изменения</string>
+    <string name="reader_constructor_defaults">По умолчанию</string>
     <string name="filter_mode_overlay">Наложение</string>
     <string name="filter_mode_multiply">Умножение</string>
     <string name="filter_mode_screen">Экран</string>
@@ -930,6 +936,7 @@
     <string name="ocr_model_openrouter">OpenRouter AI Vision</string>
     <string name="ocr_model_google">Google AI / Gemini Vision</string>
     <string name="ocr_model_zen_free">Zen Free (Бесплатно, без API ключа)</string>
+    <string name="ocr_model_mlkit">Google ML Kit (офлайн, встроенная модель)</string>
 
     <!-- Voice / Text-to-Speech Settings -->
     <string name="pref_category_voice">Голоса и Озвучка (TTS)</string>

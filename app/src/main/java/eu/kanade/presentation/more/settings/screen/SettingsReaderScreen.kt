@@ -1,15 +1,28 @@
 package eu.kanade.presentation.more.settings.screen
 
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Restore
+import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.core.graphics.alpha
+import androidx.core.graphics.blue
+import androidx.core.graphics.green
+import androidx.core.graphics.red
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.util.system.hasDisplayCutout
+import eu.kanade.tachiyomi.util.system.toast
+import tachiyomi.core.common.preference.getAndSet
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.pluralStringResource
 import tachiyomi.presentation.core.i18n.stringResource
@@ -23,6 +36,42 @@ object SettingsReaderScreen : SearchableSettings {
     @ReadOnlyComposable
     @Composable
     override fun getTitleRes() = MR.strings.pref_category_reader
+
+    /**
+     * Кнопки высшего уровня: «Сохранить изменения» и «По умолчанию».
+     *
+     * Настройки виджетов пишутся сразу, поэтому «Сохранить» идемпотентно
+     * фиксирует все значения, а «По умолчанию» удаляет ключи — приложение
+     * снова читает значения по умолчанию.
+     */
+    @Composable
+    override fun RowScope.AppBarAction() {
+        val readerPref = remember { Injekt.get<ReaderPreferences>() }
+        val context = LocalContext.current
+
+        IconButton(
+            onClick = {
+                readerPref.persistCurrent()
+                context.toast(MR.strings.reader_settings_saved)
+            },
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Save,
+                contentDescription = stringResource(MR.strings.reader_constructor_save),
+            )
+        }
+        IconButton(
+            onClick = {
+                readerPref.resetToDefaults()
+                context.toast(MR.strings.reader_settings_reset_done)
+            },
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Restore,
+                contentDescription = stringResource(MR.strings.reader_constructor_defaults),
+            )
+        }
+    }
 
     @Composable
     override fun getPreferences(): List<Preference> {
@@ -65,6 +114,7 @@ object SettingsReaderScreen : SearchableSettings {
             getWebtoonGroup(readerPreferences = readerPref),
             getNavigationGroup(readerPreferences = readerPref),
             getActionsGroup(readerPreferences = readerPref),
+            getColorFilterGroup(readerPreferences = readerPref),
         )
     }
 
@@ -248,6 +298,10 @@ object SettingsReaderScreen : SearchableSettings {
                     preference = readerPreferences.navigateToPan,
                     title = stringResource(MR.strings.pref_navigate_pan),
                     enabled = navMode != 5,
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = readerPreferences.panelNavigation,
+                    title = stringResource(MR.strings.pref_panel_navigation),
                 ),
                 Preference.PreferenceItem.SwitchPreference(
                     preference = dualPageSplitPref,
@@ -446,4 +500,102 @@ object SettingsReaderScreen : SearchableSettings {
             ),
         )
     }
+
+    @Composable
+    private fun getColorFilterGroup(readerPreferences: ReaderPreferences): Preference.PreferenceGroup {
+        val customBrightness by readerPreferences.customBrightness.collectAsState()
+        val customBrightnessValue by readerPreferences.customBrightnessValue.collectAsState()
+        val colorFilter by readerPreferences.colorFilter.collectAsState()
+        val colorFilterValue by readerPreferences.colorFilterValue.collectAsState()
+
+        return Preference.PreferenceGroup(
+            title = stringResource(MR.strings.pref_category_color_filter),
+            preferenceItems = listOf(
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = readerPreferences.customBrightness,
+                    title = stringResource(MR.strings.pref_custom_brightness),
+                ),
+                Preference.PreferenceItem.SliderPreference(
+                    value = customBrightnessValue,
+                    valueRange = -75..100,
+                    title = stringResource(MR.strings.pref_custom_brightness),
+                    onValueChanged = { readerPreferences.customBrightnessValue.set(it) },
+                    enabled = customBrightness,
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = readerPreferences.colorFilter,
+                    title = stringResource(MR.strings.pref_custom_color_filter),
+                ),
+                Preference.PreferenceItem.SliderPreference(
+                    value = colorFilterValue.red,
+                    valueRange = 0..255,
+                    title = stringResource(MR.strings.color_filter_r_value),
+                    onValueChanged = { newValue ->
+                        readerPreferences.colorFilterValue.getAndSet {
+                            getColorValue(it, newValue, RED_MASK, 16)
+                        }
+                    },
+                    enabled = colorFilter,
+                ),
+                Preference.PreferenceItem.SliderPreference(
+                    value = colorFilterValue.green,
+                    valueRange = 0..255,
+                    title = stringResource(MR.strings.color_filter_g_value),
+                    onValueChanged = { newValue ->
+                        readerPreferences.colorFilterValue.getAndSet {
+                            getColorValue(it, newValue, GREEN_MASK, 8)
+                        }
+                    },
+                    enabled = colorFilter,
+                ),
+                Preference.PreferenceItem.SliderPreference(
+                    value = colorFilterValue.blue,
+                    valueRange = 0..255,
+                    title = stringResource(MR.strings.color_filter_b_value),
+                    onValueChanged = { newValue ->
+                        readerPreferences.colorFilterValue.getAndSet {
+                            getColorValue(it, newValue, BLUE_MASK, 0)
+                        }
+                    },
+                    enabled = colorFilter,
+                ),
+                Preference.PreferenceItem.SliderPreference(
+                    value = colorFilterValue.alpha,
+                    valueRange = 0..255,
+                    title = stringResource(MR.strings.color_filter_a_value),
+                    onValueChanged = { newValue ->
+                        readerPreferences.colorFilterValue.getAndSet {
+                            getColorValue(it, newValue, ALPHA_MASK, 24)
+                        }
+                    },
+                    enabled = colorFilter,
+                ),
+                Preference.PreferenceItem.ListPreference(
+                    preference = readerPreferences.colorFilterMode,
+                    entries = ReaderPreferences.ColorFilterMode
+                        .mapIndexed { index, entry -> index to stringResource(entry.first) }
+                        .toMap(),
+                    title = stringResource(MR.strings.pref_color_filter_mode),
+                    enabled = colorFilter,
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = readerPreferences.grayscale,
+                    title = stringResource(MR.strings.pref_grayscale),
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = readerPreferences.invertedColors,
+                    title = stringResource(MR.strings.pref_inverted_colors),
+                ),
+            ),
+        )
+    }
 }
+
+private fun getColorValue(currentColor: Int, color: Int, mask: Long, bitShift: Int): Int {
+    return (color shl bitShift) or (currentColor and mask.inv().toInt())
+}
+
+private const val ALPHA_MASK: Long = 0xFF000000
+private const val RED_MASK: Long = 0x00FF0000
+private const val GREEN_MASK: Long = 0x0000FF00
+private const val BLUE_MASK: Long = 0x000000FF

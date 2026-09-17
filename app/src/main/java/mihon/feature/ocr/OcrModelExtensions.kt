@@ -15,4 +15,5 @@ val OcrModel.titleRes: StringResource
         OcrModel.GOOGLE -> MR.strings.ocr_model_google
         OcrModel.ZEN_FREE -> MR.strings.ocr_model_zen_free
         OcrModel.TESSERACT -> MR.strings.ocr_model_tesseract
+        OcrModel.MLKIT -> MR.strings.ocr_model_mlkit
     }

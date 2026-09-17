@@ -5,6 +5,7 @@ import kotlinx.coroutines.sync.withLock
 
 internal class OcrEngineLocks {
     private val cyrillicMutex = Mutex()
+    private val mlKitMutex = Mutex()
     private val legacyMutex = Mutex()
     private val fastMutex = Mutex()
     private val glensMutex = Mutex()
@@ -31,15 +32,17 @@ internal class OcrEngineLocks {
 
     suspend fun <T> withAllLocks(block: suspend () -> T): T {
         return cyrillicMutex.withLock {
-            legacyMutex.withLock {
-                fastMutex.withLock {
-                    glensMutex.withLock {
-                        owOcrMutex.withLock {
-                            openRouterMutex.withLock {
-                                googleAiMutex.withLock {
-                                    zenFreeMutex.withLock {
-                                        detectionMutex.withLock {
-                                            block()
+            mlKitMutex.withLock {
+                legacyMutex.withLock {
+                    fastMutex.withLock {
+                        glensMutex.withLock {
+                            owOcrMutex.withLock {
+                                openRouterMutex.withLock {
+                                    googleAiMutex.withLock {
+                                        zenFreeMutex.withLock {
+                                            detectionMutex.withLock {
+                                                block()
+                                            }
                                         }
                                     }
                                 }
@@ -54,6 +57,7 @@ internal class OcrEngineLocks {
     private fun mutexFor(type: OcrRepositoryImpl.EngineType): Mutex {
         return when (type) {
             OcrRepositoryImpl.EngineType.CYRILLIC -> cyrillicMutex
+            OcrRepositoryImpl.EngineType.MLKIT -> mlKitMutex
             OcrRepositoryImpl.EngineType.LEGACY -> legacyMutex
             OcrRepositoryImpl.EngineType.FAST -> fastMutex
             OcrRepositoryImpl.EngineType.GLENS -> glensMutex

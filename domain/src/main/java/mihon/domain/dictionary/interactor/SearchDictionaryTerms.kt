@@ -48,7 +48,7 @@ class SearchDictionaryTerms(
     private val punctuationCharSet: Set<Char> get() = PUNCTUATION_CHARS
 
     /** Script families used to select the right search/segmentation pipeline. */
-    private enum class Script { JAPANESE, KOREAN, CHINESE, ENGLISH }
+    private enum class Script { JAPANESE, KOREAN, CHINESE, ENGLISH, CYRILLIC }
 
     private data class SearchContext(
         val dictionariesById: Map<Long, Dictionary>,
@@ -91,6 +91,10 @@ class SearchDictionaryTerms(
             "ko", "kor" -> Script.KOREAN
             "zh", "zho", "chi" -> Script.CHINESE
             "en", "eng" -> Script.ENGLISH
+            // Кириллические языки: словарь только для них и нужен.
+            "ru", "rus", "uk", "ukr", "be", "bel", "bg", "bul",
+            "sr", "srp", "mk", "mkd", "kk", "kaz",
+            -> Script.CYRILLIC
             else -> null
         }
     }
@@ -102,6 +106,7 @@ class SearchDictionaryTerms(
             if (ch in punctuationCharSet || ch.isWhitespace()) continue
             if (ch in '\u3041'..'\u309F' || ch in '\u30A0'..'\u30FF') return Script.JAPANESE
             if (ch in '\uAC00'..'\uD7A3' || ch in '\u1100'..'\u11FF') return Script.KOREAN
+            if (ch in '\u0400'..'\u04FF' || ch in '\u0500'..'\u052F') return Script.CYRILLIC
             if (ch in '\u4E00'..'\u9FFF' || ch in '\u3400'..'\u4DBF') {
                 hasCjk = true
             } else if (ch.isLetter() && ch.code < 0x300) {
@@ -134,6 +139,7 @@ class SearchDictionaryTerms(
             ParserLanguage.KOREAN -> Script.KOREAN
             ParserLanguage.CHINESE -> Script.CHINESE
             ParserLanguage.ENGLISH -> Script.ENGLISH
+            ParserLanguage.RUSSIAN -> Script.CYRILLIC
         }
 
     suspend fun search(
@@ -768,6 +774,7 @@ class SearchDictionaryTerms(
             Script.KOREAN ->
                 char in '\uAC00'..'\uD7A3' || char in '\u1100'..'\u11FF'
             Script.ENGLISH -> false
+            Script.CYRILLIC -> false
         }
     }
 

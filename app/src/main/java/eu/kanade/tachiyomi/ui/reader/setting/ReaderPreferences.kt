@@ -10,7 +10,7 @@ import tachiyomi.core.common.preference.getEnumSet
 import tachiyomi.i18n.MR
 
 class ReaderPreferences(
-    preferenceStore: PreferenceStore,
+    private val preferenceStore: PreferenceStore,
 ) {
 
     // region General
@@ -192,6 +192,91 @@ class ReaderPreferences(
     )
 
     // endregion
+
+    /** Все настройки читалки — для сброса и явного сохранения. */
+    private val allPreferences: List<Preference<*>>
+        get() = listOf(
+            // General
+            pageTransitions,
+            flashOnPageChange,
+            flashDurationMillis,
+            flashPageInterval,
+            flashColor,
+            doubleTapAnimSpeed,
+            showPageNumber,
+            verticalNavigator,
+            verticalNavigatorOnLeft,
+            verticalNavigatorHeight,
+            showReadingMode,
+            fullscreen,
+            drawUnderCutout,
+            keepScreenOn,
+            defaultReadingMode,
+            defaultOrientationType,
+            webtoonDoubleTapZoomEnabled,
+            imageScaleType,
+            zoomStart,
+            readerTheme,
+            alwaysShowChapterTransition,
+            cropBorders,
+            navigateToPan,
+            panelNavigation,
+            landscapeZoom,
+            cropBordersWebtoon,
+            webtoonSidePadding,
+            readerHideThreshold,
+            folderPerManga,
+            skipRead,
+            skipFiltered,
+            skipDupe,
+            webtoonDisableZoomOut,
+            // Split two-page spread
+            dualPageSplitPaged,
+            dualPageInvertPaged,
+            dualPageSplitWebtoon,
+            dualPageInvertWebtoon,
+            dualPageRotateToFit,
+            dualPageRotateToFitInvert,
+            dualPageRotateToFitWebtoon,
+            dualPageRotateToFitInvertWebtoon,
+            // Color filter
+            customBrightness,
+            customBrightnessValue,
+            colorFilter,
+            colorFilterValue,
+            colorFilterMode,
+            grayscale,
+            invertedColors,
+            // Controls
+            readWithLongTap,
+            longTapOcr,
+            readWithVolumeKeys,
+            readWithVolumeKeysInverted,
+            navigationModePager,
+            navigationModeWebtoon,
+            pagerNavInverted,
+            webtoonNavInverted,
+            showNavigationOverlayNewUser,
+            showNavigationOverlayOnStart,
+        )
+
+    /** Сбрасывает все настройки читалки к значениям по умолчанию. */
+    fun resetToDefaults() {
+        allPreferences.forEach { it.delete() }
+    }
+
+    /**
+     * Идемпотентно фиксирует текущие значения настроек. Виджеты пишут сразу,
+     * поэтому метод нужен для явной кнопки «Сохранить изменения»: он
+     * гарантирует, что все значения записаны в хранилище.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun persistCurrent() {
+        allPreferences.forEach { preference ->
+            val typed = preference as Preference<Any?>
+            typed.set(typed.get())
+        }
+    }
 
     enum class FlashColor {
         BLACK,

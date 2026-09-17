@@ -155,17 +155,15 @@ object SettingsDictionaryScreen : Screen() {
             val uriHandler = LocalUriHandler.current
 
             // URLs leads lines to be over 120 char
+            // Только кириллические словари: приложение заточено под русский
+            // язык, поэтому каталог рекомендованных не тянет японские и
+            // прочие словари (JMdict EN / Jitendex / JPDB / BCCWJ убраны).
             @Suppress("ktlint:standard:max-line-length")
             val recommended = listOf(
                 RecommendedDictionary(
                     title = stringResource(MR.strings.recommended_dict_jmdict_ru_title),
                     description = stringResource(MR.strings.recommended_dict_jmdict_ru_description),
                     url = "https://github.com/yomidevs/jmdict-yomitan/releases/latest/download/JMdict_russian.zip",
-                ),
-                RecommendedDictionary(
-                    title = stringResource(MR.strings.recommended_dict_jmdict_en_title),
-                    description = stringResource(MR.strings.recommended_dict_jmdict_en_description),
-                    url = "https://github.com/yomidevs/jmdict-yomitan/releases/latest/download/JMdict_english_with_examples.zip",
                 ),
                 RecommendedDictionary(
                     title = stringResource(MR.strings.recommended_dict_openrussian_title),
@@ -181,21 +179,6 @@ object SettingsDictionaryScreen : Screen() {
                     title = stringResource(MR.strings.recommended_dict_lat_cyr_title),
                     description = stringResource(MR.strings.recommended_dict_lat_cyr_description),
                     url = "https://github.com/sj0404-collab/yomikai/raw/main/dictionaries/Latin_to_Cyrillic.zip",
-                ),
-                RecommendedDictionary(
-                    title = stringResource(MR.strings.recommended_dict_jitendex_title),
-                    description = stringResource(MR.strings.recommended_dict_jitendex_description),
-                    url = "https://github.com/stephenmk/stephenmk.github.io/releases/latest/download/jitendex-yomitan.zip",
-                ),
-                RecommendedDictionary(
-                    title = stringResource(MR.strings.recommended_dict_jpdb_title),
-                    description = stringResource(MR.strings.recommended_dict_jpdb_description),
-                    url = "https://github.com/Kuuuube/yomitan-dictionaries/raw/main/dictionaries/JPDB_v2.2_Frequency_Kana_2024-10-13.zip",
-                ),
-                RecommendedDictionary(
-                    title = stringResource(MR.strings.recommended_dict_bccwj_title),
-                    description = stringResource(MR.strings.recommended_dict_bccwj_description),
-                    url = "https://github.com/Kuuuube/yomitan-dictionaries/raw/main/dictionaries/BCCWJ_SUW_LUW_combined.zip",
                 ),
             )
 

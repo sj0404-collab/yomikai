@@ -427,6 +427,12 @@
     <string name="pref_inverted_colors">Inverted</string>
     <string name="pref_custom_color_filter">Custom color filter</string>
     <string name="pref_color_filter_mode">Color filter blend mode</string>
+    <string name="pref_category_color_filter">Color filter</string>
+    <string name="reader_settings_reset_defaults">Reset to defaults</string>
+    <string name="reader_settings_reset_done">Reader settings reset to defaults</string>
+    <string name="reader_settings_saved">Reader settings saved</string>
+    <string name="reader_constructor_save">Save changes</string>
+    <string name="reader_constructor_defaults">Defaults</string>
     <string name="filter_mode_overlay">Overlay</string>
     <string name="filter_mode_multiply">Multiply</string>
     <string name="filter_mode_screen">Screen</string>
@@ -1154,6 +1160,7 @@
     <string name="parser_language_korean">Korean</string>
     <string name="parser_language_chinese">Chinese</string>
     <string name="parser_language_english">English</string>
+    <string name="parser_language_russian">Russian (Cyrillic)</string>
 
     <!-- AnkiDroid Settings -->
     <string name="anki_add_success">Added card to AnkiDroid</string>
@@ -1234,6 +1241,7 @@
     <string name="ocr_model_zen_free">Zen Free (Zero-Config, Free without API key)</string>
     <string name="ocr_model_tesseract">Tesseract (устаревший)</string>
     <string name="ocr_model_cyrillic">Русский Cyrillic OCR (офлайн, PP-OCR)</string>
+    <string name="ocr_model_mlkit">Google ML Kit (офлайн, встроенная модель)</string>
 
     <!-- Voice / Text-to-Speech Settings -->
     <string name="pref_category_voice">Voices &amp; Text-to-Speech</string>

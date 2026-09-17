@@ -87,6 +87,7 @@ class OcrRepositoryImpl(
     )
 
     private var cyrillicEngine: CyrillicOcrEngine? = null
+    private var mlKitEngine: MlKitOcrEngine? = null
     private var legacyEngine: LegacyOcrEngine? = null
     private var fastEngine: FastOcrEngine? = null
     private var glensEngine: GlensOcrEngine? = null
@@ -133,6 +134,7 @@ class OcrRepositoryImpl(
 
     internal enum class EngineType {
         CYRILLIC,
+        MLKIT,
         LEGACY,
         FAST,
         GLENS,
@@ -145,6 +147,7 @@ class OcrRepositoryImpl(
     private fun selectedEngineType(): EngineType {
         return when (ocrModelPref.get()) {
             OcrModel.CYRILLIC -> EngineType.CYRILLIC
+            OcrModel.MLKIT -> EngineType.MLKIT
             // Old offline selections migrate transparently to the Russian
             // engine; the Japanese FAST/LEGACY models are no longer defaults.
             OcrModel.LEGACY -> EngineType.CYRILLIC
@@ -182,6 +185,9 @@ class OcrRepositoryImpl(
         // One canonical offline engine for Russian/Cyrillic text. Legacy,
         // FAST and Tesseract remain migration-only enum values.
         EngineType.CYRILLIC,
+        // ML Kit вкомпилирован в APK и не требует ни сети, ни пакета моделей,
+        // поэтому годится как офлайн-фолбэк, когда PP-OCR не установлен.
+        EngineType.MLKIT,
     )
 
     private fun isNetworkAvailable(): Boolean {
@@ -234,6 +240,9 @@ class OcrRepositoryImpl(
                     textPostprocessor,
                     ::currentTuning,
                 ).also { cyrillicEngine = it }
+            }
+            EngineType.MLKIT -> {
+                mlKitEngine ?: MlKitOcrEngine().also { mlKitEngine = it }
             }
             EngineType.FAST -> {
                 fastEngine ?: FastOcrEngine(context, requireEnvironment(), textPostprocessor).also {
@@ -377,6 +386,12 @@ class OcrRepositoryImpl(
                         image = bitmap,
                         modelKey = selectedModel,
                         type = EngineType.CYRILLIC,
+                    )
+                    OcrModel.MLKIT -> scanWithMlKit(
+                        chapterId = chapterId,
+                        pageIndex = pageIndex,
+                        image = bitmap,
+                        modelKey = selectedModel,
                     )
                     OcrModel.GLENS -> scanWithGlens(
                         chapterId = chapterId,
@@ -559,6 +574,75 @@ class OcrRepositoryImpl(
                 type = target,
             )
         }
+    }
+
+    /**
+     * Распознавание через вкомпилированную модель Google ML Kit.
+     *
+     * ML Kit отдаёт готовые строки с координатами, поэтому отдельный детектор
+     * не нужен: каждая строка становится регионом, и тап по реплике открывает
+     * именно её. Если движок падает или ничего не нашёл — честно уходим в общий
+     * фолбэк (онлайн Glens при сети, иначе локальный кириллический PP-OCR).
+     */
+    private suspend fun scanWithMlKit(
+        chapterId: Long,
+        pageIndex: Int,
+        image: Bitmap,
+        modelKey: OcrModel,
+    ): OcrPageResult {
+        val regions = try {
+            submitTask(PrioritizedTaskQueue.Priority.NORMAL) {
+                engineLocks.withTextEngineLock(EngineType.MLKIT) {
+                    val engine = engineFor(EngineType.MLKIT)
+                    if (engine is MlKitOcrEngine) engine.recognizeRegions(image) else emptyList()
+                }
+            }
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error
+            if (!useFallbackModelsPref.get()) throw error
+            logcat(LogPriority.WARN, error) { "ML Kit scanning failed, falling back" }
+            return if (isNetworkAvailable()) {
+                scanWithGlens(chapterId, pageIndex, image, modelKey)
+            } else {
+                scanLocally(chapterId, pageIndex, image, modelKey, EngineType.CYRILLIC)
+            }
+        }
+
+        val mapped = regions.mapIndexedNotNull { index, region ->
+            val text = OcrTextCleaner.joinLineHyphens(region.text).trim()
+            text.takeIf { it.isNotBlank() }?.let {
+                OcrRegion(
+                    order = index,
+                    text = it,
+                    boundingBox = region.boundingBox,
+                    textOrientation = OcrTextOrientation.Horizontal,
+                )
+            }
+        }
+
+        if (mapped.isEmpty()) {
+            return if (useFallbackModelsPref.get() && isNetworkAvailable()) {
+                scanWithGlens(chapterId, pageIndex, image, modelKey)
+            } else {
+                OcrPageResult(
+                    chapterId = chapterId,
+                    pageIndex = pageIndex,
+                    ocrModel = modelKey,
+                    imageWidth = image.width,
+                    imageHeight = image.height,
+                    regions = emptyList(),
+                )
+            }
+        }
+
+        return OcrPageResult(
+            chapterId = chapterId,
+            pageIndex = pageIndex,
+            ocrModel = modelKey,
+            imageWidth = image.width,
+            imageHeight = image.height,
+            regions = mapped,
+        )
     }
 
     private suspend fun scanWithGlens(
@@ -882,6 +966,9 @@ class OcrRepositoryImpl(
 
             cyrillicEngine?.close()
             cyrillicEngine = null
+
+            mlKitEngine?.close()
+            mlKitEngine = null
 
             legacyEngine?.close()
             legacyEngine = null

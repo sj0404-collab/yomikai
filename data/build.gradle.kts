@@ -41,6 +41,7 @@ dependencies {
 
     implementation(libs.androidx.sqlite.bundled)
     implementation(libs.litert)
+    implementation(libs.mlkit.text.recognition)
 
     implementation(libs.anki.android)
     implementation(libs.hoshidicts)

@@ -23,4 +23,7 @@ enum class ParserLanguage {
 
     /** Force the English pipeline: space-delimited words. */
     ENGLISH,
+
+    /** Force the Cyrillic pipeline: Russian/Ukrainian/etc. exact word lookup. */
+    RUSSIAN,
 }

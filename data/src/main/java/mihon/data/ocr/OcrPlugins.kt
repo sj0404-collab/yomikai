@@ -78,6 +78,19 @@ object OcrPlugins {
         supportsRegions = true,
     )
 
+    val MLKIT = OcrPluginDescriptor(
+        id = "mlkit",
+        model = OcrModel.MLKIT,
+        title = "Google ML Kit",
+        summary = "Офлайн-модель Google ML Kit внутри APK. Читает латиницу и кириллицу, " +
+            "отдаёт строки с координатами. Сеть и загрузка моделей не нужны.",
+        engineType = "MLKIT",
+        online = false,
+        requirements = emptySet(),
+        fallbackPriority = 5,
+        supportsRegions = true,
+    )
+
     val GLENS = OcrPluginDescriptor(
         id = "google_lens",
         model = OcrModel.GLENS,
@@ -141,7 +154,7 @@ object OcrPlugins {
     )
 
     /** Все выбираемые плагины в порядке показа в настройках. */
-    val ALL = listOf(CYRILLIC, GLENS, ZEN_FREE, GOOGLE_AI, OPENROUTER, OWOCR)
+    val ALL = listOf(CYRILLIC, MLKIT, GLENS, ZEN_FREE, GOOGLE_AI, OPENROUTER, OWOCR)
 
     private val BY_ID = ALL.associateBy { it.id }
     private val BY_ENGINE_TYPE = ALL.associateBy { it.engineType }

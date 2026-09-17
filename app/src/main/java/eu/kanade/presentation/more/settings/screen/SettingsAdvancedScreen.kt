@@ -495,6 +495,7 @@ object SettingsAdvancedScreen : SearchableSettings {
                         put(ParserLanguage.KOREAN, stringResource(MR.strings.parser_language_korean))
                         put(ParserLanguage.CHINESE, stringResource(MR.strings.parser_language_chinese))
                         put(ParserLanguage.ENGLISH, stringResource(MR.strings.parser_language_english))
+                        put(ParserLanguage.RUSSIAN, stringResource(MR.strings.parser_language_russian))
                     }.toImmutableMap(),
                     title = stringResource(MR.strings.pref_parser_language_override),
                     subtitle = stringResource(MR.strings.pref_parser_language_override_summary),
