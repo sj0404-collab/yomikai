@@ -381,6 +381,7 @@ object OcrQueueScreen : Screen() {
                     // One canonical offline engine; old Japanese/Tesseract
                     // engines are migration-only and hidden from new choices.
                     OcrModel.CYRILLIC to stringResource(OcrModel.CYRILLIC.titleRes),
+                    OcrModel.MLKIT to stringResource(OcrModel.MLKIT.titleRes),
                     OcrModel.GLENS to stringResource(OcrModel.GLENS.titleRes),
                     OcrModel.OWOCR to stringResource(OcrModel.OWOCR.titleRes),
                     OcrModel.OPENROUTER to stringResource(OcrModel.OPENROUTER.titleRes),

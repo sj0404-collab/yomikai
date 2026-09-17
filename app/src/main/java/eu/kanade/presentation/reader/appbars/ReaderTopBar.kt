@@ -170,8 +170,8 @@ private fun OcrModelQuickSwitcher() {
     }
     DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
         listOf(
-            // The only offline option is the Russian/Cyrillic PP-OCR pack.
             OcrModel.CYRILLIC,
+            OcrModel.MLKIT,
             OcrModel.ZEN_FREE,
             OcrModel.GLENS,
             OcrModel.OWOCR,
@@ -187,6 +187,7 @@ private fun OcrModelQuickSwitcher() {
                 downloading -> "загрузка ${(progressMap[pack]!! * 100).toInt()}%"
                 model == OcrModel.CYRILLIC && !installed -> "офлайн • скачать ~21 МБ"
                 model == OcrModel.CYRILLIC -> "офлайн • русский PP-OCR ✅"
+                model == OcrModel.MLKIT -> "офлайн • встроена в APK, без скачивания ✅"
                 pack != null && !installed -> "локальная • нажмите, чтобы скачать"
                 pack != null -> "локальная • скачана ✅"
                 model == OcrModel.OWOCR -> "внешний сервер OwOCR (ПК, WebSocket)"
