@@ -156,14 +156,17 @@ class OcrPluginsTest {
             modelsInstalled = true,
             litertAvailable = true,
         )
-        offlineOnly shouldContainExactly listOf(OcrPlugins.CYRILLIC)
+        // Офлайн-движки с выполненными требованиями: PP-OCR (пак + LiteRT)
+        // и ML Kit (вкомпилирован, требований нет).
+        offlineOnly shouldContainExactly listOf(OcrPlugins.CYRILLIC, OcrPlugins.MLKIT)
 
+        // ML Kit не требует ни сети, ни пакета моделей, поэтому доступен всегда.
         val nothing = OcrPlugins.available(
             networkAvailable = false,
             modelsInstalled = false,
             litertAvailable = false,
         )
-        nothing shouldBe emptyList()
+        nothing shouldContainExactly listOf(OcrPlugins.MLKIT)
 
         val withKeys = OcrPlugins.available(
             networkAvailable = true,
@@ -181,34 +184,38 @@ class OcrPluginsTest {
 
         OcrPlugins.fallbackChain(primary, "single", networkAvailable = true) shouldBe emptyList()
 
-        // offline: локальный движок единственный, поэтому цепочка пуста.
-        OcrPlugins.fallbackChain(primary, "offline", networkAvailable = true) shouldBe emptyList()
+        // offline: остаётся только второй локальный движок (ML Kit).
+        OcrPlugins.fallbackChain(primary, "offline", networkAvailable = true)
+            .map { it.id } shouldContainExactly listOf("mlkit")
 
         OcrPlugins.fallbackChain(primary, "online", networkAvailable = true).map { it.id } shouldContainExactly
             listOf("google_lens", "zen_free", "google_ai", "openrouter", "owocr")
 
-        // auto без сети не пробует онлайн-движки вовсе.
+        // auto без сети не пробует онлайн-движки вовсе: локальные по приоритету.
         OcrPlugins.fallbackChain(OcrPlugins.GLENS, "auto", networkAvailable = false).map { it.id } shouldContainExactly
-            listOf("cyrillic_ppocr")
+            listOf("cyrillic_ppocr", "mlkit")
 
         // auto с сетью: сначала онлайн по приоритету, потом локальный.
         OcrPlugins.fallbackChain(OcrPlugins.GLENS, "auto", networkAvailable = true).map { it.id } shouldContainExactly
-            listOf("zen_free", "google_ai", "openrouter", "owocr", "cyrillic_ppocr")
+            listOf("zen_free", "google_ai", "openrouter", "owocr", "cyrillic_ppocr", "mlkit")
 
-        // Неизвестный пресет читается как auto.
-        OcrPlugins.fallbackChain(primary, "что-то-новое", networkAvailable = false) shouldBe emptyList()
+        // Неизвестный пресет читается как auto: при отсутствии сети первичный
+        // Cyrillic исключён, остаётся ML Kit.
+        OcrPlugins.fallbackChain(primary, "что-то-новое", networkAvailable = false)
+            .map { it.id } shouldContainExactly listOf("mlkit")
     }
 
     @Test
-    fun `only the cyrillic plugin exposes detected regions`() {
+    fun `offline plugins expose detected regions`() {
         OcrPlugins.ALL.filter { it.supportsRegions }.map { it.id } shouldContainExactly
-            listOf(OcrPlugins.CYRILLIC.id)
+            listOf(OcrPlugins.CYRILLIC.id, OcrPlugins.MLKIT.id)
     }
 
     @Test
     fun `online flags match the fallback pools`() {
         OcrPlugins.ALL.filter { it.online }.map { it.id } shouldContainExactly
             listOf("google_lens", "zen_free", "google_ai", "openrouter", "owocr")
-        OcrPlugins.ALL.filterNot { it.online }.map { it.id } shouldContainExactly listOf("cyrillic_ppocr")
+        OcrPlugins.ALL.filterNot { it.online }.map { it.id } shouldContainExactly
+            listOf("cyrillic_ppocr", "mlkit")
     }
 }
