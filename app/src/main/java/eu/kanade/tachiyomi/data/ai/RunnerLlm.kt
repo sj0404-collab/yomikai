@@ -487,10 +487,12 @@ object RunnerLlm {
         withContext(Dispatchers.IO) {
             val url = session.url ?: return@withContext null
             val key = session.apiKey ?: return@withContext null
-            session.messages += "user" to userText
+            // Запрос строится из КОПИИ истории: мутация session.messages
+            // происходит только при успешном ответе, поэтому при сбое сети в
+            // сессию не попадает «фантомная» копия вопроса, а диалог не
+            // расходится с тем, что реально ушло в ранер.
             val messages = JSONArray()
-            // Контекст: последние 24 сообщения сессии — без потери нити диалога
-            session.messages.takeLast(24).forEach { (r, c) ->
+            (ArrayList(session.messages) + ("user" to userText)).takeLast(24).forEach { (r, c) ->
                 messages.put(JSONObject().put("role", r).put("content", c))
             }
             val answer = runCatching {
@@ -516,7 +518,10 @@ object RunnerLlm {
                 logcat(LogPriority.WARN, it) { "Runner LLM chat failed" }
             }.getOrNull()
             if (answer != null) {
-                session.messages += "assistant" to answer
+                synchronized(session.messages) {
+                    session.messages += "user" to userText
+                    session.messages += "assistant" to answer
+                }
                 saveSession(context, session)
             }
             answer

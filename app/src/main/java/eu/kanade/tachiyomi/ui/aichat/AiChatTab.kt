@@ -120,7 +120,11 @@ data object AiChatTab : Tab {
                 )
                 OutlinedTextField(
                     value = pat,
-                    onValueChange = prefs.githubPat()::set,
+                    onValueChange = { token ->
+                        // Пробелы по краям ломают GitHub Auth: token = " ghp_…x "
+                    // считается невалидным и старт сессии падает с 401.
+                        prefs.githubPat().set(token.trim())
+                    },
                     label = { Text("GitHub PAT") },
                     modifier = Modifier.fillMaxWidth(),
                     maxLines = 1,

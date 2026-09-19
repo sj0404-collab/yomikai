@@ -73,9 +73,9 @@ import uy.kohesive.injekt.api.get
 
 object HomeScreen : Screen() {
 
-    private val librarySearchEvent = Channel<String>()
-    private val openTabEvent = Channel<Tab>()
-    private val showBottomNavEvent = Channel<Boolean>()
+    private val librarySearchEvent = Channel<String>(Channel.BUFFERED)
+    private val openTabEvent = Channel<Tab>(Channel.BUFFERED)
+    private val showBottomNavEvent = Channel<Boolean>(Channel.BUFFERED)
 
     @Suppress("ConstPropertyName")
     private const val TabFadeDuration = 200
@@ -159,6 +159,13 @@ object HomeScreen : Screen() {
             // Provide usable navigator to content screen
             CompositionLocalProvider(LocalNavigator provides navigator) {
                 val tabsToShow = visibleTabs()
+                // Если текущая вкладка скрыта (напр. AI выключен в настройках),
+                // переключаемся на библиотеку, иначе таб-бар остаётся без выделения.
+                LaunchedEffect(tabsToShow) {
+                    if (tabsToShow.none { it::class == tabNavigator.current::class }) {
+                        tabNavigator.current = LibraryTab
+                    }
+                }
                 Scaffold(
                     startBar = {
                         if (isTabletUi()) {

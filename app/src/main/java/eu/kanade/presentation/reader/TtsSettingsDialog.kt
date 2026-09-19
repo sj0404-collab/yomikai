@@ -901,8 +901,9 @@ fun TtsSettingsDialog(
                                                     eu.kanade.tachiyomi.data.tts.TtsSpeaker.speakEdgeVoiceTest(
                                                         context,
                                                         v.shortName,
-                                                    )
-                                                    edgeProbingVoice = null
+                                                    ) {
+                                                        edgeProbingVoice = null
+                                                    }
                                                 },
                                             ) { Text("Проба") }
                                         }
@@ -967,9 +968,19 @@ fun TtsSettingsDialog(
             Row {
                 TextButton(
                     onClick = {
-                        // Проба ТЕКУЩЕГО выбора без сохранения
+                        // Проба ТЕКУЩЕГО выбора без сохранения: применяем на
+                        // время пробы и назначение ♀/♂ голосов, иначе проба
+                        // звучит старыми голосами, которые пользователь
+                        // сменил прямо в этом диалоге.
                         prefs.voiceEngine().set(engine)
                         prefs.voiceName().set(selectedVoice)
+                        prefs.voiceFemale().set(voiceFemale)
+                        prefs.voiceMale().set(voiceMale)
+                        prefs.aiGenderVoices().set(aiGender)
+                        prefs.aiProvider().set(aiProvider)
+                        prefs.zenModel().set(zenModel)
+                        prefs.openrouterFreeModel().set(orFreeModel)
+                        prefs.openrouterApiKey().set(orKey.trim())
                         prefs.speechRate().set(rate.coerceIn(0.5f, 2f))
                         prefs.ttsWebLanguage().set(webLang.trim().ifBlank { "ru" })
                         prefs.elevenApiKey().set(elevenKey.trim())

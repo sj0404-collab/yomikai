@@ -59,7 +59,7 @@ class WebViewActivity : BaseActivity() {
         assistUrl = url
 
         var headers = emptyMap<String, String>()
-        (sourceManager.get(intent.extras!!.getLong(SOURCE_KEY)) as? HttpSource)?.let { source ->
+        (sourceManager.get(intent.extras?.getLong(SOURCE_KEY) ?: -1L) as? HttpSource)?.let { source ->
             try {
                 headers = source.headers.toMultimap().mapValues { it.value.getOrNull(0) ?: "" }
             } catch (e: Exception) {

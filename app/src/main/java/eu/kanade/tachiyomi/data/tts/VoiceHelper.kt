@@ -209,7 +209,7 @@ object VoiceHelper {
     }
 
     fun classify(v: Voice): VoiceKind {
-        val n = (v.name + " " + v.locale.toLanguageTag()).lowercase(Locale.US)
+        val n = (v.name + " " + v.locale?.toLanguageTag().orEmpty()).lowercase(Locale.US)
 
         // 1) признак пола, объявленный самим движком
         val features = runCatching { v.features }.getOrNull().orEmpty()

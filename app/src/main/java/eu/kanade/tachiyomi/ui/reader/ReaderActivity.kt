@@ -53,7 +53,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.core.content.getSystemService
-import androidx.core.graphics.ColorUtils
 import androidx.core.graphics.Insets
 import androidx.core.net.toUri
 import androidx.core.transition.doOnEnd
@@ -63,7 +62,6 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
-import com.google.android.material.elevation.SurfaceColors
 import com.google.android.material.transition.platform.MaterialContainerTransform
 import com.hippo.unifile.UniFile
 import dev.icerock.moko.resources.StringResource
@@ -241,9 +239,18 @@ class ReaderActivity : BaseActivity() {
     private var loadingIndicator: ReaderProgressIndicator? = null
 
     /**
-     * The most recent touch event seen by the activity.
+     * The most recent touch event seen by the activity. Координаты и действие
+     * копируются сразу: хранить сам [MotionEvent] нельзя — каждый следующий
+     * тап переиспользует (recycle) предыдущий объект, и чтение потом даёт
+     * мусорные координаты (use-after-free).
      */
-    private var lastTouchEvent: MotionEvent? = null
+    private var lastTouch: LastTouch? = null
+
+    private data class LastTouch(
+        val rawX: Float,
+        val rawY: Float,
+        val actionMasked: Int,
+    )
 
     private var ocrDragStart by mutableStateOf<Offset?>(null)
     private var ocrDragEnd by mutableStateOf<Offset?>(null)
@@ -344,7 +351,7 @@ class ReaderActivity : BaseActivity() {
             val wantAuto = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
                 .autoReadAutoStart().get()
             if (wantAuto) {
-                val ev = lastTouchEvent
+                val ev = lastTouch
                 if (ev == null) {
                     runCatching { enterOcrMode() }
                     return@setOnLongClickListener true
@@ -488,13 +495,6 @@ class ReaderActivity : BaseActivity() {
                 startAutoReadLoop()
             }
         }
-        val settingsScreenModel = remember {
-            ReaderSettingsScreenModel(
-                readerState = viewModel.state,
-                onChangeReadingMode = viewModel::setMangaReadingMode,
-                onChangeOrientation = viewModel::setMangaOrientationType,
-            )
-        }
 
         Box(modifier = Modifier.fillMaxSize()) {
             if (!state.menuVisible && showPageNumber) {
@@ -514,27 +514,27 @@ class ReaderActivity : BaseActivity() {
                     .screenshotIndicatorEnabled().get()
             ) {
                 val lastEntry by mihon.data.ocr.OcrScreenshotBuffer.lastEntry.collectAsState()
-                val indicatorVisible = remember { mutableStateOf(false) }
+                var indicatorVisible by remember { mutableStateOf(false) }
                 val regionCount = remember { mutableStateOf(0) }
-                val pulseAnim = rememberInfiniteTransition(label = "screenshot_pulse")
-                val pulseAlpha by pulseAnim.animateFloat(
-                    initialValue = 0.6f,
-                    targetValue = 1f,
-                    animationSpec = infiniteRepeatable(
-                        animation = tween(500),
-                        repeatMode = RepeatMode.Reverse,
-                    ),
-                    label = "pulse_alpha",
-                )
                 LaunchedEffect(lastEntry) {
                     if (lastEntry != null) {
                         regionCount.value = lastEntry!!.regions.size
-                        indicatorVisible.value = true
+                        indicatorVisible = true
                         kotlinx.coroutines.delay(2000)
-                        indicatorVisible.value = false
+                        indicatorVisible = false
                     }
                 }
-                if (indicatorVisible.value) {
+                if (indicatorVisible) {
+                    val pulseAnim = rememberInfiniteTransition(label = "screenshot_pulse")
+                    val pulseAlpha by pulseAnim.animateFloat(
+                        initialValue = 0.6f,
+                        targetValue = 1f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(500),
+                            repeatMode = RepeatMode.Reverse,
+                        ),
+                        label = "pulse_alpha",
+                    )
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
@@ -570,66 +570,6 @@ class ReaderActivity : BaseActivity() {
             }
 
             ContentOverlay(state = state)
-
-            AppBars(state = state)
-        }
-
-        val onDismissRequest = viewModel::closeDialog
-        when (state.dialog) {
-            is ReaderViewModel.Dialog.Loading -> {
-                AlertDialog(
-                    onDismissRequest = {},
-                    confirmButton = {},
-                    text = {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            CircularProgressIndicator()
-                            Text(stringResource(MR.strings.loading))
-                        }
-                    },
-                )
-            }
-            is ReaderViewModel.Dialog.Settings -> {
-                ReaderSettingsDialog(
-                    onDismissRequest = onDismissRequest,
-                    onShowMenus = { setMenuVisibility(true) },
-                    onHideMenus = { setMenuVisibility(false) },
-                    screenModel = settingsScreenModel,
-                )
-            }
-            is ReaderViewModel.Dialog.ReadingModeSelect -> {
-                ReadingModeSelectDialog(
-                    onDismissRequest = onDismissRequest,
-                    screenModel = settingsScreenModel,
-                    onChange = { stringRes ->
-                        menuToggleToast?.cancel()
-                        if (!readerPreferences.showReadingMode.get()) {
-                            menuToggleToast = toast(stringRes)
-                        }
-                    },
-                )
-            }
-            is ReaderViewModel.Dialog.OrientationModeSelect -> {
-                OrientationSelectDialog(
-                    onDismissRequest = onDismissRequest,
-                    screenModel = settingsScreenModel,
-                    onChange = { stringRes ->
-                        menuToggleToast?.cancel()
-                        menuToggleToast = toast(stringRes)
-                    },
-                )
-            }
-            is ReaderViewModel.Dialog.PageActions -> {
-                ReaderPageActionsDialog(
-                    onDismissRequest = onDismissRequest,
-                    onSetAsCover = viewModel::setAsCover,
-                    onShare = viewModel::shareImage,
-                    onSave = viewModel::saveImage,
-                )
-            }
-            is ReaderViewModel.Dialog.OcrResult, null -> {}
         }
     }
 
@@ -730,8 +670,7 @@ class ReaderActivity : BaseActivity() {
     }
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
-        lastTouchEvent?.recycle()
-        lastTouchEvent = MotionEvent.obtain(ev)
+        lastTouch = LastTouch(rawX = ev.rawX, rawY = ev.rawY, actionMasked = ev.actionMasked)
 
         if (::binding.isInitialized && viewModel.state.value.ocrSelectionMode) {
             val loc = IntArray(2)
@@ -785,17 +724,7 @@ class ReaderActivity : BaseActivity() {
 
     @Composable
     private fun ContentOverlay(state: ReaderViewModel.State) {
-        val flashOnPageChange by readerPreferences.flashOnPageChange.collectAsState()
-
-        val colorOverlayEnabled by readerPreferences.colorFilter.collectAsState()
-        val colorOverlay by readerPreferences.colorFilterValue.collectAsState()
-        val colorOverlayMode by readerPreferences.colorFilterMode.collectAsState()
-        val colorOverlayBlendMode = remember(colorOverlayMode) {
-            ReaderPreferences.ColorFilterMode.getOrNull(colorOverlayMode)?.second
-        }
-
-        binding.composeOverlay.setComposeContent {
-            val state by viewModel.state.collectAsState()
+        run {
             val dimOcrBackground by dictionaryPreferences.ocrResultDimBackground().collectAsState()
             val ocrResultPresentation by dictionaryPreferences.ocrResultPresentation().collectAsState()
             val ocrPopupWidthDp by dictionaryPreferences.ocrResultPopupWidthDp().collectAsState()
@@ -842,7 +771,7 @@ class ReaderActivity : BaseActivity() {
             }
 
             if (!ifSourcesLoaded()) {
-                return@setComposeContent
+                return@run
             }
 
             Box(modifier = Modifier.fillMaxSize()) {
@@ -1306,92 +1235,6 @@ class ReaderActivity : BaseActivity() {
                 }
             }
         }
-
-        val toolbarColor = ColorUtils.setAlphaComponent(
-            SurfaceColors.SURFACE_2.getColor(this),
-            if (isNightMode()) 230 else 242, // 90% dark 95% light
-        )
-
-        if (flashOnPageChange) {
-            DisplayRefreshHost(hostState = displayRefreshHost)
-        }
-    }
-
-    @Composable
-    fun AppBars(state: ReaderViewModel.State) {
-        if (!ifSourcesLoaded()) {
-            return
-        }
-
-        val isHttpSource = viewModel.getSource() is HttpSource
-
-        val cropBorderPaged by readerPreferences.cropBorders.collectAsState()
-        val cropBorderWebtoon by readerPreferences.cropBordersWebtoon.collectAsState()
-        val isPagerType = ReadingMode.isPagerType(viewModel.getMangaReadingMode())
-        val cropEnabled = if (isPagerType) cropBorderPaged else cropBorderWebtoon
-
-        val verticalNavigatorModes by readerPreferences.verticalNavigator.collectAsState()
-        val verticalNavigator = verticalNavigatorModes.contains(
-            ReadingMode.fromPreference(viewModel.getMangaReadingMode()),
-        )
-        val verticalNavigatorOnLeft by readerPreferences.verticalNavigatorOnLeft.collectAsState()
-        val verticalNavigatorHeight by readerPreferences.verticalNavigatorHeight.collectAsState()
-
-        ReaderAppBars(
-            visible = state.menuVisible,
-
-            mangaTitle = state.manga?.title,
-            chapterTitle = state.currentChapter?.chapter?.name,
-            navigateUp = onBackPressedDispatcher::onBackPressed,
-            onClickTopAppBar = ::openMangaScreen,
-            bookmarked = state.bookmarked,
-            onToggleBookmarked = viewModel::toggleChapterBookmark,
-            onOpenInWebView = ::openChapterInWebView.takeIf { isHttpSource },
-            onOpenInBrowser = ::openChapterInBrowser.takeIf { isHttpSource },
-            onShare = ::shareChapter.takeIf { isHttpSource },
-
-            chapterNavigatorType = if (!verticalNavigator) {
-                if (state.viewer is R2LPagerViewer) {
-                    ChapterNavigatorType.HORIZONTAL_RTL
-                } else {
-                    ChapterNavigatorType.HORIZONTAL_LTR
-                }
-            } else {
-                if (verticalNavigatorOnLeft) {
-                    ChapterNavigatorType.VERTICAL_LEFT
-                } else {
-                    ChapterNavigatorType.VERTICAL_RIGHT
-                }
-            },
-            verticalNavigatorHeight = verticalNavigatorHeight / 100f,
-            onNextChapter = ::loadNextChapter,
-            enabledNext = state.viewerChapters?.nextChapter != null,
-            onPreviousChapter = ::loadPreviousChapter,
-            enabledPrevious = state.viewerChapters?.prevChapter != null,
-            currentPage = state.currentPage,
-            totalPages = state.totalPages,
-            onPageIndexChange = {
-                isScrollingThroughPages = true
-                moveToPageIndex(it)
-            },
-
-            readingMode = ReadingMode.fromPreference(
-                viewModel.getMangaReadingMode(resolveDefault = false),
-            ),
-            onClickReadingMode = viewModel::openReadingModeSelectDialog,
-            orientation = ReaderOrientation.fromPreference(
-                viewModel.getMangaOrientation(resolveDefault = false),
-            ),
-            onClickOrientation = viewModel::openOrientationModeSelectDialog,
-            cropEnabled = cropEnabled,
-            onClickCropBorder = {
-                val enabled = viewModel.toggleCropBorders()
-                menuToggleToast?.cancel()
-                menuToggleToast = toast(if (enabled) MR.strings.on else MR.strings.off)
-            },
-            onClickSettings = viewModel::openSettingsDialog,
-            onClickOcr = ::enterOcrMode,
-        )
     }
 
     /**
@@ -2051,7 +1894,7 @@ class ReaderActivity : BaseActivity() {
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         viewModel.enterOcrMode()
 
-        val last = lastTouchEvent
+        val last = lastTouch
         if (last != null && last.actionMasked != MotionEvent.ACTION_UP &&
             last.actionMasked != MotionEvent.ACTION_CANCEL
         ) {

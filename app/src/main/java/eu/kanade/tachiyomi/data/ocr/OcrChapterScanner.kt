@@ -13,6 +13,8 @@ import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.interactor.GetChapter
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.manga.interactor.GetManga
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 internal class OcrChapterScanner(
     private val context: Context,
@@ -188,14 +190,16 @@ internal class OcrChapterScanner(
     }
 
     private fun checkNetworkState(): String? {
+        // Сетевой шлюз нужен ТОЛЬКО пресету «online» (все движки онлайн).
+        // Пресеты auto/offline/single с локальными движками (Cyrillic PP-OCR,
+        // ML Kit) обязаны работать офлайн: иначе сканирование скачанных глав
+        // при отсутствии сети прерывалось, а частичный кэш главы стирался.
+        // downloadOnlyOverWifi — настройка ОЧЕРЕДИ загрузки, а не скан-гейт.
+        val preset = Injekt.get<mihon.domain.ocr.service.OcrPreferences>().fallbackPreset().get()
+        if (preset != "online") return null
         val state = context.activeNetworkState()
         return if (state.isOnline) {
-            val requireWifi = downloadPreferences.downloadOnlyOverWifi.get()
-            if (requireWifi && !state.isWifi) {
-                context.getString(R.string.download_notifier_text_only_wifi)
-            } else {
-                null
-            }
+            null
         } else {
             context.getString(R.string.download_notifier_no_network)
         }

@@ -279,6 +279,9 @@ object OcrModelDownloader {
                     val totalPackSize = fileSizes.sum()
                     var done = 0
                     var totalDownloaded = 0L
+                    // Частые onProgress (каждые 256 КБ) не должны спамить
+                    // уведомлением: обновляем не чаще раза в секунду.
+                    var lastNotifAt = 0L
                     files.all { (url, name) ->
                         val fileIndex = done
                         var fileDownloaded = 0L
@@ -297,15 +300,19 @@ object OcrModelDownloader {
                             fileDownloaded = (fileSizes[fileIndex] * frac).toLong()
                             totalDownloaded += (fileDownloaded - prev)
                             setProgress(pack, (fileIndex + frac) / files.size)
-                            val pct = ((fileIndex + frac) / files.size * 100).toInt()
-                            showNotif(
-                                context,
-                                "Загрузка моделей: $pack",
-                                "${pct}% — файл ${fileIndex + 1}/${files.size}",
-                                pct,
-                                downloadedBytes = totalDownloaded,
-                                totalBytes = totalPackSize.takeIf { it > 0 } ?: 0L,
-                            )
+                            val now = System.currentTimeMillis()
+                            if (frac >= 1f || now - lastNotifAt >= 1_000L) {
+                                lastNotifAt = now
+                                val pct = ((fileIndex + frac) / files.size * 100).toInt()
+                                showNotif(
+                                    context,
+                                    "Загрузка моделей: $pack",
+                                    "${pct}% — файл ${fileIndex + 1}/${files.size}",
+                                    pct,
+                                    downloadedBytes = totalDownloaded,
+                                    totalBytes = totalPackSize.takeIf { it > 0 } ?: 0L,
+                                )
+                            }
                         }
                             if (r) break
                         }
@@ -380,7 +387,14 @@ object OcrModelDownloader {
                 }
             }
             onProgress(1f)
-            part.renameTo(destination)
+            if (!part.renameTo(destination)) {
+                // Сбой переименования: оставлять .part нельзя — иначе каждая
+                // повторная попытка качает весь файл заново.
+                logcat(LogPriority.WARN) { "Model rename failed, clearing .part: $destination" }
+                part.delete()
+                return false
+            }
+            true
         } catch (e: Throwable) {
             logcat(LogPriority.WARN, e) { "Model file download failed: $url" }
             part.delete()

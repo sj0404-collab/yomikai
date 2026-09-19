@@ -126,10 +126,21 @@ object TtsSpeaker {
                 pending.forEach { it(ready) }
             }
             initInProgress = true
-            systemTts = if (wantEngine != null) {
-                TextToSpeech(context.applicationContext, listener, wantEngine)
-            } else {
-                TextToSpeech(context.applicationContext, listener)
+            // Конструктор TextToSpeech может бросить исключение на невалидном/
+            // удалённом движке (например пакет перестал существовать) —
+            // глушим и честно пересоздаём; без этого падало всё приложение.
+            runCatching {
+                systemTts = if (wantEngine != null) {
+                    TextToSpeech(context.applicationContext, listener, wantEngine)
+                } else {
+                    TextToSpeech(context.applicationContext, listener)
+                }
+            }.onFailure {
+                systemTts = null
+                initInProgress = false
+                systemReady = false
+                systemEnginePkg = null
+                onReady(null)
             }
         } else if (!initInProgress && !systemReady) {
             // Зависший полуинициализированный экземпляр: убираем и пробуем заново.
@@ -724,13 +735,18 @@ object TtsSpeaker {
                         )
                         engine.setSpeechRate(prefs().speechRate().get().coerceIn(0.5f, 2f))
                         val known = runCatching { engine.voices?.firstOrNull { it.name == voiceName } }.getOrNull()
-                        if (known != null) engine.setVoice(known)
-                        val params = android.os.Bundle().apply { putString("voiceName", voiceName) }
+                        if (known != null) {
+                            engine.setVoice(known)
+                        } else {
+                            engine.language = Locale("ru", "RU")
+                        }
+                        // v1.9.44: hidden-параметр «voiceName» ломает speak() на RHVoice
+                        // (голос уже задан через setVoice() выше) — Bundle не шлём.
                         val r = runCatching {
                             engine.speak(
                                 "Привет! Это тест голоса $voiceName.",
                                 TextToSpeech.QUEUE_FLUSH,
-                                params,
+                                null,
                                 "yk_vtest",
                             )
                         }.getOrDefault(TextToSpeech.ERROR)
@@ -897,7 +913,7 @@ object TtsSpeaker {
     }
 
     /** Проба конкретного голоса Edge TTS (кнопка «Проба» в списке голосов). */
-    fun speakEdgeVoiceTest(context: Context, voice: String) {
+    fun speakEdgeVoiceTest(context: Context, voice: String, onDone: () -> Unit = {}) {
         stop()
         currentJob = scope.launch {
             setSpeaking(true)
@@ -915,6 +931,8 @@ object TtsSpeaker {
             } catch (e: Exception) {
                 logcat(LogPriority.WARN, e) { "Edge voice test failed" }
                 setSpeaking(false)
+            } finally {
+                onDone()
             }
         }
     }

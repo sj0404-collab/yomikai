@@ -202,7 +202,7 @@ object AiBackends {
     fun state(context: Context, prefs: OcrPreferences = Injekt.get()): AiBackendState {
         val modelId = prefs.localLlmModel().get()
         val model = LocalLlm.CATALOG.firstOrNull { it.id == modelId }
-        val session = runCatching { RunnerLlm.listSessions(context).firstOrNull() }.getOrNull()
+        val session = liveRunnerSession(context)
         return AiBackendState(
             // Сеть нужна только для статуса: сам resolve() её не требует,
             // потому что онлайн-провайдеры и так отвечают null при сбое.
@@ -295,7 +295,7 @@ object AiBackends {
             }
 
             BACKEND_RUNNER -> {
-                val session = runCatching { RunnerLlm.listSessions(context).firstOrNull() }.getOrNull()
+val session = liveRunnerSession(context)
                 if (session?.url != null) {
                     Resolution(
                         backendId = plugin.id,
@@ -318,4 +318,17 @@ object AiBackends {
 
     /** Столько токенов просил чат вкладки AI до появления реестра. */
     const val DEFAULT_MAX_TOKENS = 1800
+
+    /**
+     * Живая ранер-сессия: URL И непустой apiKey. Сессия без ключа (её могла
+     * создать hub-ветка, где ключ не пишется в файл) для чата бесполезна —
+     * `RunnerLlm.chat` возвращает null, поэтому учитывать её как «активную»
+     * нельзя, иначе UI показывает «сессия активна», а ответов нет.
+     */
+    private fun liveRunnerSession(context: Context): RunnerLlm.Session? =
+        runCatching {
+            RunnerLlm.listSessions(context).firstOrNull { s ->
+                !s.url.isNullOrBlank() && !s.apiKey.isNullOrBlank()
+            }
+        }.getOrNull()
 }

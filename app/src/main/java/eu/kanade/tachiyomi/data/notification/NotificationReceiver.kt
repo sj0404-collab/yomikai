@@ -17,9 +17,9 @@ import eu.kanade.tachiyomi.util.system.getParcelableExtraCompat
 import eu.kanade.tachiyomi.util.system.notificationManager
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
-import kotlinx.coroutines.runBlocking
 import tachiyomi.core.common.Constants
 import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.domain.chapter.interactor.GetChapter
 import tachiyomi.domain.chapter.interactor.UpdateChapter
 import tachiyomi.domain.chapter.model.Chapter
@@ -57,18 +57,15 @@ class NotificationReceiver : BroadcastReceiver() {
             // Clear the download queue
             ACTION_CLEAR_DOWNLOADS -> downloadManager.clearQueue()
             // Launch share activity and dismiss notification
-            ACTION_SHARE_IMAGE ->
-                shareImage(
-                    context,
-                    intent.getStringExtra(EXTRA_URI)!!.toUri(),
-                )
+            ACTION_SHARE_IMAGE -> {
+                val uri = intent.getStringExtra(EXTRA_URI)?.toUri() ?: return
+                shareImage(context, uri)
+            }
             // Share backup file
-            ACTION_SHARE_BACKUP ->
-                shareFile(
-                    context,
-                    intent.getParcelableExtraCompat(EXTRA_URI)!!,
-                    "application/x-protobuf+gzip",
-                )
+            ACTION_SHARE_BACKUP -> {
+                val uri = intent.getParcelableExtraCompat(EXTRA_URI) ?: return
+                shareFile(context, uri, "application/x-protobuf+gzip")
+            }
             ACTION_CANCEL_RESTORE -> cancelRestore(context)
             // Cancel library update and dismiss notification
             ACTION_CANCEL_LIBRARY_UPDATE -> cancelLibraryUpdate(context)
@@ -148,15 +145,17 @@ class NotificationReceiver : BroadcastReceiver() {
      * @param chapterId id of chapter
      */
     private fun openChapter(context: Context, mangaId: Long, chapterId: Long) {
-        val manga = runBlocking { getManga.await(mangaId) }
-        val chapter = runBlocking { getChapter.await(chapterId) }
-        if (manga != null && chapter != null) {
-            val intent = ReaderActivity.newIntent(context, manga.id, chapter.id).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        launchIO {
+            val manga = getManga.await(mangaId)
+            val chapter = getChapter.await(chapterId)
+            if (manga != null && chapter != null) {
+                val intent = ReaderActivity.newIntent(context, manga.id, chapter.id).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                }
+                context.startActivity(intent)
+            } else {
+                withUIContext { context.toast(MR.strings.chapter_error) }
             }
-            context.startActivity(intent)
-        } else {
-            context.toast(MR.strings.chapter_error)
         }
     }
 
