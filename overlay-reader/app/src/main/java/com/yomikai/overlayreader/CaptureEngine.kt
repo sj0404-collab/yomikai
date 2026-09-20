@@ -44,11 +44,13 @@ class CaptureEngine(
     fun capture(rect: Rect): Bitmap? {
         if (display == null && !ensureStarted()) return null
 
-        var image = reader?.acquireLatestImage()
-        if (image == null) {
-            // Ждём ближайший кадр: статичный экран может не отрисовываться.
-            Thread.sleep(120)
+        // Статичный экран может долго не порождать новых кадров (AUTO_MIRROR
+        // отрисовывает только «грязные» области) — крутимся до 3 секунд.
+        val succeedAt = System.currentTimeMillis() + 3000
+        var image: android.media.Image? = null
+        while (image == null && System.currentTimeMillis() < succeedAt) {
             image = reader?.acquireLatestImage()
+            if (image == null) Thread.sleep(120)
         }
         val img = image ?: return null
         return try {

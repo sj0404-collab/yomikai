@@ -6,6 +6,8 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.os.Handler
+import android.os.Looper
 import android.view.MotionEvent
 import android.view.View
 import kotlin.math.max
@@ -33,7 +35,6 @@ class OverlayView(
         fun onResetFrame()
         fun onExit()
         fun onFrameChanged(f: RectFBean)
-        fun onTapWhileHidden()
     }
 
     enum class Btn(val label: String) {
@@ -51,7 +52,33 @@ class OverlayView(
     var scanning: Boolean = false
     var statusText: String = ""
     var resultText: String = ""
-    var hidden: Boolean = false
+
+    // «Прокачка» кадров на время захвата: оверлей постоянно перерисовывается,
+    // поэтому дисплей (а с ним и VirtualDisplay) получает свежие кадры даже на
+    // полностью статичном экране. Панели при этом не рисуются, чтобы кадр был
+    // чистым.
+    private var capturePumping = false
+    private val pumpHandler = Handler(Looper.getMainLooper())
+    private val pumpRunnable = object : Runnable {
+        override fun run() {
+            if (capturePumping) {
+                invalidate()
+                pumpHandler.postDelayed(this, 90)
+            }
+        }
+    }
+
+    fun beginCapturePump() {
+        if (capturePumping) return
+        capturePumping = true
+        pumpHandler.post(pumpRunnable)
+    }
+
+    fun endCapturePump() {
+        capturePumping = false
+        pumpHandler.removeCallbacks(pumpRunnable)
+        invalidate()
+    }
 
     private lateinit var frame: RectF
     private var toolbarRect = RectF()
@@ -100,11 +127,6 @@ class OverlayView(
         textSize = sp(13f)
         typeface = Typeface.SANS_SERIF
     }
-    private val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        textSize = sp(15f)
-        typeface = Typeface.DEFAULT_BOLD
-    }
 
     private val density: Float = resources.displayMetrics.density
 
@@ -142,7 +164,7 @@ class OverlayView(
         val bw = w / count
         for (i in Btn.entries.indices) {
             buttons += Pair(
-                RectF(i * bw, toolbarH, (i + 1) * bw, h),
+                RectF(i * bw, 0f, (i + 1) * bw, toolbarH),
                 Btn.entries[i],
             )
         }
@@ -159,13 +181,7 @@ class OverlayView(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        if (hidden) {
-            canvas.drawColor(Color.argb(28, 0, 0, 0))
-            hintPaint.textAlign = Paint.Align.CENTER
-            canvas.drawText("Читалка скрыта — нажмите, чтобы вернуть", viewW / 2, viewH / 2, hintPaint)
-            hintPaint.textAlign = Paint.Align.LEFT
-            return
-        }
+        if (capturePumping) return
 
         val alpha = (Prefs.overlayOpacity().coerceIn(0.1f, 0.9f) * 255).toInt()
         dimPaint.color = Color.argb(alpha, 4, 8, 20)
@@ -197,8 +213,6 @@ class OverlayView(
             btnPaint.textAlign = Paint.Align.CENTER
             canvas.drawText(btn.label, rect.centerX(), rect.centerY() + dp(4f), btnPaint)
         }
-        titlePaint.textAlign = Paint.Align.LEFT
-        canvas.drawText("Overlay Reader", dp(10f), dp(24f), titlePaint)
     }
 
     private fun drawHandles(canvas: Canvas) {
@@ -288,10 +302,6 @@ class OverlayView(
     }
 
     private fun onDown(x: Float, y: Float): Boolean {
-        if (hidden) {
-            callback.onTapWhileHidden()
-            return true
-        }
         touchX = x
         touchY = y
         startFrame.set(frame)

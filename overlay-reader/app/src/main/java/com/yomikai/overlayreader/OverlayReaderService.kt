@@ -125,10 +125,7 @@ class OverlayReaderService : Service() {
             overlay?.invalidate()
         }
 
-        override fun onPassThrough() {
-            overlay?.hidden = true
-            overlay?.invalidate()
-        }
+        override fun onPassThrough() = setPassthrough(true)
 
         override fun onResetFrame() {
             overlay?.resetFrame()
@@ -138,11 +135,6 @@ class OverlayReaderService : Service() {
 
         override fun onFrameChanged(f: RectFBean) {
             Prefs.saveFrame(f)
-        }
-
-        override fun onTapWhileHidden() {
-            overlay?.hidden = false
-            overlay?.invalidate()
         }
     }
 
@@ -159,8 +151,9 @@ class OverlayReaderService : Service() {
             overlayView.invalidate()
             return
         }
-        val screenW = capturer.screenWidth
-        val screenH = capturer.screenHeight
+        wm.defaultDisplay.getRealMetrics(screenMetrics)
+        val screenW = screenMetrics.widthPixels
+        val screenH = screenMetrics.heightPixels
         if (screenW <= 0 || screenH <= 0) {
             overlayView.statusText = "Ошибка захвата экрана"
             overlayView.invalidate()
@@ -172,18 +165,43 @@ class OverlayReaderService : Service() {
             overlayView.statusText = "Распознаю текст…"
             overlayView.invalidate()
 
+            // Точные экранные координаты окна оверлея: на ряде устройств окно
+            // APPLICATION_OVERLAY смещено вниз от статусбара, поэтому пересчёт
+            // «доля → пиксель» идёт через локальные координаты окна.
+            val loc = IntArray(2)
+            overlayView.getLocationOnScreen(loc)
             val frameBean = Prefs.frame()
+            val vw = overlayView.width
+            val vh = overlayView.height
             val rect = Rect(
-                (frameBean.left * screenW).toInt(),
-                (frameBean.top * screenH).toInt(),
-                (frameBean.right * screenW).toInt(),
-                (frameBean.bottom * screenH).toInt(),
+                loc[0] + (frameBean.left * vw).toInt(),
+                loc[1] + (frameBean.top * vh).toInt(),
+                loc[0] + (frameBean.right * vw).toInt(),
+                loc[1] + (frameBean.bottom * vh).toInt(),
             )
-            val bitmap: Bitmap? = withContext(Dispatchers.Default) { capturer.capture(rect) }
+            Log.i(TAG, "scan region=$rect overlaySize=${vw}x$vh origin=${loc[0]},${loc[1]}")
+
+            // Оверлей держим видимым и «прокачиваем» его перерисовку: это заставляет
+            // компоновщик непрерывно выдавать кадры, и VirtualDisplay видит их
+            // даже на статичном экране. Панели оверлея в кадр не попадут
+            // (во время прокачки они не рисуются).
+            val wasHidden = overlayView.visibility != View.VISIBLE
+            if (wasHidden) setPassthrough(false)
+            overlayView.beginCapturePump()
+            val bitmap: Bitmap? = withContext(Dispatchers.Default) {
+                runCatching {
+                    Thread.sleep(250)
+                    capturer.capture(rect)
+                }.getOrNull()
+            }
+            overlayView.endCapturePump()
+            setPassthrough(wasHidden)
+
             if (bitmap == null) {
                 overlayView.scanning = false
                 overlayView.statusText = "Не удалось получить кадр"
                 overlayView.invalidate()
+                Log.e(TAG, "capture returned null for $rect")
                 return@launch
             }
 
@@ -195,6 +213,7 @@ class OverlayReaderService : Service() {
             } finally {
                 if (!bitmap.isRecycled) bitmap.recycle()
             }
+            Log.i(TAG, "OCR result: ${result.regions.size} regions, text='${result.text.take(80)}'")
 
             overlayView.scanning = false
             lastRegions = result.regions
@@ -235,6 +254,16 @@ class OverlayReaderService : Service() {
         )
         overlayParams = lp
         wm.addView(view, lp)
+        // Точное экранное смещение оверлея известно лишь после разметки —
+        // ставим пузырь строго под тулбар, чтобы не перекрывать кнопки.
+        view.post {
+            val loc = IntArray(2)
+            view.getLocationOnScreen(loc)
+            if (loc[1] != 0) {
+                bubbleParams?.y = loc[1] + px(44f).toInt() + px(16f).toInt()
+                bubbleView?.let { runCatching { wm.updateViewLayout(it, bubbleParams) } }
+            }
+        }
     }
 
     private fun addBubbleWindow() {
@@ -254,7 +283,7 @@ class OverlayReaderService : Service() {
 
             override fun onTouchEvent(event: MotionEvent): Boolean {
                 if (event.actionMasked == MotionEvent.ACTION_UP) {
-                    toggleOverlayVisibility()
+                    togglePassthrough()
                     return true
                 }
                 return super.onTouchEvent(event)
@@ -278,10 +307,26 @@ class OverlayReaderService : Service() {
         wm.addView(view, lp)
     }
 
-    private fun toggleOverlayVisibility() {
-        val current = overlay ?: return
-        current.hidden = !current.hidden
-        current.invalidate()
+    /**
+     * Пропуск касаний: оверлей становится невидимым и нетронутым, приложение
+     * под ним полностью управляемо; вернуть читалку можно пузырём.
+     */
+    private fun setPassthrough(on: Boolean) {
+        val v = overlay ?: return
+        val lp = overlayParams ?: return
+        if (on) {
+            v.visibility = View.INVISIBLE
+            lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        } else {
+            v.visibility = View.VISIBLE
+            lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+        }
+        runCatching { wm.updateViewLayout(v, lp) }
+    }
+
+    private fun togglePassthrough() {
+        val currentlyHidden = overlay?.visibility != View.VISIBLE
+        setPassthrough(!currentlyHidden)
     }
 
     private fun computeBubbleY(): Int {

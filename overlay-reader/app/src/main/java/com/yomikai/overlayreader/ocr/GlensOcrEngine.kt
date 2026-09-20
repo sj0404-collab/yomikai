@@ -521,7 +521,7 @@ internal class ProtoReader(private val bytes: ByteArray) {
         pos += count
     }
 
-    private fun readVarint32(): Int {
+    internal fun readVarint32(): Int {
         var result = 0
         var shift = 0
         while (shift < 32) {
@@ -538,7 +538,7 @@ internal class ProtoReader(private val bytes: ByteArray) {
         throw IOException("Malformed varint32")
     }
 
-    private fun readVarint64(): Long {
+    internal fun readVarint64(): Long {
         var result = 0L
         var shift = 0
         while (shift < 64) {

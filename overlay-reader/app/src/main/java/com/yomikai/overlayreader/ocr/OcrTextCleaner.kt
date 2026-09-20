@@ -10,27 +10,11 @@ object OcrTextCleaner {
     private val ALLOWED = Regex("[\\p{L}\\p{N}]")
 
     /**
-     * Склейка дефиса на конце строки с началом следующей: «ХО- \nРОШО» → «ХОРОШО».
+     * Склейка дефиса на конце строки с началом следующей: «ХО-\nРОШО» → «ХОРОШО».
+     * Обычные переводы строк не трогаем — их в пробел сворачивает `clean()`.
      */
-    fun joinLineHyphens(text: String): String {
-        val lines = text.split("\n")
-        val sb = StringBuilder()
-        for (i in lines.indices) {
-            val line = lines[i].trimEnd()
-            if (i > 0 && lines[i - 1].trimEnd().endsWith("-")) {
-                sb.replace(sb.length - 1, sb.length, "")
-            } else if (i > 0 && !sb.isEmpty()) {
-                sb.append(' ')
-            }
-            val candidate = line
-            if (candidate.endsWith("-") && i < lines.size - 1) {
-                sb.append(candidate.dropLast(1))
-            } else {
-                sb.append(candidate)
-            }
-        }
-        return sb.toString()
-    }
+    fun joinLineHyphens(text: String): String =
+        text.replace(Regex("-\\s*\r?\n\\s*"), "")
 
     /**
      * Консервативная очистка: убираем то, что не похоже на текст (служебные
@@ -45,11 +29,15 @@ object OcrTextCleaner {
     }
 
     /**
-     * Полный цикл: очистка → автофикс кириллицы → склейка переносов.
+     * Полный цикл: склейка переносов → очистка → автофикс кириллицы.
+     *
+     * Склейка ДО чистки: `clean()` сворачивает переводы строк в пробел, и
+     * информация о переносе теряется.
      */
     fun postprocess(text: String): String {
-        val cleaned = clean(text).let { CyrillicTranslitFixer.autoFixCyrillic(it) }
-        return joinLineHyphens(cleaned).trim()
+        val joined = joinLineHyphens(text)
+        val cleaned = clean(joined)
+        return CyrillicTranslitFixer.autoFixCyrillic(cleaned).trim()
     }
 
     /** Число «настоящих» букв (первые 50 буквенных символов, для эвристик голоса). */

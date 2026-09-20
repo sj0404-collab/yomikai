@@ -23,6 +23,8 @@ class MainActivity : Activity() {
     private val CAPTURE_REQUEST = 1001
     private val NOTIFICATION_REQUEST = 1002
 
+    private var pendingStart = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -36,11 +38,25 @@ class MainActivity : Activity() {
         maybeRequestNotificationPermission()
     }
 
+    override fun onResume() {
+        super.onResume()
+        // После возврата с экрана «Разрешить поверх других приложений».
+        if (pendingStart && canDrawOverlays()) {
+            pendingStart = false
+            launchCapture()
+        }
+    }
+
     private fun onStartClicked() {
         if (!canDrawOverlays()) {
+            pendingStart = true
             requestOverlayPermission()
             return
         }
+        launchCapture()
+    }
+
+    private fun launchCapture() {
         val mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         startActivityForResult(mediaProjectionManager.createScreenCaptureIntent(), CAPTURE_REQUEST)
     }
