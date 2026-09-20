@@ -1,0 +1,50 @@
+name: Overlay Reader APK
+# Сборка отдельного APK читалки (overlay-reader) на каждый push в main.
+# Артефакт — debug APK (неподписанный релиз на Android не устанавливается).
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'overlay-reader/**'
+  pull_request:
+    paths:
+      - 'overlay-reader/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build overlay-reader APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up JDK
+        uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5.5.0
+        with:
+          java-version-file: .github/.java-version
+          distribution: temurin
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+
+      - name: Build debug APK
+        working-directory: overlay-reader
+        shell: bash
+        run: ./gradlew :app:assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: overlay-reader-debug
+          path: overlay-reader/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
