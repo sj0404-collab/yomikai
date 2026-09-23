@@ -1137,8 +1137,7 @@ class AutoReadEngine(
             // Рамки хранятся в долях 0..1, а сортировщик работает с целыми
             // Rect: масштабируем на 100000, геометрия и зазоры сохраняются.
             val scale = 100_000
-            val rects = lines.map { l ->
-                val b = l.boundingBox
+            fun rectOf(line: Line) = line.boundingBox.let { b ->
                 // Поля Rect заполняем через свойства, а не через конструктор
                 // (left, top, right, bottom): mockable-android jar в юнит-тестах
                 // не пишет значения из этого конструктора, и сортировщик видел
@@ -1150,9 +1149,55 @@ class AutoReadEngine(
                     bottom = (b.bottom * scale).toInt()
                 }
             }
-            val sortedIndices = tachiyomi.core.common.util.system.ReadingOrderSorter.sort(rects, direction)
+
+            // Манга и комикс читаются по горизонтальным полосам (строкам реплик),
+            // а направление работает ВНУТРИ полосы. Без этого сортировщик при
+            // отсутствии чистого разреза выходил на фолбэк «сначала top», и бабл,
+            // стоящий на пару процентов выше слева, читался раньше правого —
+            // манга уходила в чтение слева направо.
+            if (order != "vertical") {
+                val bands = groupIntoBands(lines)
+                if (bands.size > 1) {
+                    return bands.flatMap { band ->
+                        if (band.size == 1) {
+                            band
+                        } else {
+                            tachiyomi.core.common.util.system.ReadingOrderSorter
+                                .sort(band.map(::rectOf), direction)
+                                .map { band[it] }
+                        }
+                    }
+                }
+            }
+
+            val sortedIndices =
+                tachiyomi.core.common.util.system.ReadingOrderSorter.sort(lines.map(::rectOf), direction)
             return sortedIndices.map { lines[it] }
         }
+
+        /**
+         * Раскладывает реплики по горизонтальным полосам: реплика попадает в
+         * текущую полосу, пока не опустилась ниже её низа (с допуском
+         * [BAND_TOLERANCE] на неточность координат OCR).
+         */
+        private fun groupIntoBands(lines: List<Line>): List<List<Line>> {
+            val bands = mutableListOf<MutableList<Line>>()
+            var bandBottom = 0f
+            for (line in lines.sortedBy { it.boundingBox.top }) {
+                val box = line.boundingBox
+                val current = bands.lastOrNull()
+                if (current == null || box.top >= bandBottom - BAND_TOLERANCE) {
+                    bands += mutableListOf(line)
+                    bandBottom = box.bottom
+                } else {
+                    current += line
+                    bandBottom = maxOf(bandBottom, box.bottom)
+                }
+            }
+            return bands
+        }
+
+        private const val BAND_TOLERANCE = 0.02f
 
         /**
          * Чистка OCR-мусора ВНУТРИ реплики (по скриншотам пользователя:

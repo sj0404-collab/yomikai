@@ -83,6 +83,51 @@ class AutoReadEngineCleanTest {
     }
 
     @Test
+    fun `orderRegions rtl keeps right bubble first when left one sits slightly higher`() {
+        val lines = listOf(
+            AutoReadEngine.Line("LEFT", OcrBoundingBox(0.08f, 0.049f, 0.38f, 0.20f)),
+            AutoReadEngine.Line("RIGHT", OcrBoundingBox(0.60f, 0.050f, 0.92f, 0.21f)),
+        )
+        val out = AutoReadEngine.orderRegions(lines, "rtl")
+        assertEquals(listOf("RIGHT", "LEFT"), out.map { it.text })
+    }
+
+    @Test
+    fun `orderRegions rtl reads row by row, not column by column`() {
+        val lines = listOf(
+            AutoReadEngine.Line("TOP_RIGHT", OcrBoundingBox(0.55f, 0.05f, 0.92f, 0.18f)),
+            AutoReadEngine.Line("TOP_LEFT", OcrBoundingBox(0.08f, 0.05f, 0.45f, 0.18f)),
+            AutoReadEngine.Line("BOTTOM_RIGHT", OcrBoundingBox(0.55f, 0.55f, 0.92f, 0.68f)),
+            AutoReadEngine.Line("BOTTOM_LEFT", OcrBoundingBox(0.08f, 0.55f, 0.45f, 0.68f)),
+        )
+        val out = AutoReadEngine.orderRegions(lines, "rtl")
+        assertEquals(
+            listOf("TOP_RIGHT", "TOP_LEFT", "BOTTOM_RIGHT", "BOTTOM_LEFT"),
+            out.map { it.text },
+        )
+    }
+
+    @Test
+    fun `orderRegions ltr keeps left bubble first when right one sits slightly higher`() {
+        val lines = listOf(
+            AutoReadEngine.Line("RIGHT", OcrBoundingBox(0.60f, 0.050f, 0.92f, 0.21f)),
+            AutoReadEngine.Line("LEFT", OcrBoundingBox(0.08f, 0.049f, 0.38f, 0.20f)),
+        )
+        val out = AutoReadEngine.orderRegions(lines, "ltr")
+        assertEquals(listOf("LEFT", "RIGHT"), out.map { it.text })
+    }
+
+    @Test
+    fun `orderRegions keeps a single row in document order for vertical webtoon`() {
+        val lines = listOf(
+            AutoReadEngine.Line("LOWER", OcrBoundingBox(0.08f, 0.40f, 0.90f, 0.46f)),
+            AutoReadEngine.Line("UPPER", OcrBoundingBox(0.08f, 0.10f, 0.90f, 0.16f)),
+        )
+        val out = AutoReadEngine.orderRegions(lines, "vertical")
+        assertEquals(listOf("UPPER", "LOWER"), out.map { it.text })
+    }
+
+    @Test
     fun `short russian reactions with punctuation survive cleanup`() {
         assertEquals("А!", AutoReadEngine.cleanOcrGarbage("А!", "ru"))
         assertEquals("А-А?", AutoReadEngine.cleanOcrGarbage("А-А?", "ru"))

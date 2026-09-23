@@ -91,6 +91,9 @@ fun ReaderFloatingControls(
     onInstantScreenshot: () -> Unit = {},
     onReadingOrderChange: (String) -> Unit = {},
     readingOrder: String = "rtl",
+    /** Пресет типа контента (id из OcrContentType): задаёт и порядок чтения. */
+    contentPreset: String = "balanced",
+    onContentPresetChange: (String) -> Unit = {},
     onExportChapter: () -> Unit = {},
     /** true — голос выбирает читатель, false — определяется автоматически. */
     manualVoiceMode: Boolean = false,
@@ -347,22 +350,37 @@ fun ReaderFloatingControls(
                                 if (!hiddenM.contains("r_order")) {
 
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    val orderLabel = when (readingOrder) {
-                                        "ltr" -> "→ Слева направо"
-                                        "vertical" -> "↓ Сверху вниз"
-                                        else -> "← Справа налево"
+                                    val presetTitle = when (contentPreset) {
+                                        "manga" -> "Манга"
+                                        "manhwa" -> "Манхва"
+                                        "manhua" -> "Маньхуа"
+                                        "comic" -> "Комикс"
+                                        else -> "Сбаланс."
                                     }
-                                    Text("$orderLabel  ", style = MaterialTheme.typography.labelMedium)
+                                    val presetOrder = when (contentPreset) {
+                                        "manga" -> "← Справа налево"
+                                        "manhwa", "manhua" -> "↓ Сверху вниз"
+                                        "comic" -> "→ Слева направо"
+                                        else -> when (readingOrder) {
+                                            "ltr" -> "→ Слева направо"
+                                            "vertical" -> "↓ Сверху вниз"
+                                            else -> "← Справа налево"
+                                        }
+                                    }
+                                    Text("$presetTitle · $presetOrder  ", style = MaterialTheme.typography.labelMedium)
                                     SmallFloatingActionButton(onClick = {
                                         beepAction()
-                                        val next = when (readingOrder) {
-                                            "rtl" -> "ltr"
-                                            "ltr" -> "vertical"
-                                            else -> "rtl"
-                                        }
-                                        onReadingOrderChange(next)
+                                        onContentPresetChange(
+                                            when (contentPreset) {
+                                                "manga" -> "manhwa"
+                                                "manhwa" -> "manhua"
+                                                "manhua" -> "comic"
+                                                "comic" -> "manga"
+                                                else -> "manga"
+                                            },
+                                        )
                                     }) {
-                                        Icon(Icons.Outlined.DocumentScanner, contentDescription = "Порядок чтения")
+                                        Icon(Icons.Outlined.DocumentScanner, contentDescription = "Режим чтения: $presetTitle")
                                     }
                                 }
 

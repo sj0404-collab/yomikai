@@ -53,6 +53,17 @@ enum class OcrContentType(
     ),
 
     /**
+     * Китайская маньхуа: вертикальные колонки, читаются справа налево, текст
+     * крупнее корейского, но леттеринг плотный и рамки узкие.
+     */
+    MANHUA(
+        id = "manhua",
+        title = "Маньхуа",
+        hint = "Вертикальные колонки, чтение сверху вниз и справа налево.",
+        viewer = OcrViewerHint.PAGER_RTL,
+    ),
+
+    /**
      * Западный комикс: плотный леттеринг, крупные заголовки, чтение слева
      * направо, прямоугольные баллоны стоят близко друг к другу.
      */
@@ -217,6 +228,21 @@ data class OcrTuning(
                     minWordGapPx = 7,
                     minAcceptConfidence = 0.34f,
                     rescueMaxLines = 5,
+                    readingOrder = "vertical",
+                    scanRegion = scanRegion,
+                )
+
+                OcrContentType.MANHUA -> DEFAULT.copy(
+                    detectorThreshold = 0.19f,
+                    minComponentArea = 24,
+                    maxTextBoxes = 80,
+                    mergeOverlapYFactor = 0.50f,
+                    mergeGapXFactor = 0.65f,
+                    splitMinWidthPx = 36,
+                    wordGapFactor = 1.8f,
+                    minWordGapPx = 6,
+                    minAcceptConfidence = 0.32f,
+                    rescueMaxLines = 6,
                     readingOrder = "vertical",
                     scanRegion = scanRegion,
                 )

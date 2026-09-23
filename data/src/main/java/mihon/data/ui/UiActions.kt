@@ -186,12 +186,21 @@ object UiActions {
             builtIn = true,
         ),
         UiActionSpec(
+            id = "preset_manhua",
+            title = "Пресет: маньхуа (вертикально)",
+            placement = UiPlacement.FLOATING_MENU,
+            effect = UiEffect.OCR_PRESET,
+            value = OcrContentType.MANHUA.id,
+            order = 22,
+            builtIn = true,
+        ),
+        UiActionSpec(
             id = "preset_comic",
             title = "Пресет: комикс",
             placement = UiPlacement.FLOATING_MENU,
             effect = UiEffect.OCR_PRESET,
             value = OcrContentType.COMIC.id,
-            order = 22,
+            order = 23,
             builtIn = true,
         ),
         UiActionSpec(
@@ -200,7 +209,7 @@ object UiActions {
             placement = UiPlacement.FLOATING_MENU,
             effect = UiEffect.OCR_PRESET,
             value = OcrContentType.BALANCED.id,
-            order = 23,
+            order = 24,
             builtIn = true,
         ),
     )

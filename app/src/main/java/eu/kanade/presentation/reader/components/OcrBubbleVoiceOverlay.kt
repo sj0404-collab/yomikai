@@ -38,8 +38,8 @@ import kotlin.math.roundToInt
  *
  * Показываются по переключателю «значки озвучки» (иначе на странице тишина,
  * чтобы не мешать чтению). Дают два способа озвучить реплику:
- *  - **Значок на каждом бабле** ([perBubble]): маленькая кнопка 🔊 в правом
- *    верхнем углу рамки; тап — озвучить именно этот текст.
+ *  - **Значок у текущей реплики** ([perBubble]): маленькая кнопка 🔊 в правом
+ *    верхнем углу рамки бабла, который звучит сейчас; тап — озвучить его текст.
  *  - **Перетаскиваемый значок** ([draggable]): один значок перетаскивается,
  *    а на отпускании привязывается к ближайшему баблу и озвучивает его.
  *
@@ -66,26 +66,33 @@ fun OcrBubbleVoiceOverlay(
         val iconSize = 30.dp
 
         if (perBubble) {
-            regions.forEachIndexed { index, region ->
-                val box = region.box
-                if (region.text.isBlank() || !box.isValidForIcon()) return@forEachIndexed
-                // Позиция правого верхнего угла рамки в dp внутри компоновки.
-                val xDp = (box.left * maxW.value).dp
-                val yDp = (box.top * maxH.value).dp
-                val wDp = ((box.right - box.left) * maxW.value).dp
-                Box(
-                    modifier = Modifier
-                        .offset(x = xDp + wDp - iconSize, y = yDp - iconSize / 3)
-                        .size(iconSize)
-                        .pointerInput(index, region.text, onSpeakRegion) {
-                            detectTapGestures { onSpeakRegion(region.text, index) }
-                        }
-                        .semantics { contentDescription = "Озвучить реплику ${index + 1}: ${region.text.take(30)}" },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    SpeakerBadge(color = iconColor, size = iconSize)
+            // Раньше значок рисовался на КАЖДОМ регионе кадра, и страница
+            // выглядела усыпанной иконками. Показываем один — у реплики,
+            // которая звучит сейчас; порядок чтения ведёт его по баблам.
+            regions.filter { it.state == AutoReadEngine.FrameRegion.State.CURRENT }
+                .forEach { region ->
+                    val box = region.box
+                    if (region.text.isBlank() || !box.isValidForIcon()) return@forEach
+                    val currentIndex = regions.indexOf(region)
+                    val xDp = (box.left * maxW.value).dp
+                    val yDp = (box.top * maxH.value).dp
+                    val wDp = ((box.right - box.left) * maxW.value).dp
+                    Box(
+                        modifier = Modifier
+                            .offset(x = xDp + wDp - iconSize, y = yDp - iconSize / 3)
+                            .size(iconSize)
+                            .pointerInput(currentIndex, region.text, onSpeakRegion) {
+                                detectTapGestures { onSpeakRegion(region.text, currentIndex) }
+                            }
+                            .semantics {
+                                contentDescription =
+                                    "Озвучить реплику ${region.index}: ${region.text.take(30)}"
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        SpeakerBadge(color = iconColor, size = iconSize)
+                    }
                 }
-            }
         }
 
         if (draggable) {

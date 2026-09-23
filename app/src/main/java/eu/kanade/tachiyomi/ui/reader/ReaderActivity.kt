@@ -788,6 +788,14 @@ class ReaderActivity : BaseActivity() {
                             .scanReadingOrder().get(),
                     )
                 }
+                // Пресет типа контента (манга/манхва/маньхуа/комикс) для кнопки
+                // в плавающем меню: он задаёт и порядок чтения, и параметры OCR.
+                var contentPresetId by androidx.compose.runtime.remember {
+                    androidx.compose.runtime.mutableStateOf(
+                        uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+                            .contentType().get(),
+                    )
+                }
                 // Быстрая смена AI-модели (по требованию пользователя): верхняя
                 // AI-кнопка теперь открывает «Сменить AI-модель», а из него уже
                 // можно попасть в полный диалог озвучки.
@@ -1021,19 +1029,23 @@ class ReaderActivity : BaseActivity() {
                         ocrPrefsForVoice.voiceIcons().set(enabled)
                         toast(if (enabled) "Значки озвучки реплик включены" else "Значки озвучки реплик выключены")
                     },
-                    onReadingOrderChange = { order ->
-                        uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
-                            .scanReadingOrder().set(order)
-                        readingOrderState = order
-                        toast(
-                            when (order) {
-                                "ltr" -> "Порядок чтения: слева направо (комиксы)"
-                                "vertical" -> "Порядок чтения: сверху вниз (вебтуны)"
-                                else -> "Порядок чтения: справа налево (манга)"
-                            },
-                        )
-                    },
                     readingOrder = readingOrderState,
+                    contentPreset = contentPresetId,
+                    onContentPresetChange = { id ->
+                        val prefs = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+                        val type = mihon.data.ocr.OcrContentType.fromId(id)
+                        prefs.contentType().set(type.id)
+                        contentPresetId = type.id
+                        mihon.data.ocr.ContentAutoPreset.rememberManual(
+                            mihon.data.ocr.ReaderContextBus.current.value?.mangaId,
+                            type.id,
+                            prefs,
+                        )
+                        val order = mihon.data.ocr.OcrTuning.preset(type).readingOrder
+                        prefs.scanReadingOrder().set(order)
+                        readingOrderState = order
+                        toast("Режим: ${type.title} — ${mihon.data.ocr.OcrRegionRules.orderTitle(order)}")
+                    },
                     onExportChapter = { viewModel.exportChapterToOfflineFolder(this@ReaderActivity) },
                 )
 

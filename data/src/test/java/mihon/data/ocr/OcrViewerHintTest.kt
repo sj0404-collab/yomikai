@@ -29,6 +29,15 @@ class OcrViewerHintTest {
     }
 
     @Test
+    fun `manhua is paged rtl although its text is vertical`() {
+        // Маньхуа — исключение из правила выше: текст в колонках читается
+        // сверху вниз, но страницы листаются справа налево, как в манге.
+        val manhua = OcrContentType.MANHUA
+        OcrTuning.preset(manhua).readingOrder shouldBe "vertical"
+        manhua.viewer shouldBe OcrViewerHint.PAGER_RTL
+    }
+
+    @Test
     fun `every reading order used by presets has a matching hint`() {
         // READING_ORDERS — источник допустимых значений порядка чтения: ни одно
         // из них не должно теряться в KEEP, и для каждого обязан находиться

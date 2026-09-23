@@ -52,8 +52,20 @@ class OcrPluginsTest {
     fun `content presets set reading order and scan region`() {
         OcrTuning.preset(OcrContentType.MANGA).readingOrder shouldBe "rtl"
         OcrTuning.preset(OcrContentType.MANHWA).readingOrder shouldBe "vertical"
+        OcrTuning.preset(OcrContentType.MANHUA).readingOrder shouldBe "vertical"
         OcrTuning.preset(OcrContentType.COMIC).readingOrder shouldBe "ltr"
         OcrTuning.preset(OcrContentType.MANHWA, ScanRegion.TOP_HALF).scanRegion shouldBe ScanRegion.TOP_HALF
+    }
+
+    @Test
+    fun `manhua is a vertical preset between manhwa and comic`() {
+        OcrContentType.fromId("manhua") shouldBe OcrContentType.MANHUA
+        OcrContentType.MANHUA.viewer shouldBe OcrViewerHint.PAGER_RTL
+        val manhua = OcrTuning.preset(OcrContentType.MANHUA)
+        // Текст крупнее манги, но леттеринг плотнее вебтуна.
+        manhua.wordGapFactor shouldBe OcrTuning.preset(OcrContentType.MANHWA).wordGapFactor - 0.2f
+        manhua.maxTextBoxes shouldBe
+            OcrTuning.preset(OcrContentType.MANHWA).maxTextBoxes + 16
     }
 
     @Test
