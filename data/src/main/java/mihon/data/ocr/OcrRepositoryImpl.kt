@@ -200,6 +200,19 @@ class OcrRepositoryImpl(
     }
 
     /**
+     * Онлайн-движок реально готов к запросу: ключ/адрес заданы. Без этой
+     * проверки цепочка тратила до минуты на заведомо 401/403-ответ.
+     */
+    private fun onlineEngineReady(type: EngineType): Boolean = when (type) {
+        EngineType.ZEN_FREE -> ocrPreferences.zenFreeEnabled().get()
+        EngineType.GOOGLE -> ocrPreferences.googleApiKey().get().isNotBlank()
+        EngineType.OPENROUTER -> ocrPreferences.openrouterApiKey().get().isNotBlank()
+        EngineType.OWOCR -> ocrPreferences.owocrAddress().get().isNotBlank()
+        EngineType.GLENS -> true
+        EngineType.CYRILLIC, EngineType.MLKIT, EngineType.FAST, EngineType.LEGACY -> false
+    }
+
+    /**
      * ЦЕПОЧКА фолбэков (по пресету пользователя), а не один шаг:
      *  auto    — при сети: онлайн → локальные; без сети: ТОЛЬКО локальные
      *            (онлайн даже не пробуются — мгновенный переход, без таймаутов);
@@ -209,11 +222,8 @@ class OcrRepositoryImpl(
      */
     private fun fallbackChain(primary: EngineType): List<EngineType> {
         val preset = preferenceStore.getString("pref_fallback_preset", "auto").get()
-        val online = buildList {
-            add(EngineType.GLENS)
-            if (ocrPreferences.zenFreeEnabled().get()) add(EngineType.ZEN_FREE)
-            add(EngineType.GOOGLE)
-        }
+        val online = listOf(EngineType.GLENS, EngineType.ZEN_FREE, EngineType.GOOGLE)
+            .filter { onlineEngineReady(it) }
         val chain = when (preset) {
             "single" -> emptyList()
             "online" -> online

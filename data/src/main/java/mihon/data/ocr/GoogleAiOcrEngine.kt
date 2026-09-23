@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
+import mihon.domain.ocr.exception.OcrException
 import mihon.domain.ocr.service.OcrPreferences
 import tachiyomi.core.common.util.system.logcat
 import java.io.ByteArrayOutputStream
@@ -26,6 +27,11 @@ internal class GoogleAiOcrEngine(
         require(!image.isRecycled) { "Input bitmap is recycled" }
 
         val apiKey = ocrPreferences.googleApiKey().get()
+        if (apiKey.isBlank()) {
+            throw OcrException.InitializationError(
+                IllegalStateException("Google AI API key is empty"),
+            )
+        }
         val model = ocrPreferences.googleModel().get().ifBlank { "gemini-2.5-flash" }
         val base64Image = encodeBitmapToBase64(image)
 

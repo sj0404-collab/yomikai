@@ -246,4 +246,24 @@ class OcrPluginsTest {
         OcrPlugins.ALL.filterNot { it.online }.map { it.id } shouldContainExactly
             listOf("cyrillic_ppocr", "mlkit")
     }
+
+    @Test
+    fun `keyless online plugins are the only ones the runtime chain may try`() {
+        val withoutKeys = OcrPlugins.available(
+            networkAvailable = true,
+            modelsInstalled = true,
+            litertAvailable = true,
+        )
+        withoutKeys.filter { it.online }.map { it.id } shouldContainExactly
+            listOf("google_lens", "zen_free")
+
+        val withGoogleKey = OcrPlugins.available(
+            networkAvailable = true,
+            modelsInstalled = true,
+            litertAvailable = true,
+            hasApiKey = { it == OcrPlugins.GOOGLE_AI },
+        )
+        withGoogleKey.filter { it.online }.map { it.id } shouldContainExactly
+            listOf("google_lens", "zen_free", "google_ai")
+    }
 }
