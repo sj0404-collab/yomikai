@@ -1238,7 +1238,7 @@
     <string name="ocr_model_owocr">OwOCR (Self-Hosted Websocket)</string>
     <string name="ocr_model_openrouter">OpenRouter AI Vision</string>
     <string name="ocr_model_google">Google AI / Gemini Vision</string>
-    <string name="ocr_model_zen_free">Zen Free (Zero-Config, Free without API key)</string>
+    <string name="ocr_model_zen_free">Space Bunny Free (OpenCode Zen)</string>
     <string name="ocr_model_tesseract">Tesseract (устаревший)</string>
     <string name="ocr_model_cyrillic">Русский Cyrillic OCR (офлайн, PP-OCR)</string>
     <string name="ocr_model_mlkit">Google ML Kit (офлайн, встроенная модель)</string>
@@ -1254,7 +1254,7 @@
     <string name="pref_token_usage">Token Usage Counter</string>
     <string name="pref_token_usage_summary">Total tokens consumed across AI OCR requests</string>
     <string name="token_indicator_label">Tokens Used: %1$d</string>
-    <string name="zen_free_status_label">Zen Free Active (No API Key Required)</string>
+    <string name="zen_free_status_label">Space Bunny Free active via OpenCode Zen (no API key required)</string>
 
     <!-- CBZ Direct Reader -->
     <string name="cbz_direct_reader">CBZ Direct Reader</string>

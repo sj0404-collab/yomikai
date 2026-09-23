@@ -41,11 +41,7 @@ enum class OcrModel {
     GOOGLE,
 
     /**
-     * Бесплатный режим без ключа и без настройки.
-     *
-     * Исполняется движком Google Lens: бесплатные модели провайдера Zen
-     * не принимают изображения ("No endpoints found that support image
-     * input"), поэтому OCR через них невозможен.
+     * Бесплатная vision-модель Space Bunny Free через OpenCode Zen.
      */
     ZEN_FREE,
 

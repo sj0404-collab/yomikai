@@ -105,12 +105,13 @@ object OcrPlugins {
     val ZEN_FREE = OcrPluginDescriptor(
         id = "zen_free",
         model = OcrModel.ZEN_FREE,
-        title = "Zen Free",
-        summary = "Бесплатный режим без ключа и настройки. Изображения не принимаются, поэтому идёт через Google Lens.",
+        title = "Space Bunny Free (OpenCode Zen)",
+        summary = "Бесплатная vision-модель space-bunny-free через OpenCode Zen. Работает с ручным и автоматическим OCR.",
         engineType = "ZEN_FREE",
         online = true,
         requirements = setOf(OcrPluginRequirement.NETWORK),
         fallbackPriority = 20,
+        supportsRegions = true,
     )
 
     val GOOGLE_AI = OcrPluginDescriptor(

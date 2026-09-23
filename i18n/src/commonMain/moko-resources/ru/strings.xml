@@ -935,7 +935,7 @@
     <string name="ocr_model_owocr">OwOCR (Собственный сервер)</string>
     <string name="ocr_model_openrouter">OpenRouter AI Vision</string>
     <string name="ocr_model_google">Google AI / Gemini Vision</string>
-    <string name="ocr_model_zen_free">Zen Free (Бесплатно, без API ключа)</string>
+    <string name="ocr_model_zen_free">Space Bunny Free (OpenCode Zen)</string>
     <string name="ocr_model_mlkit">Google ML Kit (офлайн, встроенная модель)</string>
 
     <!-- Voice / Text-to-Speech Settings -->
@@ -949,7 +949,7 @@
     <string name="pref_token_usage">Счётчик токенов</string>
     <string name="pref_token_usage_summary">Всего токенов использовано в ИИ-запросах OCR</string>
     <string name="token_indicator_label">Использовано токенов: %1$d</string>
-    <string name="zen_free_status_label">Zen Free Активен (Без API ключа)</string>
+    <string name="zen_free_status_label">Space Bunny Free активен через OpenCode Zen (без API-ключа)</string>
 
     <!-- CBZ Direct Reader -->
     <string name="cbz_direct_reader">Прямое чтение CBZ</string>

@@ -99,7 +99,6 @@ class OcrPreferences(
     fun googleApiKey() = preferenceStore.getString("pref_google_api_key", "")
     fun googleModel() = preferenceStore.getString("pref_google_model", "gemini-2.5-flash")
 
-    // Zen Free Mode Settings (Works without API key)
     fun zenFreeEnabled() = preferenceStore.getBoolean("pref_zen_free_enabled", true)
 
     // Token Tracker & Usage Counter

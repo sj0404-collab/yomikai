@@ -157,7 +157,7 @@ private val ENGINE_TITLES = mapOf(
     OcrModel.LEGACY to "Старый (медленно)",
     OcrModel.TESSERACT to "Tesseract (полный офлайн)",
     OcrModel.GLENS to "Google Lens (онлайн)",
-    OcrModel.ZEN_FREE to "Zen Free (онлайн, без ключа)",
+    OcrModel.ZEN_FREE to "Space Bunny Free (OpenCode Zen, онлайн)",
     OcrModel.GOOGLE to "Gemini (онлайн, по ключу)",
     OcrModel.OPENROUTER to "OpenRouter (онлайн, по ключу)",
     OcrModel.OWOCR to "OwOCR (свой сервер)",

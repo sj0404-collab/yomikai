@@ -21,13 +21,10 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * Онлайн AI-ассистент читалки. Два провайдера, оба OpenAI-совместимые:
  *
- * • ZEN (opencode.ai/zen) — БЕЗ API-ключа. Бесплатные модели:
+ * • ZEN (opencode.ai/zen) — БЕЗ API-ключа. Бесплатные текстовые модели:
  *   mimo-v2.5-free, deepseek-v4-flash-free, laguna-s-2.1-free,
  *   nemotron-3-ultra-free, nemotron-3.5-lightning-free, hy3-free,
- *   big-pickle. Проверено живым запросом: отвечают без авторизации.
- *   ВАЖНО: vision у Zen нет («No endpoints found that support image
- *   input»), поэтому ассистент ТЕКСТОВЫЙ — пол говорящих определяет по
- *   репликам, не по картинке.
+ *   big-pickle. Space Bunny Free используется отдельным vision-OCR движком.
  *
  * • OPENROUTER — по API-ключу, выбор из бесплатных «:free» моделей
  *   (список тянется живьём с /api/v1/models и фильтруется по суффиксу).

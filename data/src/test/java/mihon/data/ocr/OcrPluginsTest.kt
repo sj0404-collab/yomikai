@@ -206,10 +206,38 @@ class OcrPluginsTest {
     }
 
     @Test
-    fun `offline plugins expose detected regions`() {
+    fun `region-capable plugins expose their capability`() {
         OcrPlugins.ALL.filter { it.supportsRegions }.map { it.id } shouldContainExactly
-            listOf(OcrPlugins.CYRILLIC.id, OcrPlugins.MLKIT.id)
+            listOf(OcrPlugins.CYRILLIC.id, OcrPlugins.MLKIT.id, OcrPlugins.ZEN_FREE.id)
     }
+
+    @Test
+    fun `space bunny free parses ordered regions and coordinates`() {
+        val regions = parseZenOcrRegions(
+            """{"regions":[{"text":"Первая","box":[100,200,900,260],"orientation":"horizontal"},{"text":"Вторая","box":[0.1,0.3,0.8,0.4],"orientation":"vertical"}]}""",
+        )
+
+        regions.map { it.text } shouldContainExactly listOf("Первая", "Вторая")
+        regions.map { it.order } shouldContainExactly listOf(0, 1)
+        regions[0].boundingBox shouldBe mihon.domain.ocr.model.OcrBoundingBox(0.1f, 0.2f, 0.9f, 0.26f)
+        regions[1].boundingBox shouldBe mihon.domain.ocr.model.OcrBoundingBox(0.1f, 0.3f, 0.8f, 0.4f)
+        regions[1].textOrientation shouldBe mihon.domain.ocr.model.OcrTextOrientation.Vertical
+        ZenFreeOcrEngine.MODEL shouldBe "space-bunny-free"
+    }
+
+    @Test
+    fun `space bunny free keeps plain text and drops invalid regions`() {
+        val plain = parseZenOcrRegions("Просто видимая реплика")
+        plain.single().text shouldBe "Просто видимая реплика"
+        plain.single().boundingBox shouldBe mihon.domain.ocr.model.OcrBoundingBox(0f, 0f, 1f, 1f)
+
+        val filtered = parseZenOcrResultsWithInvalidRegion()
+        filtered.map { it.text } shouldContainExactly listOf("Правильная")
+    }
+
+    private fun parseZenOcrResultsWithInvalidRegion() = parseZenOcrRegions(
+        """{"regions":[{"text":"Неверная","box":[900,200,100,260]},{"text":"Правильная","box":[100,200,900,260]}]}""",
+    )
 
     @Test
     fun `online flags match the fallback pools`() {

@@ -209,7 +209,11 @@ class OcrRepositoryImpl(
      */
     private fun fallbackChain(primary: EngineType): List<EngineType> {
         val preset = preferenceStore.getString("pref_fallback_preset", "auto").get()
-        val online = listOf(EngineType.GLENS, EngineType.ZEN_FREE, EngineType.GOOGLE)
+        val online = buildList {
+            add(EngineType.GLENS)
+            if (ocrPreferences.zenFreeEnabled().get()) add(EngineType.ZEN_FREE)
+            add(EngineType.GOOGLE)
+        }
         val chain = when (preset) {
             "single" -> emptyList()
             "online" -> online
@@ -273,7 +277,7 @@ class OcrRepositoryImpl(
                 }
             }
             EngineType.ZEN_FREE -> {
-                zenFreeEngine ?: ZenFreeOcrEngine(context, ocrPreferences).also {
+                zenFreeEngine ?: ZenFreeOcrEngine().also {
                     zenFreeEngine = it
                 }
             }
@@ -513,9 +517,9 @@ class OcrRepositoryImpl(
             EngineType.MLKIT -> scanWithMlKit(chapterId, pageIndex, image, OcrModel.MLKIT)
             EngineType.GLENS -> scanWithGlens(chapterId, pageIndex, image, OcrModel.GLENS)
             EngineType.OWOCR -> scanWithOwOcr(chapterId, pageIndex, image, OcrModel.OWOCR)
+            EngineType.ZEN_FREE -> scanWithZenFree(chapterId, pageIndex, image)
             EngineType.OPENROUTER,
             EngineType.GOOGLE,
-            EngineType.ZEN_FREE,
             -> scanWithTextEngine(chapterId, pageIndex, image, type)
             EngineType.LEGACY,
             EngineType.FAST,
@@ -533,7 +537,6 @@ class OcrRepositoryImpl(
         val model = when (type) {
             EngineType.OPENROUTER -> OcrModel.OPENROUTER
             EngineType.GOOGLE -> OcrModel.GOOGLE
-            EngineType.ZEN_FREE -> OcrModel.ZEN_FREE
             else -> error("Unsupported text-only OCR engine: $type")
         }
         val regions = if (text.isBlank()) {
@@ -552,6 +555,33 @@ class OcrRepositoryImpl(
             chapterId = chapterId,
             pageIndex = pageIndex,
             ocrModel = model,
+            imageWidth = image.width,
+            imageHeight = image.height,
+            regions = regions,
+        )
+    }
+
+    private suspend fun scanWithZenFree(
+        chapterId: Long,
+        pageIndex: Int,
+        image: Bitmap,
+    ): OcrPageResult {
+        val recognized = submitTask(PrioritizedTaskQueue.Priority.NORMAL) {
+            engineLocks.withTextEngineLock(EngineType.ZEN_FREE) {
+                val engine = engineFor(EngineType.ZEN_FREE)
+                if (engine is ZenFreeOcrEngine) engine.recognizePage(image) else emptyList()
+            }
+        }
+        val regions = recognized.mapIndexedNotNull { index, region ->
+            val text = OcrTextCleaner.joinLineHyphens(region.text).trim()
+            text.takeIf(String::isNotEmpty)?.let {
+                region.copy(order = index, text = it)
+            }
+        }
+        return OcrPageResult(
+            chapterId = chapterId,
+            pageIndex = pageIndex,
+            ocrModel = OcrModel.ZEN_FREE,
             imageWidth = image.width,
             imageHeight = image.height,
             regions = regions,
