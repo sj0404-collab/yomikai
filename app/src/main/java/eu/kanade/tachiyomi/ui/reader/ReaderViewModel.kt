@@ -1058,18 +1058,22 @@ class ReaderViewModel @JvmOverloads constructor(
                     pageIndex = pageIndex,
                     image = bitmap.toOcrImage(),
                 )
-                val order = mihon.domain.ocr.service.OcrPreferences(
+                val prefs = mihon.domain.ocr.service.OcrPreferences(
                     tachiyomi.core.common.preference.AndroidPreferenceStore(context),
-                ).scanReadingOrder().get()
-                val sorted = when (order) {
-                    "ltr" -> result.regions.sortedWith(
-                        compareBy({ it.boundingBox.top }, { it.boundingBox.left }),
-                    )
-                    "vertical" -> result.regions.sortedBy { it.boundingBox.top }
-                    else -> result.regions.sortedWith( // rtl — манга
-                        compareBy({ it.boundingBox.top }, { -it.boundingBox.right }),
-                    )
-                }
+                )
+                // Порядок берём из пресета типа контента, а сортировку — общую
+                // с авточтением: своя копия сравнивала рамки по верхнему краю и
+                // читала мангу слева направо, если баблы стояли на разной высоте.
+                val order = mihon.data.ocr.OcrRegionRules.readingOrderFor(prefs)
+                val sorted = eu.kanade.tachiyomi.data.tts.AutoReadEngine.orderRegions(
+                    result.regions.map {
+                        eu.kanade.tachiyomi.data.tts.AutoReadEngine.Line(
+                            text = it.text,
+                            boundingBox = it.boundingBox,
+                        )
+                    },
+                    order,
+                )
                 val text = sorted.joinToString(". ") {
                     mihon.domain.ocr.model.normalizeOcrTextForDisplay(it.text)
                 }.trim()
