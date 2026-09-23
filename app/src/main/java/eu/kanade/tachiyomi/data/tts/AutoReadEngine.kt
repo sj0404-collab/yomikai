@@ -1095,7 +1095,7 @@ class AutoReadEngine(
 
         fun ttsTimeoutMs(textLength: Int, speechRate: Float): Long {
             val rate = speechRate.takeIf { it.isFinite() && it > 0f }?.coerceIn(0.5f, 2f) ?: 1f
-            return textLength.coerceAtLeast(0) * 220L / rate + 8_000L
+            return (textLength.coerceAtLeast(0) * 220L / rate).toLong() + 8_000L
         }
 
         /** Настоящие одно- и двухбуквенные русские слова (союзы/предлоги/междометия). */

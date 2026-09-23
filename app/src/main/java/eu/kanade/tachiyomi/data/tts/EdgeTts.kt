@@ -448,7 +448,7 @@ object EdgeTts {
             }
         }
 
-        override fun onClosed(webSocket: WebSocket, response: Response) {
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
             if (!finished) {
                 finished = true
                 onError(null)

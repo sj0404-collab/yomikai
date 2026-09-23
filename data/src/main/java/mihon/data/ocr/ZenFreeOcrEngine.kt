@@ -140,9 +140,10 @@ internal class ZenFreeOcrEngine : OcrEngine {
                 "Return only JSON: {\"regions\":[{\"text\":\"...\",\"box\":[left,top,right,bottom]," +
                 "\"orientation\":\"horizontal\"}]}. Coordinates are integers from 0 to 1000 relative to the " +
                 "full image. Use one region per visible speech bubble or text block. Use [] when no text exists."
-        private val json = Json { ignoreUnknownKeys = true }
     }
 }
+
+private val zenFreeJson = Json { ignoreUnknownKeys = true }
 
 @Serializable
 private data class ZenOcrResponse(
@@ -164,7 +165,7 @@ internal fun parseZenOcrRegions(content: String): List<OcrRegion> {
     val objectEnd = jsonText.lastIndexOf('}')
     val parsed = if (objectStart >= 0 && objectEnd > objectStart) {
         runCatching {
-            json.decodeFromString<ZenOcrResponse>(jsonText.substring(objectStart, objectEnd + 1))
+            zenFreeJson.decodeFromString<ZenOcrResponse>(jsonText.substring(objectStart, objectEnd + 1))
         }.getOrNull()
     } else {
         null
