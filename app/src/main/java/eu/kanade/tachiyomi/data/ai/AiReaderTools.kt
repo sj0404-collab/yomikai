@@ -48,7 +48,7 @@ object AiReaderTools {
     val SYSTEM_PROMPT_LINES = listOf(
         "@tool reader_status {} — текущие настройки читалки: пресет типа контента, " +
             "область сканирования, порядок чтения, движки OCR и озвучки, что из них доступно",
-        "@tool ocr_preset {\"id\":\"manga|manhwa|comic|balanced\"} — применить пресет типа " +
+        "@tool ocr_preset {\"id\":\"manga|manhwa|manhua|comic|balanced\"} — применить пресет типа " +
             "контента (меняет параметры детектора, область и порядок чтения)",
         "@tool plugins_list {} — реестры плагинов: OCR-движки, голосовые движки и бэкенды AI-чата " +
             "с требованиями и доступностью",

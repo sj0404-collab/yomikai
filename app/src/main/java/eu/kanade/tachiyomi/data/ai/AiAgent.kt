@@ -119,7 +119,7 @@ object AiAgent {
             "\"placement\":\"floating_menu|reader_top_bar|ocr_card\"," +
             "\"effect\":\"ocr_preset|scan_region|reading_mode|voice_engine|ai_provider\"," +
             "\"value\":\"manhwa\",\"order\":100} — добавить свою кнопку в меню читалки; " +
-            "значение выбирается из списка эффекта (для ocr_preset — manga|manhwa|comic|balanced)\n" +
+            "значение выбирается из списка эффекта (для ocr_preset — manga|manhwa|manhua|comic|balanced)\n" +
             "@tool ui_action_edit {\"id\":\"my_manhwa\",\"title\":\"новое название\"} — изменить кнопку\n" +
             "@tool ui_action_delete {\"id\":\"my_manhwa\"} — убрать кнопку\n" +
             "@tool ui_action_list {} — все кнопки: встроенные и пользовательские\n" +
