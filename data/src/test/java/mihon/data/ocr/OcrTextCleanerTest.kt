@@ -191,4 +191,22 @@ class OcrTextCleanerTest {
         OcrTextCleaner.filterGarbageTokens("") shouldBe ""
         OcrTextCleaner.filterGarbageTokens("   ") shouldBe "   "
     }
+
+    @Test
+    fun `single visible gap is treated as a word boundary`() {
+        ocrWordGapThreshold(intArrayOf(7), wordGapFactor = 1.7f, minWordGapPx = 5) shouldBe 5
+        ocrWordGapThreshold(intArrayOf(3), wordGapFactor = 1.7f, minWordGapPx = 5) shouldBe 5
+    }
+
+    @Test
+    fun `word boundary uses the lower gap cluster instead of the widest gap`() {
+        ocrWordGapThreshold(intArrayOf(2, 10), wordGapFactor = 1.7f, minWordGapPx = 5) shouldBe 5
+        ocrWordGapThreshold(intArrayOf(2, 2, 2, 10, 10, 10), wordGapFactor = 1.7f, minWordGapPx = 5) shouldBe 5
+    }
+
+    @Test
+    fun `equal word-sized gaps are not compared with themselves`() {
+        ocrWordGapThreshold(intArrayOf(6, 6, 6), wordGapFactor = 1.7f, minWordGapPx = 5) shouldBe 5
+        ocrWordGapThreshold(intArrayOf(4, 4, 4), wordGapFactor = 1.7f, minWordGapPx = 5) shouldBe 5
+    }
 }

@@ -519,11 +519,24 @@ internal class CyrillicOcrEngine(
         return mutex.withLock {
             require(!image.isRecycled) { "Input bitmap is recycled" }
             if (image.width < 4 || image.height < 4) return@withLock ""
-            val result = recognizeLineBitmap(image)
-            if (result.text.isBlank() || !acceptsConfidence(result)) {
-                return@withLock ""
+            val kind = OcrBoxGeometry.classifyKind(
+                left = 0,
+                top = 0,
+                right = image.width,
+                bottom = image.height,
+                imageWidth = image.width,
+                imageHeight = image.height,
+            )
+            val crop = if (kind == OcrBoxGeometry.Kind.VERTICAL) rotate90cw(image) else image
+            try {
+                val result = recognizeLineBitmap(crop)
+                if (result.text.isBlank() || !acceptsConfidence(result)) {
+                    return@withLock ""
+                }
+                cleanRecognition(textPostprocessor.postprocess(result.text))
+            } finally {
+                if (crop !== image && !crop.isRecycled) crop.recycle()
             }
-            cleanRecognition(textPostprocessor.postprocess(result.text))
         }
     }
 
@@ -695,9 +708,11 @@ internal class CyrillicOcrEngine(
         if (start >= 0) runs.add(intArrayOf(start, w - 1))
         if (runs.size < 2) return listOf(crop)
         val gaps = IntArray(runs.size - 1) { i -> runs[i + 1][0] - runs[i][1] - 1 }
-        val positive = gaps.filter { it > 0 }.sorted()
-        val median = if (positive.isEmpty()) 1.0 else positive[positive.size / 2].toDouble()
-        val threshold = max(tuning().minWordGapPx, round(median * tuning().wordGapFactor).toInt())
+        val threshold = ocrWordGapThreshold(
+            gaps = gaps,
+            wordGapFactor = tuning().wordGapFactor,
+            minWordGapPx = tuning().minWordGapPx,
+        )
         var splitAfter = 0
         val groups = mutableListOf<IntArray>()
         var groupStart = runs[0][0]
@@ -1279,4 +1294,16 @@ internal class CyrillicOcrEngine(
 
         private const val ALLOWED_PUNCTUATION = " .,!?;:-()[]{}\"'«»„“”%№+/=…—–"
     }
+}
+
+internal fun ocrWordGapThreshold(
+    gaps: IntArray,
+    wordGapFactor: Float,
+    minWordGapPx: Int,
+): Int {
+    val positive = gaps.filter { it > 0 }.sorted()
+    if (positive.isEmpty()) return minWordGapPx
+    if (positive.size <= 2 || positive.first() == positive.last()) return minWordGapPx
+    val lowerQuartile = positive[(positive.size - 1) / 4]
+    return max(minWordGapPx, round(lowerQuartile * wordGapFactor).toInt())
 }

@@ -75,4 +75,22 @@ internal object OcrBoxGeometry {
             box.right >= 0.98f &&
             box.bottom >= 0.98f
     }
+
+    fun restoreVerticalCrop(
+        box: OcrBoundingBox,
+        sourceHeight: Int,
+        cropTop: Int,
+        cropHeight: Int,
+    ): OcrBoundingBox? {
+        if (sourceHeight <= 0 || cropHeight <= 0 || cropTop < 0 || cropTop >= sourceHeight) return null
+        val top = (cropTop + box.top * cropHeight) / sourceHeight
+        val bottom = (cropTop + box.bottom * cropHeight) / sourceHeight
+        val restored = OcrBoundingBox(
+            left = box.left.coerceIn(0f, 1f),
+            top = top.coerceIn(0f, 1f),
+            right = box.right.coerceIn(0f, 1f),
+            bottom = bottom.coerceIn(0f, 1f),
+        )
+        return restored.takeIf { it.isValid() }
+    }
 }

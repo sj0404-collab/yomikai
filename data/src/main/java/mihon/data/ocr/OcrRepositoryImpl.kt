@@ -316,37 +316,40 @@ class OcrRepositoryImpl(
     }
 
     private suspend fun recognizeWithFallback(primary: EngineType, image: Bitmap): String {
-        // Без сети онлайн-первичный движок не пробуем вовсе — сразу цепочка
         val skipPrimary = primary in onlineEngines && !isNetworkAvailable()
+        val fallbackEnabled = useFallbackModelsPref.get()
+        var primaryText: String? = null
         var lastError: Throwable? = null
 
         if (!skipPrimary) {
             try {
-                return recognizeWithEngine(primary, image)
+                val text = recognizeWithEngine(primary, image)
+                primaryText = text
+                if (text.isNotBlank() || !fallbackEnabled) return text
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
                 lastError = e
             }
         }
 
-        if (!useFallbackModelsPref.get()) {
-            throw lastError ?: OcrException.ConnectionError(null)
+        if (!fallbackEnabled) {
+            return primaryText ?: throw lastError ?: OcrException.ConnectionError(null)
         }
 
         for (engine in fallbackChain(primary)) {
-            // Пропускаем онлайн-движки при отсутствии сети
             if (engine in onlineEngines && !isNetworkAvailable()) continue
             try {
                 logcat(LogPriority.WARN) {
-                    "OCR (${primary.name.lowercase()}) unavailable, trying ${engine.name.lowercase()}"
+                    "OCR (${primary.name.lowercase()}) returned no usable text, trying ${engine.name.lowercase()}"
                 }
-                return recognizeWithEngine(engine, image)
+                val text = recognizeWithEngine(engine, image)
+                if (text.isNotBlank()) return text
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
                 lastError?.addSuppressed(e) ?: run { lastError = e }
             }
         }
-        throw lastError ?: OcrException.InitializationError()
+        return primaryText ?: throw lastError ?: OcrException.InitializationError()
     }
 
     override suspend fun recognizeText(image: OcrImage): String {
@@ -367,87 +370,55 @@ class OcrRepositoryImpl(
         return withActiveOperation {
             val regionChoice = ocrPreferences.scanRegion().get()
             val result = image.useBitmap { originalBitmap ->
-                // Авто-пресет: один раз на главу, до чтения профиля детектора.
                 ContentAutoPreset.maybeApply(
                     chapterId = chapterId,
                     pageWidth = originalBitmap.width,
                     pageHeight = originalBitmap.height,
                     prefs = ocrPreferences,
                 )
-                val bitmap = when (regionChoice) {
-                    mihon.domain.ocr.service.ScanRegion.TOP_HALF -> Bitmap.createBitmap(originalBitmap, 0, 0, originalBitmap.width, originalBitmap.height / 2)
-                    mihon.domain.ocr.service.ScanRegion.BOTTOM_HALF -> Bitmap.createBitmap(originalBitmap, 0, originalBitmap.height / 2, originalBitmap.width, originalBitmap.height / 2)
-                    else -> originalBitmap
+                val sourceHeight = originalBitmap.height
+                val cropTop = when (regionChoice) {
+                    mihon.domain.ocr.service.ScanRegion.BOTTOM_HALF -> sourceHeight / 2
+                    else -> 0
                 }
-                when (val selectedModel = ocrModelPref.get()) {
-                    OcrModel.CYRILLIC -> scanLocalOrFallback(
-                        chapterId = chapterId,
-                        pageIndex = pageIndex,
-                        image = bitmap,
-                        modelKey = selectedModel,
-                        type = EngineType.CYRILLIC,
-                    )
-                    OcrModel.MLKIT -> scanWithMlKit(
-                        chapterId = chapterId,
-                        pageIndex = pageIndex,
-                        image = bitmap,
-                        modelKey = selectedModel,
-                    )
-                    OcrModel.GLENS -> scanWithGlens(
-                        chapterId = chapterId,
-                        pageIndex = pageIndex,
-                        image = bitmap,
-                        modelKey = selectedModel,
-                    )
-                    OcrModel.LEGACY -> scanLocalOrFallback(
-                        chapterId = chapterId,
-                        pageIndex = pageIndex,
-                        image = bitmap,
-                        modelKey = selectedModel,
-                        type = EngineType.CYRILLIC,
-                    )
-                    OcrModel.FAST -> scanLocalOrFallback(
-                        chapterId = chapterId,
-                        pageIndex = pageIndex,
-                        image = bitmap,
-                        modelKey = selectedModel,
-                        type = EngineType.CYRILLIC,
-                    )
-                    OcrModel.OWOCR -> scanOwOcrOrFallback(
-                        chapterId = chapterId,
-                        pageIndex = pageIndex,
-                        image = bitmap,
-                        modelKey = selectedModel,
-                    )
-                    OcrModel.OPENROUTER -> scanWithEngineOrFallback(
-                        chapterId = chapterId,
-                        pageIndex = pageIndex,
-                        image = bitmap,
-                        modelKey = selectedModel,
-                        type = EngineType.OPENROUTER,
-                    )
-                    OcrModel.GOOGLE -> scanWithEngineOrFallback(
-                        chapterId = chapterId,
-                        pageIndex = pageIndex,
-                        image = bitmap,
-                        modelKey = selectedModel,
-                        type = EngineType.GOOGLE,
-                    )
-                    OcrModel.TESSERACT -> scanLocalOrFallback(
-                        chapterId = chapterId,
-                        pageIndex = pageIndex,
-                        image = bitmap,
-                        modelKey = selectedModel,
-                        type = EngineType.CYRILLIC,
-                    )
-                    OcrModel.ZEN_FREE -> scanWithEngineOrFallback(
-                        chapterId = chapterId,
-                        pageIndex = pageIndex,
-                        image = bitmap,
-                        modelKey = selectedModel,
-                        type = EngineType.ZEN_FREE,
+                val cropHeight = when (regionChoice) {
+                    mihon.domain.ocr.service.ScanRegion.FULL_PAGE -> sourceHeight
+                    else -> (sourceHeight - cropTop).coerceAtLeast(1)
+                }
+                val crop = if (cropTop == 0 && cropHeight == sourceHeight) {
+                    originalBitmap
+                } else {
+                    Bitmap.createBitmap(
+                        originalBitmap,
+                        0,
+                        cropTop,
+                        originalBitmap.width,
+                        cropHeight,
                     )
                 }
+                val croppedResult = try {
+                    scanPageWithFallback(
+                        chapterId = chapterId,
+                        pageIndex = pageIndex,
+                        image = crop,
+                        primary = selectedEngineType(),
+                    )
+                } finally {
+                    if (crop !== originalBitmap && !crop.isRecycled) crop.recycle()
+                }
+                croppedResult.copy(
+                    imageHeight = sourceHeight,
+                    regions = croppedResult.regions.mapNotNull { region ->
+                        OcrBoxGeometry.restoreVerticalCrop(
+                            box = region.boundingBox,
+                            sourceHeight = sourceHeight,
+                            cropTop = cropTop,
+                            cropHeight = cropHeight,
+                        )?.let { restored ->
+                            region.copy(boundingBox = restored)
+                        }
+                    },
+                )
             }
 
             cacheStore.upsert(result)
@@ -498,82 +469,93 @@ class OcrRepositoryImpl(
         }
     }
 
-    private suspend fun scanWithEngineOrFallback(
+    private suspend fun scanPageWithFallback(
         chapterId: Long,
         pageIndex: Int,
         image: Bitmap,
-        modelKey: OcrModel,
+        primary: EngineType,
+    ): OcrPageResult {
+        val fallbackEnabled = useFallbackModelsPref.get()
+        val engines = if (fallbackEnabled) listOf(primary) + fallbackChain(primary) else listOf(primary)
+        var attempted = false
+        var lastResult: OcrPageResult? = null
+        var lastError: Throwable? = null
+
+        for (engine in engines) {
+            if (engine in onlineEngines && !isNetworkAvailable()) continue
+            attempted = true
+            try {
+                val result = scanPageByEngine(chapterId, pageIndex, image, engine)
+                if (result.regions.isNotEmpty()) return result
+                lastResult = result
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                if (!fallbackEnabled) throw error
+                logcat(LogPriority.WARN, error) {
+                    "OCR page scan ${engine.name.lowercase()} failed or returned no text"
+                }
+                lastError?.addSuppressed(error) ?: run { lastError = error }
+            }
+        }
+
+        if (!attempted) throw lastError ?: OcrException.ConnectionError(null)
+        return lastResult ?: throw lastError ?: OcrException.InitializationError()
+    }
+
+    private suspend fun scanPageByEngine(
+        chapterId: Long,
+        pageIndex: Int,
+        image: Bitmap,
         type: EngineType,
     ): OcrPageResult {
-        return try {
-            val text = recognizeWithEngine(type, image)
-            val bbox = OcrBoundingBox(0f, 0f, 1f, 1f)
-            val region = OcrRegion(
-                order = 0,
-                text = text,
-                boundingBox = bbox,
-                textOrientation = OcrTextOrientation.Horizontal,
-            )
-            OcrPageResult(
-                chapterId = chapterId,
-                pageIndex = pageIndex,
-                ocrModel = modelKey,
-                imageWidth = image.width,
-                imageHeight = image.height,
-                regions = if (text.isBlank()) emptyList() else listOf(region),
-            )
-        } catch (e: Throwable) {
-            if (!useFallbackModelsPref.get()) {
-                throw e
-            }
-            if (isNetworkAvailable()) {
-                scanWithGlens(
-                    chapterId = chapterId,
-                    pageIndex = pageIndex,
-                    image = image,
-                    modelKey = modelKey,
-                )
-            } else {
-                // Без сети используем единый Cyrillic PP-OCR.
-                scanLocally(
-                    chapterId = chapterId,
-                    pageIndex = pageIndex,
-                    image = image,
-                    modelKey = modelKey,
-                    type = EngineType.CYRILLIC,
-                )
-            }
+        return when (type) {
+            EngineType.CYRILLIC -> scanLocally(chapterId, pageIndex, image, OcrModel.CYRILLIC, type)
+            EngineType.MLKIT -> scanWithMlKit(chapterId, pageIndex, image, OcrModel.MLKIT)
+            EngineType.GLENS -> scanWithGlens(chapterId, pageIndex, image, OcrModel.GLENS)
+            EngineType.OWOCR -> scanWithOwOcr(chapterId, pageIndex, image, OcrModel.OWOCR)
+            EngineType.OPENROUTER,
+            EngineType.GOOGLE,
+            EngineType.ZEN_FREE,
+            -> scanWithTextEngine(chapterId, pageIndex, image, type)
+            EngineType.LEGACY,
+            EngineType.FAST,
+            -> scanLocally(chapterId, pageIndex, image, OcrModel.CYRILLIC, EngineType.CYRILLIC)
         }
     }
 
-    private suspend fun scanLocalOrFallback(
+    private suspend fun scanWithTextEngine(
         chapterId: Long,
         pageIndex: Int,
         image: Bitmap,
-        modelKey: OcrModel,
         type: EngineType,
     ): OcrPageResult {
-        return try {
-            scanLocally(
-                chapterId = chapterId,
-                pageIndex = pageIndex,
-                image = image,
-                modelKey = modelKey,
-                type = type,
-            )
-        } catch (e: Throwable) {
-            val target = if (isNetworkAvailable()) EngineType.ZEN_FREE else EngineType.CYRILLIC
-            logcat(LogPriority.WARN, e) {
-                "Local OCR model unavailable; falling back to ${target.name.lowercase()}"
-            }
-            scanWithEngineOrFallback(
-                chapterId = chapterId,
-                pageIndex = pageIndex,
-                image = image,
-                modelKey = modelKey,
-                type = target,
+        val text = recognizeWithEngine(type, image).trim()
+        val model = when (type) {
+            EngineType.OPENROUTER -> OcrModel.OPENROUTER
+            EngineType.GOOGLE -> OcrModel.GOOGLE
+            EngineType.ZEN_FREE -> OcrModel.ZEN_FREE
+            else -> error("Unsupported text-only OCR engine: $type")
+        }
+        val regions = if (text.isBlank()) {
+            emptyList()
+        } else {
+            listOf(
+                OcrRegion(
+                    order = 0,
+                    text = text,
+                    boundingBox = OcrBoundingBox(0f, 0f, 1f, 1f),
+                    textOrientation = OcrTextOrientation.Horizontal,
+                ),
             )
         }
+        return OcrPageResult(
+            chapterId = chapterId,
+            pageIndex = pageIndex,
+            ocrModel = model,
+            imageWidth = image.width,
+            imageHeight = image.height,
+            regions = regions,
+        )
     }
 
     /**
@@ -590,21 +572,10 @@ class OcrRepositoryImpl(
         image: Bitmap,
         modelKey: OcrModel,
     ): OcrPageResult {
-        val regions = try {
-            submitTask(PrioritizedTaskQueue.Priority.NORMAL) {
-                engineLocks.withTextEngineLock(EngineType.MLKIT) {
-                    val engine = engineFor(EngineType.MLKIT)
-                    if (engine is MlKitOcrEngine) engine.recognizeRegions(image) else emptyList()
-                }
-            }
-        } catch (error: Throwable) {
-            if (error is CancellationException) throw error
-            if (!useFallbackModelsPref.get()) throw error
-            logcat(LogPriority.WARN, error) { "ML Kit scanning failed, falling back" }
-            return if (isNetworkAvailable()) {
-                scanWithGlens(chapterId, pageIndex, image, modelKey)
-            } else {
-                scanLocally(chapterId, pageIndex, image, modelKey, EngineType.CYRILLIC)
+        val regions = submitTask(PrioritizedTaskQueue.Priority.NORMAL) {
+            engineLocks.withTextEngineLock(EngineType.MLKIT) {
+                val engine = engineFor(EngineType.MLKIT)
+                if (engine is MlKitOcrEngine) engine.recognizeRegions(image) else emptyList()
             }
         }
 
@@ -621,18 +592,14 @@ class OcrRepositoryImpl(
         }
 
         if (mapped.isEmpty()) {
-            return if (useFallbackModelsPref.get() && isNetworkAvailable()) {
-                scanWithGlens(chapterId, pageIndex, image, modelKey)
-            } else {
-                OcrPageResult(
-                    chapterId = chapterId,
-                    pageIndex = pageIndex,
-                    ocrModel = modelKey,
-                    imageWidth = image.width,
-                    imageHeight = image.height,
-                    regions = emptyList(),
-                )
-            }
+            return OcrPageResult(
+                chapterId = chapterId,
+                pageIndex = pageIndex,
+                ocrModel = modelKey,
+                imageWidth = image.width,
+                imageHeight = image.height,
+                regions = emptyList(),
+            )
         }
 
         return OcrPageResult(
@@ -706,36 +673,6 @@ class OcrRepositoryImpl(
         )
     }
 
-    private suspend fun scanOwOcrOrFallback(
-        chapterId: Long,
-        pageIndex: Int,
-        image: Bitmap,
-        modelKey: OcrModel,
-    ): OcrPageResult {
-        return try {
-            scanWithOwOcr(
-                chapterId = chapterId,
-                pageIndex = pageIndex,
-                image = image,
-                modelKey = modelKey,
-            )
-        } catch (e: Throwable) {
-            if (e is CancellationException) throw e
-            if (!useFallbackModelsPref.get()) {
-                throw e
-            }
-            logcat(LogPriority.WARN, e) {
-                "OwOCR scanning failed, falling back to glens"
-            }
-            scanWithGlens(
-                chapterId = chapterId,
-                pageIndex = pageIndex,
-                image = image,
-                modelKey = modelKey,
-            )
-        }
-    }
-
     private suspend fun scanLocally(
         chapterId: Long,
         pageIndex: Int,
@@ -802,6 +739,14 @@ class OcrRepositoryImpl(
 
         val regions = usableBoxes.mapIndexedNotNull { index, box ->
             val crop = cropBitmap(image, box) ?: return@mapIndexedNotNull null
+            val orientation = if (
+                OcrBoxGeometry.classifyKind(0, 0, crop.width, crop.height, crop.width, crop.height) ==
+                OcrBoxGeometry.Kind.VERTICAL
+            ) {
+                OcrTextOrientation.Vertical
+            } else {
+                OcrTextOrientation.Horizontal
+            }
             try {
                 val text = submitTask(PrioritizedTaskQueue.Priority.NORMAL) {
                     engineLocks.withTextEngineLock(type) {
@@ -822,7 +767,7 @@ class OcrRepositoryImpl(
                         order = index,
                         text = text,
                         boundingBox = box,
-                        textOrientation = OcrTextOrientation.Horizontal,
+                        textOrientation = orientation,
                     )
                 }
             } finally {

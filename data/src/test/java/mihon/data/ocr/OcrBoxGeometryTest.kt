@@ -86,6 +86,36 @@ class OcrBoxGeometryTest {
     }
 
     @Test
+    fun `bottom-half boxes are restored to full-page coordinates`() {
+        OcrBoxGeometry.restoreVerticalCrop(
+            box = OcrBoundingBox(0.1f, 0.2f, 0.8f, 0.6f),
+            sourceHeight = 2000,
+            cropTop = 1000,
+            cropHeight = 1000,
+        ) shouldBe OcrBoundingBox(0.1f, 0.6f, 0.8f, 0.8f)
+    }
+
+    @Test
+    fun `top-half boxes keep their page coordinates`() {
+        OcrBoxGeometry.restoreVerticalCrop(
+            box = OcrBoundingBox(0.1f, 0.2f, 0.8f, 0.6f),
+            sourceHeight = 2000,
+            cropTop = 0,
+            cropHeight = 1000,
+        ) shouldBe OcrBoundingBox(0.1f, 0.1f, 0.8f, 0.3f)
+    }
+
+    @Test
+    fun `invalid vertical crop geometry is rejected`() {
+        OcrBoxGeometry.restoreVerticalCrop(
+            box = OcrBoundingBox(0.1f, 0.2f, 0.8f, 0.6f),
+            sourceHeight = 2000,
+            cropTop = 2000,
+            cropHeight = 1000,
+        ) shouldBe null
+    }
+
+    @Test
     fun `box kinds follow geometry so presets bind to bubbles automatically`() {
         // Квадратное облачко в середине страницы — реплика в пузыре.
         OcrBoxGeometry.classifyKind(300, 800, 620, 1100, 1000, 2000) shouldBe OcrBoxGeometry.Kind.BUBBLE
