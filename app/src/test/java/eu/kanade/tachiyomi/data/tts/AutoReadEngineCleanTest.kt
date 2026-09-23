@@ -81,4 +81,22 @@ class AutoReadEngineCleanTest {
         val out = AutoReadEngine.orderRegions(lines, "vertical")
         assertEquals(listOf("A", "C"), out.map { it.text })
     }
+
+    @Test
+    fun `short russian reactions with punctuation survive cleanup`() {
+        assertEquals("А!", AutoReadEngine.cleanOcrGarbage("А!", "ru"))
+        assertEquals("А-А?", AutoReadEngine.cleanOcrGarbage("А-А?", "ru"))
+        assertTrue(AutoReadEngine.isMeaningful("А!", "ru"))
+        assertTrue(AutoReadEngine.isMeaningful("А-А?", "ru"))
+    }
+
+    @Test
+    fun `tts timeout scales with selected speech rate`() {
+        val normal = AutoReadEngine.ttsTimeoutMs(200, 1f)
+        val slow = AutoReadEngine.ttsTimeoutMs(200, 0.5f)
+        val fast = AutoReadEngine.ttsTimeoutMs(200, 2f)
+
+        assertTrue(slow > normal)
+        assertTrue(normal > fast)
+    }
 }

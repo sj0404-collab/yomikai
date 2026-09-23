@@ -61,8 +61,9 @@ object EdgeTts {
     /** Голос по умолчанию: русский женский (нейтральный). */
     const val DEFAULT_VOICE = "ru-RU-SvetlanaNeural"
 
-    /** Предел одного SSML-запроса — Microsoft режет длиннее 4096 байт. */
-    private const val SSML_BYTE_LIMIT = 4000
+    private const val SSML_BYTE_LIMIT = 3600
+    private const val AUDIO_CACHE_FILES = 32
+    private const val AUDIO_CACHE_BYTES = 64L * 1024L * 1024L
 
     private val client by lazy {
         OkHttpClient.Builder()
@@ -222,66 +223,128 @@ object EdgeTts {
         voice: String = DEFAULT_VOICE,
         ratePercent: Int = 0,
         pitchHz: Int = 0,
+        useCache: Boolean = false,
     ): File? = withContext(Dispatchers.IO) {
-        val volume = 0
-        val target = File(context.cacheDir, "tts_edge_${System.nanoTime()}.mp3")
-        val out = target.outputStream().buffered()
-        var any = false
+        val cleanText = sanitizeForSsml(text)
+        if (cleanText.isBlank()) return@withContext null
+        val cacheDir = File(context.cacheDir, "edge_tts").apply { mkdirs() }
+        val cached = audioCacheFile(cacheDir, cleanText, voice, ratePercent, pitchHz)
+        if (useCache && cached.isFile && cached.length() >= 1024) return@withContext cached
+        val target = if (useCache) {
+            File.createTempFile("edge_", ".mp3", cacheDir)
+        } else {
+            File(context.cacheDir, "tts_edge_${System.nanoTime()}.mp3")
+        }
+        var completed = false
         try {
-            for (chunk in chunkForSsml(text)) {
-                val data = speakChunk(chunk, voice, ratePercent, pitchHz, volume)
-                if (data.isEmpty()) {
-                    logcat(LogPriority.WARN) { "EdgeTTS empty chunk for voice $voice" }
-                    continue
+            target.outputStream().buffered().use { output ->
+                for (chunk in chunkForSsml(cleanText)) {
+                    val data = speakChunk(chunk, voice, ratePercent, pitchHz, 0)
+                    if (data.isEmpty()) {
+                        throw IllegalStateException("EdgeTTS returned an empty chunk for $voice")
+                    }
+                    output.write(data)
                 }
-                out.write(data)
-                any = true
             }
-            if (!any) null else target
+            if (!useCache) {
+                completed = true
+                target
+            } else {
+                if (!target.renameTo(cached)) {
+                    target.copyTo(cached, overwrite = true)
+                    target.delete()
+                }
+                pruneAudioCache(cacheDir)
+                if (cached.length() < 1024) {
+                    cached.delete()
+                    null
+                } else {
+                    completed = true
+                    cached
+                }
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             logcat(LogPriority.WARN, e) { "EdgeTTS synthesis failed" }
             null
         } finally {
-            runCatching { out.close() }
-            if (!any && target.exists()) target.delete()
+            if (!completed && target.exists()) target.delete()
         }
     }
 
-    /**
-     * Разбивает текст на куски ≤ [SSML_BYTE_LIMIT] байт UTF-8, не режа
-     * символы: большой текст уходит несколькими SSML-запросами.
-     */
-    private fun chunkForSsml(text: String, limit: Int = SSML_BYTE_LIMIT): List<String> {
-        if (text.toByteArray(Charsets.UTF_8).size <= limit) return listOf(text)
+    internal fun chunkForSsml(text: String, limit: Int = SSML_BYTE_LIMIT): List<String> {
+        if (text.isBlank() || limit <= 0) return emptyList()
         val chunks = mutableListOf<String>()
-        val rest = StringBuilder(text)
-        while (rest.isNotEmpty()) {
-            var take = limit
-            // Отступаем, пока не попадём на границу UTF-8 символа.
-            while (take > 0) {
-                val candidate = rest.substring(0, take)
-                if (candidate.isWholeUtf8()) break
-                take--
+        var start = 0
+        while (start < text.length) {
+            while (start < text.length && text[start].isWhitespace()) start++
+            if (start >= text.length) break
+            if (escapeXml(text.substring(start)).toByteArray(Charsets.UTF_8).size <= limit) {
+                chunks += text.substring(start).trim()
+                break
             }
-            if (take <= 0) take = limit
-            var part = rest.substring(0, take)
-            // Не резать XML-сущности (&amp; etc.) посередине.
-            val amp = part.lastIndexOf('&')
-            if (amp >= 0 && part.indexOf(';', amp) < 0 && part.length > amp + 1) {
-                part = part.substring(0, amp)
+            var low = start + 1
+            var high = text.length
+            var end = start
+            while (low <= high) {
+                val middle = (low + high) ushr 1
+                val size = escapeXml(text.substring(start, middle)).toByteArray(Charsets.UTF_8).size
+                if (size <= limit) {
+                    end = middle
+                    low = middle + 1
+                } else {
+                    high = middle - 1
+                }
             }
-            chunks += part.trim()
-            rest.delete(0, part.length)
+            if (end <= start) end = (start + 1).coerceAtMost(text.length)
+            val usefulStart = start + (end - start) * 3 / 4
+            val whitespace = text.substring(usefulStart, end).lastIndexOfAny(charArrayOf(' ', '\n', '\r', '\t'))
+            val cut = if (whitespace >= 0) usefulStart + whitespace + 1 else end
+            chunks += text.substring(start, cut).trim()
+            start = cut
         }
         return chunks.filter(String::isNotBlank)
     }
 
-    private fun String.isWholeUtf8(): Boolean = try {
-        this.toByteArray(Charsets.UTF_8).toString(Charsets.UTF_8) == this
-    } catch (e: Exception) {
-        false
+    private fun sanitizeForSsml(text: String): String = buildString(text.length) {
+        for (char in text) {
+            when {
+                char == '\n' || char == '\r' || char == '\t' -> append(char)
+                char.code in 0..31 || char.code in 127..159 -> Unit
+                else -> append(char)
+            }
+        }
+    }.replace("\r\n", "\n").replace('\r', '\n').trim()
+
+    private fun audioCacheFile(
+        directory: File,
+        text: String,
+        voice: String,
+        ratePercent: Int,
+        pitchHz: Int,
+    ): File {
+        val source = "$voice|$ratePercent|$pitchHz|$text"
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(source.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+        return File(directory, "$digest.mp3")
+    }
+
+    private fun pruneAudioCache(directory: File) {
+        val files = directory.listFiles { file -> file.isFile && file.extension.equals("mp3", true) }
+            ?.sortedBy { it.lastModified() }
+            .orEmpty()
+        var totalBytes = files.sumOf(File::length)
+        var remaining = files.size
+        for (file in files) {
+            if (remaining <= AUDIO_CACHE_FILES && totalBytes <= AUDIO_CACHE_BYTES) break
+            val size = file.length()
+            if (file.delete()) {
+                totalBytes -= size
+                remaining--
+            }
+        }
     }
 
     /** Один SSML-запрос на WebSocket, возвращает конкатенированный MP3. */
@@ -351,9 +414,10 @@ object EdgeTts {
             val rate = if (ratePercent >= 0) "+$ratePercent%" else "$ratePercent%"
             val pitch = if (pitchHz >= 0) "+${pitchHz}Hz" else "${pitchHz}Hz"
             val vol = if (volumePercent >= 0) "+$volumePercent%" else "$volumePercent%"
+            val language = voice.substringBefore('-', "en").lowercase(Locale.US)
             val ssml =
                 "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' " +
-                    "xml:lang='en-US'><voice name='$voice'>" +
+                    "xml:lang='$language'><voice name='${escapeXml(voice)}'>" +
                     "<prosody pitch='$pitch' rate='$rate' volume='$vol'>$s</prosody>" +
                     "</voice></speak>"
             webSocket.send(
@@ -381,6 +445,13 @@ object EdgeTts {
                 // Аудио идёт сразу после заголовка + \r\n\r\n (2 байта).
                 val data = bytes.substring(2 + headerLength)
                 if (data.size > 0) audio.write(data.toByteArray())
+            }
+        }
+
+        override fun onClosed(webSocket: WebSocket, response: Response) {
+            if (!finished) {
+                finished = true
+                onError(null)
             }
         }
 

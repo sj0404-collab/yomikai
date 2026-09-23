@@ -92,16 +92,13 @@ object SpeechMarkup {
         return out.trim().trim(',').trim()
     }
 
-    /**
-     * v1.9.41: финальная зачистка ПЕРЕД синтезом: движки не должны произносить
-     * имена знаков («точка точка точка», «восклицательный знак»): повторы
-     * `. ! ? ; : …` схлопываются в одну паузу-запятую, одиночные служебные
-     * символы удаляются. [strip] не трогаем: на экране «…» остаётся видимой.
-     */
     fun forSpeech(text: String): String {
-        var out = text.replace("…", ",")
-        out = out.replace(Regex("[.]{2,}"), ",")
-        out = out.replace(Regex("[!?;:]{2,}"), ",")
+        var out = text.replace(Regex("\\.{2,}"), "…")
+        out = out.replace(Regex("!{2,}"), "!!")
+        out = out.replace(Regex("\\?{2,}"), "??")
+        out = out.replace(Regex("([!?]{2})[!?]+"), "$1")
+        out = out.replace(Regex("(?:;;|:){2,}"), ";")
+        out = out.replace(Regex("\\s+([,!?;:…])"), "$1")
         out = out.replace(Regex("(^|\\s)[.,!?;:·•*#|/^_=+<>]+(\\s|$)"), " ")
         out = out.replace(Regex(",{2,}"), ",")
         out = out.replace(Regex("\\s{2,}"), " ")

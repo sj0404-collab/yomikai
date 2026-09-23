@@ -383,8 +383,8 @@ class AutoReadEngine(
                         scrollFraction = 0f,
                         regions = ocrRegions,
                         engineUsed = engineName,
-                        imageWidth = bitmap.width,
-                        imageHeight = bitmap.height,
+                        imageWidth = result.imageWidth,
+                        imageHeight = result.imageHeight,
                     )
                 }
 
@@ -485,12 +485,16 @@ class AutoReadEngine(
                                 j == i -> FrameRegion.State.CURRENT
                                 else -> FrameRegion.State.UPCOMING
                             },
+                            r.text,
                         )
                     }
 
-                    // Текст: приоритет — очищенный ассистентом, затем перевод, затем сырой OCR
-                    val speakTextRaw = prep?.text?.takeIf { it.isNotBlank() }
-                        ?: translations.getOrNull(i) ?: region.text
+                    val translatedText = translations.getOrNull(i)?.takeIf { it.isNotBlank() }
+                    val speakTextRaw = if (translate && language != target) {
+                        translatedText ?: region.text
+                    } else {
+                        prep?.text?.takeIf { it.isNotBlank() } ?: translatedText ?: region.text
+                    }
 
                     // Ручной режим важнее автоопределения: читатель выбрал
                     // голос кнопкой в читалке и ждёт именно его.
@@ -682,8 +686,7 @@ class AutoReadEngine(
                 OcrHistoryStore.addAutoRead(true, "озвучено (${System.currentTimeMillis() - t0} мс)", text.take(60))
             }
         }
-        // страховка: макс. время = длина текста * 220мс + запас 5с
-        val timeoutMs = text.length * 220L + 5_000L
+        val timeoutMs = ttsTimeoutMs(text.length, prefs.speechRate().get())
         val start = System.currentTimeMillis()
         while (!done.value && System.currentTimeMillis() - start < timeoutMs) {
             if (job?.isActive != true) {
@@ -1090,6 +1093,11 @@ class AutoReadEngine(
          */
         private const val OCR_FRAME_TIMEOUT_MS = 45_000L
 
+        fun ttsTimeoutMs(textLength: Int, speechRate: Float): Long {
+            val rate = speechRate.takeIf { it.isFinite() && it > 0f }?.coerceIn(0.5f, 2f) ?: 1f
+            return textLength.coerceAtLeast(0) * 220L / rate + 8_000L
+        }
+
         /** Настоящие одно- и двухбуквенные русские слова (союзы/предлоги/междометия). */
         private val RUSSIAN_SINGLE_WORD = setOf("а", "и", "в", "с", "у", "о", "я", "к")
         private val RUSSIAN_SHORT_WORD = setOf(
@@ -1217,7 +1225,14 @@ class AutoReadEngine(
             if (letters == 0) return false
             if (letters.toFloat() / total < 0.4f && total >= 3) return false
             // Одна-две буквы — настоящие русские слова (я, и, в, с, но, не…)
-            if (letters <= 2) return language == "ru" && isShortRussianWord(row)
+            if (letters <= 2) {
+                if (language != "ru") return false
+                val compact = row.filter(Char::isLetter).lowercase()
+                if (isShortRussianWord(compact)) return true
+                return compact.length == 2 &&
+                    compact.all { it in '\u0400'..'\u04FF' } &&
+                    Regex("^[\\p{L}][\\s—–-]+[\\p{L}][.!?…]*$").matches(row)
+            }
             when (language) {
                 "ru" -> {
                     val cyr = row.count { it in '\u0400'..'\u04FF' }
@@ -1247,7 +1262,7 @@ class AutoReadEngine(
             val words = text.split(Regex("\\s+"))
             return words.any { w -> w.count { it.isLetter() } >= 3 } ||
                 // Короткие настоящие русские слова (я, и, но, не…) — читаем.
-                (language == "ru" && words.any { isShortRussianWord(it) }) ||
+                (language == "ru" && words.any { isShortRussianWord(it.filter(Char::isLetter)) }) ||
                 // …или короткая осмысленная («Да!», «Ах!», «Нет?»)
                 (text.length in 2..6 && text.count { it.isLetter() } >= 2)
         }

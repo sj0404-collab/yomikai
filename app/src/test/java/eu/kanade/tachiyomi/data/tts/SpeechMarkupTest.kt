@@ -71,4 +71,21 @@ class SpeechMarkupTest {
         SpeechMarkup.strip("{1}{ж}  Я думала,  ÷ мы в кино идём...") shouldBe
             "Я думала, мы в кино идём..."
     }
+
+    @Test
+    fun `speech keeps natural sentence-ending punctuation`() {
+        SpeechMarkup.forSpeech("Подожди... Really?!") shouldBe "Подожди… Really?!"
+        SpeechMarkup.forSpeech("Нет!!! Почему???") shouldBe "Нет!! Почему??"
+    }
+
+    @Test
+    fun `edge ssml chunks count escaped bytes without splitting text`() {
+        val source = "&".repeat(1_000) + "尾"
+        val chunks = EdgeTts.chunkForSsml(source, limit = 100)
+
+        chunks.joinToString("") shouldBe source
+        chunks.maxOf { chunk ->
+            chunk.toByteArray(Charsets.UTF_8).size + chunk.count { it == '&' } * 4
+        } shouldBe 100
+    }
 }

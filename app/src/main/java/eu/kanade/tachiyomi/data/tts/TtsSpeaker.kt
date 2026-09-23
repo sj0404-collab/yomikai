@@ -889,25 +889,31 @@ object TtsSpeaker {
         val ratePercent = ((p.speechRate().get().coerceIn(0.5f, 2f) - 1f) * 100).toInt().coerceIn(-50, 100)
         val pitchHz = ((p.speechPitch().get().coerceIn(0.5f, 2f) - 1f) * 40).toInt().coerceIn(-50, 50)
         currentJob = scope.launch {
+            var delegated = false
             setSpeaking(true)
             try {
-                for (sentence in splitSentences(text)) {
-                    if (currentJob?.isActive != true) break
-                    val file = EdgeTts.synthesizeToFile(
-                        context,
-                        sentence,
-                        voice = voice,
-                        ratePercent = ratePercent,
-                        pitchHz = pitchHz,
-                    ) ?: continue
-                    playFileBlocking(file)
+                val file = EdgeTts.synthesizeToFile(
+                    context = context,
+                    text = text,
+                    voice = voice,
+                    ratePercent = ratePercent,
+                    pitchHz = pitchHz,
+                    useCache = true,
+                )
+                if (file == null) {
+                    delegated = true
+                    withContext(Dispatchers.Main) { speakSystem(context, text) }
+                } else {
+                    playFileBlocking(file, deleteAfterPlayback = false)
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                logcat(LogPriority.WARN, e) { "Edge TTS failed" }
+                delegated = true
+                logcat(LogPriority.WARN, e) { "Edge TTS failed; using system voice" }
+                withContext(Dispatchers.Main) { speakSystem(context, text) }
             } finally {
-                setSpeaking(false)
+                if (!delegated) setSpeaking(false)
             }
         }
     }
@@ -918,13 +924,19 @@ object TtsSpeaker {
         currentJob = scope.launch {
             setSpeaking(true)
             try {
+                val p = prefs()
                 val file = EdgeTts.synthesizeToFile(
-                    context,
-                    "Привет! Это тест голоса $voice.",
+                    context = context,
+                    text = "Привет! Это тест голоса $voice.",
                     voice = voice.ifBlank { EdgeTts.DEFAULT_VOICE },
+                    ratePercent = ((p.speechRate().get().coerceIn(0.5f, 2f) - 1f) * 100)
+                        .toInt().coerceIn(-50, 100),
+                    pitchHz = ((p.speechPitch().get().coerceIn(0.5f, 2f) - 1f) * 40)
+                        .toInt().coerceIn(-50, 50),
+                    useCache = true,
                 )
                 if (file != null) {
-                    playFileBlocking(file)
+                    playFileBlocking(file, deleteAfterPlayback = false)
                 } else {
                     setSpeaking(false)
                 }
@@ -1115,7 +1127,10 @@ object TtsSpeaker {
         }
     }
 
-    private suspend fun playFileBlocking(file: File) {
+    private suspend fun playFileBlocking(
+        file: File,
+        deleteAfterPlayback: Boolean = true,
+    ) {
         withContext(Dispatchers.IO) {
             suspendCancellableCoroutine { cont ->
                 val mp = MediaPlayer()
@@ -1124,12 +1139,12 @@ object TtsSpeaker {
                     mp.setDataSource(file.absolutePath)
                     mp.setOnCompletionListener {
                         runCatching { mp.release() }
-                        file.delete()
+                        if (deleteAfterPlayback) file.delete()
                         if (cont.isActive) cont.resume(Unit)
                     }
                     mp.setOnErrorListener { _, _, _ ->
                         runCatching { mp.release() }
-                        file.delete()
+                        if (deleteAfterPlayback) file.delete()
                         if (cont.isActive) cont.resume(Unit)
                         true
                     }
@@ -1137,11 +1152,11 @@ object TtsSpeaker {
                     mp.start()
                     cont.invokeOnCancellation {
                         runCatching { mp.stop(); mp.release() }
-                        file.delete()
+                        if (deleteAfterPlayback) file.delete()
                     }
                 } catch (e: Exception) {
                     runCatching { mp.release() }
-                    file.delete()
+                    if (deleteAfterPlayback) file.delete()
                     if (cont.isActive) cont.resume(Unit)
                 }
             }
