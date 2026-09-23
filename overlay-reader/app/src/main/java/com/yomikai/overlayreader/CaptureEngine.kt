@@ -70,7 +70,12 @@ class CaptureEngine(
     }
 
     private fun ensureStarted(): Boolean {
-        if (reader != null) return true
+        if (display != null && reader != null) return true
+        // Предыдущая попытка могла упасть уже после создания ImageReader:
+        // тогда reader остался не-null, а display — null, и ensureStarted()
+        // больше никогда не доходил до createVirtualDisplay (захват умирал
+        // навсегда). Перед повтором разбираем half-initialized состояние.
+        releaseCaptureResources()
 
         val metrics = DisplayMetrics()
         appContext.getSystemService(Context.WINDOW_SERVICE)
@@ -102,7 +107,26 @@ class CaptureEngine(
             Log.e("OverlayCapture", "createVirtualDisplay failed", e)
             null
         }
+        if (display == null) {
+            // Чистим за собой, чтобы следующий capture() честно попробовал снова.
+            releaseCaptureResources()
+        }
         return display != null
+    }
+
+    /**
+     * Гасит только собственные ресурсы захвата. MediaProjection не трогаем:
+     * она принадлежит сервису, и её остановка погасила бы всю сессию.
+     */
+    private fun releaseCaptureResources() {
+        runCatching { display?.release() }
+        runCatching { reader?.close() }
+        display = null
+        reader = null
+        handler?.looper?.quitSafely()
+        thread?.join(500)
+        thread = null
+        handler = null
     }
 
     private fun copyImage(image: android.media.Image): Bitmap? {
@@ -125,13 +149,7 @@ class CaptureEngine(
     }
 
     fun stop() {
-        runCatching { display?.release() }
-        runCatching { reader?.close() }
-        display = null
-        reader = null
-        handler?.looper?.quitSafely()
-        thread?.join(500)
-        thread = null
+        releaseCaptureResources()
         runCatching { projection.stop() }
     }
 }
