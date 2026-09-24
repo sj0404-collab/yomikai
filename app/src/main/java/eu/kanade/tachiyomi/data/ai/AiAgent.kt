@@ -565,6 +565,35 @@ object AiAgent {
             onFailure = { ToolResult(call.name, "ОШИБКА: ${it.message?.take(160)}", status = "error") },
         )
 
+        AiChatTools.TOOL_GEN_VIDEO -> runCatching {
+            val imagesArr = call.args.optJSONArray("images")
+            val images = when {
+                imagesArr != null -> (0 until imagesArr.length())
+                    .map { imagesArr.getString(it).trim() }
+                    .filter { it.startsWith("http", ignoreCase = true) }
+                else -> call.args.optString("images")
+                    .split('\n', ',')
+                    .map { it.trim() }
+                    .filter { it.startsWith("http", ignoreCase = true) }
+            }
+            AiChatTools.renderVideo(
+                context,
+                images,
+                call.args.optString("text"),
+                call.args.optInt("fps", 3),
+                call.args.optString("name").ifBlank { null },
+            )
+        }.fold(
+            onSuccess = { outcome ->
+                if (outcome.file != null) {
+                    ToolResult(call.name, outcome.output, outcome.file, status = "ok")
+                } else {
+                    ToolResult(call.name, outcome.output, status = "error")
+                }
+            },
+            onFailure = { ToolResult(call.name, "ОШИБКА: ${it.message?.take(160)}", status = "error") },
+        )
+
         "runner_chat" -> {
             val prefsR = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
             if (!prefsR.aiAllowRunner().get()) {

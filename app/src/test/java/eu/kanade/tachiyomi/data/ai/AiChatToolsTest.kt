@@ -21,6 +21,7 @@ class AiChatToolsTest {
             "voice_list",
             "voice_preview",
             "voice_set",
+            "gen_video",
         )
         AiChatTools.TOOL_NAMES.distinct().size shouldBe AiChatTools.TOOL_NAMES.size
     }
@@ -47,6 +48,13 @@ class AiChatToolsTest {
         // внешние голоса как «текущие».
         val docs = AiChatTools.SYSTEM_PROMPT_LINES.joinToString("\n")
         docs.contains("ru-RU-SvetlanaNeural") shouldBe true
+    }
+
+    @Test
+    fun `video tool documented as run on github runner`() {
+        // gen_video исполняется на GitHub-ранере (video-runner.yml) с PAT.
+        val line = AiChatTools.SYSTEM_PROMPT_LINES.first { "gen_video" in it }
+        line.contains("GitHub-ранер") shouldBe true
     }
 
     @Test

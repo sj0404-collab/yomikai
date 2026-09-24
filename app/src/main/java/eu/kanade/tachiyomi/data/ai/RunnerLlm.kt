@@ -56,6 +56,7 @@ object RunnerLlm {
     private const val REPO = "sj0404-collab/yomikai"
     private const val WORKFLOW = "llm-runner.yml"
     private const val WORKFLOW_OPENCODE = "opencode.yml"
+    private const val WORKFLOW_VIDEO = "video-runner.yml"
     // Графика opencode.yml живёт в main (GitHub диспатчит только воркфлоу из
     // default-ветки), а agent/, npm-hub/, tools/ — в ветке prototype-opencode-agent,
     // которую воркфлоу чекаутит первым шагом.
@@ -211,6 +212,160 @@ object RunnerLlm {
             },
         )
         null
+    }
+
+    //
+    // Генерация видео (video-runner.yml)
+    //
+
+    data class VideoRequest(
+        /** "text" — текстовая анимация; "slideshow" — из готовых картинок. */
+        val mode: String = "text",
+        /** Заголовок/капшн, рисуется поверх кадров. */
+        val text: String = "",
+        /** URL картинок для слайд-шоу (pollinations и т.п.). */
+        val images: List<String> = emptyList(),
+        val fps: Int = 3,
+    )
+
+    data class VideoResult(val file: File, val sizeBytes: Long)
+
+    /**
+     * Генерация видео НА РАНЕРЕ: диспатчим video-runner.yml, ждём артефакта
+     * video-<session> и скачиваем mp4. Python + ffmpeg на ubuntu-раннере не
+     * исполняют произвольный код из запроса — текст только рисуется на кадрах,
+     * картинки скачиваются по URL.
+     */
+    suspend fun startVideo(
+        context: Context,
+        request: VideoRequest,
+        onStatus: (String) -> Unit,
+    ): VideoResult? = withContext(Dispatchers.IO) {
+        val token = prefs().githubPat().get()
+        if (token.isBlank()) {
+            onStatus("Нет GitHub-токена: задайте PAT в настройках вкладки AI (⚙)")
+            return@withContext null
+        }
+        val session = "v" + System.currentTimeMillis().toString(36) + (1000..9999).random()
+
+        onStatus("Отправляем генерацию видео в GitHub Actions…")
+        val dispatchBody = JSONObject()
+            .put("ref", "main")
+            .put(
+                "inputs",
+                JSONObject()
+                    .put("session", session)
+                    .put("mode", if (request.mode == "slideshow") "slideshow" else "text")
+                    .put("text", request.text)
+                    .put("images", JSONArray(request.images))
+                    .put("fps", request.fps.coerceIn(1, 24)),
+            )
+        val dispatch = runCatching {
+            githubRequest(
+                token = token,
+                url = "https://api.github.com/repos/$REPO/actions/workflows/$WORKFLOW_VIDEO/dispatches",
+                method = "POST",
+                body = dispatchBody.toString(),
+            )
+        }.getOrElse {
+            onStatus("Не удалось связаться с GitHub: ${it.message ?: "ошибка сети"}")
+            return@withContext null
+        }
+        if (dispatch.code !in 200..299) {
+            onStatus("GitHub отклонил запуск (${dispatch.code}): ${apiError(dispatch.body)}")
+            return@withContext null
+        }
+
+        val deadline = System.currentTimeMillis() + VIDEO_TIMEOUT_MS
+        var lastStatus = ""
+        var runId: Long? = null
+        while (System.currentTimeMillis() < deadline) {
+            val state = fetchRunState(
+                token, session, "linux",
+                workflow = WORKFLOW_VIDEO, stepText = ::videoStepText,
+            )
+            runId = state.runId ?: runId
+            if (state.message != lastStatus) {
+                onStatus(state.message)
+                lastStatus = state.message
+            }
+
+            runId?.let { id ->
+                fetchVideoArtifact(token, id, session)?.let { result ->
+                    onStatus("✅ Видео готово: ${result.sizeBytes / 1024} КБ")
+                    return@withContext result
+                }
+            }
+
+            if (state.terminal) {
+                onStatus(state.message)
+                return@withContext null
+            }
+            delay(POLL_INTERVAL_MS)
+        }
+        onStatus(
+            if (runId == null) {
+                "Таймаут: GitHub не создал запуск за ${VIDEO_TIMEOUT_MS / 60_000} минут"
+            } else {
+                "Таймаут: видео не появилось за ${VIDEO_TIMEOUT_MS / 60_000} минут. " +
+                    "Последний статус: ${lastStatus.ifBlank { "неизвестен" }}"
+            },
+        )
+        null
+    }
+
+    private const val VIDEO_TIMEOUT_MS = 9L * 60_000L
+
+    /** Человекочитаемые статусы этапов video-runner.yml. */
+    private fun videoStepText(name: String): String? = when {
+        name.startsWith("Setup Python") -> "Готовим Python на ранере…"
+        name.startsWith("Create renderer") -> "Собираем генератор кадров…"
+        name.startsWith("Render frames") -> "Рисуем кадры видео…"
+        name.startsWith("Encode video") -> "Сжимаем видео…"
+        name.startsWith("Upload video") -> "Загружаем готовое видео…"
+        else -> null
+    }
+
+    /** Скачать артефакт video-<session> и вернуть первый mp4 внутри. */
+    private fun fetchVideoArtifact(token: String, runId: Long, sessionId: String): VideoResult? {
+        return runCatching {
+            val response = githubRequest(
+                token,
+                "https://api.github.com/repos/$REPO/actions/runs/$runId/artifacts?per_page=100",
+            )
+            if (response.code !in 200..299) return null
+            val artifacts = JSONObject(response.body).getJSONArray("artifacts")
+            var downloadUrl: String? = null
+            for (i in 0 until artifacts.length()) {
+                val artifact = artifacts.getJSONObject(i)
+                if (
+                    artifact.getString("name") == "video-$sessionId" &&
+                    !artifact.getBoolean("expired")
+                ) {
+                    downloadUrl = artifact.getString("archive_download_url")
+                    break
+                }
+            }
+            val url = downloadUrl ?: return null
+            val zip = githubDownload(token, url)
+            if (zip.code !in 200..299 || zip.body.isEmpty()) return null
+            var out: File? = null
+            ZipInputStream(zip.body.inputStream()).use { zis ->
+                var entry = zis.nextEntry
+                while (entry != null) {
+                    if (!entry.isDirectory && entry.name.endsWith(".mp4")) {
+                        val bytes = zis.readBytes()
+                        if (bytes.size >= 1024) {
+                            out = File.createTempFile("yomi_video_", ".mp4")
+                                .apply { writeBytes(bytes) }
+                            break
+                        }
+                    }
+                    entry = zis.nextEntry
+                }
+            }
+            out?.let { VideoResult(it, it.length()) }
+        }.getOrNull()
     }
 
     private const val START_TIMEOUT_MS = 12L * 60_000L

@@ -42,6 +42,7 @@ import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.SmartToy
+import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -342,6 +343,7 @@ fun ReaderAiChatOverlay(
                     enabled = !loading,
                     onImage = { input = "Нарисуй картинку: " },
                     onAudio = { input = "Создай аудиофайл (render_audio): " },
+                    onVideo = { input = "Сделай видео: " },
                     onZip = { send("Упакуй workspace в zip и покажи готовый файл", null, null) },
                 )
 
@@ -738,6 +740,7 @@ private fun QuickActionsRow(
     enabled: Boolean,
     onImage: () -> Unit,
     onAudio: () -> Unit,
+    onVideo: () -> Unit,
     onZip: () -> Unit,
 ) {
     Row(
@@ -759,6 +762,12 @@ private fun QuickActionsRow(
             icon = { Icon(Icons.Outlined.GraphicEq, null, modifier = Modifier.size(14.dp)) },
             enabled = enabled,
             onClick = onAudio,
+        )
+        QuickActionButton(
+            label = "Видео",
+            icon = { Icon(Icons.Outlined.Videocam, null, modifier = Modifier.size(14.dp)) },
+            enabled = enabled,
+            onClick = onVideo,
         )
         QuickActionButton(
             label = "Zip",

@@ -24,12 +24,14 @@ object AiChatTools {
     const val TOOL_VOICE_LIST = "voice_list"
     const val TOOL_VOICE_PREVIEW = "voice_preview"
     const val TOOL_VOICE_SET = "voice_set"
+    const val TOOL_GEN_VIDEO = "gen_video"
 
     val TOOL_NAMES = listOf(
         TOOL_RENDER_AUDIO,
         TOOL_VOICE_LIST,
         TOOL_VOICE_PREVIEW,
         TOOL_VOICE_SET,
+        TOOL_GEN_VIDEO,
     )
 
     /** Документация инструментов для системного промпта агента. */
@@ -38,6 +40,7 @@ object AiChatTools {
         "@tool voice_list {} — список голосов Edge TTS и какой сейчас выбран",
         "@tool voice_preview {\"voice\":\"ru-RU-DmitryNeural\"} — проиграть пробу голоса, чтобы пользователь послушал",
         "@tool voice_set {\"voice\":\"ru-RU-DmitryNeural\"} — сменить голос озвучки приложения на указанный",
+        "@tool gen_video {\"text\":\"заголовок\",\"images\":[\"https://image.pollinations.ai/prompt/a%20cat\"],\"fps\":3,\"name\":\"видео.mp4\"} — собрать видео на GitHub-ранере (нужен PAT-токен в настройках вкладки AI): slideshow из images или текстовая анимация; файл появится в чате готовым",
     )
 
     /** Короткий каталог голосов Edge TTS для `voice_list` (без сети). */
@@ -126,6 +129,47 @@ object AiChatTools {
             return@withContext RenderOutcome("ОШИБКА: не удалось записать файл: ${it.message?.take(100)}")
         }
         RenderOutcome("Аудио готово: audio/$mp3 (${dest.length() / 1024} КБ, голос «$v»)", dest)
+    }
+
+    /**
+     * Собрать видео на GitHub-ранере (video-runner.yml, нужен PAT-токен):
+     * текстовая анимация или слайд-шоу из [images]-URL. Готовый mp4 кладётся
+     * в workspace (`videos/`) и появляется в чате готовым.
+     */
+    suspend fun renderVideo(
+        context: Context,
+        images: List<String>,
+        text: String,
+        fps: Int,
+        nameHint: String?,
+        onStatus: (String) -> Unit = {},
+    ): RenderOutcome = withContext(Dispatchers.IO) {
+        val result = RunnerLlm.startVideo(
+            context,
+            RunnerLlm.VideoRequest(
+                mode = if (images.isNotEmpty()) "slideshow" else "text",
+                text = text,
+                images = images,
+                fps = fps,
+            ),
+            onStatus,
+        )
+        if (result == null) {
+            return@withContext RenderOutcome("ОШИБКА: видео не создано — нужен GitHub-токен (⚙ вкладки AI) или сеть не дала связаться с ранером")
+        }
+        val base = (nameHint ?: "video_${System.currentTimeMillis() / 1000}").let(::sanitizeName)
+        val mp4name = if (base.endsWith(".mp4", true)) base else "$base.mp4"
+        val dest = AiWorkspace.resolve(context, "videos/$mp4name")
+        if (dest == null) {
+            return@withContext RenderOutcome("ОШИБКА: некорректное имя файла: $nameHint")
+        }
+        runCatching {
+            dest.parentFile?.mkdirs()
+            result.file.copyTo(dest, overwrite = true)
+        }.onFailure {
+            return@withContext RenderOutcome("ОШИБКА: не удалось записать файл: ${it.message?.take(100)}")
+        }
+        RenderOutcome("Видео готово: videos/$mp4name (${dest.length() / 1024} КБ)", dest)
     }
 
     /** Только безопасные для файловой системы символы. */
