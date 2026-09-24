@@ -96,7 +96,7 @@ object AiPlugins {
         // Инструменты реестра видимости вкладок (UiTabs): тоже закрыты, иначе
         // плагин с именем ui_tab_hide перехватил бы управление навигацией.
         "ui_tab_hide", "ui_tab_show", "ui_tab_list",
-    ) + AiReaderTools.TOOL_NAMES
+    ) + AiReaderTools.TOOL_NAMES + AiChatTools.TOOL_NAMES
 
     private fun toJson(p: Plugin) = JSONObject()
         .put("name", sanitize(p.name))

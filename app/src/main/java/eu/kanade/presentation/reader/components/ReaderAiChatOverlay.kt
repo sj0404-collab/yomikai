@@ -10,6 +10,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -31,12 +33,14 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Send
+import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.GraphicEq
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -333,6 +337,13 @@ fun ReaderAiChatOverlay(
                         }
                     }
                 }
+
+                QuickActionsRow(
+                    enabled = !loading,
+                    onImage = { input = "Нарисуй картинку: " },
+                    onAudio = { input = "Создай аудиофайл (render_audio): " },
+                    onZip = { send("Упакуй workspace в zip и покажи готовый файл", null, null) },
+                )
 
                 Row(
                     modifier = Modifier
@@ -719,5 +730,59 @@ private fun ChatBubble(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun QuickActionsRow(
+    enabled: Boolean,
+    onImage: () -> Unit,
+    onAudio: () -> Unit,
+    onZip: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        QuickActionButton(
+            label = "Картинка",
+            icon = { Icon(Icons.Outlined.Image, null, modifier = Modifier.size(14.dp)) },
+            enabled = enabled,
+            onClick = onImage,
+        )
+        QuickActionButton(
+            label = "Аудио",
+            icon = { Icon(Icons.Outlined.GraphicEq, null, modifier = Modifier.size(14.dp)) },
+            enabled = enabled,
+            onClick = onAudio,
+        )
+        QuickActionButton(
+            label = "Zip",
+            icon = { Icon(Icons.Outlined.Archive, null, modifier = Modifier.size(14.dp)) },
+            enabled = enabled,
+            onClick = onZip,
+        )
+    }
+}
+
+@Composable
+private fun QuickActionButton(
+    label: String,
+    icon: @Composable () -> Unit,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+    ) {
+        icon()
+        Spacer(Modifier.width(4.dp))
+        Text(label, style = MaterialTheme.typography.bodySmall)
     }
 }

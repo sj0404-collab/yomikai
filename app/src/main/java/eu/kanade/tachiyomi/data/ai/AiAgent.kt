@@ -143,6 +143,8 @@ object AiAgent {
             "@tool github_api {\"path\":\"/repos/OWNER/REPO/actions/runs?per_page=3\"} — GET-запрос к GitHub API привязанным токеном (если разрешено)\n" +
             "ЧИТАЛКА, РАСПОЗНАВАНИЕ И ОЗВУЧКА (реестры плагинов приложения):\n" +
             AiReaderTools.SYSTEM_PROMPT_LINES.joinToString("\n") { it } + "\n" +
+            "ГЕНЕРАЦИЯ И ГОЛОСА AI-ЧАТА (файлы создаются в workspace и появляются в чате готовыми):\n" +
+            AiChatTools.SYSTEM_PROMPT_LINES.joinToString("\n") { it } + "\n" +
             "Если пользователь жалуется, что текст распознаётся плохо или не тем порядком, — " +
             "сначала reader_status, затем ocr_preset с подходящим id (manga/manhwa/comic/balanced).\n" +
             "Если пользователь жалуется на озвучку/голоса/синтез (молчит, один голос на всех ролей, " +
@@ -394,7 +396,7 @@ object AiAgent {
             "provider_create", "provider_edit", "provider_delete", "provider_list",
             "ui_action_create", "ui_action_edit", "ui_action_delete", "ui_action_list",
             "ui_tab_hide", "ui_tab_show", "ui_tab_list",
-        ) + AiReaderTools.TOOL_NAMES + AiPlugins.list(context).map { it.name }
+        ) + AiReaderTools.TOOL_NAMES + AiChatTools.TOOL_NAMES + AiPlugins.list(context).map { it.name }
 
     /**
      * Разбор вызовов инструментов. Модели (особенно бесплатные) пишут вызов
@@ -531,6 +533,37 @@ object AiAgent {
         AiReaderTools.TOOL_TTS_STATUS -> runCatching {
             ToolResult(call.name, AiReaderTools.ttsStatus(context))
         }.getOrElse { ToolResult(call.name, "ОШИБКА: ${it.message?.take(160)}") }
+
+        AiChatTools.TOOL_VOICE_LIST -> runCatching {
+            ToolResult(call.name, AiChatTools.voiceList(context), status = "ok")
+        }.getOrElse { ToolResult(call.name, "ОШИБКА: ${it.message?.take(160)}", status = "error") }
+
+        AiChatTools.TOOL_VOICE_PREVIEW -> runCatching {
+            ToolResult(call.name, AiChatTools.previewVoice(context, call.args.optString("voice").ifBlank { null }), status = "ok")
+        }.getOrElse { ToolResult(call.name, "ОШИБКА: ${it.message?.take(160)}", status = "error") }
+
+        AiChatTools.TOOL_VOICE_SET -> runCatching {
+            val out = AiChatTools.voiceSet(call.args.optString("voice"))
+            ToolResult(call.name, out, status = if (out.startsWith("ОШИБКА")) "error" else "ok")
+        }.getOrElse { ToolResult(call.name, "ОШИБКА: ${it.message?.take(160)}", status = "error") }
+
+        AiChatTools.TOOL_RENDER_AUDIO -> runCatching {
+            AiChatTools.renderAudio(
+                context,
+                call.args.optString("text"),
+                call.args.optString("voice").ifBlank { null },
+                call.args.optString("name").ifBlank { null },
+            )
+        }.fold(
+            onSuccess = { outcome ->
+                if (outcome.file != null) {
+                    ToolResult(call.name, outcome.output, outcome.file, status = "ok")
+                } else {
+                    ToolResult(call.name, outcome.output, status = "error")
+                }
+            },
+            onFailure = { ToolResult(call.name, "ОШИБКА: ${it.message?.take(160)}", status = "error") },
+        )
 
         "runner_chat" -> {
             val prefsR = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
