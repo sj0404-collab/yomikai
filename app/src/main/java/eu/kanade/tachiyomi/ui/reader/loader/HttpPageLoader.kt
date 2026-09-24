@@ -23,7 +23,6 @@ import java.util.concurrent.PriorityBlockingQueue
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.incrementAndFetch
-import kotlin.math.min
 
 /**
  * Loader used to load chapters from an online source.
@@ -41,7 +40,12 @@ internal class HttpPageLoader(
      */
     private val queue = PriorityBlockingQueue<PriorityPage>()
 
-    private val preloadSize = 4
+    /**
+     * Индексы страниц, уже поставленных в очередь для фоновой загрузки.
+     * Защищает от дубликатов в [queue], когда страница пере-привязывается
+     * (скролл туда-сюда) во время полного префетча главы.
+     */
+    private val enqueued = java.util.Collections.synchronizedSet(mutableSetOf<Int>())
 
     init {
         scope.launchIO {
@@ -101,13 +105,14 @@ internal class HttpPageLoader(
         if (page.status == Page.State.Queue) {
             queuedPages += PriorityPage(page, PriorityPage.DEFAULT).also { queue.offer(it) }
         }
-        queuedPages += preloadNextPages(page, preloadSize)
+        queuedPages += preloadRemainingPages(page)
 
         suspendCancellableCoroutine<Nothing> { continuation ->
             continuation.invokeOnCancellation {
                 queuedPages.forEach {
                     if (it.page.status == Page.State.Queue) {
                         queue.remove(it)
+                        enqueued.remove(it.page.index)
                     }
                 }
             }
@@ -146,24 +151,31 @@ internal class HttpPageLoader(
     }
 
     /**
-     * Preloads the given [amount] of pages after the [currentPage] with a lower priority.
+     * Полный фоновый префетч оставшихся страниц главы (не только 4 следующих).
      *
-     * @return a list of [PriorityPage] that were added to the [queue]
+     * Каждая прочитанная онлайн-страница укладывается в [ChapterCache] — так
+     * книгу можно дочитать офлайн с того места, где остановился, без повторной
+     * загрузки. Текущая страница всегда грузится с приоритетом DEFAULT выше
+     * фоновых ADJACENT, поэтому чтение остаётся мгновенным, а очередь
+     * непрерывно кеширует все оставшиеся страницы.
+     *
+     * @return список [PriorityPage], добавленных в [queue]
      */
-    private fun preloadNextPages(currentPage: ReaderPage, amount: Int): List<PriorityPage> {
+    private fun preloadRemainingPages(currentPage: ReaderPage): List<PriorityPage> {
         val pageIndex = currentPage.index
         val pages = currentPage.chapter.pages ?: return emptyList()
-        if (pageIndex == pages.lastIndex) return emptyList()
+        if (pageIndex >= pages.lastIndex) return emptyList()
 
-        return pages
-            .subList(pageIndex + 1, min(pageIndex + 1 + amount, pages.size))
-            .mapNotNull {
-                if (it.status == Page.State.Queue) {
-                    PriorityPage(it, PriorityPage.ADJACENT).apply { queue.offer(this) }
-                } else {
-                    null
-                }
+        val offered = mutableListOf<PriorityPage>()
+        for (i in (pageIndex + 1)..pages.lastIndex) {
+            val candidate = pages[i]
+            if (candidate.status == Page.State.Queue && enqueued.add(candidate.index)) {
+                val priorityPage = PriorityPage(candidate, PriorityPage.ADJACENT)
+                queue.offer(priorityPage)
+                offered += priorityPage
             }
+        }
+        return offered
     }
 
     /**
@@ -193,6 +205,10 @@ internal class HttpPageLoader(
             if (e is CancellationException) {
                 throw e
             }
+        } finally {
+            // Страница обработана (успешно или с ошибкой): разрешаем поставить
+            // её в очередь снова при следующем пере-привязывании.
+            enqueued.remove(page.index)
         }
     }
 }

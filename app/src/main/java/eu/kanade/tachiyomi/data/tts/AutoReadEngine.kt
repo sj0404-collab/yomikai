@@ -246,9 +246,15 @@ class AutoReadEngine(
             _isReading.value = true
             var aiRefine: Job? = null
             try {
-                val pixels = IntArray(bitmap.width * bitmap.height)
-                bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-                val image = OcrImage(bitmap.width, bitmap.height, pixels)
+                // v1.9.91: кадр для OCR уменьшаем ДО минимально читаемого разрешения
+                // (детектор движка всё равно жмёт всё до ~736px). Так конвертация
+                // пикселей и онлайн-вызовы выполняются мгновенно в фоне, а текст
+                // остаётся читаемым.
+                val scanBitmap = downscaleForScan(bitmap)
+                val ocrBitmap = scanBitmap
+                val pixels = IntArray(ocrBitmap.width * ocrBitmap.height)
+                ocrBitmap.getPixels(pixels, 0, ocrBitmap.width, 0, 0, ocrBitmap.width, ocrBitmap.height)
+                val image = OcrImage(ocrBitmap.width, ocrBitmap.height, pixels)
                 // Кадр в JPEG для AI-определения пола говорящих (если включено)
                 // В ручном режиме пол задан читателем — AI Vision не нужен.
                 val genderJpeg: ByteArray? = if (prefs.aiGenderVoices().get() &&
@@ -256,12 +262,12 @@ class AutoReadEngine(
                 ) {
                     runCatching {
                         val out = java.io.ByteArrayOutputStream()
-                        val scaled = if (bitmap.width > 1024) {
-                            val h = bitmap.height * 1024 / bitmap.width
-                            Bitmap.createScaledBitmap(bitmap, 1024, h, true)
-                        } else bitmap
+                        val scaled = if (ocrBitmap.width > 1024) {
+                            val h = ocrBitmap.height * 1024 / ocrBitmap.width
+                            Bitmap.createScaledBitmap(ocrBitmap, 1024, h, true)
+                        } else ocrBitmap
                         scaled.compress(Bitmap.CompressFormat.JPEG, 70, out)
-                        if (scaled !== bitmap && !scaled.isRecycled) scaled.recycle()
+                        if (scaled !== ocrBitmap && !scaled.isRecycled) scaled.recycle()
                         out.toByteArray()
                     }.getOrNull()
                 } else null
@@ -290,8 +296,8 @@ class AutoReadEngine(
                         chapterId = chapterId,
                         pageIndex = pageIndex,
                         ocrModel = prefs.ocrModel().get(),
-                        imageWidth = bitmap.width,
-                        imageHeight = bitmap.height,
+                        imageWidth = ocrBitmap.width,
+                        imageHeight = ocrBitmap.height,
                         regions = emptyList(),
                     )
                 }
@@ -319,21 +325,34 @@ class AutoReadEngine(
                     Line(normalizeOcrTextForDisplay(CyrillicTranslitFixer.autoFixCyrillic(it.text)).trim(), it.boundingBox)
                 }
                 val wholePage = result.regions.size == 1 && result.regions.first().isWholePage
-                if (wholePage && !bitmap.isRecycled) {
-                    val bubbleLines = runCatching { readBubbles(bitmap, chapterId, pageIndex, order) }
-                        .onFailure {
-                            logcat(LogPriority.WARN, it) { "Bubble detection failed" }
-                            OcrHistoryStore.addAutoRead(false, "детектор облачков", it.message ?: it.javaClass.simpleName)
-                        }
-                        .getOrDefault(emptyList())
-                    lines = if (bubbleLines.isNotEmpty()) {
-                        bubbleLines
+                // v1.9.91: полностраничные (AI) движки распознают ВСЮ видимую
+                // область ОДНИМ вызовом. Больше не режем кадр на маленькие
+                // баблы и не распознаём каждый кроп по отдельности — это
+                // замедляло AI-OCR и теряло слова. Строки целой страницы сразу
+                // становятся репликами; YOLO-баллоны остаются запасным путём,
+                // когда модель вернула пустой результат.
+                if (wholePage && !ocrBitmap.isRecycled) {
+                    val wholeText = lines.firstOrNull()?.text.orEmpty()
+                    val usableWhole = wholeText.count(Char::isLetter) >= 4
+                    lines = if (usableWhole) {
+                        splitWholePageToLines(lines.first())
                     } else {
-                        // Фолбэк: строки полностраничного текста как реплики
-                        lines.firstOrNull()?.let { splitWholePageToLines(it) } ?: emptyList()
+                        val bubbleLines = runCatching { readBubbles(ocrBitmap, chapterId, pageIndex, order) }
+                            .onFailure {
+                                logcat(LogPriority.WARN, it) { "Bubble detection failed" }
+                                OcrHistoryStore.addAutoRead(false, "детектор облачков", it.message ?: it.javaClass.simpleName)
+                            }
+                            .getOrDefault(emptyList())
+                        if (bubbleLines.isNotEmpty()) {
+                            bubbleLines
+                        } else {
+                            // Фолбэк: строки полностраничного текста как реплики
+                            lines.firstOrNull()?.let { splitWholePageToLines(it) } ?: emptyList()
+                        }
                     }
                 }
                 if (!bitmap.isRecycled) bitmap.recycle()
+                if (scanBitmap !== bitmap && !scanBitmap.isRecycled) scanBitmap.recycle()
 
                 // Локальный OCR (Cyrillic PP-OCR) отдаёт регион на КАЖДУЮ
                 // строку: реплика из двух строк распадалась на два разных
@@ -589,8 +608,14 @@ class AutoReadEngine(
         if (prefs.autoScreenshotEnabled().get()) {
             scope.launch {
                 runCatching {
-                    withTimeout(OCR_FRAME_TIMEOUT_MS) {
-                        scanPageOcr.await(chapterId, pageIndex, bitmap.toOcrImage())
+                    // Скриншот в фоне и в минимально читаемом разрешении.
+                    val scaled = downscaleForScan(bitmap)
+                    try {
+                        withTimeout(OCR_FRAME_TIMEOUT_MS) {
+                            scanPageOcr.await(chapterId, pageIndex, scaled.toOcrImage())
+                        }
+                    } finally {
+                        if (scaled !== bitmap && !scaled.isRecycled) scaled.recycle()
                     }
                 }.onSuccess { result ->
                     if (result.regions.isEmpty()) return@onSuccess
@@ -1083,7 +1108,29 @@ class AutoReadEngine(
 
     companion object {
         private const val HISTORY_LIMIT = 600
-        private const val MAX_BUBBLES_PER_FRAME = 14
+        private const val MAX_BUBBLES_PER_FRAME = 40
+
+        /**
+         * Максимальная длинная сторона кадра для OCR: минимальное разрешение,
+         * при котором текст ещё читается. Детектор движка всё равно масштабирует
+         * кадр до ~736px, поэтому уменьшенный заранее кадр ускоряет конвертацию
+         * пикселей и онлайн-OCR без потери слов.
+         */
+        private const val OCR_SCAN_MAX_EDGE = 1600
+
+        /** Возвращает кадр в минимально читаемом разрешении (сам же, если он уже мал). */
+        private fun downscaleForScan(src: Bitmap): Bitmap {
+            if (src.isRecycled) return src
+            val longEdge = maxOf(src.width, src.height)
+            if (longEdge <= OCR_SCAN_MAX_EDGE) return src
+            val scale = OCR_SCAN_MAX_EDGE.toFloat() / longEdge
+            return Bitmap.createScaledBitmap(
+                src,
+                (src.width * scale).toInt().coerceAtLeast(1),
+                (src.height * scale).toInt().coerceAtLeast(1),
+                true,
+            )
+        }
 
         /**
          * Максимальное время OCR одного кадра в авточтении. Локальный движок

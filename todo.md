@@ -97,3 +97,15 @@
 - [x] Keep UTF-8/Cyrillic fidelity, full-bubble rescue, short utterances, safe line-wrap joining, and no pseudo-word hallucination as one shared quality gate.
 - [x] Run the complete regression suite before triggering exactly one signed release APK build in GitHub Actions: `release.yml` now runs migrations, the focused Cyrillic OCR tests, the CTC scoring tests and the full unit-test suite before `assembleRelease`, so an unverified commit cannot produce an APK. Local sandbox compilation stays blocked because Android SDK is unavailable; the GitHub runner remains the authoritative build/test environment.
 - [ ] Upload only the verified Yomihon release APK and its Markdown quality report to GoFile.
+
+## v1.9.91: единый бейдж, OCR всей области, мгновенные скрины, полный кеш главы
+
+- [x] Единый бейдж 🔊 при озвучке реплики: `OcrBubbleVoiceOverlay` рисует ровно один значок у текущего бабла (`isSpeaking = readingActive` в `ReaderActivity`); вне озвучки остаётся только перетаскиваемый значок.
+- [x] Все OCR-модели распознают всю видимую область целиком: `AutoReadEngine.readFrame` для полностраничных (AI) движков больше не режет кадр на баблы и не распознаёт кропы по отдельности — результат всей области сразу делится на реплики; YOLO-баллоны остались запасным путём для пустого результата.
+- [x] Фоновый скрин в минимально читаемом разрешении: `downscaleForScan` (длинная сторона 1600px) в `readFrame` и `captureInstantScreenshot` — «часики» сканирования быстрые, текст не теряется (детектор и так жмёт до 736px).
+- [x] Все слова распознаются: лимит баблов на кадр поднят с 14 до 40, основной путь возвращает все слова видимой области.
+- [x] Читалка открывает и кеширует ВСЕ страницы: `HttpPageLoader` префетчит оставшиеся страницы всей главы (не только 4), текущая страница приоритетнее фоновых; `ChapterCache` поднят с 100 МБ до 1 ГБ.
+- [x] Автоочистка кеша после прочтения: `ReaderActivity.pruneReadPagesFromCache` + `ChapterCache.removeImageFromCache` — прочитанные позади страницы освобождаются (кроме одной ближайшей).
+- [x] Локальная проверка: `:app:compileDebugKotlin`, `:app:testDebugUnitTest` (вкл. `AutoReadEngineCleanTest`), `:data:testDebugUnitTest`, `verifySqlDelightMigration` — все зелёные.
+- [x] Отчёт качества `docs/ocr-releases/2026-09-24-v1.9.91.md` и `CURRENT.md`.
+- [ ] Push на `main` и тег `v1.9.91` → единственная подписанная сборка в GitHub Actions `release.yml`; проверить SHA-256/размер APK и релиз.

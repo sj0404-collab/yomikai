@@ -85,6 +85,7 @@ import eu.kanade.presentation.reader.components.ChapterNavigatorType
 import eu.kanade.presentation.reader.settings.ReaderSettingsDialog
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder
+import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.data.saver.Image
@@ -985,6 +986,8 @@ class ReaderActivity : BaseActivity() {
                         },
                         perBubble = true,
                         draggable = true,
+                        // Единый бейдж: пока TTS озвучивает реплику — один значок.
+                        isSpeaking = readingActive,
                     )
                 }
 
@@ -1427,7 +1430,30 @@ class ReaderActivity : BaseActivity() {
         ) {
             dismissActiveOcrOverlaySession()
         }
+        // Страница стала активной — прочитанные позади страницы автоматически
+        // освобождаются из кеша (префетч всей главы не раздувает хранилище).
+        pruneReadPagesFromCache(page)
         viewModel.onPageSelected(page)
+    }
+
+    /**
+     * Автоочистка кеша прочитанных страниц: онлайн-префетч подтягивает ВСЮ
+     * главу в кеш, поэтому страницы, которые пользователь уже пролистал,
+     * удаляем сами после их прочтения. Ближайшую позади страницу сохраняем —
+     * на случай возврата на шаг назад.
+     */
+    private fun pruneReadPagesFromCache(currentPage: ReaderPage) {
+        val pages = currentPage.chapter.pages ?: return
+        if (currentPage.index <= 1) return
+        val chapterCache = uy.kohesive.injekt.Injekt.get<ChapterCache>()
+        for (i in 0 until currentPage.index - 1) {
+            val imageUrl = pages[i].imageUrl ?: continue
+            runCatching {
+                if (chapterCache.isImageInCache(imageUrl)) {
+                    chapterCache.removeImageFromCache(imageUrl)
+                }
+            }
+        }
     }
 
     /**

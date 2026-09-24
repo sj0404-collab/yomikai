@@ -34,19 +34,15 @@ import mihon.domain.ocr.model.OcrBoundingBox
 import kotlin.math.roundToInt
 
 /**
- * Значки 🔊 поверх реплик (баблов) читалки.
+ * Значок 🔊 над репликами (баблами) читалки.
  *
- * Показываются по переключателю «значки озвучки» (иначе на странице тишина,
- * чтобы не мешать чтению). Дают два способа озвучить реплику:
- *  - **Значок у текущей реплики** ([perBubble]): маленькая кнопка 🔊 в правом
- *    верхнем углу рамки бабла, который звучит сейчас; тап — озвучить его текст.
- *  - **Перетаскиваемый значок** ([draggable]): один значок перетаскивается,
- *    а на отпускании привязывается к ближайшему баблу и озвучивает его.
+ * Один-единственный бейдж: пока TTS озвучивает реплику ([isSpeaking] — true),
+ * показывается ровно ОДИН значок у текущего бабла (справа сверху от его рамки),
+ * а не россыпь значков по странице. Когда озвучка не идёт, значков на данных
+ * нет — остаётся только перетаскиваемый значок для ручной озвучки реплики.
  *
  * Координаты баблов — нормализованные 0..1 относительно изображения. Здесь они
- * маппятся на размер компоновки (как у [AutoReadHighlight] по умолчанию). Если
- * страница letterbox-ится и значки смещаются, это известное допущение; точный
- * [imageRect] при желании можно прокинуть через параметр в будущем.
+ * маппятся на размер компоновки (как у [AutoReadHighlight] по умолчанию).
  */
 @Composable
 fun OcrBubbleVoiceOverlay(
@@ -56,46 +52,55 @@ fun OcrBubbleVoiceOverlay(
     perBubble: Boolean = true,
     draggable: Boolean = true,
     iconColor: Color = Color(0xFF00E5FF),
+    isSpeaking: Boolean = false,
 ) {
     if (regions.isEmpty()) return
     BoxWithConstraints(
-        modifier = modifier.fillMaxSize().semantics { contentDescription = "Значки озвучки реплик" },
+        modifier = modifier.fillMaxSize().semantics { contentDescription = "Бейдж озвучки реплик" },
     ) {
         val maxW = maxWidth
         val maxH = maxHeight
         val iconSize = 30.dp
 
-        if (perBubble) {
-            // Раньше значок рисовался на КАЖДОМ регионе кадра, и страница
-            // выглядела усыпанной иконками. Показываем один — у реплики,
-            // которая звучит сейчас; порядок чтения ведёт его по баблам.
-            regions.filter { it.state == AutoReadEngine.FrameRegion.State.CURRENT }
-                .forEach { region ->
-                    val box = region.box
-                    if (region.text.isBlank() || !box.isValidForIcon()) return@forEach
-                    val currentIndex = regions.indexOf(region)
-                    val xDp = (box.left * maxW.value).dp
-                    val yDp = (box.top * maxH.value).dp
-                    val wDp = ((box.right - box.left) * maxW.value).dp
-                    Box(
-                        modifier = Modifier
-                            .offset(x = xDp + wDp - iconSize, y = yDp - iconSize / 3)
-                            .size(iconSize)
-                            .pointerInput(currentIndex, region.text, onSpeakRegion) {
-                                detectTapGestures { onSpeakRegion(region.text, currentIndex) }
-                            }
-                            .semantics {
-                                contentDescription =
-                                    "Озвучить реплику ${region.index}: ${region.text.take(30)}"
-                            },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        SpeakerBadge(color = iconColor, size = iconSize)
-                    }
+        if (isSpeaking) {
+            // ЕДИНЫЙ бейдж: один индикатор у реплики, которую TTS озвучивает
+            // сейчас. Если рамка текущей реплики неизвестна — фиксируем значок
+            // в верхнем правом углу страницы, чтобы он всё равно был виден.
+            val current = regions.firstOrNull { it.state == AutoReadEngine.FrameRegion.State.CURRENT }
+            if (current != null && current.text.isNotBlank() && current.box.isValidForIcon()) {
+                val box = current.box
+                val currentIndex = regions.indexOf(current)
+                val xDp = (box.left * maxW.value).dp
+                val yDp = (box.top * maxH.value).dp
+                val wDp = ((box.right - box.left) * maxW.value).dp
+                Box(
+                    modifier = Modifier
+                        .offset(x = xDp + wDp - iconSize, y = yDp - iconSize / 3)
+                        .size(iconSize)
+                        .pointerInput(currentIndex, current.text, onSpeakRegion) {
+                            detectTapGestures { onSpeakRegion(current.text, currentIndex) }
+                        }
+                        .semantics {
+                            contentDescription =
+                                "Озвучить реплику ${current.index}: ${current.text.take(30)}"
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    SpeakerBadge(color = iconColor, size = iconSize)
                 }
-        }
-
-        if (draggable) {
+            } else {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 8.dp, end = 8.dp)
+                        .size(iconSize),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    SpeakerBadge(color = iconColor, size = iconSize)
+                }
+            }
+        } else if (draggable) {
+            // Не звучит — только перетаскиваемый значок для ручной озвучки.
             DraggableSpeakIcon(regions = regions, onSpeakRegion = onSpeakRegion, accent = iconColor)
         }
     }

@@ -176,6 +176,22 @@ class ChapterCache(
     }
 
     /**
+     * Remove image from cache by its url.
+     *
+     * v1.9.91: прочитанные онлайн-страницы автоматически освобождаются из
+     * кеша после их прочтения (полный префетч главы не раздувает хранилище).
+     *
+     * @param imageUrl url of image.
+     */
+    fun removeImageFromCache(imageUrl: String) {
+        try {
+            diskCache.remove(DiskUtil.hashKeyForDisk(imageUrl))
+        } catch (e: Exception) {
+            logcat(LogPriority.WARN, e) { "Failed to remove image from cache" }
+        }
+    }
+
+    /**
      * Remove file from cache.
      *
      * @param file name of file "md5.0".
@@ -210,4 +226,7 @@ private const val PARAMETER_APP_VERSION = 1
 private const val PARAMETER_VALUE_COUNT = 1
 
 /** The maximum number of bytes this cache should use to store.  */
-private const val PARAMETER_CACHE_SIZE = 100L * 1024 * 1024
+// v1.9.91: читалка кеширует ВСЕ страницы главы при онлайн-чтении (полный
+// префетч), чтобы книгу можно было дочитать офлайн с места остановки.
+// 100 МБ LRU вытеснял первые страницы большого тома — поднимаем до 1 ГБ.
+private const val PARAMETER_CACHE_SIZE = 1024L * 1024 * 1024
