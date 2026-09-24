@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -36,9 +37,14 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import cafe.adriel.voyager.navigator.LocalNavigator
+import cafe.adriel.voyager.navigator.currentOrThrow
+import coil3.compose.AsyncImage
 import eu.kanade.presentation.util.Screen as YomikaiScreen
+import java.io.File
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import mihon.data.ocr.OcrScreenshotBuffer
@@ -143,82 +149,43 @@ class ScreenshotDetailScreen(
                 color = MaterialTheme.colorScheme.primary,
             )
 
-            val regionColors = listOf(
-                Color(0x8800E5FF), Color(0x88FF6D00), Color(0x88AA00FF),
-                Color(0x8800E676), Color(0x88FFD600), Color(0x88FF1744),
-            )
-
-            Canvas(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(420.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
-            ) {
-                val canvasW = size.width
-                val canvasH = size.height
-
-                // Сетка-подложка (лёгкая)
-                for (i in 1..4) {
-                    drawLine(
-                        color = Color.LightGray.copy(alpha = 0.3f),
-                        start = Offset(0f, canvasH * i / 5),
-                        end = Offset(canvasW, canvasH * i / 5),
-                        strokeWidth = 1f,
-                    )
-                    drawLine(
-                        color = Color.LightGray.copy(alpha = 0.3f),
-                        start = Offset(canvasW * i / 5, 0f),
-                        end = Offset(canvasW * i / 5, canvasH),
-                        strokeWidth = 1f,
-                    )
-                }
-
-                val paint = android.graphics.Paint().apply {
-                    textSize = 11.sp.toPx()
-                    isAntiAlias = true
-                    color = android.graphics.Color.DKGRAY
-                }
-
-                entry.regions.forEachIndexed { idx, region ->
-                    val color = regionColors[idx % regionColors.size]
-                    val x1 = region.left * canvasW
-                    val y1 = region.top * canvasH
-                    val w = (region.right - region.left) * canvasW
-                    val h = (region.bottom - region.top) * canvasH
-
-                    // Фон региона
-                    drawRect(
-                        color = color.copy(alpha = 0.25f),
-                        topLeft = Offset(x1, y1),
-                        size = Size(w, h),
-                    )
-                    // Рамка
-                    drawRect(
-                        color = color.copy(alpha = 0.7f),
-                        topLeft = Offset(x1, y1),
-                        size = Size(w, h),
-                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5f),
-                    )
-                    // Номер + текст
-                    paint.color = android.graphics.Color.WHITE
-                    drawContext.canvas.nativeCanvas.drawText(
-                        "#${idx + 1}",
-                        x1 + 3f,
-                        y1 + 12f,
-                        paint,
-                    )
-                    val textLines = region.text.chunked((w / 5f).toInt().coerceAtLeast(8))
-                    paint.color = android.graphics.Color.DKGRAY
-                    textLines.take(3).forEachIndexed { li, line ->
-                        drawContext.canvas.nativeCanvas.drawText(
-                            line,
-                            x1 + 3f,
-                            y1 + 24f + li * 13f,
-                            paint,
+            val hasImage = entry.imagePath != null && File(entry.imagePath).exists()
+            if (hasImage) {
+                // Настоящий кадр (JPEG, снятый при авточтении) с оверлеем регионов.
+                // Box имеет пропорции кадра, поэтому Fit-изображение и регионы
+                // (нормализованные 0..1 к размеру кадра) совпадают по позициям.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(
+                            if (entry.imageHeight > 0) {
+                                entry.imageWidth.toFloat() / entry.imageHeight
+                            } else {
+                                3f / 4f
+                            },
                         )
-                    }
+                        .clip(RoundedCornerShape(8.dp)),
+                ) {
+                    AsyncImage(
+                        model = File(entry.imagePath),
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Fit,
+                    )
+                    RegionOverlay(
+                        entry = entry,
+                        modifier = Modifier.matchParentSize(),
+                        drawGrid = false,
+                    )
                 }
+            } else {
+                RegionOverlay(
+                    entry = entry,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(420.dp),
+                    drawGrid = true,
+                )
             }
 
             // ===== Текстовый список =====
@@ -260,6 +227,100 @@ class ScreenshotDetailScreen(
                     Text(
                         region.text,
                         style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Canvas с рамками распознанных регионов. Поверх настоящего кадра
+     * (drawGrid = false) или на «странице»-заглушке с сеткой (drawGrid = true).
+     * Координаты регионов нормализованы 0..1 к размеру кадра, поэтому при
+     * пропорциональном боксе оверлей ложится точно на текст.
+     */
+    @Composable
+    private fun RegionOverlay(
+        entry: OcrScreenshotEntry,
+        modifier: Modifier,
+        drawGrid: Boolean,
+    ) {
+        val regionColors = listOf(
+            Color(0x8800E5FF), Color(0x88FF6D00), Color(0x88AA00FF),
+            Color(0x8800E676), Color(0x88FFD600), Color(0x88FF1744),
+        )
+        Canvas(
+            modifier = if (drawGrid) {
+                modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+            } else {
+                modifier.clip(RoundedCornerShape(8.dp))
+            },
+        ) {
+            val canvasW = size.width
+            val canvasH = size.height
+
+            // Сетка-подложка (только для режима без изображения)
+            if (drawGrid) {
+                for (i in 1..4) {
+                    drawLine(
+                        color = Color.LightGray.copy(alpha = 0.3f),
+                        start = Offset(0f, canvasH * i / 5),
+                        end = Offset(canvasW, canvasH * i / 5),
+                        strokeWidth = 1f,
+                    )
+                    drawLine(
+                        color = Color.LightGray.copy(alpha = 0.3f),
+                        start = Offset(canvasW * i / 5, 0f),
+                        end = Offset(canvasW * i / 5, canvasH),
+                        strokeWidth = 1f,
+                    )
+                }
+            }
+
+            val paint = android.graphics.Paint().apply {
+                textSize = 11.sp.toPx()
+                isAntiAlias = true
+            }
+
+            entry.regions.forEachIndexed { idx, region ->
+                val color = regionColors[idx % regionColors.size]
+                val x1 = region.left * canvasW
+                val y1 = region.top * canvasH
+                val w = (region.right - region.left) * canvasW
+                val h = (region.bottom - region.top) * canvasH
+                if (w <= 0f || h <= 0f) return@forEachIndexed
+
+                // Фон региона
+                drawRect(
+                    color = color.copy(alpha = if (drawGrid) 0.25f else 0.18f),
+                    topLeft = Offset(x1, y1),
+                    size = Size(w, h),
+                )
+                // Рамка
+                drawRect(
+                    color = color.copy(alpha = 0.7f),
+                    topLeft = Offset(x1, y1),
+                    size = Size(w, h),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5f),
+                )
+                // Номер + текст
+                paint.color = android.graphics.Color.WHITE
+                drawContext.canvas.nativeCanvas.drawText(
+                    "#${idx + 1}",
+                    x1 + 3f,
+                    y1 + 12f,
+                    paint,
+                )
+                val textLines = region.text.chunked((w / 5f).toInt().coerceAtLeast(8))
+                paint.color = if (drawGrid) android.graphics.Color.DKGRAY else android.graphics.Color.WHITE
+                textLines.take(3).forEachIndexed { li, line ->
+                    drawContext.canvas.nativeCanvas.drawText(
+                        line,
+                        x1 + 3f,
+                        y1 + 24f + li * 13f,
+                        paint,
                     )
                 }
             }

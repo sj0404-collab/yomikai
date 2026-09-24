@@ -44,6 +44,7 @@ import eu.kanade.tachiyomi.util.ocr.toOcrImage
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -56,6 +57,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import logcat.LogPriority
 import mihon.domain.ocr.exception.OcrException
 import mihon.domain.ocr.interactor.OcrProcessor
@@ -1053,11 +1055,20 @@ class ReaderViewModel @JvmOverloads constructor(
         autoScanJob?.cancel()
         autoScanJob = viewModelScope.launchIO {
             try {
-                val result = scanPageOcr.await(
-                    chapterId = chapterId,
-                    pageIndex = pageIndex,
-                    image = bitmap.toOcrImage(),
-                )
+                // Жёсткий таймаут, как в авточтении: «зависший» онлайн-движок не
+                // должен блокировать скан-и-читай вечно.
+                val result = try {
+                    withTimeout(eu.kanade.tachiyomi.data.tts.AutoReadEngine.OCR_FRAME_TIMEOUT_MS) {
+                        scanPageOcr.await(
+                            chapterId = chapterId,
+                            pageIndex = pageIndex,
+                            image = bitmap.toOcrImage(),
+                        )
+                    }
+                } catch (e: TimeoutCancellationException) {
+                    withUIContext { eventChannel.send(Event.OcrNoTextFound) }
+                    return@launchIO
+                }
                 val prefs = mihon.domain.ocr.service.OcrPreferences(
                     tachiyomi.core.common.preference.AndroidPreferenceStore(context),
                 )

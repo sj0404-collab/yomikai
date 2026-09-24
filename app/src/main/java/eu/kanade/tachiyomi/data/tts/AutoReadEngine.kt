@@ -24,6 +24,7 @@ import mihon.data.ocr.CyrillicTranslitFixer
 import mihon.domain.ocr.interactor.ScanPageOcr
 import mihon.domain.ocr.model.OcrBoundingBox
 import mihon.domain.ocr.model.OcrImage
+import mihon.domain.ocr.model.OcrModel
 import mihon.domain.ocr.model.normalizeOcrTextForDisplay
 import mihon.domain.ocr.service.OcrPreferences
 import tachiyomi.core.common.util.system.logcat
@@ -351,6 +352,32 @@ class AutoReadEngine(
                         }
                     }
                 }
+                // v1.9.92: онлайн-движок вернул ПОДОЗРИТЕЛЬНО мало строк (например,
+                // только ватермарку «Читай раньше всех на Remanga», а настоящую
+                // крупную реплику модель не увидела) — дочитываем кадр локальным
+                // разбором баллонов (YOLO + Cyrillic OCR) и доклеиваем результат.
+                // Так реальный текст манхвы не пропадает, даже если AI его пропустил.
+                if (result.ocrModel in ONLINE_MODELS &&
+                    lines.count { it.text.count(Char::isLetter) >= 3 } < SUPPLEMENT_BUBBLES_MIN &&
+                    !ocrBitmap.isRecycled
+                ) {
+                    val extra = runCatching { readBubbles(ocrBitmap, chapterId, pageIndex, order) }
+                        .onFailure {
+                            logcat(LogPriority.WARN, it) { "Bubble supplement failed" }
+                            OcrHistoryStore.addAutoRead(false, "добор баллонов", it.message ?: it.javaClass.simpleName)
+                        }
+                        .getOrDefault(emptyList())
+                    if (extra.isNotEmpty()) {
+                        lines = lines + extra
+                    }
+                }
+
+                // Скриншот-кадр для вкладки «Скриншоты»: JPEG сохраняем ДО recycle —
+                // после него пикселей больше нет, а сама запись пишется ниже по коду.
+                val screenshotJpeg: ByteArray? = if (prefs.autoScreenshotEnabled().get() && !ocrBitmap.isRecycled) {
+                    runCatching { encodeJpeg(ocrBitmap, JPEG_QUALITY) }.getOrNull()
+                } else null
+
                 if (!bitmap.isRecycled) bitmap.recycle()
                 if (scanBitmap !== bitmap && !scanBitmap.isRecycled) scanBitmap.recycle()
 
@@ -384,10 +411,11 @@ class AutoReadEngine(
                 val ordered = orderRegions(fresh, order)
 
                 // ===== СКРИНШОТ: сохраняем распознанные регионы в буфер =====
-                // Лёгкая запись (~1-5 KB) — только текст + координаты,
-                // без JPEG-файлов. Показывается на вкладке «Скриншоты».
+                // Лёгкая запись (~1-5 KB) — текст + координаты + JPEG-кадр кадра
+                // (который снимался ещё до recycle). Показывается на вкладке
+                // «Скриншоты» вместе с настоящей картинкой и именем движка OCR.
                 if (prefs.autoScreenshotEnabled().get() && ordered.isNotEmpty()) {
-                    val engineName = prefs.ocrModel().get().name.lowercase()
+                    val engineName = result.ocrModel.name.lowercase()
                     val ocrRegions = ordered.mapIndexed { idx, line ->
                         OcrRegion(
                             order = idx,
@@ -404,6 +432,7 @@ class AutoReadEngine(
                         engineUsed = engineName,
                         imageWidth = result.imageWidth,
                         imageHeight = result.imageHeight,
+                        imageJpeg = screenshotJpeg,
                     )
                 }
 
@@ -607,18 +636,24 @@ class AutoReadEngine(
     ) {
         if (prefs.autoScreenshotEnabled().get()) {
             scope.launch {
-                runCatching {
-                    // Скриншот в фоне и в минимально читаемом разрешении.
-                    val scaled = downscaleForScan(bitmap)
-                    try {
+                // Скриншот в фоне и в минимально читаемом разрешении.
+                val scaled = downscaleForScan(bitmap)
+                try {
+                    val result = try {
                         withTimeout(OCR_FRAME_TIMEOUT_MS) {
                             scanPageOcr.await(chapterId, pageIndex, scaled.toOcrImage())
                         }
-                    } finally {
-                        if (scaled !== bitmap && !scaled.isRecycled) scaled.recycle()
+                    } catch (e: TimeoutCancellationException) {
+                        logcat(LogPriority.WARN) {
+                            "Instant screenshot OCR timeout (${OCR_FRAME_TIMEOUT_MS}ms)"
+                        }
+                        return@launch
                     }
-                }.onSuccess { result ->
-                    if (result.regions.isEmpty()) return@onSuccess
+                    // JPEG-кадр пишем ДО recycle: после него пикселей не будет.
+                    val jpeg = runCatching { encodeJpeg(scaled, JPEG_QUALITY) }.getOrNull()
+                    val width = scaled.width
+                    val height = scaled.height
+                    if (result.regions.isEmpty()) return@launch
                     val ordered = orderRegions(
                         result.regions.map {
                             Line(
@@ -640,12 +675,17 @@ class AutoReadEngine(
                                 textOrientation = OcrTextOrientation.Horizontal,
                             )
                         },
-                        engineUsed = prefs.ocrModel().get().name.lowercase(),
-                        imageWidth = bitmap.width,
-                        imageHeight = bitmap.height,
+                        engineUsed = result.ocrModel.name.lowercase(),
+                        imageWidth = width,
+                        imageHeight = height,
+                        imageJpeg = jpeg,
                     )
-                }.onFailure { e ->
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
                     logcat(LogPriority.WARN, e) { "Instant screenshot OCR failed" }
+                } finally {
+                    if (scaled !== bitmap && !scaled.isRecycled) scaled.recycle()
                 }
             }
         }
@@ -1118,6 +1158,29 @@ class AutoReadEngine(
          */
         private const val OCR_SCAN_MAX_EDGE = 1600
 
+        /** Качество JPEG скриншотов во вкладку «Скриншоты». */
+        private const val JPEG_QUALITY = 78
+
+        /**
+         * Онлайн-движки OCR (ответ идёт по сети). Если такой движок вернул
+         * очень мало строк — кадр дочитывается локальным разбором баллонов,
+         * чтобы AI-пропущенная реплика (напр. крупный текст поверх ватермарки)
+         * не терялась. Офлайн-движки (CYRILLIC/MLKIT) и так дают строки с боксами.
+         */
+        private val ONLINE_MODELS = setOf(
+            OcrModel.GLENS,
+            OcrModel.ZEN_FREE,
+            OcrModel.GOOGLE,
+            OcrModel.OPENROUTER,
+            OcrModel.OWOCR,
+        )
+
+        /**
+         * Порог «подозрительно мало»: при меньшем числе осмысленных строк
+         * онлайн-результата запускается локальный добор баллонов.
+         */
+        private const val SUPPLEMENT_BUBBLES_MIN = 3
+
         /** Возвращает кадр в минимально читаемом разрешении (сам же, если он уже мал). */
         private fun downscaleForScan(src: Bitmap): Bitmap {
             if (src.isRecycled) return src
@@ -1132,13 +1195,20 @@ class AutoReadEngine(
             )
         }
 
+        /** Сжимает кадр в JPEG-байты (для вкладки «Скриншоты»). */
+        private fun encodeJpeg(bitmap: Bitmap, quality: Int): ByteArray {
+            val out = java.io.ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)
+            return out.toByteArray()
+        }
+
         /**
          * Максимальное время OCR одного кадра в авточтении. Локальный движок
          * при первом запуске/загрузке модели, а также онлайн-движок (GLENS /
          * Google) при недоступном сервисе БЕЗ этого жёсткого лимита могли
          * заморозить авточтение навсегда. По таймауту кадр считается пустым.
          */
-        private const val OCR_FRAME_TIMEOUT_MS = 45_000L
+        internal const val OCR_FRAME_TIMEOUT_MS = 25_000L
 
         fun ttsTimeoutMs(textLength: Int, speechRate: Float): Long {
             val rate = speechRate.takeIf { it.isFinite() && it > 0f }?.coerceIn(0.5f, 2f) ?: 1f

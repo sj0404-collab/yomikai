@@ -245,7 +245,7 @@ object SettingsConstructorScreen : Screen() {
                             }
                         }
                         Text(
-                            text = "Записи лёгкие (~1-5KB, только текст и координаты, без изображений). Хранятся в кольцевом буфере.",
+                            text = "Скриншоты хранят текст, координаты регионов и JPEG-кадр страницы (вкладка «Скриншоты»). Кольцевой буфер: старые записи и картинки удаляются автоматически.",
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 6.dp),
                         )

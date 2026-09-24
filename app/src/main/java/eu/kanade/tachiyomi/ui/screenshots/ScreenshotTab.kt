@@ -36,17 +36,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import cafe.adriel.voyager.navigator.tab.LocalTabNavigator
 import cafe.adriel.voyager.navigator.tab.TabOptions
+import coil3.compose.AsyncImage
 import eu.kanade.presentation.util.Tab
 import eu.kanade.tachiyomi.data.tts.TtsSpeaker
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import mihon.data.ocr.OcrScreenshotBuffer
 import mihon.data.ocr.OcrScreenshotEntry
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -54,12 +57,9 @@ import java.util.Locale
 /**
  * Вкладка «Скриншоты» в нижней навигации.
  *
- * Показывает все скриншоты (лёгкие JSON-записи с текстом и регионами OCR),
- * сделанные во время авточтения. Каждый скриншот — это карточка с:
- * - номером страницы,
- * - количеством распознанных регионов,
- * - временем захвата,
- * - кратким превью текста.
+ * Показывает все скриншоты, сделанные во время авточтения. Каждая карточка —
+ * миниатюра настоящего кадра (JPEG, если запись сохранила картинку) + номер
+ * страницы + движок OCR, который распознал этот кадр, + время + превью текста.
  *
  * Нажатие на карточку открывает детальный экран с текстовым оверлеем.
  */
@@ -182,6 +182,17 @@ private fun ScreenshotCard(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.Top,
     ) {
+        // Миниатюра настоящего кадра (если запись сохранила JPEG).
+        if (entry.imagePath != null && File(entry.imagePath).exists()) {
+            AsyncImage(
+                model = File(entry.imagePath),
+                contentDescription = null,
+                modifier = Modifier
+                    .size(width = 72.dp, height = 96.dp)
+                    .clip(RoundedCornerShape(4.dp)),
+                contentScale = ContentScale.Fit,
+            )
+        }
         Column(modifier = Modifier.weight(1f)) {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),

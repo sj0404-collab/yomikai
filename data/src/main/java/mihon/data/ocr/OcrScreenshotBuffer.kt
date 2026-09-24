@@ -16,19 +16,21 @@ import tachiyomi.core.common.util.system.logcat
 import java.io.File
 
 /**
- * Кольцевой буфер скриншотов авточтения — лёгкий (только текст, ~1-5 KB на запись).
+ * Кольцевой буфер скриншотов авточтения — текст регионов (~1-5 KB) плюс
+ * необязательный JPEG-кадр каждого скриншота.
  *
- * Хранит до [MAX_ENTRIES] последних записей в JSON-файле.
- * Физических изображений НЕТ — галерея отрисовывает текст по координатам
- * из [OcrScreenshotEntry.regions], исходное изображение берётся из кэша
- * загруженных страниц (coil/subsampling).
+ * Хранит до [MAX_ENTRIES] последних записей в JSON-файле. Если запись создана
+ * с JPEG-кадром ([OcrScreenshotEntry.add]), картинка пишется в каталог
+ * `filesDir/screenshots_images/<id>.jpg`, а в записи сохраняется её путь —
+ * галерея показывает реальное изображение с оверлеем регионов.
  *
- * При превышении лимита самая старая запись удаляется.
+ * При превышении лимита самая старая запись и её файл удаляются.
  */
 object OcrScreenshotBuffer {
 
     private const val DEFAULT_MAX_ENTRIES = 50
     private const val FILE_NAME = "screenshots.json"
+    private const val IMAGE_DIR_NAME = "screenshots_images"
 
     /** Лимит записей (кольцевой буфер). Меняется через dev-панель. */
     @kotlin.jvm.Volatile
@@ -45,20 +47,23 @@ object OcrScreenshotBuffer {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var persistFile: File? = null
+    private var imagesDir: File? = null
     private var initialized = false
 
     fun init(context: Context) {
         if (initialized) return
         initialized = true
         persistFile = File(context.filesDir, FILE_NAME)
+        imagesDir = File(context.filesDir, IMAGE_DIR_NAME).apply { mkdirs() }
         load()
     }
 
     // ---- Публичные методы ----
 
     /**
-     * Добавить запись скриншота (только текст + регионы, ~1-5 KB).
-     * Если буфер полон — самая старая запись удаляется.
+     * Добавить запись скриншота (текст + регионы ~1-5 KB, плюс необязательный
+     * JPEG-кадр [imageJpeg], который пишется файлом и показывается в галерее).
+     * Если буфер полон — самая старая запись (и её файл) удаляется.
      *
      * @return Созданная запись.
      */
@@ -70,11 +75,17 @@ object OcrScreenshotBuffer {
         engineUsed: String,
         imageWidth: Int = 0,
         imageHeight: Int = 0,
+        imageJpeg: ByteArray? = null,
         scanRegion: String = "viewport",
     ): OcrScreenshotEntry {
         val id = System.currentTimeMillis()
         val serializableRegions = regions.map { SerializableOcrRegion.fromOcrRegion(it) }
         val summaryText = regions.joinToString(" ") { it.text.trim() }.trim()
+        val imagePath = imageJpeg?.let { jpeg ->
+            imagesDir?.let { dir ->
+                File(dir, "$id.jpg").apply { writeBytes(jpeg) }.absolutePath
+            }
+        }
         val entry = OcrScreenshotEntry(
             id = id,
             chapterId = chapterId,
@@ -86,13 +97,15 @@ object OcrScreenshotBuffer {
             summaryText = summaryText,
             imageWidth = imageWidth,
             imageHeight = imageHeight,
+            imagePath = imagePath,
             scanRegion = scanRegion,
         )
 
         val current = _entries.value.toMutableList()
         val limit = maxEntries.coerceAtLeast(1)
         if (current.size >= limit) {
-            current.removeFirst()
+            val evicted = current.removeFirst()
+            deleteImageFile(evicted)
         }
         current.add(entry)
         _entries.value = current
@@ -111,6 +124,7 @@ object OcrScreenshotBuffer {
 
     /** Очистить буфер. */
     fun clear() {
+        _entries.value.forEach { deleteImageFile(it) }
         _entries.value = emptyList()
         _lastEntry.value = null
         persist()
@@ -119,6 +133,7 @@ object OcrScreenshotBuffer {
     /** Очистить скриншоты одной главы. */
     fun clearChapter(chapterId: Long) {
         val (keep, remove) = _entries.value.partition { it.chapterId != chapterId }
+        remove.forEach { deleteImageFile(it) }
         _entries.value = keep
         if (_lastEntry.value?.chapterId == chapterId) _lastEntry.value = null
         persist()
@@ -127,10 +142,22 @@ object OcrScreenshotBuffer {
     /** Текущее количество записей в буфере. */
     fun size(): Int = _entries.value.size
 
-    /** Примерный размер JSON-файла на диске (в байтах). */
-    fun diskSizeBytes(): Long = persistFile?.length() ?: 0L
+    /** Размер файлов скриншотов (JSON + JPEG-кадры) в байтах. */
+    fun diskSizeBytes(): Long {
+        val jsonSize = persistFile?.length() ?: 0L
+        val imagesSize = _entries.value.sumOf { it.imagePath?.let { p -> runCatching { File(p).length() }.getOrDefault(0L) } ?: 0L }
+        return jsonSize + imagesSize
+    }
 
     // ---- Внутренние ----
+
+    private fun deleteImageFile(entry: OcrScreenshotEntry) {
+        entry.imagePath?.let { path ->
+            runCatching { File(path).delete() }.onFailure {
+                logcat(LogPriority.WARN, it) { "OcrScreenshotBuffer: delete image failed" }
+            }
+        }
+    }
 
     private fun persist() {
         val file = persistFile ?: return

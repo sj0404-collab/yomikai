@@ -22,6 +22,9 @@ import mihon.domain.ocr.model.OcrRegion
  * @param summaryText     Сжатый текст всех регионов для поиска (одна строка).
  * @param imageWidth      Ширина исходного изображения (координаты regions нормализованы 0..1).
  * @param imageHeight     Высота исходного изображения.
+ * @param imagePath       Абсолютный путь к JPEG-картинке кадра (там, где скриншот
+ *                        сохраняют как изображение, а не только как текст). null —
+ *                        только текст/координаты.
  * @param scanRegion      Тип сканирования: "full" (вся страница) или "viewport" (видимая область).
  */
 @Serializable
@@ -36,6 +39,7 @@ data class OcrScreenshotEntry(
     val summaryText: String = "",
     val imageWidth: Int = 0,
     val imageHeight: Int = 0,
+    val imagePath: String? = null,
     val scanRegion: String = "viewport",
 )
 
