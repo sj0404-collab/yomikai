@@ -132,5 +132,5 @@
 - [x] Новые тесты: `cleanMlKitLine` ×6 и `tile gating follows content density` в `OcrTextCleanerTest`/`OcrPluginsTest`.
 - [x] Локальная проверка: `:data:compileDebugKotlin`, `:data:testDebugUnitTest` (`--rerun-tasks`), `:app:compileDebugKotlin`, `:app:testDebugUnitTest`, `verifySqlDelightMigration` — все зелёные.
 - [x] Отчёт качества `docs/ocr-releases/2026-09-24-v1.9.93.md` и `CURRENT.md`.
-- [ ] Push на `main` и тег `v1.9.93` → единственная подписанная сборка в GitHub Actions `release.yml`; SHA-256 APK подтверждён, релиз опубликован.
+- [x] Push на `main` (`97d62e3`) и тег `v1.9.93` → единственная подписанная сборка в GitHub Actions `release.yml` (run 36004992680); SHA-256 `6eb75b511715b023df5c04f8ae59153894d47fbeccbd88ec8c6ea488b2f39775`, размер 54027792 байт, релиз опубликован.
 - [ ] (по явному запросу) залить `yomikai-v1.9.93.apk` и отчёт на GoFile для проверки на устройстве.
