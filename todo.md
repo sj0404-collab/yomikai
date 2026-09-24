@@ -122,3 +122,15 @@
 - [x] Отчёт качества `docs/ocr-releases/2026-09-24-v1.9.92.md` и `CURRENT.md`.
 - [x] Push на `main` и тег `v1.9.92` → единственная подписанная сборка в GitHub Actions `release.yml`; SHA-256 APK подтверждён, релиз опубликован.
 - [ ] (по явному запросу) залить `yomikai-v1.9.92.apk` и отчёт на GoFile для проверки на устройстве.
+
+## v1.9.93: быстрее локальный и онлайн OCR, ML Kit перестаёт выдавать «крякозябры»
+
+- [x] Локальный OCR быстрее: тайлы детектора 2×2 запускаются только когда основной проход нашёл меньше `tilingMinTextBoxes` боксов (пресеты: BALANCED 8, MANGA 6, MANHWA 12, MANHUA 8, COMIC 10) — вместо 5 проходов на кадр.
+- [x] Локальный OCR быстрее: верификатор PP-OCRv5 пропускается (`verifierSkipConfidence` 0.82) при уверенной v3 И чистой кириллице после правки омоглифов — устройство-защита от «уверенного мусора» сохраняется через `isAcceptableCyrillicOcrText`.
+- [x] ML Kit: строки чистятся конвейером кириллического движка (`OcrTextCleaner.cleanMlKitLine`) — правка омоглифов, отсев mojibake/диакритики и мусорных токенов, чистые кириллица/ASCII сохраняются; движок остаётся в фолбэке.
+- [x] Онлайн OCR быстрее: GLens 1500→1200 px/JPEG 78, ZenFree 2048→1080/78, Google AI и OpenRouter 1500→1080/78; OwOCR (self-hosted) не трогали.
+- [x] Новые тесты: `cleanMlKitLine` ×6 и `tile gating follows content density` в `OcrTextCleanerTest`/`OcrPluginsTest`.
+- [x] Локальная проверка: `:data:compileDebugKotlin`, `:data:testDebugUnitTest` (`--rerun-tasks`), `:app:compileDebugKotlin`, `:app:testDebugUnitTest`, `verifySqlDelightMigration` — все зелёные.
+- [x] Отчёт качества `docs/ocr-releases/2026-09-24-v1.9.93.md` и `CURRENT.md`.
+- [ ] Push на `main` и тег `v1.9.93` → единственная подписанная сборка в GitHub Actions `release.yml`; SHA-256 APK подтверждён, релиз опубликован.
+- [ ] (по явному запросу) залить `yomikai-v1.9.93.apk` и отчёт на GoFile для проверки на устройстве.

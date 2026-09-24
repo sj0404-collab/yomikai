@@ -87,9 +87,10 @@ internal class GlensOcrEngine(
             val encoded = ByteArrayOutputStream()
             // JPEG вместо PNG: страница манги в PNG(100) весит около 3 МБ,
             // и на мобильной сети отправка занимала больше десяти секунд.
-            // JPEG(85) даёт примерно 0.5 МБ при том же качестве распознавания
-            // (текст в баллонах — крупный высококонтрастный шрифт).
-            val success = working.compress(Bitmap.CompressFormat.JPEG, 85, encoded)
+            // JPEG(78) даёт примерно 0.3-0.5 МБ при том же качестве
+            // распознавания (текст в баллонах — крупный высококонтрастный
+            // шрифт) и ускоряет и аплоад, и обработку на стороне Google Lens.
+            val success = working.compress(Bitmap.CompressFormat.JPEG, 78, encoded)
             if (!success) {
                 throw IOException("Failed to encode image for GLens request")
             }
@@ -768,7 +769,7 @@ internal class GlensOcrEngine(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
         private const val DEFAULT_CLIENT_LANGUAGE = "ja"
         private const val DEFAULT_CLIENT_REGION = "Asia/Tokyo"
-        private const val MAX_IMAGE_DIMENSION = 1500
+        private const val MAX_IMAGE_DIMENSION = 1200
 
         private const val CONNECT_TIMEOUT_MS = 10_000
         private const val READ_TIMEOUT_MS = 60_000

@@ -106,16 +106,17 @@ internal class OpenRouterOcrEngine(
 
     private companion object {
         /** Длинная сторона страницы перед отправкой в vision-модель. */
-        const val MAX_IMAGE_SIDE = 1500
+        const val MAX_IMAGE_SIDE = 1080
     }
 
     private fun encodeBitmapToBase64(bitmap: Bitmap): String {
         val stream = ByteArrayOutputStream()
-        // Страница уменьшается до 1500 px по длинной стороне и кодируется
+        // Страница уменьшается до 1080 px по длинной стороне и кодируется
         // в JPEG: раньше улетал PNG полного размера (несколько мегабайт в
         // base64 внутри JSON), из-за чего запрос к vision-модели тянулся
         // десятки секунд и стоил дороже. Параметр качества у PNG к тому же
-        // игнорировался — формат без потерь.
+        // игнорировался — формат без потерь. Для чтения реплик 1080 px с
+        // качеством 78 — больше, чем достаточно, а payload заметно меньше.
         val maxSide = maxOf(bitmap.width, bitmap.height)
         val scaled = if (maxSide > MAX_IMAGE_SIDE) {
             val factor = MAX_IMAGE_SIDE.toFloat() / maxSide
@@ -130,7 +131,7 @@ internal class OpenRouterOcrEngine(
         }
         val source = scaled ?: bitmap
         try {
-            source.compress(Bitmap.CompressFormat.JPEG, 85, stream)
+            source.compress(Bitmap.CompressFormat.JPEG, 78, stream)
         } finally {
             if (scaled != null && !scaled.isRecycled) scaled.recycle()
         }

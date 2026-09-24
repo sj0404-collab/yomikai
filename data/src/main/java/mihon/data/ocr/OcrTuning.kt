@@ -98,6 +98,14 @@ data class OcrTuning(
     /** Сколько боксов максимум берётся со страницы. */
     val maxTextBoxes: Int = 96,
 
+    /**
+     * Порог «достаточности» основного прохода детектора: если он уже нашёл
+     * больше боксов, дополнительные тайлы 2x2 не запускаются. Тайлы добавляют
+     * ещё четыре прохода модели на кадр и были главным тормазом локального OCR
+     * в авточтении: на плотной странице основной проход и так видит реплики.
+     */
+    val tilingMinTextBoxes: Int = 8,
+
     /** Доля вертикального перекрытия, при которой два бокса склеиваются. */
     val mergeOverlapYFactor: Float = 0.55f,
 
@@ -117,6 +125,16 @@ data class OcrTuning(
     // ---- Признание результата ----
     /** Ниже этого порога кроп распознаётся повторно с усиленным контрастом. */
     val contrastRetryConfidence: Float = 0.90f,
+
+    /**
+     * Выше этого порога уверенности PP-OCRv3 с чистой кириллицей верификатор
+     * PP-OCRv5 уже не запускается (ускорение: v5 почти удваивает инференс
+     * каждого кропа, а на каждой распознанной строке их ещё и по одному на
+     * слово). Защита от «уверенного мусора» сохраняется: латинско-похожий
+     * вывод из device-регрессии не проходит [OcrTextCleaner.isAcceptableCyrillicOcrText]
+     * и по-прежнему идёт на сравнение с v5.
+     */
+    val verifierSkipConfidence: Float = 0.82f,
 
     /** Пол строки/кропа отбрасывается ниже этой уверенности. */
     val minAcceptConfidence: Float = 0.32f,
@@ -172,7 +190,9 @@ data class OcrTuning(
         require(detectorThreshold in 0.01f..0.99f) { "detectorThreshold вне диапазона 0.01..0.99" }
         require(minComponentArea in 1..4096) { "minComponentArea вне диапазона 1..4096" }
         require(maxTextBoxes in 1..1024) { "maxTextBoxes вне диапазона 1..1024" }
+        require(tilingMinTextBoxes in 0..1024) { "tilingMinTextBoxes вне диапазона 0..1024" }
         require(contrastRetryConfidence in 0.05f..1f) { "contrastRetryConfidence вне диапазона 0.05..1" }
+        require(verifierSkipConfidence in 0f..1f) { "verifierSkipConfidence вне диапазона 0..1" }
         require(minAcceptConfidence in 0f..1f) { "minAcceptConfidence вне диапазона 0..1" }
         require(shortTextMinConfidence in 0f..1f) { "shortTextMinConfidence вне диапазона 0..1" }
         require(minCropInkRatio in 0f..0.5f) { "minCropInkRatio вне диапазона 0..0.5" }
@@ -205,6 +225,7 @@ data class OcrTuning(
                     detectorThreshold = 0.17f,
                     minComponentArea = 18,
                     maxTextBoxes = 128,
+                    tilingMinTextBoxes = 6,
                     mergeOverlapYFactor = 0.60f,
                     mergeGapXFactor = 0.45f,
                     wordGapFactor = 1.5f,
@@ -221,6 +242,7 @@ data class OcrTuning(
                     detectorThreshold = 0.18f,
                     minComponentArea = 28,
                     maxTextBoxes = 64,
+                    tilingMinTextBoxes = 12,
                     mergeOverlapYFactor = 0.45f,
                     mergeGapXFactor = 0.80f,
                     splitMinWidthPx = 40,
@@ -236,6 +258,7 @@ data class OcrTuning(
                     detectorThreshold = 0.19f,
                     minComponentArea = 24,
                     maxTextBoxes = 80,
+                    tilingMinTextBoxes = 8,
                     mergeOverlapYFactor = 0.50f,
                     mergeGapXFactor = 0.65f,
                     splitMinWidthPx = 36,
@@ -251,6 +274,7 @@ data class OcrTuning(
                     detectorThreshold = 0.22f,
                     minComponentArea = 26,
                     maxTextBoxes = 96,
+                    tilingMinTextBoxes = 10,
                     mergeOverlapYFactor = 0.58f,
                     mergeGapXFactor = 0.50f,
                     wordGapFactor = 1.6f,

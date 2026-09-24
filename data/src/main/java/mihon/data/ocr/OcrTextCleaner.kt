@@ -173,6 +173,42 @@ object OcrTextCleaner {
     }
 
     /**
+     * Чистка одной строки Google ML Kit тем же конвейером, что и локальный
+     * кириллический движок: омоглифы, словарная/мусорная валидация.
+     *
+     * Базовая латинская модель ML Kit на русском тексте отдаёт «крякозябры»:
+     * либо латинские омоглифы кириллицы («√IРНЕТ» вместо «ПРИВЕТ»), либо
+     * мусорную раскодировку с диакритикой и C1-символами («Êðèñòî»). Правила:
+     *  * слова с кириллицей после правки омоглифов должны быть допустимы по
+     *    [isAcceptableCyrillicOcrText] (иначе строка отбрасывается целиком);
+     *  * строка без кириллицы остаётся только если её буквы — чистый ASCII
+     *    („Are you ready?“ читается, mojibake с диакритикой — нет);
+     *  * строки из одного мусора / «словарная лесенка» отбрасываются.
+     *
+     * Это не словарная подмена: ничего не придумывается, только отсев мусора
+     * и правка омоглифов в словах с кириллицей.
+     */
+    fun cleanMlKitLine(text: String): String {
+        val raw = text.trim()
+        if (raw.isBlank()) return ""
+        if (looksLikeDictionaryRamp(raw)) return ""
+        val fixed = fixLookalikesPerWord(raw)
+        val letters = fixed.count(Char::isLetter)
+        if (letters == 0) return ""
+        val cyrillic = fixed.count { it.code in CYRILLIC_RANGE }
+        if (cyrillic > 0) {
+            val salvaged = filterGarbageTokens(fixed)
+            return if (isAcceptableCyrillicOcrText(salvaged)) salvaged else ""
+        }
+        // Чистая латынь: только ASCII-буквы и привычная пунктуация. Если часть
+        // «букв» — диакритика/C1, это мусорная раскодировка, а не текст.
+        val latin = fixed.count { it.isLetter() && it.code < 0x80 }
+        if (latin.toFloat() / letters < 0.9f) return ""
+        if (letters.toFloat() / fixed.length < 0.4f) return ""
+        return fixed
+    }
+
+    /**
      * Итоговый гейт для строки локального распознавания.
      *
      * [filterGarbageTokens] отбрасывает мусорные токены только из строк, где

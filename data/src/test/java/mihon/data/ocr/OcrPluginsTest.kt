@@ -22,12 +22,14 @@ class OcrPluginsTest {
         balanced.detectorThreshold shouldBe 0.20f
         balanced.minComponentArea shouldBe 24
         balanced.maxTextBoxes shouldBe 96
+        balanced.tilingMinTextBoxes shouldBe 8
         balanced.mergeOverlapYFactor shouldBe 0.55f
         balanced.mergeGapXFactor shouldBe 0.55f
         balanced.splitMinWidthPx shouldBe 32
         balanced.wordGapFactor shouldBe 1.7f
         balanced.minWordGapPx shouldBe 5
         balanced.contrastRetryConfidence shouldBe 0.90f
+        balanced.verifierSkipConfidence shouldBe 0.82f
         balanced.minAcceptConfidence shouldBe 0.32f
         balanced.shortTextMinConfidence shouldBe 0.18f
         balanced.minCoverage shouldBe 0.12f
@@ -38,6 +40,21 @@ class OcrPluginsTest {
         balanced.rescueMaxLines shouldBe 6
         balanced.readingOrder shouldBe "rtl"
         balanced.scanRegion shouldBe ScanRegion.FULL_PAGE
+    }
+
+    @Test
+    fun `tile gating follows content density`() {
+        // Тайлы 2x2 (четыре лишних прохода детектора) запускаются только когда
+        // основной проход почти ничего не нашёл.
+        OcrTuning.preset(OcrContentType.BALANCED).tilingMinTextBoxes shouldBe 8
+        // Плотная манга: основной проход и так видит реплики, тайлы почти не нужны.
+        OcrTuning.preset(OcrContentType.MANGA).tilingMinTextBoxes shouldBe 6
+        // Разреженный вебтун: тайлы добавляют мелкие облачка, пока боксов мало.
+        OcrTuning.preset(OcrContentType.MANHWA).tilingMinTextBoxes shouldBe 12
+        OcrTuning.preset(OcrContentType.MANHUA).tilingMinTextBoxes shouldBe 8
+        OcrTuning.preset(OcrContentType.COMIC).tilingMinTextBoxes shouldBe 10
+        // Верификатор v5 экономим одинаково на всех пресетах.
+        OcrTuning.preset(OcrContentType.MANGA).verifierSkipConfidence shouldBe 0.82f
     }
 
     @Test

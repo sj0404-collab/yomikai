@@ -129,8 +129,8 @@ internal class ZenFreeOcrEngine : OcrEngine {
     companion object {
         const val MODEL = "space-bunny-free"
         private const val ENDPOINT = "https://opencode.ai/zen/v1/chat/completions"
-        private const val MAX_IMAGE_SIDE = 2048
-        private const val JPEG_QUALITY = 88
+        private const val MAX_IMAGE_SIDE = 1080
+        private const val JPEG_QUALITY = 78
         private const val MAX_TOKENS = 4096
         private const val CONNECT_TIMEOUT_MS = 15_000
         private const val READ_TIMEOUT_MS = 90_000

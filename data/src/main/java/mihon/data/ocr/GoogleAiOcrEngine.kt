@@ -107,7 +107,7 @@ internal class GoogleAiOcrEngine(
 
     private companion object {
         /** Длинная сторона страницы перед отправкой в vision-модель. */
-        const val MAX_IMAGE_SIDE = 1500
+        const val MAX_IMAGE_SIDE = 1080
     }
 
     private fun encodeBitmapToBase64(bitmap: Bitmap): String {
@@ -131,7 +131,7 @@ internal class GoogleAiOcrEngine(
         }
         val source = scaled ?: bitmap
         try {
-            source.compress(Bitmap.CompressFormat.JPEG, 85, stream)
+            source.compress(Bitmap.CompressFormat.JPEG, 78, stream)
         } finally {
             if (scaled != null && !scaled.isRecycled) scaled.recycle()
         }

@@ -773,7 +773,10 @@ internal class CyrillicOcrEngine(
         // Тайловая развёртка: на страницах высокого разрешения мелкие
         // облачка исчезают, когда весь лист ужат в квадрат детектора, —
         // прогоняем модель дополнительно по плиткам 2×2 с перекрытием 12%.
-        if (max(image.width, image.height) > DETECTOR_SIZE) {
+        // Но четыре лишних прохода на КАЖДЫЙ кадр — главный тормоз локального
+        // OCR в авточтении. Если основной проход уже нашёл достаточно боксов,
+        // тайлы почти наверняка не добавят нового текста — пропускаем их.
+        if (max(image.width, image.height) > DETECTOR_SIZE && boxes.size < tuning().tilingMinTextBoxes) {
             val overX = (image.width * 0.12f).toInt()
             val overY = (image.height * 0.12f).toInt()
             val halfW = image.width / 2
@@ -1044,11 +1047,14 @@ internal class CyrillicOcrEngine(
         val secondChars = verifierChars
         if (
             secondModel != null &&
-            secondInput != null && secondOutput != null && secondChars != null
+            secondInput != null && secondOutput != null && secondChars != null &&
+            !maySkipVerifier(candidates.maxByOrNull(::candidateQuality) ?: candidates.last())
         ) {
             // Device regression showed that v3 may assign a high confidence to
-            // Latin-shaped garbage in clean Cyrillic captions. Always compare
-            // v5 rather than treating it as a low-confidence-only fallback.
+            // Latin-shaped garbage in clean Cyrillic captions. Compare v5 then
+            // (rather than treating it as a low-confidence-only fallback) —
+            // unless v3 is already confident with clean Cyrillic: then a second
+            // full-model pass would only double the latency for no new signal.
             val verifierResult = runRecognizer(
                 crop,
                 secondModel,
@@ -1077,6 +1083,21 @@ internal class CyrillicOcrEngine(
         return candidates.maxByOrNull(::candidateQuality)
             ?.let { it.copy(inkRatio = inkRatio) }
             ?: Recognition("", 0f, inkRatio = inkRatio)
+    }
+
+    /**
+     * Можно ли не запускать верификатор PP-OCRv5.
+     *
+     * v5 удваивает инференс каждого кропа (а кропов — целая строка плюс
+     * каждое слово). Пропускаем его только когда v3 уже дал уверенный результат
+     * И его текст — чистая кириллица с поправкой омоглифов: именно такие кейсы
+     * v5 не исправляет, а «уверенный латино-похожий мусор» из device-регрессии
+     * через этот фильтр не проходит и всё равно уходит на сравнение с v5.
+     */
+    private fun maySkipVerifier(v3: Recognition): Boolean {
+        if (v3.text.isBlank()) return false
+        if (v3.confidence < tuning().verifierSkipConfidence) return false
+        return OcrTextCleaner.isAcceptableCyrillicOcrText(OcrTextCleaner.fixLookalikesPerWord(v3.text))
     }
 
     /**

@@ -209,4 +209,46 @@ class OcrTextCleanerTest {
         ocrWordGapThreshold(intArrayOf(6, 6, 6), wordGapFactor = 1.7f, minWordGapPx = 5) shouldBe 5
         ocrWordGapThreshold(intArrayOf(4, 4, 4), wordGapFactor = 1.7f, minWordGapPx = 5) shouldBe 5
     }
+
+    @Test
+    fun `ml kit clean line keeps blank and pure-latin text`() {
+        OcrTextCleaner.cleanMlKitLine("   ") shouldBe ""
+        OcrTextCleaner.cleanMlKitLine("") shouldBe ""
+        OcrTextCleaner.cleanMlKitLine("Are you ready?") shouldBe "Are you ready?"
+        OcrTextCleaner.cleanMlKitLine("SOS") shouldBe "SOS"
+        OcrTextCleaner.cleanMlKitLine("3D") shouldBe "3D"
+    }
+
+    @Test
+    fun `ml kit clean line keeps clean cyrillic as-is`() {
+        OcrTextCleaner.cleanMlKitLine("ПРИВЕТ!") shouldBe "ПРИВЕТ!"
+        OcrTextCleaner.cleanMlKitLine("надо просто продолжать") shouldBe "надо просто продолжать"
+    }
+
+    @Test
+    fun `ml kit clean line fixes latin lookalikes inside cyrillic words`() {
+        // «ЛPHИВЕТ» — типичный вывод латинской модели ML Kit на русском тексте.
+        OcrTextCleaner.cleanMlKitLine("ЛPHИВЕТ!") shouldBe "ЛРНИВЕТ!"
+    }
+
+    @Test
+    fun `ml kit clean line drops latin garbage from a cyrillic line`() {
+        // «Vorld» не вошёл в белый список — как и у кириллического движка,
+        // мусорный токен уходит, чистая фраза остаётся.
+        OcrTextCleaner.cleanMlKitLine("ПРИВЕТ Vorld") shouldBe "ПРИВЕТ"
+    }
+
+    @Test
+    fun `ml kit clean line rejects non-lookalike mixed-script garbage`() {
+        // «q» нет в таблице омоглифов: слово остаётся смешанным, а смешанный
+        // токен не является чистой кириллицей — строка отбрасывается целиком.
+        OcrTextCleaner.cleanMlKitLine("Прqaмер") shouldBe ""
+    }
+
+    @Test
+    fun `ml kit clean line rejects diacritic mojibake`() {
+        // «Êðèñòî» — мусорная раскодировка кириллицы в Latin-1: буквы не ASCII,
+        // кириллицы нет — это не текст, а крякозябры.
+        OcrTextCleaner.cleanMlKitLine("Êðèñòî") shouldBe ""
+    }
 }
