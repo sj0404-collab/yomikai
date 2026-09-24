@@ -120,5 +120,5 @@
 - [x] UI: миниатюры JPEG в карточках вкладки «Скриншоты»; на детальном экране реальный кадр с оверлеем регионов (coil3), сетка-заглушка для старых записей.
 - [x] Локальная проверка: `:app:compileDebugKotlin`, `:app:testDebugUnitTest` (вкл. `AutoReadEngineCleanTest`, `OcrRegionTapTest`), `:data:testDebugUnitTest`, `verifySqlDelightMigration` — все зелёные.
 - [x] Отчёт качества `docs/ocr-releases/2026-09-24-v1.9.92.md` и `CURRENT.md`.
-- [ ] Push на `main` и тег `v1.9.92` → единственная подписанная сборка в GitHub Actions `release.yml`.
+- [x] Push на `main` и тег `v1.9.92` → единственная подписанная сборка в GitHub Actions `release.yml`; SHA-256 APK подтверждён, релиз опубликован.
 - [ ] (по явному запросу) залить `yomikai-v1.9.92.apk` и отчёт на GoFile для проверки на устройстве.
