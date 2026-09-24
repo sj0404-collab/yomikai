@@ -801,6 +801,7 @@ class ReaderActivity : BaseActivity() {
                 // AI-кнопка теперь открывает «Сменить AI-модель», а из него уже
                 // можно попасть в полный диалог озвучки.
                 var showModelPicker by remember { mutableStateOf(false) }
+                var showAiChat by remember { mutableStateOf(false) }
                 if (showModelPicker) {
                     eu.kanade.presentation.reader.AiModelPickerDialog(
                         onDismissRequest = { showModelPicker = false },
@@ -1014,6 +1015,7 @@ class ReaderActivity : BaseActivity() {
                     onOpenFullOcrSettings = {
                         showOcrBubbleSettings = true
                     },
+                    onOpenAiChat = { showAiChat = true },
 
                     onScanRegionChange = { region ->
                         uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>().scanRegion().set(region)
@@ -1247,6 +1249,16 @@ class ReaderActivity : BaseActivity() {
                         }
                     }
                     null -> {}
+                }
+
+                if (showAiChat) {
+                    eu.kanade.presentation.reader.components.ReaderAiChatOverlay(
+                        context = this@ReaderActivity,
+                        mangaId = state.manga?.id,
+                        mangaTitle = state.manga?.title ?: "книга",
+                        chapterTitle = state.currentChapter?.chapter?.name,
+                        onClose = { showAiChat = false },
+                    )
                 }
             }
         }

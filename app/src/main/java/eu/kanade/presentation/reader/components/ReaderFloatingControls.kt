@@ -41,6 +41,7 @@ import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.RecordVoiceOver
+import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material3.Card
@@ -385,8 +386,17 @@ fun ReaderFloatingControls(
                                 }
 
                                 }
-                                // AI-чат убран из читалки: теперь он —
-                                // отдельная вкладка «AI» в нижней навигации.
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("AI-чат  ", style = MaterialTheme.typography.labelMedium)
+                                    SmallFloatingActionButton(onClick = {
+                                        beepAction()
+                                        menuOpen = false
+                                        onOpenAiChat()
+                                    }) {
+                                        Icon(Icons.Outlined.SmartToy, contentDescription = "AI-чат")
+                                    }
+                                }
+
                                 // Голос: режим (авто/ручной) и, в ручном,
                                 // выбор пола. Две кнопки рядом — чтобы не
                                 // уходить в настройки посреди главы.

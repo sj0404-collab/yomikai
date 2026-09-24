@@ -41,10 +41,10 @@ object AiHistoryManager {
 
     private fun prefs(): OcrPreferences = Injekt.get()
 
-    fun historyFile(context: Context): File {
+    fun historyFile(context: Context, mangaId: Long? = null): File {
         val ws = aiWorkspaceDir(context)
         ws.mkdirs()
-        return File(ws, FILE)
+        return if (mangaId != null) File(ws, "ai_history_${mangaId}.json") else File(ws, FILE)
     }
 
     private fun aiWorkspaceDir(context: Context): File {
@@ -55,8 +55,8 @@ object AiHistoryManager {
         return if (candidate.exists() || candidate.mkdirs()) candidate else File(context.filesDir, "ai_workspace")
     }
 
-    fun load(context: Context): MutableList<Msg> {
-        val f = historyFile(context)
+    fun load(context: Context, mangaId: Long? = null): MutableList<Msg> {
+        val f = historyFile(context, mangaId)
         if (!f.exists()) return mutableListOf()
         return try {
             val raw = f.readText()
@@ -70,17 +70,17 @@ object AiHistoryManager {
         }
     }
 
-    fun save(context: Context, history: List<Msg>) {
+    fun save(context: Context, history: List<Msg>, mangaId: Long? = null) {
         try {
             val limit = prefs().aiHistoryLimit().get().coerceIn(4, 100)
             val toSave = history.takeLast(limit)
-            historyFile(context).writeText(json.encodeToString(toSave))
+            historyFile(context, mangaId).writeText(json.encodeToString(toSave))
         } catch (e: Exception) {
             logcat(LogPriority.WARN, e) { "AiHistoryManager save failed" }
         }
     }
 
-    fun append(context: Context, history: MutableList<Msg>, msg: Msg) {
+    fun append(context: Context, history: MutableList<Msg>, msg: Msg, mangaId: Long? = null) {
         history.add(msg)
         val limit = prefs().aiHistoryLimit().get().coerceIn(4, 100)
         while (history.size > limit) {
@@ -95,7 +95,7 @@ object AiHistoryManager {
             }
             history.add(0, Msg(role = "ai", text = summary, time = System.currentTimeMillis()))
         }
-        save(context, history)
+        save(context, history, mangaId)
     }
 
     /**
