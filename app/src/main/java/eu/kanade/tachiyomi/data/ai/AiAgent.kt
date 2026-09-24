@@ -359,9 +359,8 @@ object AiAgent {
 
         var cleanText = stripToolSyntax(context, answer)
         // Кнопки-варианты: [[Вариант]] по одной на строку в конце ответа
-        val choiceRe = Regex("\\[\\[(.{2,80}?)]]")
-        val choices = choiceRe.findAll(cleanText).map { it.groupValues[1].trim() }.take(4).toList()
-        if (choices.isNotEmpty()) cleanText = choiceRe.replace(cleanText, "").trim()
+        val choices = parseChoices(cleanText)
+        if (choices.isNotEmpty()) cleanText = stripChoices(cleanText)
         cleanText = cleanText.ifBlank { "Готово. Результаты — в карточках инструментов ниже и в workspace." }
         AgentReply(
             cleanText, results, images,
@@ -372,6 +371,16 @@ object AiAgent {
             choices = choices,
         )
     }
+
+    /** Кнопки-варианты: [[Текст]] по одной на строку в конце ответа модели. */
+    private val choiceRe = Regex("\\[\\[(.{2,80}?)]]")
+
+    /** Извлекает варианты действий [[…]] из ответа модели (не более 4). */
+    internal fun parseChoices(text: String): List<String> =
+        choiceRe.findAll(text).map { it.groupValues[1].trim() }.take(4).toList()
+
+    /** Убирает из видимого текста разметку [[вариант]], оставляя сами тексты. */
+    internal fun stripChoices(text: String): String = choiceRe.replace(text, "").trim()
 
     /** Имена всех известных инструментов — для «мягкого» синтаксиса без @tool. */
     private fun knownToolNames(context: Context): Set<String> =

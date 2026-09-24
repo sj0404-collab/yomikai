@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -44,6 +45,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedIconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -288,6 +290,9 @@ fun ReaderAiChatOverlay(
                                 clipboard?.setPrimaryClip(ClipData.newPlainText("AI-чат", msg.text))
                                 showToast("Скопировано")
                             },
+                            onChoice = { choice ->
+                                if (!loading) send(choice, null, null)
+                            },
                             onRetry = {
                                 if (!loading) {
                                     history.remove(msg)
@@ -454,6 +459,7 @@ private fun sendMessage(
                 tokens = reply.tokens,
                 model = reply.model,
                 reasoning = reply.reasoning.orEmpty(),
+                choices = reply.choices,
                 tools = reply.toolResults.map { tr ->
                     buildString {
                         append(tr.name)
@@ -555,6 +561,7 @@ private fun ChatBubble(
     isMine: Boolean,
     canPlay: Boolean,
     onCopy: () -> Unit,
+    onChoice: (String) -> Unit = {},
     onRetry: () -> Unit,
     onDelete: () -> Unit,
     onSpeak: () -> Unit,
@@ -602,6 +609,26 @@ private fun ChatBubble(
                         msg.text,
                         style = MaterialTheme.typography.bodyMedium,
                     )
+                }
+                if (!isMine && msg.choices.isNotEmpty()) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        msg.choices.forEach { choice ->
+                            OutlinedButton(
+                                onClick = { onChoice(choice) },
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                            ) {
+                                Text(
+                                    choice,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    maxLines = 2,
+                                )
+                            }
+                        }
+                    }
                 }
                 if (msg.tools.isNotEmpty()) {
                     var showTools by remember { mutableStateOf(false) }

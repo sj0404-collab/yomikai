@@ -37,6 +37,8 @@ object AiHistoryManager {
         val reasoning: String = "",
         val tools: List<String> = emptyList(),
         val files: List<String> = emptyList(),
+        /** Кнопки-варианты [[...]] из ответа модели — повторная отправка текстом. */
+        val choices: List<String> = emptyList(),
     )
 
     private const val FILE = "ai_history.json"
