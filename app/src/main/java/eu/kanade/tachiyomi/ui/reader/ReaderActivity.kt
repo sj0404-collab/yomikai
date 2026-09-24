@@ -128,6 +128,7 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.sample
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import logcat.LogPriority
 import mihon.domain.dictionary.model.DictionaryTerm
@@ -205,6 +206,7 @@ class ReaderActivity : BaseActivity() {
     /** Движок авточтения с историей и подсветкой. */
     private val autoReadEngine by lazy { eu.kanade.tachiyomi.data.tts.AutoReadEngine(applicationContext) }
     private var autoReadLoop: kotlinx.coroutines.Job? = null
+    private val autoLookedUpChapters = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
 
     /**
      * Реальная автопрокрутка вместо прежней тост-заглушки: вебтун плавно
@@ -494,6 +496,29 @@ class ReaderActivity : BaseActivity() {
         androidx.compose.runtime.LaunchedEffect(state.currentChapter?.chapter?.id, state.viewer) {
             if (autoStartChapter && state.viewer != null && !autoReadActive) {
                 startAutoReadLoop()
+            }
+        }
+
+        androidx.compose.runtime.LaunchedEffect(state.currentChapter?.chapter?.id) {
+            val chapter = state.currentChapter?.chapter ?: return@LaunchedEffect
+            val manga = viewModel.manga ?: return@LaunchedEffect
+            if (!autoLookedUpChapters.add(chapter.id)) return@LaunchedEffect
+            delay(1200)
+            val root = binding.root
+            if (root.width <= 0 || root.height <= 0) return@LaunchedEffect
+            val frame = android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
+            val bitmap = cropCurrentSelectionBitmap(frame) ?: return@LaunchedEffect
+            try {
+                val summary = eu.kanade.tachiyomi.data.ai.ReaderBookLookup.inspect(
+                    context = this@ReaderActivity,
+                    mangaId = manga.id,
+                    mangaTitle = manga.title,
+                    chapterName = chapter.name,
+                    bitmap = bitmap,
+                )
+                if (summary != null) withUIContext { toast(summary.lineSequence().first()) }
+            } finally {
+                if (!bitmap.isRecycled) bitmap.recycle()
             }
         }
 

@@ -233,6 +233,8 @@ class OcrPreferences(
     // runner (полу-онлайн, GitHub-ранер)
     fun aiBackend() = preferenceStore.getString("pref_ai_backend", "online")
 
+    fun aiBookLookup() = preferenceStore.getString("pref_ai_book_lookup", "on")
+
     // Выбранная локальная модель (id из LocalLlm.CATALOG)
     fun localLlmModel() = preferenceStore.getString("pref_local_llm_model", "")
 

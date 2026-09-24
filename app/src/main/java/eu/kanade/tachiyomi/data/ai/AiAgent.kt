@@ -96,6 +96,10 @@ object AiAgent {
             "@tool read_file {\"name\":\"путь/файл.txt\"} — прочитать файл workspace (для продолжения без потери контекста)\n" +
             "@tool gen_image {\"prompt\":\"описание на английском\"} — нарисовать картинку (Pollinations)\n" +
             "@tool check_site {\"url\":\"https://...\"} — проверить, работает ли сайт\n" +
+            "@tool web_search {\"query\":\"поисковый запрос\"} — поиск в интернете, вернёт список результатов со ссылками\n" +
+            "@tool web_fetch {\"url\":\"https://...\",\"maxChars\":4000} — скачать страницу и вернуть её текст без разметки\n" +
+            "@tool book_recall {} — что уже известно о текущей книге (где читать, о чём, как читать, заметки, советы)\n" +
+            "@tool book_remember {\"kind\":\"site|summary|fact|advice|заметка\",\"text\":\"значение\"} — сохранить знание о книге\n" +
             "@tool list_ext {} — список установленных расширений-источников с их доменами\n" +
             "@tool filter_ext {\"hide\":\"подстрока\",\"show\":\"подстрока\"} — скрыть/показать источники по имени/языку\n" +
             "@tool find_manga {\"title\":\"название\"} — найти мангу по включённым источникам, вернёт где реально открывается\n" +
@@ -209,6 +213,8 @@ object AiAgent {
         attachmentsInfo: String? = null,
         history: List<Pair<String, String>> = emptyList(), // role to content
         chatFn: (suspend (String, String) -> AiAssistant.ChatReply?)? = null,
+        mangaId: Long? = null,
+        bookContext: String? = null,
     ): AgentReply = withContext(Dispatchers.IO) {
         val chat = chatFn ?: onlineChat
         val results = mutableListOf<ToolResult>()
@@ -235,6 +241,7 @@ object AiAgent {
         val capabilityBlock = runCatching { AiCapabilityReporter.renderForPrompt(context) }.getOrNull().orEmpty()
         val prompt = buildString {
             if (historyBlock.isNotBlank()) append("Контекст диалога (последние $historyLimit, бюджет ${tokenBudget} токенов):\n").append(historyBlock).append("\n\n")
+            if (!bookContext.isNullOrBlank()) append(bookContext).append("\n\n")
             if (!attachmentsInfo.isNullOrBlank()) append("Вложения пользователя:\n").append(attachmentsInfo).append("\n\n")
             if (capabilityBlock.isNotBlank()) append(capabilityBlock).append("\n\n")
             append(userText)
@@ -284,7 +291,7 @@ object AiAgent {
                 // Инструменты больше не могут зависнуть навсегда (gen_image /
                 // check_site на медленной сети): жёсткий таймаут 120 секунд.
                 val r = runCatching {
-                    withTimeoutOrNull(120_000L) { execute(context, call, chat) }
+                    withTimeoutOrNull(120_000L) { execute(context, call, chat, mangaId) }
                         ?: ToolResult(call.name, "ОШИБКА: инструмент не ответил за 120 секунд", status = "error")
                 }
                     .getOrElse { ToolResult(call.name, "ОШИБКА: ${it.message?.take(160)}", status = "error") }
@@ -349,7 +356,8 @@ object AiAgent {
     private fun knownToolNames(context: Context): Set<String> =
         setOf(
             "write_file", "edit_file", "append_file", "read_file", "gen_image",
-            "check_site", "list_ext", "filter_ext", "find_manga", "zip_workspace",
+            "check_site", "web_search", "web_fetch", "book_recall", "book_remember",
+            "list_ext", "filter_ext", "find_manga", "zip_workspace",
             "plugin_create", "plugin_edit", "plugin_delete", "plugin_list",
             "runner_chat", "runner_start", "github_api",
             "provider_create", "provider_edit", "provider_delete", "provider_list",
@@ -473,6 +481,7 @@ object AiAgent {
         context: Context,
         call: ToolCall,
         chatFn: suspend (String, String) -> AiAssistant.ChatReply?,
+        mangaId: Long? = null,
     ): ToolResult = when (call.name) {
         // Инструменты читалки: видят те же реестры и настройки, что и экраны,
         // поэтому ответ агента не может разойтись с настройками пользователя.
@@ -615,6 +624,34 @@ object AiAgent {
         "check_site" -> {
             val url = call.args.optString("url")
             ToolResult("check_site", checkSite(url))
+        }
+
+        "web_search" -> {
+            val query = call.args.optString("query")
+            ToolResult("web_search", webSearch(query))
+        }
+
+        "web_fetch" -> {
+            val url = call.args.optString("url")
+            val maxChars = call.args.optInt("maxChars", 4000)
+            ToolResult("web_fetch", webFetch(url, maxChars))
+        }
+
+        "book_recall" -> ToolResult("book_recall", BookKnowledge.render(context, mangaId))
+
+        "book_remember" -> {
+            val kind = call.args.optString("kind", "fact")
+            val value = call.args.optString("text").ifBlank { call.args.optString("value") }
+            if (mangaId == null) {
+                ToolResult("book_remember", "ОШИБКА: книга не задана — знания сохраняются только в читалке", status = "error")
+            } else {
+                val ok = BookKnowledge.remember(context, mangaId, kind, value)
+                ToolResult(
+                    name = "book_remember",
+                    output = if (ok) "Сохранено в знания о книге: $kind" else "Пустое значение — не сохранял",
+                    status = if (ok) "ok" else "error",
+                )
+            }
         }
 
         "list_ext" -> ToolResult("list_ext", listExtensions())
@@ -970,6 +1007,95 @@ object AiAgent {
             }
         }.getOrElse { "$url — НЕ отвечает: ${it.message?.take(100)}" }
     }
+
+    private fun webSearch(rawQuery: String): String {
+        val query = rawQuery.trim()
+        if (query.isBlank()) return "ОШИБКА: пустой запрос"
+        return runCatching {
+            val url = "https://html.duckduckgo.com/html/?q=" + URLEncoder.encode(query, "UTF-8")
+            val html = fetchText(url, 120_000)
+            val rows = Regex(
+                "(?is)<a[^>]+class=\"result__a\"[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>",
+            ).findAll(html).take(8).map { m ->
+                val href = htmlUnescape(m.groupValues[1])
+                val title = stripHtml(m.groupValues[2])
+                val real = if (href.contains("uddg=")) {
+                    runCatching {
+                        java.net.URLDecoder.decode(
+                            href.substringAfter("uddg=").substringBefore("&"),
+                            "UTF-8",
+                        )
+                    }.getOrDefault(href)
+                } else {
+                    href
+                }
+                "• $title\n  $real"
+            }.toList()
+            if (rows.isEmpty()) {
+                "Ничего не найдено по запросу «$query»"
+            } else {
+                "Результаты по «$query»:\n" + rows.joinToString("\n")
+            }
+        }.getOrElse { "ОШИБКА поиска: ${it.message?.take(120)}" }
+    }
+
+    private fun webFetch(rawUrl: String, maxChars: Int): String {
+        val url = rawUrl.trim()
+        if (url.isBlank()) return "ОШИБКА: пустой URL"
+        val normalized = if (url.startsWith("http")) url else "https://$url"
+        return runCatching {
+            val html = fetchText(normalized, maxChars.coerceIn(500, 60_000))
+            val text = stripHtml(
+                html
+                    .replace(Regex("(?is)<script.*?</script>"), " ")
+                    .replace(Regex("(?is)<style.*?</style>"), " "),
+            ).replace(Regex("\\s{2,}"), " ").trim()
+            if (text.isBlank()) {
+                "$normalized — страница без текста (вероятно, JS-сайт)"
+            } else {
+                text.take(maxChars.coerceIn(500, 60_000))
+            }
+        }.getOrElse { "ОШИБКА загрузки: ${it.message?.take(120)}" }
+    }
+
+    private fun fetchText(url: String, maxChars: Int): String {
+        val conn = AiAssistant.openConnection(url)
+        conn.connectTimeout = 12_000
+        conn.readTimeout = 12_000
+        conn.instanceFollowRedirects = true
+        conn.requestMethod = "GET"
+        conn.setRequestProperty(
+            "User-Agent",
+            "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile Safari/537.36",
+        )
+        conn.setRequestProperty("Accept-Language", "ru,en;q=0.8")
+        return try {
+            val stream = conn.getInputStream()
+            val text = stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            if (text.length > maxChars) text.take(maxChars) else text
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun stripHtml(raw: String): String {
+        val unescaped = htmlUnescape(raw)
+        return unescaped
+            .replace(Regex("(?is)<br\\s*/?>"), "\n")
+            .replace(Regex("(?is)</(p|div|li|tr|h[1-6])>"), "\n")
+            .replace(Regex("(?is)<[^>]+>"), " ")
+            .replace(Regex("[ \\t\\x0B\\f]+"), " ")
+            .trim()
+    }
+
+    private fun htmlUnescape(raw: String): String = raw
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&nbsp;", " ")
 
     private fun listExtensions(): String {
         val sources = sourceManager.getAll().filterIsInstance<CatalogueSource>()

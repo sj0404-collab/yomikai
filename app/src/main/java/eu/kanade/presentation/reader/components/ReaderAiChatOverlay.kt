@@ -432,6 +432,8 @@ private suspend fun chatOnce(
             .dropLast(1)
             .map { it.role to it.text }
             .takeLast(6)
+        val knowledge = eu.kanade.tachiyomi.data.ai.BookKnowledge.render(context, mangaId)
+            .ifBlank { "ЗНАНИЕ О КНИГЕ: пока ничего не проверено — при необходимости выясни через web_search и сохрани через book_remember." }
         val prompt = buildString {
             append("Книга: ").append(mangaTitle)
             if (!chapterTitle.isNullOrBlank()) append("\nГлава: ").append(chapterTitle)
@@ -443,6 +445,8 @@ private suspend fun chatOnce(
             attachmentsInfo = attachedText,
             history = priorTurns,
             chatFn = chat,
+            mangaId = mangaId,
+            bookContext = knowledge,
         )
     }
 
