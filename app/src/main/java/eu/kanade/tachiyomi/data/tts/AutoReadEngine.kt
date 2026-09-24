@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import logcat.LogPriority
 import mihon.data.ocr.OcrHistoryStore
+import mihon.data.ocr.OcrTextCleaner
 import mihon.data.ocr.OcrRegionRules
 import mihon.data.ocr.RuMorph
 import mihon.data.ocr.MangaTranslatorService
@@ -1328,7 +1329,9 @@ class AutoReadEngine(
          *  • остальные строки склеиваются пробелом.
          */
         fun cleanOcrGarbage(text: String, language: String): String {
-            val rawRows = text.lines().map { it.trim() }.filter { it.isNotBlank() }
+            val rawRows = text.lines()
+                .map { OcrTextCleaner.stripPromotionalText(it).trim() }
+                .filter { it.isNotBlank() }
             // Короткие целые слова («шум», «гам») OCR-чистка больше не кромсает:
             // одиночное слово из букв проходит без правок и фильтров.
             val singleWord = rawRows.singleOrNull()
@@ -1416,6 +1419,7 @@ class AutoReadEngine(
         /** Финальная проверка собранной реплики перед чтением. */
         fun isMeaningful(text: String, language: String): Boolean {
             if (text.isBlank()) return false
+            if (OcrTextCleaner.isPromotionalText(text)) return false
             if (!matchesLanguage(text, language)) return false
             // Служебная навигация сайта: «— том 1 глава 1 →», «том 1 глава 1»,
             // «← том 3 глава 5 →». Это шапка/футер манга-ридера, а не реплика;

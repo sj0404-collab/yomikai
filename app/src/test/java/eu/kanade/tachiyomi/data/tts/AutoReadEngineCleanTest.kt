@@ -144,4 +144,10 @@ class AutoReadEngineCleanTest {
         assertTrue(slow > normal)
         assertTrue(normal > fast)
     }
+
+    @Test
+    fun `fictional text is meaningful and watermark is not`() {
+        assertTrue(AutoReadEngine.isMeaningful("Столичный город Арзия", "ru"))
+        assertFalse(AutoReadEngine.isMeaningful("REMANGA.ORG ЧИТАЙ РАНЬШЕ ВСЕХ", "ru"))
+    }
 }

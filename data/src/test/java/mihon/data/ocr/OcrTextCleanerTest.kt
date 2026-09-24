@@ -251,4 +251,19 @@ class OcrTextCleanerTest {
         // кириллицы нет — это не текст, а крякозябры.
         OcrTextCleaner.cleanMlKitLine("Êðèñòî") shouldBe ""
     }
+
+    @Test
+    fun `fictional captions are not dictionary corrected`() {
+        OcrTextCleaner.normalizeLocalCyrillicCaption("Столичный город Арзия") shouldBe
+            "Столичный город Арзия"
+        OcrTextCleaner.normalizeLocalCyrillicCaption("Никак иначе") shouldBe
+            "Никак иначе"
+    }
+
+    @Test
+    fun `promotional watermark is removed without touching caption`() {
+        val text = "Столичный город Арзия\nREMANGA.ORG ЧИТАЙ РАНЬШЕ ВСЕХ"
+        OcrTextCleaner.stripPromotionalText(text) shouldBe "Столичный город Арзия"
+        OcrTextCleaner.isPromotionalText("REMANGA.ORG ЧИТАЙ РАНЬШЕ ВСЕХ") shouldBe true
+    }
 }

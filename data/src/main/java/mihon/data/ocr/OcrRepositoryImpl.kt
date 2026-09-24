@@ -447,7 +447,7 @@ class OcrRepositoryImpl(
         return cacheStore.getPage(
             chapterId = chapterId,
             pageIndex = pageIndex,
-        )
+        )?.withoutPromotionalRegions()
     }
 
     override suspend fun getCachedChapterIds(chapterIds: Collection<Long>): Set<Long> {
@@ -500,8 +500,9 @@ class OcrRepositoryImpl(
             attempted = true
             try {
                 val result = scanPageByEngine(chapterId, pageIndex, image, engine)
-                if (result.regions.isNotEmpty()) return result
-                lastResult = result
+                val usable = result.withoutPromotionalRegions()
+                if (usable.regions.isNotEmpty()) return usable
+                lastResult = usable
             } catch (error: Throwable) {
                 if (error is CancellationException) throw error
                 if (!fallbackEnabled) throw error
@@ -866,6 +867,15 @@ class OcrRepositoryImpl(
         }
 
         return Bitmap.createBitmap(image, rect.left, rect.top, rect.width(), rect.height())
+    }
+
+    private fun OcrPageResult.withoutPromotionalRegions(): OcrPageResult {
+        return copy(
+            regions = regions.mapNotNull { region ->
+                val text = OcrTextCleaner.stripPromotionalText(region.text)
+                text.takeIf(String::isNotBlank)?.let { region.copy(text = it) }
+            },
+        )
     }
 
     override fun cleanup() {

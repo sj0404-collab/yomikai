@@ -36,6 +36,13 @@ class OcrTextCleanerUserDictTest {
     }
 
     @Test
+    fun `user dictionary coverage does not include built-in words`() {
+        OcrVocabulary.configure(null)
+
+        OcrTextCleaner.userDictionaryCoverage("Столичный город Арзия") shouldBe 0f
+    }
+
+    @Test
     fun `dictionaryCoverage counts user words as covered letters`() {
         OcrVocabulary.configure(null)
         OcrVocabulary.addWord("ЖЖУЗЛИК")

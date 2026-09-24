@@ -1020,7 +1020,7 @@ class ReaderActivity : BaseActivity() {
                         toast("Область сканирования изменена")
                     },
                     onAutoscrollToggle = ::toggleAutoscroll,
-                    onAutoSpeakPage = ::startAutoReadLoop,
+                    onAutoSpeakPage = ::autoSpeakVisiblePage,
                     onStopSpeak = {
                         stopAutoReadLoop()
                         viewModel.stopAutoSpeak()
@@ -1516,6 +1516,8 @@ class ReaderActivity : BaseActivity() {
      * с кнопкой «Остановить».
      */
     fun autoSpeakVisiblePage() {
+        stopAutoReadLoop()
+        autoReadEngine.clearHistory()
         readCurrentPage(thenAdvance = false)
     }
 

@@ -80,6 +80,33 @@ object OcrTextCleaner {
         }
     }
 
+    private val PROMOTIONAL_SITE = Regex(
+        "reman?ga(?:\\.org)?",
+        RegexOption.IGNORE_CASE,
+    )
+    private val PROMOTIONAL_SLOGAN = Regex(
+        "читай\\s+раньше\\s+всех(?:\\s+на\\s+reman?ga(?:\\.org)?)?",
+        RegexOption.IGNORE_CASE,
+    )
+
+    fun stripPromotionalText(text: String): String {
+        if (text.isBlank()) return text
+        return text.lineSequence()
+            .map { line ->
+                line.replace(PROMOTIONAL_SLOGAN, "")
+                    .replace(PROMOTIONAL_SITE, "")
+                    .replace(Regex("[ \\t]{2,}"), " ")
+                    .trim()
+            }
+            .filter(String::isNotBlank)
+            .joinToString("\n")
+    }
+
+    fun isPromotionalText(text: String): Boolean {
+        if (text.isBlank()) return false
+        return stripPromotionalText(text).isBlank()
+    }
+
     /**
      * Нормализует локально распознанную русскую подпись в правильном порядке.
      *
@@ -346,6 +373,20 @@ object OcrTextCleaner {
         val user = OcrVocabulary.isUserWord(up)
         if (user) OcrTextCleanerStats.userDictHits++
         return user
+    }
+
+    fun userDictionaryCoverage(text: String): Float {
+        if (text.isBlank()) return 0f
+        var letters = 0
+        var covered = 0
+        for (token in text.split(Regex("[^\\p{L}\\p{N}]+"))) {
+            val lexical = token.filter(Char::isLetter)
+            if (lexical.count { it.code in CYRILLIC_RANGE } == 0) continue
+            letters += lexical.length
+            if (OcrVocabulary.isUserWord(lexical)) covered += lexical.length
+        }
+        if (letters == 0) return 0f
+        return covered.toFloat() / letters
     }
 
     /**
