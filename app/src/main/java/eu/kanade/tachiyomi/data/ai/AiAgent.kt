@@ -100,6 +100,11 @@ object AiAgent {
             "@tool web_fetch {\"url\":\"https://...\",\"maxChars\":4000} — скачать страницу и вернуть её текст без разметки\n" +
             "@tool book_recall {} — что уже известно о текущей книге (где читать, о чём, как читать, заметки, советы)\n" +
             "@tool book_remember {\"kind\":\"site|summary|fact|advice|заметка\",\"text\":\"значение\"} — сохранить знание о книге\n" +
+            "@tool reader_actions {} — какие действия доступны в открытой читалке\n" +
+            "@tool reader_do {\"action\":\"speak_page\"} — выполнить действие читалки: " +
+            "speak_page (озвучить текущую страницу), speak_chapter (озвучивать всю главу), " +
+            "stop_speak (прекратить озвучку), page_text (распознать текст текущей страницы), " +
+            "page_count (сколько страниц в главе)\n" +
             "@tool list_ext {} — список установленных расширений-источников с их доменами\n" +
             "@tool filter_ext {\"hide\":\"подстрока\",\"show\":\"подстрока\"} — скрыть/показать источники по имени/языку\n" +
             "@tool find_manga {\"title\":\"название\"} — найти мангу по включённым источникам, вернёт где реально открывается\n" +
@@ -357,6 +362,7 @@ object AiAgent {
         setOf(
             "write_file", "edit_file", "append_file", "read_file", "gen_image",
             "check_site", "web_search", "web_fetch", "book_recall", "book_remember",
+            "reader_actions", "reader_do",
             "list_ext", "filter_ext", "find_manga", "zip_workspace",
             "plugin_create", "plugin_edit", "plugin_delete", "plugin_list",
             "runner_chat", "runner_start", "github_api",
@@ -638,6 +644,13 @@ object AiAgent {
         }
 
         "book_recall" -> ToolResult("book_recall", BookKnowledge.render(context, mangaId))
+
+        "reader_actions" -> ToolResult("reader_actions", ReaderAiActions.describe())
+
+        "reader_do" -> {
+            val action = call.args.optString("action")
+            ToolResult("reader_do", ReaderAiActions.run(action, call.args))
+        }
 
         "book_remember" -> {
             val kind = call.args.optString("kind", "fact")

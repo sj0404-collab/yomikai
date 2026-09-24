@@ -456,11 +456,16 @@ class AutoReadEngine(
                 if (prefs.aiGenderVoices().get() && ordered.isNotEmpty()) {
                     val newLines = ordered.map { it.text }
                     val prevSnapshot = prevFrameLines
+                    val advice = eu.kanade.tachiyomi.data.ai.BookKnowledge.renderAdvice(
+                        context = context,
+                        mangaId = mihon.data.ocr.ReaderContextBus.current.value?.mangaId,
+                    )
                     scope.launch {
                         preparedRef.set(
                             eu.kanade.tachiyomi.data.ai.AiAssistant.prepareFrame(
                                 newLines = newLines,
                                 prevLines = prevSnapshot,
+                                advice = advice,
                             ),
                         )
                     }

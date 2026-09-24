@@ -152,6 +152,8 @@ import kotlin.time.Duration.Companion.seconds
 class ReaderActivity : BaseActivity() {
 
     companion object {
+        private const val READER_ACTION_PREFIX = "reader."
+
         fun newIntent(context: Context, mangaId: Long?, chapterId: Long?): Intent {
             return Intent(context, ReaderActivity::class.java).apply {
                 putExtra("manga", mangaId)
@@ -346,6 +348,7 @@ class ReaderActivity : BaseActivity() {
 
         binding = ReaderActivityBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        registerReaderAiActions()
         // v1.9.40: long-press на странице читалки = выбор области скана (как в вебе).
         // v1.9.46: если включено авто-сканирование — удержание сразу выделяет,
         // распознаёт и озвучивает область вокруг точки касания (autoclick с
@@ -603,7 +606,6 @@ class ReaderActivity : BaseActivity() {
      * Called when the activity is destroyed. Cleans up the viewer, configuration and any view.
      */
     override fun onDestroy() {
-        // Полный стоп авточтения и голоса при выходе из читалки
         stopAutoReadLoop()
         super.onDestroy()
         autoscrollJob?.cancel()
@@ -611,6 +613,7 @@ class ReaderActivity : BaseActivity() {
         config = null
         menuToggleToast?.cancel()
         readingModeToast?.cancel()
+        eu.kanade.tachiyomi.data.ai.ReaderAiActions.unregisterAll(READER_ACTION_PREFIX)
     }
 
     override fun onPause() {
@@ -1556,6 +1559,46 @@ class ReaderActivity : BaseActivity() {
         stopAutoReadLoop()
         autoReadEngine.clearHistory()
         readCurrentPage(thenAdvance = false)
+    }
+
+    private fun registerReaderAiActions() {
+        val actions = eu.kanade.tachiyomi.data.ai.ReaderAiActions
+        actions.unregisterAll(READER_ACTION_PREFIX)
+        actions.register("${READER_ACTION_PREFIX}speak_page") {
+            withUIContext { autoSpeakVisiblePage() }
+            "Озвучиваю текущую страницу"
+        }
+        actions.register("${READER_ACTION_PREFIX}speak_chapter") {
+            withUIContext { startAutoReadLoop() }
+            "Запустил озвучку главы: страницы будут читаться и листаться"
+        }
+        actions.register("${READER_ACTION_PREFIX}stop_speak") {
+            withUIContext { stopAutoReadLoop() }
+            "Озвучка остановлена"
+        }
+        actions.register("${READER_ACTION_PREFIX}page_count") {
+            val total = viewModel.state.value.totalPages
+            val page = viewModel.state.value.currentPage
+            "Страниц в главе: $total, открыта: $page"
+        }
+        actions.register("${READER_ACTION_PREFIX}page_text") {
+            val root = binding.root
+            val rect = android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
+            val bitmap = cropCurrentSelectionBitmap(rect)
+            if (bitmap == null) {
+                "Не удалось получить кадр страницы"
+            } else {
+                try {
+                    val file = java.io.File(cacheDir, "ai_page_text.jpg")
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 82, file.outputStream())
+                    eu.kanade.tachiyomi.data.ai.AiAgent.ocrAttachment(file).orEmpty().ifBlank {
+                        "На странице не распознан текст"
+                    }
+                } finally {
+                    if (!bitmap.isRecycled) bitmap.recycle()
+                }
+            }
+        }
     }
 
     /**

@@ -103,6 +103,13 @@ object BookKnowledge {
         return stored
     }
 
+    fun renderAdvice(context: Context, mangaId: Long?, limit: Int = 8): String? {
+        if (mangaId == null) return null
+        val advice = load(context, mangaId).advice.takeLast(limit)
+        if (advice.isEmpty()) return null
+        return "Советы читателя, соблюдай их: " + advice.joinToString("; ")
+    }
+
     fun render(context: Context, mangaId: Long?): String {
         if (mangaId == null) return ""
         val book = load(context, mangaId)

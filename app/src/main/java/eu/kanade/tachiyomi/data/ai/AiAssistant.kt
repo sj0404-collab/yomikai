@@ -477,7 +477,7 @@ object AiAssistant {
      * «N|-» для пропуска дубля. Всё видно в скрытом чате (журнале).
      * Таймаут 8с: при сбое вызывающий код откатывается на локальный конвейер.
      */
-    suspend fun prepareFrame(newLines: List<String>, prevLines: List<String>): List<PreparedLine>? {
+    suspend fun prepareFrame(newLines: List<String>, prevLines: List<String>, advice: String? = null): List<PreparedLine>? {
         if (newLines.isEmpty()) return emptyList()
         val prevBlock = if (prevLines.isEmpty()) {
             "(прошлый кадр пуст)"
@@ -485,10 +485,11 @@ object AiAssistant {
             prevLines.takeLast(20).joinToString("\n") { "- ${it.take(90)}" }
         }
         val newBlock = newLines.mapIndexed { i, t -> "${i + 1}. ${t.take(140)}" }.joinToString("\n")
+        val adviceBlock = advice?.let { "\n\nСоветы читателя (соблюдай): $it" }.orEmpty()
         val answer = kotlinx.coroutines.withTimeoutOrNull(8_000) {
             chat(
                 userPrompt = "Прошлый кадр манги содержал реплики:\n$prevBlock\n\n" +
-                    "Новый кадр:\n$newBlock\n\n" +
+                    "Новый кадр:\n$newBlock$adviceBlock\n\n" +
                     "Для КАЖДОЙ реплики нового кадра ответь отдельной строкой строго в формате " +
                     "«N|г|текст», где N — номер, г — пол говорящего (м/ж/н), " +
                     "текст — реплика, очищенная от мусора OCR. Если реплика повторяет прошлый кадр " +
