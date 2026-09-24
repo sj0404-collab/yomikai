@@ -220,6 +220,7 @@ object AiAgent {
         chatFn: (suspend (String, String) -> AiAssistant.ChatReply?)? = null,
         mangaId: Long? = null,
         bookContext: String? = null,
+        onProgress: ((String) -> Unit)? = null,
     ): AgentReply = withContext(Dispatchers.IO) {
         val chat = chatFn ?: onlineChat
         val results = mutableListOf<ToolResult>()
@@ -255,6 +256,7 @@ object AiAgent {
         val systemPromptEffective = SYSTEM_PROMPT + "\n\n" + capabilityBlock
 
         val turnStarted = System.currentTimeMillis()
+        onProgress?.invoke("Запрос к модели…")
         var totalTokens = 0
         var roundsDone = 0
 
@@ -291,6 +293,7 @@ object AiAgent {
                 break
             }
             roundsDone = round
+            onProgress?.invoke("Инструменты: ${calls.joinToString(", ") { it.name }}")
             val outputs = calls.map { call ->
                 val t0 = System.currentTimeMillis()
                 // Инструменты больше не могут зависнуть навсегда (gen_image /
@@ -308,11 +311,24 @@ object AiAgent {
                 val finalR = if (r.output.startsWith("ОШИБКА")) r.copy(status = "error") else r
                 if (finalR.fileProduced != null && finalR.name == "gen_image") images += finalR.fileProduced
                 results += finalR
+                val file = finalR.fileProduced
+                onProgress?.invoke(
+                    buildString {
+                        append(finalR.name)
+                        if (finalR.tookMs > 0) append(" · ").append(finalR.tookMs / 1000).append(" с")
+                        if (file != null) {
+                            append(" · файл ").append(file.name).append(" · ")
+                            append(file.length() / 1024).append(" КБ")
+                        }
+                        if (finalR.status == "error") append(" · ошибка")
+                    },
+                )
                 "${finalR.name}: ${finalR.output.take(700)}"
             }
             val followUp = "Твой предыдущий ответ с вызовами:\n${answer.take(6000)}\n\n" +
                 "Результаты инструментов:\n" + outputs.joinToString("\n---\n") +
                 "\n\nПродолжи задачу. Если всё сделано — дай полный финальный ответ без @tool."
+            onProgress?.invoke("Инструменты выполнены, жду ответ модели…")
             val next = reliableChat(
                 chat,
                 prompt + "\n\n(вызовы выполнены приложением)\n" + followUp,

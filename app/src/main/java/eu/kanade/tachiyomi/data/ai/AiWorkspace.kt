@@ -86,6 +86,16 @@ object AiWorkspace {
         f.absolutePath.removePrefix(root(context).absolutePath).trimStart('/')
     }.getOrDefault(f.name)
 
+    fun relPathOrNull(context: Context, f: File): String? = runCatching {
+        val rootPath = root(context).canonicalPath
+        val filePath = f.canonicalPath
+        if (filePath.startsWith(rootPath) && filePath != rootPath) {
+            filePath.removePrefix(rootPath).trimStart('/')
+        } else {
+            null
+        }
+    }.getOrNull()
+
     /** Безопасное разрешение относительного пути (без выхода из workspace). */
     fun resolve(context: Context, rel: String): File? = runCatching {
         val r = root(context)

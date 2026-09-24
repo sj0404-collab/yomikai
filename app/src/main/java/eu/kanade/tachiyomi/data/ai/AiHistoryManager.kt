@@ -34,6 +34,9 @@ object AiHistoryManager {
         val time: Long = System.currentTimeMillis(),
         val tokens: Int = 0,
         val model: String = "",
+        val reasoning: String = "",
+        val tools: List<String> = emptyList(),
+        val files: List<String> = emptyList(),
     )
 
     private const val FILE = "ai_history.json"

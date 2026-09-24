@@ -9,6 +9,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -75,7 +76,9 @@ import eu.kanade.tachiyomi.data.ai.AiBackends
 import eu.kanade.tachiyomi.data.ai.AiHistoryManager
 import eu.kanade.tachiyomi.data.ai.AiHistoryManager.Msg
 import eu.kanade.tachiyomi.data.tts.TtsSpeaker
+import eu.kanade.tachiyomi.util.storage.getUriCompat
 import eu.kanade.tachiyomi.util.system.toast
+import eu.kanade.tachiyomi.util.system.toShareIntent
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -95,12 +98,51 @@ fun ReaderAiChatOverlay(
     var showClearConfirm by remember { mutableStateOf(false) }
     var attachedName by remember { mutableStateOf<String?>(null) }
     var attachedBytes by remember { mutableStateOf<ByteArray?>(null) }
+    var activity by remember { mutableStateOf("") }
+    var elapsed by remember { mutableStateOf(0L) }
+    var backendLine by remember { mutableStateOf("") }
 
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
     val showToast: (String) -> Unit = { message -> context.toast(message) }
     val scrollTo: (Int) -> Unit = { index -> scope.launch { listState.animateScrollToItem(index) } }
+    val setActivity: (String) -> Unit = { text ->
+        scope.launch {
+            activity = text
+            elapsed = 0L
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        val prefs = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+        val backend = eu.kanade.tachiyomi.data.ai.AiBackends.byId(prefs.aiBackend().get())
+        val status = eu.kanade.tachiyomi.data.ai.AiBackends.statusOf(
+            backend,
+            eu.kanade.tachiyomi.data.ai.AiBackends.state(context, prefs),
+            prefs.aiProvider().get(),
+        )
+        backendLine = if (status.available) {
+            "${backend.title} · ${status.detail}"
+        } else {
+            "${backend.title} · недоступно: ${status.missing.joinToString(", ")}"
+        }
+    }
+
+    LaunchedEffect(loading) {
+        if (!loading) {
+            elapsed = 0L
+            activity = ""
+        }
+    }
+
+    LaunchedEffect(loading) {
+        while (loading) {
+            kotlinx.coroutines.delay(1000)
+            elapsed += 1
+        }
+    }
+
     val send: (String, String?, ByteArray?) -> Unit = { text, fileName, fileBytes ->
         if (text.isNotBlank() && !loading) {
             sendMessage(
@@ -115,6 +157,7 @@ fun ReaderAiChatOverlay(
                 history = history,
                 loading = { loading = it },
                 onScroll = scrollTo,
+                onActivity = setActivity,
             )
             attachedName = null
             attachedBytes = null
@@ -170,9 +213,40 @@ fun ReaderAiChatOverlay(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                         )
+                        if (backendLine.isNotBlank()) {
+                            Text(
+                                backendLine,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                            )
+                        }
                     }
                     IconButton(onClick = onClose) {
                         Icon(Icons.Outlined.Close, contentDescription = "Скрыть AI-чат")
+                    }
+                }
+                if (loading || activity.isNotBlank()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (loading) {
+                            CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(6.dp))
+                        }
+                        Text(
+                            buildString {
+                                append(if (loading) "AI думает" else "Готово")
+                                if (loading && elapsed > 0) append(" · ").append(elapsed).append(" с")
+                                if (activity.isNotBlank()) append(" · ").append(activity)
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                        )
                     }
                 }
                 HorizontalDivider()
@@ -228,23 +302,6 @@ fun ReaderAiChatOverlay(
                                 TtsSpeaker.speak(context, msg.text)
                             },
                         )
-                    }
-
-                    if (loading) {
-                        item {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(4.dp),
-                            ) {
-                                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                                Spacer(Modifier.width(8.dp))
-                                Text(
-                                    "AI думает…",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
                     }
                 }
 
@@ -358,9 +415,11 @@ private fun sendMessage(
     history: SnapshotStateList<Msg>,
     loading: (Boolean) -> Unit,
     onScroll: (Int) -> Unit,
+    onActivity: (String) -> Unit = {},
 ) {
     AiHistoryManager.append(context, history, Msg(role = "user", text = input), mangaId)
     loading(true)
+    onActivity("Запрос к модели…")
     scope.launch {
         val reply = runCatching {
             chatOnce(
@@ -372,14 +431,19 @@ private fun sendMessage(
                 attachmentsName = attachmentsName,
                 attachmentsBytes = attachmentsBytes,
                 history = history,
+                onProgress = onActivity,
             )
         }.getOrElse { error ->
+            onActivity("Ошибка запроса")
             AiAgent.AgentReply(
                 text = "Сбой запроса к AI: ${error.message ?: error::class.java.simpleName}",
                 toolResults = emptyList(),
                 images = emptyList(),
             )
         }
+        val files = (reply.toolResults.mapNotNull { it.fileProduced } + reply.images)
+            .distinct()
+            .mapNotNull { eu.kanade.tachiyomi.data.ai.AiWorkspace.relPathOrNull(context, it) }
         AiHistoryManager.append(
             context = context,
             history = history,
@@ -389,10 +453,25 @@ private fun sendMessage(
                 time = System.currentTimeMillis(),
                 tokens = reply.tokens,
                 model = reply.model,
+                reasoning = reply.reasoning.orEmpty(),
+                tools = reply.toolResults.map { tr ->
+                    buildString {
+                        append(tr.name)
+                        if (tr.status == "error") append(" — ошибка")
+                        if (tr.tookMs > 0) append(" · ").append(tr.tookMs / 1000).append(" с")
+                        val produced = tr.fileProduced
+                        if (produced != null) {
+                            append(" · ").append(produced.name).append(' ')
+                            append(produced.length() / 1024).append(" КБ")
+                        }
+                    }
+                },
+                files = files,
             ),
             mangaId = mangaId,
         )
         loading(false)
+        onActivity("Готово")
         onScroll(history.size - 1)
     }
 }
@@ -406,6 +485,7 @@ private suspend fun chatOnce(
     attachmentsName: String?,
     attachmentsBytes: ByteArray?,
     history: List<Msg>,
+    onProgress: ((String) -> Unit)? = null,
 ): AiAgent.AgentReply =
     withContext(Dispatchers.IO) {
         val prefs = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
@@ -447,6 +527,7 @@ private suspend fun chatOnce(
             chatFn = chat,
             mangaId = mangaId,
             bookContext = knowledge,
+            onProgress = onProgress,
         )
     }
 
@@ -500,11 +581,88 @@ private fun ChatBubble(
             modifier = Modifier.fillMaxWidth(if (isMine) 0.85f else 0.95f),
         ) {
             Column(Modifier.padding(10.dp)) {
+                if (msg.reasoning.isNotBlank()) {
+                    var showReasoning by remember { mutableStateOf(false) }
+                    Text(
+                        if (showReasoning) "Размышления ▾" else "Размышления ▸",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.clickable { showReasoning = !showReasoning },
+                    )
+                    if (showReasoning) {
+                        Text(
+                            msg.reasoning.take(1200),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
                 SelectionContainer {
                     Text(
                         msg.text,
                         style = MaterialTheme.typography.bodyMedium,
                     )
+                }
+                if (msg.tools.isNotEmpty()) {
+                    var showTools by remember { mutableStateOf(false) }
+                    Text(
+                        if (showTools) "Инструменты (${msg.tools.size}) ▾" else "Инструменты (${msg.tools.size}) ▸",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.clickable { showTools = !showTools }.padding(top = 4.dp),
+                    )
+                    if (showTools) {
+                        msg.tools.forEach { line ->
+                            Text(
+                                "• $line",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                msg.files.forEach { rel ->
+                    val file = java.io.File(eu.kanade.tachiyomi.data.ai.AiWorkspace.root(context), rel)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Outlined.AttachFile, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                file.name,
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                            )
+                            Text(
+                                rel + " · " + (file.length() / 1024) + " КБ",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                            )
+                        }
+                        TextButton(
+                            onClick = {
+                                if (!file.exists()) {
+                                    context.toast("Файл не найден")
+                                } else {
+                                    runCatching {
+                                        context.startActivity(
+                                            file.getUriCompat(context).toShareIntent(
+                                                context = context,
+                                                type = "application/octet-stream",
+                                                message = rel,
+                                            ),
+                                        )
+                                    }.onFailure { context.toast("Не удалось открыть файл") }
+                                }
+                            },
+                            enabled = file.exists(),
+                        ) {
+                            Text("Отправить")
+                        }
+                    }
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
