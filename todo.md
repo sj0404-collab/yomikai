@@ -108,4 +108,5 @@
 - [x] Автоочистка кеша после прочтения: `ReaderActivity.pruneReadPagesFromCache` + `ChapterCache.removeImageFromCache` — прочитанные позади страницы освобождаются (кроме одной ближайшей).
 - [x] Локальная проверка: `:app:compileDebugKotlin`, `:app:testDebugUnitTest` (вкл. `AutoReadEngineCleanTest`), `:data:testDebugUnitTest`, `verifySqlDelightMigration` — все зелёные.
 - [x] Отчёт качества `docs/ocr-releases/2026-09-24-v1.9.91.md` и `CURRENT.md`.
-- [ ] Push на `main` и тег `v1.9.91` → единственная подписанная сборка в GitHub Actions `release.yml`; проверить SHA-256/размер APK и релиз.
+- [x] Push на `main` и тег `v1.9.91` → единственная подписанная сборка в GitHub Actions `release.yml`; SHA-256 APK подтверждён, релиз опубликован.
+- [ ] (по явному запросу) залить `yomikai-v1.9.91.apk` и отчёт на GoFile для проверки на устройстве.
