@@ -37,7 +37,30 @@ object SpeechCue {
          * пунктуацию, иначе «Ааа!» получил бы крик дважды.
          */
         val fromCue: Boolean = false,
+        /**
+         * Кусок — настоящий звук (вздох, стон, крик), который обычный голос
+         * не умеет произносить, а лишь читает буквами. Такие куски — ровно те,
+         * что мост отправляет в плагин озвучки; междометия и обычный текст
+         * остаются на голосе.
+         */
+        val isSound: Boolean = false,
+        /**
+         * Тип звука («sigh», «moan», «cry», …). Плагину нужен именно тип: он
+         * подбирает нужный образец, а не читает подставленный текст.
+         */
+        val soundId: String? = null,
     )
+
+    /** Типы звуков: стабильные ключи для плагина, порядок как в [SOUNDS]. */
+    object SoundId {
+        const val CRY_FOR_HELP = "cry_for_help"
+        const val CRY = "cry"
+        const val MOAN = "moan"
+        const val GASP = "gasp"
+        const val SIGH = "sigh"
+        const val LAUGH = "laugh"
+        const val COUGH = "cough"
+    }
 
     /** Звук: что говорить и каким голосом. */
     class Sound(
@@ -46,6 +69,8 @@ object SpeechCue {
         val rate: Float,
         val pauseMs: Int,
         val words: List<String>,
+        /** Тип звука для плагина озвучки, см. [SoundId]. */
+        val id: String,
     )
 
     /** Состояние: только модификатор подачи, ничего не произносится. */
@@ -68,6 +93,7 @@ object SpeechCue {
                 "крик помощи", "зовет помощь", "зовёт помощь", "на помощь",
                 "помогите", "помоги", "спасите", "спаси", "救命",
             ),
+            id = SoundId.CRY_FOR_HELP,
         ),
         Sound(
             spoken = "А-а-а!",
@@ -79,6 +105,7 @@ object SpeechCue {
                 "воет", "воёт", "рычит", "закричал", "закричала", "вскрикнул",
                 "вскрикнула", "кричит о помощи",
             ),
+            id = SoundId.CRY,
         ),
         Sound(
             spoken = "А-а-а...",
@@ -89,6 +116,7 @@ object SpeechCue {
                 "стонет от боли", "стон", "стонет", "хнычет", "хнычеть",
                 "ныть", "поскуливает", "скулит",
             ),
+            id = SoundId.MOAN,
         ),
         Sound(
             spoken = "А-а-а!",
@@ -99,6 +127,7 @@ object SpeechCue {
                 "вдох", "вдыхает", "задыхается", "хватает воздух",
                 "не хватает воздуха", "дышит часто", "задыхаясь",
             ),
+            id = SoundId.GASP,
         ),
         Sound(
             spoken = "А-а-а...",
@@ -108,6 +137,7 @@ object SpeechCue {
             words = listOf(
                 "вздох", "вздыхает", "вздохнув", "выдох", "выдыхает",
             ),
+            id = SoundId.SIGH,
         ),
         Sound(
             spoken = "Ха-ха-ха!",
@@ -118,6 +148,7 @@ object SpeechCue {
                 "смеется", "смеётся", "смех", "хохочет", "хихикает",
                 "усмехается", "смешок",
             ),
+            id = SoundId.LAUGH,
         ),
         Sound(
             spoken = "Кхм... Кхм!",
@@ -125,6 +156,7 @@ object SpeechCue {
             rate = 0.9f,
             pauseMs = 300,
             words = listOf("кашель", "кашляет", "кашлянул", "кашлянуть", "кашлит"),
+            id = SoundId.COUGH,
         ),
     )
 
@@ -255,7 +287,7 @@ object SpeechCue {
      */
     fun render(text: String): String {
         var out = CUE_SPAN.replace(text) { match ->
-            val remark = match.groupValues[1]
+            val remark = match.groupValues[1].trim('*').trim()
             soundOf(remark)?.spoken
                 ?: if (isInterjection(remark)) remark
                 // `*курсив*` — текст, который нужно показать и прочесть, а не
@@ -368,7 +400,7 @@ object SpeechCue {
         for (span in spans) {
             plain(sentence.substring(cursor, span.range.first))
             cursor = span.range.last + 1
-            val remark = span.groupValues[1]
+            val remark = span.groupValues[1].trim('*').trim()
             val sound = soundOf(remark)
             // `*курсив*` — обычный текст, а не ремарка. Молча выбрасывать слово
             // нельзя: OCR вебтунов и переводов даёт звёздочки сплошь и рядом.
@@ -384,6 +416,8 @@ object SpeechCue {
                     sound.rate * sr,
                     sound.pauseMs,
                     fromCue = true,
+                    isSound = true,
+                    soundId = sound.id,
                 )
                 isInterjection(remark) -> plain(remark)
                 // Звёздочки вокруг обычного слова — выделение, а не указание

@@ -312,4 +312,46 @@ class SpeechCueTest {
         w.text shouldBe "Текст."
         (w.rate < 1f) shouldBe true
     }
+
+    @Test
+    fun `only real sounds are marked for the plugin bridge`() {
+        // Мост отправляет в плагин только звуки — то, что обычный голос
+        // произнести не может. Междометия и обычный текст остаются на голосе,
+        // иначе плагин забирал бы весь текст книги.
+        val sound = SpeechCue.deliveries("(вздох)").first()
+        sound.isSound shouldBe true
+        sound.soundId shouldBe SpeechCue.SoundId.SIGH
+
+        // Междометие пришло из ремарки, но междометием не является.
+        val interjection = SpeechCue.deliveries("(*Ааа!*)").first()
+        interjection.fromCue shouldBe true
+        interjection.isSound shouldBe false
+        interjection.soundId shouldBe null
+
+        // Обычный текст — вообще не из ремарки.
+        val text = SpeechCue.deliveries("Прости.").first()
+        text.fromCue shouldBe false
+        text.isSound shouldBe false
+        text.soundId shouldBe null
+    }
+
+    @Test
+    fun `every built-in sound has a stable id`() {
+        // Мост ищет звук по типу, поэтому у каждого типа должен быть свой ключ,
+        // иначе плагин не сможет отличить вздох от кашля.
+        val byRemark = mapOf(
+            "(крик помощи)" to SpeechCue.SoundId.CRY_FOR_HELP,
+            "(крик)" to SpeechCue.SoundId.CRY,
+            "(стон)" to SpeechCue.SoundId.MOAN,
+            "(вдох)" to SpeechCue.SoundId.GASP,
+            "(вздох)" to SpeechCue.SoundId.SIGH,
+            "(смех)" to SpeechCue.SoundId.LAUGH,
+            "(кашель)" to SpeechCue.SoundId.COUGH,
+        )
+        for ((remark, id) in byRemark) {
+            val d = SpeechCue.deliveries(remark).first()
+            d.soundId shouldBe id
+            d.isSound shouldBe true
+        }
+    }
 }
