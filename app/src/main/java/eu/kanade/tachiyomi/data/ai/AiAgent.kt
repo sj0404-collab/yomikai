@@ -105,6 +105,9 @@ object AiAgent {
             "выучить правило книги: порядок чтения, область/рамка, баблы, расшифровка, голоса и роли\n" +
             "@tool book_learn {\"kind\":\"...\",\"text\":\"- правило\\n- правило\",\"user\":true} — список правил; " +
             "user=true, если правило продиктовал пользователь\n" +
+            "@tool book_learn {\"kind\":\"fact|voice|transcription\",\"text\":\"знание\",\"scope\":\"series|global\"} — " +
+            "положить знание в память ВНЕ книги: series — термины, имена и перевод для всей серии, " +
+            "global — для всех книг. Порядок чтения и области сюда НЕ кладут: они остаются книжными\n" +
             "@tool reader_actions {} — какие действия доступны в открытой читалке\n" +
             "@tool reader_do {\"action\":\"speak_page\"} — выполнить действие читалки: " +
             "speak_page (озвучить текущую страницу), speak_chapter (озвучивать всю главу), " +
@@ -265,9 +268,15 @@ object AiAgent {
                 "(порядок чтения, области и рамки, баблы, расшифровка, голоса и роли) и зафиксируй их " +
                 "вызовами book_learn с kind. Не выдумывай правил: если источник не нашёлся — скажи об этом."
         }
+        // Память из других книг: имена персонажей, термины серии и особенности
+        // перевода не должны открываться заново в каждой манге.
+        val sharedMemory = bookSession?.book?.title
+            ?.let { BookSharedMemory.render(context, it) }
+            .orEmpty()
         val prompt = buildString {
             if (historyBlock.isNotBlank()) append("Контекст диалога (последние $historyLimit, бюджет ${tokenBudget} токенов):\n").append(historyBlock).append("\n\n")
             if (!bookContext.isNullOrBlank()) append(bookContext).append("\n\n")
+            if (sharedMemory.isNotBlank()) append(sharedMemory).append("\n\n")
             if (onboarding != null) append(onboarding).append("\n\n")
             if (!attachmentsInfo.isNullOrBlank()) append("Вложения пользователя:\n").append(attachmentsInfo).append("\n\n")
             if (capabilityBlock.isNotBlank()) append(capabilityBlock).append("\n\n")
@@ -824,23 +833,49 @@ object AiAgent {
                     }
                 } else {
                     val author = if (fromUser) BookLearning.AUTHOR_USER else BookLearning.AUTHOR_AGENT
-                    val stored = BookKnowledge.learn(
-                        context = context,
-                        mangaId = manga,
-                        kind = kind.ifBlank { BookLearning.KIND_ADVICE },
-                        text = text,
-                        source = if (author == BookLearning.AUTHOR_USER) BookLearning.AUTHOR_USER else "",
-                        author = author,
-                    )
-                    ToolResult(
-                        name = "book_learn",
-                        output = if (stored > 0) {
-                            "Выучено правил: $stored (${BookLearning.kindTitle(kind)})"
-                        } else {
-                            "Такое правило уже выучено или текст пустой — не дублирую"
-                        },
-                        status = "ok",
-                    )
+                    val scope = call.args.optString("scope").trim().lowercase()
+                    // scope=series|global — знание нужно не только этой книге:
+                    // имена героев, термины и перевод помогают в других томах.
+                    // Правила чтения (порядок, области) остаются книжными.
+                    if (scope == BookSharedMemory.SCOPE_SERIES || scope == BookSharedMemory.SCOPE_GLOBAL) {
+                        val shared = BookSharedMemory.remember(
+                            context = context,
+                            scope = scope,
+                            title = BookKnowledge.load(context, manga).title,
+                            kind = kind.ifBlank { BookLearning.KIND_FACT },
+                            text = text,
+                            source = if (author == BookLearning.AUTHOR_USER) BookLearning.AUTHOR_USER else "",
+                            author = author,
+                        )
+                        ToolResult(
+                            name = "book_learn",
+                            output = if (shared > 0) {
+                                val where = if (scope == BookSharedMemory.SCOPE_SERIES) "в память серии" else "в общую память"
+                                "Записано $where: $shared (${BookLearning.kindTitle(kind)}) — пригодится в других книгах"
+                            } else {
+                                "Такое знание уже есть в общей памяти — не дублирую"
+                            },
+                            status = "ok",
+                        )
+                    } else {
+                        val stored = BookKnowledge.learn(
+                            context = context,
+                            mangaId = manga,
+                            kind = kind.ifBlank { BookLearning.KIND_ADVICE },
+                            text = text,
+                            source = if (author == BookLearning.AUTHOR_USER) BookLearning.AUTHOR_USER else "",
+                            author = author,
+                        )
+                        ToolResult(
+                            name = "book_learn",
+                            output = if (stored > 0) {
+                                "Выучено правил: $stored (${BookLearning.kindTitle(kind)})"
+                            } else {
+                                "Такое правило уже выучено или текст пустой — не дублирую"
+                            },
+                            status = "ok",
+                        )
+                    }
                 }
             }
         }
