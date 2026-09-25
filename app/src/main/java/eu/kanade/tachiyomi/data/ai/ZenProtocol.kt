@@ -1,4 +1,4 @@
-package eu.kohesive.tachiyomi.data.ai
+package eu.kanade.tachiyomi.data.ai
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray

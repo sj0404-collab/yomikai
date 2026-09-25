@@ -1,4 +1,4 @@
-package eu.kohesive.tachiyomi.data.ai
+package eu.kanade.tachiyomi.data.ai
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
