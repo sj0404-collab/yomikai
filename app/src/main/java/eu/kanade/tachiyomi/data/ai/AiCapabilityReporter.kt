@@ -34,6 +34,15 @@ object AiCapabilityReporter {
         val allowGithub = prefs.aiAllowGithub().get()
         val backend = prefs.aiBackend().get()
 
+        // Zen: доступность выводится из фактического ответа, а не из наличия
+        // сети. Раньше здесь стояло `hasNetwork`, и отчёт писал «доступно» даже
+        // при HTTP 403 FreeTierError — агент верил отчёту и по инструкции
+        // «не повторяй недоступное» продолжал пробовать закрытый путь.
+        val zenVerdict = ZenAvailability.describe(
+            hasNetwork = hasNetwork,
+            state = AiAssistant.zenState(),
+        )
+
         return listOf(
             Capability("Интернет", hasNetwork, if (hasNetwork) "OK" else "Нет сети — онлайн OCR/TTS/AI не работают"),
             Capability("Google AI (Gemini) — пол говорящих, OCR онлайн", hasGoogleKey && hasNetwork, when {
@@ -42,7 +51,7 @@ object AiCapabilityReporter {
                 else -> "OK"
             }),
             Capability("OpenRouter", hasOpenRouterKey && hasNetwork, if (hasNetwork && !hasOpenRouterKey) "Нет ключа" else if (!hasNetwork) "Нет сети" else "OK"),
-            Capability("Zen free (без ключа)", hasNetwork, if (!hasNetwork) "Нет сети" else "OK (бесплатно)"),
+            Capability("Zen free (без ключа)", zenVerdict.first, zenVerdict.second),
             Capability("ElevenLabs нейроголос", hasElevenKey && hasNetwork, if (!hasElevenKey) "Нет ключа ElevenLabs" else if (!hasNetwork) "Нет сети" else "OK"),
             Capability("TTS-сервер (ПК/ранер)", prefs.remoteTtsUrl().get().isNotBlank(), if (prefs.remoteTtsUrl().get().isBlank()) "Не указан адрес в Настройки → Голос" else "OK"),
             Capability("GitHub-ранер LLM", hasGithubPat && allowRunner && hasNetwork, when {

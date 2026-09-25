@@ -143,6 +143,34 @@ object AiAssistant {
     private val modelCooldownUntil = ConcurrentHashMap<String, Long>()
 
     @Volatile
+    private var zenLastSuccessAt: Long = 0L
+
+    @Volatile
+    private var zenLastBlockedAt: Long = 0L
+
+    /**
+     * Что реально отвечает Zen. Отчёт о возможностях обязан опираться на
+     * фактический ответ, а не на наличие сети: раньше он писал «доступно» по
+     * одному факту подключения, и агент затем по инструкции «не повторяй
+     * недоступное» продолжал биться в закрытую дверь вместо перехода на
+     * рабочий путь.
+     */
+    fun zenState(): ZenAvailability.State = ZenAvailability.decide(
+        lastSuccessAt = zenLastSuccessAt,
+        lastBlockedAt = zenLastBlockedAt,
+        now = System.currentTimeMillis(),
+    )
+
+    private fun noteZenSuccess() {
+        zenLastSuccessAt = System.currentTimeMillis()
+        zenLastBlockedAt = 0L
+    }
+
+    private fun noteZenBlocked() {
+        zenLastBlockedAt = System.currentTimeMillis()
+    }
+
+    @Volatile
     private var lastFailureMessage: String = ""
 
     fun lastFailure(): String = lastFailureMessage
@@ -369,6 +397,7 @@ object AiAssistant {
                 )) {
                     is Outcome.Ok -> {
                         modelCooldownUntil.remove(m)
+                        noteZenSuccess()
                         return res.reply
                     }
                     Outcome.RateLimited -> {
@@ -495,6 +524,7 @@ object AiAssistant {
                 // путь выглядит сломанным на 5 минут.
                 if (isZenFreeTierBlocked(code, text)) {
                     lastFailureMessage = FREE_TIER_BLOCKED_MESSAGE
+                    noteZenBlocked()
                     logcat(LogPriority.WARN) { "Zen free tier blocked for $model (HTTP $code)" }
                     return Outcome.FreeTierBlocked
                 }
