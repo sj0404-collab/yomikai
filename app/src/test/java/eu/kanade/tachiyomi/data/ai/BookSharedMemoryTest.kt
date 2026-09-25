@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.data.ai
 
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
 import org.junit.jupiter.api.Test
 
 /**
@@ -31,8 +32,16 @@ class BookSharedMemoryTest {
 
     @Test
     fun `different series give different keys`() {
-        BookSharedMemory.seriesKey("Падший лисёнок") shouldBe
+        // Разные серии НЕ должны сливаться в один ключ, иначе память одной
+        // серии протекала бы в другую.
+        BookSharedMemory.seriesKey("Падший лисёнок") shouldNotBe
             BookSharedMemory.seriesKey("Синий замок")
+    }
+
+    @Test
+    fun `volume number is not cut out of the middle of a word`() {
+        // Граница слова настоящая: «аттом» не должно превратиться в «а».
+        BookSharedMemory.seriesKey("аттом") shouldBe "аттом"
     }
 
     @Test
