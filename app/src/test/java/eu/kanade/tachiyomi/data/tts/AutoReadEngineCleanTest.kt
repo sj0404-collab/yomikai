@@ -156,10 +156,8 @@ class AutoReadEngineCleanTest {
         // Регрессия: страница из одной реплики, которую движок не смог произнести,
         // ждала полный таймаут (минимум 8 с) и выглядела как остановка.
         val fullTimeout = AutoReadEngine.ttsTimeoutMs(0, 1f)
-        assertTrue(
-            "полный таймаут реплики должен быть заметно больше терпения к старту",
-            fullTimeout > AutoReadEngine.TTS_START_GRACE_MS * 2,
-        )
+        // Полный таймаут реплики должен быть заметно больше терпения к старту.
+        assertTrue(fullTimeout > AutoReadEngine.TTS_START_GRACE_MS * 2)
 
         // На старте реплика ещё не пошла — ждать имело смысл.
         assertFalse(AutoReadEngine.ttsStartedOrGiveUp(started = false, elapsedMs = 0))
