@@ -46,20 +46,27 @@ object AiAssistant {
     const val OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
     /**
-     * Модели Zen, проверенные без ключа. Порядок = приоритет ротации:
-     * первыми идут БЫСТРЫЕ без тяжёлого reasoning (laguna отвечает «жмн»
-     * за долю секунды), reasoning-модели — в хвосте. При FreeUsageLimitError
+     * Модели Zen, проверенные без ключа.
+     *
+     * Список взят из документации opencode Zen, а не придуман: там перечислены
+     * именно бесплатные модели, которые отдаются без ключа. Модели, которые
+     * из неё ушли (laguna-s-2.1-free, deepseek-v4-flash-free, hy3-free),
+     * выброшены — они больше не существуют, и каждая попытка получить ответ
+     * была чистой потерей времени.
+     *
+     * Порядок = приоритет ротации: первыми идут БЫСТРЫЕ без тяжёлого
+     * reasoning, reasoning-модели — в хвосте. При FreeUsageLimitError
      * (rate limit конкретной модели) запрос автоматически повторяется на
      * следующей модели списка.
      */
     val ZEN_MODELS = listOf(
-        "laguna-s-2.1-free",
+        "mimo-v2.6-flash-free",
         "mimo-v2.5-free",
-        "deepseek-v4-flash-free",
-        "hy3-free",
-        "big-pickle",
         "nemotron-3.5-lightning-free",
         "nemotron-3-ultra-free",
+        "big-pickle",
+        "space-bunny-free",
+        "ling-3.0-flash-fin-free",
     )
 
     /** Запасной список OpenRouter :free на случай оффлайна при первом открытии. */
@@ -444,19 +451,20 @@ object AiAssistant {
     ): Outcome {
         val startedAt = System.currentTimeMillis()
         return try {
-            val messages = JSONArray()
-            if (!systemPrompt.isNullOrBlank()) {
-                messages.put(JSONObject().put("role", "system").put("content", systemPrompt))
+            // Эндпоинт и форма запроса зависят от семейства модели: Claude
+            // ждёт /messages, GPT и Muse — /responses, Gemini — свой путь.
+            // Раньше всё уходило в /chat/completions, поэтому модели этих
+            // семейств не отвечали вовсе и выглядели сломанными.
+            val body = ZenProtocol.requestBody(model, userPrompt, systemPrompt, maxTokens)
+            // Базовый адрес приходит от вызывающего кода с хвостом
+            // /chat/completions; подставляем эндпоинт, который нужен модели.
+            val actualUrl = if (url.endsWith("/chat/completions")) {
+                ZenProtocol.urlFor(url.removeSuffix("/chat/completions"), model)
+            } else {
+                url
             }
-            messages.put(JSONObject().put("role", "user").put("content", userPrompt))
-            val body = JSONObject()
-                .put("model", model)
-                .put("messages", messages)
-                .put("max_tokens", maxTokens)
-                .put("temperature", 0.0)
-                .put("stream", false)
 
-            val conn = openConnection(url)
+            val conn = openConnection(actualUrl)
             conn.requestMethod = "POST"
             conn.doOutput = true
             conn.connectTimeout = 15_000
@@ -501,22 +509,13 @@ object AiAssistant {
                     else -> Outcome.Fatal
                 }
             }
-            val root = JSONObject(text)
-            val choice = root.optJSONArray("choices")?.optJSONObject(0)
-            val message = choice?.optJSONObject("message")
-            val finishReason = choice?.optString("finish_reason").orEmpty()
-            val tokens = root.optJSONObject("usage")?.optInt("total_tokens", 0) ?: 0
-            val answer = message?.optString("content")?.trim()?.ifBlank { null }
-            // Размышления reasoning-моделей: Zen отдаёт их в «reasoning»
-            // (nemotron) или «reasoning_content» (hy3) — проверено живыми
-            // запросами. Показываются в AI-чате при включённой опции.
-            // org.json.optString возвращает ЛИТЕРАЛ "null", когда поле есть,
-            // но равно JSON null — из-за этого в чате показывалось «🤔 null»
-            // (баг со скриншота пользователя). Отфильтровываем.
-            val reasoning = message?.let { m ->
-                m.optString("reasoning").takeIf { it.isNotBlank() && it != "null" }
-                    ?: m.optString("reasoning_content").takeIf { it.isNotBlank() && it != "null" }
-            }?.trim()?.ifBlank { null }
+            // Разбор формы ответа — по семейству модели. Раньше читался
+            // только choices[0].message, поэтому у Claude (блок thinking),
+            // у Responses (отдельный output) и у Gemini (флаг thought)
+            // размышления терялись, и в чате появлялось «🤔 null».
+            val parsed = ZenProtocol.parse(text, model)
+            val answer = parsed.content
+            val reasoning = parsed.reasoning
             addLog(LogEntry(startedAt, model, userPrompt.take(200), (answer ?: "<пусто>").take(200), System.currentTimeMillis() - startedAt))
             answer?.let {
                 lastFailureMessage = ""
@@ -525,8 +524,8 @@ object AiAssistant {
                         content = it,
                         reasoning = reasoning,
                         model = model,
-                        tokens = tokens,
-                        complete = finishReason != "length",
+                        tokens = parsed.tokens,
+                        complete = parsed.complete,
                     ),
                 )
             } ?: Outcome.Fatal
