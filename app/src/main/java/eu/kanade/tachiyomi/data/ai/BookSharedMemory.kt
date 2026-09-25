@@ -46,16 +46,18 @@ object BookSharedMemory {
      * память серии распадалась бы на отдельные книги.
      *
      * `\b` в Java ASCII-ориентирован, поэтому для «Том 2» он не срабатывает
-     * и подзаголовок остаётся в ключе. Лечится [RegexOption.UNICODE_CHARACTER_CLASS]:
-     * без него «Падший лисёнок» и «Падший лисёнок Том 2» давали разные ключи.
+     * и подзаголовок остаётся в ключе. Лечится флагом `u` в самом шаблоне
+     * (`(?iu)`): без него «Падший лисёнок» и «Падший лисёнок Том 2» давали
+     * разные ключи.
+     *
+     * Флаг `u` задан инлайном, а не [RegexOption]: в Kotlin такого элемента
+     * нет, есть только `UNICODE_CASE` внутри шаблона. Точка после слова
+     * («Vol. 4») разрешена отдельно — иначе номер не прилипал к названию.
      */
     fun seriesKey(title: String): String {
         val base = title
             .replace(
-                Regex(
-                    "\\b(том|vol|volume|часть|part|книга|book)\\s*[\\d.]+",
-                    setOf(RegexOption.IGNORE_CASE, RegexOption.UNICODE_CHARACTER_CLASS),
-                ),
+                Regex("(?iu)\\b(том|vol|volume|часть|part|книга|book)\\.?\\s*[\\d.]+"),
                 " ",
             )
             .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
@@ -117,10 +119,13 @@ object BookSharedMemory {
         val rules = load(context)
         var stored = 0
         for (rule in parsed) {
+            // Сравниваем с ключом области, а не с source правила: в памяти
+            // source уже заменён ключом, и сверка с исходным источником
+            // никогда не совпала бы — дубль проходил бы каждый раз.
             val duplicate = rules.any {
                 it.kind == rule.kind &&
                     it.text.equals(rule.text, ignoreCase = true) &&
-                    it.source == rule.source
+                    it.source == key
             }
             if (duplicate) continue
             // Ключ области кладём в source: правило остаётся обычным

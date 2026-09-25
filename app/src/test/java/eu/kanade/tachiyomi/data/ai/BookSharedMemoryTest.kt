@@ -1,7 +1,7 @@
 package eu.kanade.tachiyomi.data.ai
 
-import org.junit.jupiter.api.Test
 import io.kotest.matchers.shouldBe
+import org.junit.jupiter.api.Test
 
 /**
  * Память между книгами.
@@ -17,6 +17,16 @@ class BookSharedMemoryTest {
         BookSharedMemory.seriesKey("Падший лисёнок, том 1") shouldBe key
         BookSharedMemory.seriesKey("Падший лисёнок Том 2") shouldBe key
         BookSharedMemory.seriesKey("Падший лисёнок — часть 3") shouldBe key
+    }
+
+    @Test
+    fun `number after a dot does not stay in the key`() {
+        // «Vol. 4» и «Volume 2» — один ключ: точка между словом и номером
+        // раньше не пропускалась, и в ключе оставался одинокая «4».
+        val key = BookSharedMemory.seriesKey("Solo Leveling")
+        BookSharedMemory.seriesKey("Solo Leveling, Vol. 4") shouldBe key
+        BookSharedMemory.seriesKey("Solo Leveling vol 3") shouldBe key
+        BookSharedMemory.seriesKey("Solo Leveling Volume 2") shouldBe key
     }
 
     @Test
