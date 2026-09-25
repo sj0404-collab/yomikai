@@ -1302,6 +1302,13 @@ class ReaderActivity : BaseActivity() {
                         mangaTitle = state.manga?.title ?: "книга",
                         chapterTitle = state.currentChapter?.chapter?.name,
                         onClose = { aiChatVisible.value = false },
+                        // «Стоп» в чате гасит и озвучку с авточтением: иначе
+                        // остановленный ответ оставляет читателя вслух
+                        // читающей главу, а кнопки в меню он не видит.
+                        onStopRequested = {
+                            stopAutoReadLoop()
+                            eu.kanade.tachiyomi.data.tts.TtsSpeaker.stop()
+                        },
                     )
                 }
             }
@@ -1592,6 +1599,21 @@ class ReaderActivity : BaseActivity() {
             withUIContext { stopAutoReadLoop() }
             "Озвучка остановлена"
         }
+        // Листание. Без этих действий агент физически не мог вести читателя
+        // постранично: он видел только открытую страницу и вынужден был
+        // просить скриншоты по одной.
+        actions.register("${READER_ACTION_PREFIX}turn_page") { args ->
+            val target = args.optString("to").trim().lowercase()
+            withUIContext { turnPage(target) }
+        }
+        // Авточтение вкл/выкл. Агент должен уметь сам начать читать главу и
+        // сам её остановить, а не только описывать, что надо нажать.
+        actions.register("${READER_ACTION_PREFIX}auto_read") { args ->
+            // Ключ «action» уже занят селектором действия, поэтому режим
+            // берётся из «to» — иначе агент управлял бы сам собой.
+            val mode = args.optString("to").trim().lowercase()
+            withUIContext { setAutoRead(mode) }
+        }
         actions.register("${READER_ACTION_PREFIX}page_count") {
             val total = viewModel.state.value.totalPages
             val page = viewModel.state.value.currentPage
@@ -1684,6 +1706,47 @@ class ReaderActivity : BaseActivity() {
         autoReadEngine.stop()
         eu.kanade.tachiyomi.data.tts.TtsReadingNotifier.dismiss(this)
     }
+
+    /**
+     * Листание по команде агента. Возвращает честный отчёт: агент должен
+     * знать, что страница сдвинулась, иначе он будет просить скриншоты по
+     * одной и обещать «продолжить постранично», ничего не делая.
+     */
+    private fun turnPage(target: String): String {
+        val total = viewModel.state.value.totalPages
+        val current = viewModel.state.value.currentPage
+        val moveTo: Int = when (target) {
+            "", "next", "вперёд", "дальше" -> current + 1
+            "prev", "back", "назад" -> current - 1
+            "first", "начало" -> 1
+            "last", "конец" -> total
+            else -> argsInt(target)
+        }
+        if (moveTo == current && target.isNotBlank() && target.any { it.isDigit() }) {
+            return "Страница $current: прыгать на саму страницу нельзя, только вперёд, назад, в начало или в конец"
+        }
+        if (total > 0 && moveTo in 1..total) {
+            // Индекс с нуля: нумерация страниц у читателя с единицы.
+            moveToPageIndex(moveTo - 1)
+            return "Страница $moveTo из $total"
+        }
+        return "Нельзя перейти на страницу $moveTo: открыта $current из ${total.coerceAtLeast(0)}"
+    }
+
+    /** Авточтение по команде агента: on / off / status. */
+    private fun setAutoRead(action: String): String = when (action) {
+        "on", "start", "старт", "включи" -> {
+            startAutoReadLoop()
+            "Авточтение включено: читаю и листаю"
+        }
+        "off", "stop", "стоп", "выключи" -> {
+            stopAutoReadLoop()
+            "Авточтение остановлено"
+        }
+        else -> "Авточтение ${if (autoReadActive) "включено" else "выключено"}"
+    }
+
+    private fun argsInt(target: String): Int = target.filter { it.isDigit() }.toIntOrNull() ?: -1
 
     private fun readCurrentPage(thenAdvance: Boolean) {
         autoReadLoop?.cancel()

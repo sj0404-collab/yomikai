@@ -117,7 +117,12 @@ object AiAgent {
             "see_page (СПРОСИТЬ ВИЖУЩУЮ МОДЕЛЬ про открытую страницу, обязательно с вопросом: " +
             "{\"action\":\"see_page\",\"question\":\"что нарисовано на этой странице?\"} — " +
             "это твои глаза: картинку вижу я, модель описывает её), " +
-            "page_count (сколько страниц в главе)\n" +
+            "page_count (сколько страниц в главе), " +
+            "turn_page (ЛИСТАТЬ САМ: {\"action\":\"turn_page\",\"to\":\"next|prev|first|last\"}), " +
+            "auto_read ({\"action\":\"auto_read\",\"to\":\"on|off\"} — самому включить или " +
+            "выключить авточтение и читать главу)\n" +
+            "ВАЖНО: чтобы вести читателя постранично, листай сам через turn_page, а не " +
+            "проси прислать скриншоты. На каждой странице смотри see_page и page_text.\n" +
             "@tool list_ext {} — список установленных расширений-источников с их доменами\n" +
             "@tool filter_ext {\"hide\":\"подстрока\",\"show\":\"подстрока\"} — скрыть/показать источники по имени/языку\n" +
             "@tool find_manga {\"title\":\"название\"} — найти мангу по включённым источникам, вернёт где реально открывается\n" +
@@ -348,12 +353,33 @@ object AiAgent {
         // дубликаты вызовов по-прежнему не исполняются дважды за один ход
         // (важно для append_file/write_file).
         val executedCalls = mutableSetOf<String>()
+        // Поиск по сети — единственный инструмент, который модель в цикле
+        // повторяла по чуть-чуть разными запросами. На скрине это 8 вызовов
+        // и 33 тысячи токенов на одну фразу «продолжить постранично».
+        // Дальше поиск не идёт, а модели прямо говорится, что искать больше
+        // нечего: дешевле закончить ход, чем выжигать токены.
+        val searchBudget = 3
+        var searchesUsed = 0
         for (round in 1..12) {
             val parsedCalls = parseToolCalls(context, answer)
             if (parsedCalls.isEmpty()) break
             val calls = parsedCalls.filter { call ->
-                executedCalls.add(call.name + "\u0000" + call.args.toString())
+                val fresh = executedCalls.add(call.name + "\u0000" + call.args.toString())
+                // Поиск пропускается только когда бюджет исчерпан; при этом
+                // остальные инструменты раунда (например reader_do) выполняются
+                // как обычно — иначе агент встал бы целиком.
+                fresh && (call.name != "web_search" || searchesUsed < searchBudget)
             }
+            if (calls.isEmpty() && parsedCalls.any { it.name == "web_search" } &&
+                searchesUsed >= searchBudget
+            ) {
+                answer = stripToolSyntax(context, answer).ifBlank {
+                    "Поиск в сети уже выполнялся $searchBudget раза и результат использован. " +
+                        "Дальше искать нечего — отвечаю по тому, что уже есть."
+                }
+                break
+            }
+            searchesUsed += calls.count { it.name == "web_search" }
             if (calls.isEmpty()) {
                 answer = stripToolSyntax(context, answer).ifBlank {
                     "Все запрошенные инструменты уже выполнены; повторный вызов пропущен."

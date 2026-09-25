@@ -53,6 +53,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material.icons.outlined.StopCircle
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.OutlinedIconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -104,6 +106,12 @@ fun ReaderAiChatOverlay(
     chapterTitle: String?,
     onClose: () -> Unit,
     onVoiceGender: String = "female",
+    /**
+     * Полная остановка по кнопке «Стоп»: прерывает ход агента и всё, что он
+     * успел запустить. Без этого кнопка «Стоп» в меню читалки недоступна
+     * именно тогда, когда она нужнее всего, — когда открыт чат.
+     */
+    onStopRequested: () -> Unit = {},
 ) {
     val history = remember { mutableStateListOf<Msg>() }
     var loading by remember { mutableStateOf(false) }
@@ -129,6 +137,15 @@ fun ReaderAiChatOverlay(
 
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+
+    // Задача текущего хода: без ссылки её нечем прервать, а прерывать
+    // читателю нужно — иначе ответ агента нельзя остановить.
+    var runningJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+
+    // Сообщение, отправленное «поверх» текущего хода. Раньше поле ввода
+    // блокировалось на всё время работы агента, поэтому последовательно
+    // спросить его было нельзя в принципе.
+    var queuedMessage by remember { mutableStateOf<Pair<String, ByteArray?>?>(null) }
 
     val showToast: (String) -> Unit = { message -> context.toast(message) }
     val scrollTo: (Int) -> Unit = { index -> scope.launch { listState.animateScrollToItem(index) } }
@@ -217,6 +234,46 @@ fun ReaderAiChatOverlay(
             )
             attachedName = null
             attachedBytes = null
+        }
+    }
+
+    // Отправка, которая не теряет сообщение, поданное во время работы
+    // агента: оно встаёт в очередь и уходит следующим ходом.
+    val sendOrQueue: (String, String?, ByteArray?) -> Unit = { text, fileName, fileBytes ->
+        when {
+            text.isBlank() -> Unit
+            // Идёт ход — копим. Больше одного сообщения в очередь не берём:
+            // читателю важнее ответить сейчас, чем копить пачку.
+            loading -> {
+                if (queuedMessage == null) {
+                    queuedMessage = text to fileBytes
+                    input = ""
+                    attachedName = null
+                    attachedBytes = null
+                    showToast("Сообщение в очереди — уйдёт следом")
+                }
+            }
+            else -> send(text, fileName, fileBytes)
+        }
+    }
+
+    // Стоп: прерываем ход агента и всё, что он успел запустить, — озвучку и
+    // авточтение. Иначе остановленный ответ оставляет читателя вслух
+    // читающую главу.
+    val stopEverything: () -> Unit = {
+        runningJob?.cancel()
+        runningJob = null
+        loading = false
+        onStopRequested()
+        showToast("Остановлено")
+    }
+
+    // Очередь уходит сама, как только освободился агент.
+    LaunchedEffect(loading, queuedMessage) {
+        val next = queuedMessage
+        if (!loading && next != null) {
+            queuedMessage = null
+            send(next.first, null, next.second)
         }
     }
 
@@ -488,22 +545,41 @@ fun ReaderAiChatOverlay(
                         value = input,
                         onValueChange = { input = it },
                         modifier = Modifier.weight(1f),
-                        placeholder = { Text("Сообщение AI…") },
+                        placeholder = {
+                            Text(
+                                if (queuedMessage != null) {
+                                    "В очереди — уйдёт следом"
+                                } else {
+                                    "Сообщение AI…"
+                                },
+                            )
+                        },
                         maxLines = 4,
-                        enabled = !loading,
+                        // Ввод не блокируется на время работы агента: писать
+                        // ему последовательно должно быть можно, иначе вопрос
+                        // приходилось заранее писать в поле и ждать.
+                        enabled = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                         keyboardActions = KeyboardActions(
                             onSend = {
-                                send(input.trim(), attachedName, attachedBytes)
+                                sendOrQueue(input.trim(), attachedName, attachedBytes)
                             },
                         ),
                     )
                     Spacer(Modifier.width(8.dp))
                     OutlinedIconButton(
-                        onClick = { send(input.trim(), attachedName, attachedBytes) },
-                        enabled = input.isNotBlank() && !loading,
+                        onClick = { sendOrQueue(input.trim(), attachedName, attachedBytes) },
+                        enabled = input.isNotBlank(),
                     ) {
                         Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = "Отправить")
+                    }
+                    // Стоп виден всегда, пока идёт ход: иначе ответ агента,
+                    // а вместе с ним озвучка и авточтение, нечем остановить.
+                    if (loading) {
+                        Spacer(Modifier.width(4.dp))
+                        FilledIconButton(onClick = stopEverything) {
+                            Icon(Icons.Outlined.StopCircle, contentDescription = "Остановить")
+                        }
                     }
                 }
 
