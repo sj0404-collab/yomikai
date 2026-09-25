@@ -633,7 +633,9 @@ private fun sendMessage(
     }
 }
 
-private val linkRe = Regex("https?://[^\\s)\\]}\"']+", RegexOption.IGNORE_CASE)
+// `}` внутри класса символов экранирован: без экрана ICU-движок регулярок
+// (Android 13+, Itel/Infinix) бросает PatternSyntaxException в <clinit>.
+private val linkRe = Regex("https?://[^\\s)\\]\\}\"']+", RegexOption.IGNORE_CASE)
 
 /** Модель чата по текущему провайдеру — для заголовка и выбора ролей. */
 private fun chatModelLabel(
