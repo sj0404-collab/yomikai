@@ -304,9 +304,9 @@ object AiAssistant {
                     break
                 }
                 if (reply == null) {
-                    // Закрыт бесплатный Zen целиком — ротация и cooldown тут
-                    // только вредят, выходим сразу.
-                    if (lastOutcome == Outcome.FreeTierBlocked) return@withContext null
+                    // У OpenRouter свой 403 — это про конкретный ключ или
+                    // модель. Дальше по коду всё равно пробуется Zen, поэтому
+                    // cooldown ставится, а не выход.
                     coolDown(
                         model,
                         when (lastOutcome) {
@@ -379,10 +379,15 @@ object AiAssistant {
                         coolDown(m, 5 * 60_000L)
                         break
                     }
-                    // Закрыт весь бесплатный Zen разом: следующие модели из
-                    // каталога дадут тот же 403, а cooldown на них убьёт даже
-                    // рабочий путь на минуты. Выходим сразу.
-                    Outcome.FreeTierBlocked -> return null
+                    // 403 FreeTierError — это про конкретную модель, а не про
+                    // весь Zen разом. Доказано тем, что OCR-движок ходит в тот
+                    // же эндпоинт с той же моделью space-bunny-free и работает.
+                    // Раньше здесь был выход сразу, и первая закрытая модель
+                    // убивала чат целиком, не дав дойти до рабочей.
+                    Outcome.FreeTierBlocked -> {
+                        coolDown(m, 5 * 60_000L)
+                        break
+                    }
                     Outcome.Transient -> {
                         if (attempt >= retryDelaysMs.size) {
                             coolDown(m, 90_000L)
@@ -417,7 +422,11 @@ object AiAssistant {
         object Fatal : Outcome()
         /**
          * Бесплатные модели Zen закрыты для сторонних клиентов самим
-         * OpenCode. Ротация тут бессильна: заблокированы ВСЕ модели сразу.
+         * OpenCode. Закрытие помодельное, а не общее: OCR-движок в этом же
+         * приложении ходит в тот же эндпоинт с моделью `space-bunny-free` и
+         * получает ответ. Поэтому исход означает «пропусти эту модель», а не
+         * «сдавайся» — иначе чат переставал работать из-за одной закрытой
+         * модели, не дойдя до рабочей.
          */
         object FreeTierBlocked : Outcome()
     }
