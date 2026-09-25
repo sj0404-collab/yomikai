@@ -233,6 +233,15 @@ class OcrPreferences(
     // runner (полу-онлайн, GitHub-ранер)
     fun aiBackend() = preferenceStore.getString("pref_ai_backend", "online")
 
+    // ---- Раздельный выбор моделей: OCR / чат / оркестратор ----
+    // Оркестратор — агент читалки (вызывает инструменты, выводит правила
+    // книги). Пустое значение = «как у чата», поэтому у тех, кто ничего не
+    // выбирал, поведение не меняется; см. AiModelRoles.
+    fun aiOrchestratorBackend() = preferenceStore.getString("pref_ai_orchestrator_backend", "")
+
+    /** Модель оркестратора ("" = модель чата). Для Zen берётся из каталога. */
+    fun aiOrchestratorModel() = preferenceStore.getString("pref_ai_orchestrator_model", "")
+
     fun aiBookLookup() = preferenceStore.getString("pref_ai_book_lookup", "on")
 
     // Выбранная локальная модель (id из LocalLlm.CATALOG)

@@ -230,11 +230,20 @@ object AiAssistant {
     /**
      * Как chat(), но с reasoning-блоком и именем фактически ответившей
      * модели (при автосмене может отличаться от выбранной).
+     *
+     * [modelOverride] — модель отдельной роли (например, оркестратора читалки).
+     * Пустое значение = обычный выбор провайдера, поведение прежнее.
      */
-    suspend fun chatFull(userPrompt: String, systemPrompt: String? = null, maxTokens: Int = 500): ChatReply? =
+    suspend fun chatFull(
+        userPrompt: String,
+        systemPrompt: String? = null,
+        maxTokens: Int = 500,
+        modelOverride: String? = null,
+    ): ChatReply? =
         withContext(Dispatchers.IO) {
             val p = prefs()
             val provider = p.aiProvider().get()
+            val override = modelOverride?.takeIf { it.isNotBlank() }
 
             // Провайдер пользователя из реестра AiProviders (свой base URL,
             // модель и ключ). Проверяется первым: id у него свой, поэтому ветки
@@ -246,9 +255,10 @@ object AiAssistant {
 
             val key = p.openrouterApiKey().get()
             if (provider == PROVIDER_OPENROUTER && key.isNotBlank()) {
-                val model = p.openrouterFreeModel().get().ifBlank { OPENROUTER_FREE_FALLBACK.first() }
+                val model = override
+                    ?: p.openrouterFreeModel().get().ifBlank { OPENROUTER_FREE_FALLBACK.first() }
                 if (coolingDown(model) && p.aiAutoRotate().get()) {
-                    return@withContext zenChatWithRotation(userPrompt, systemPrompt, maxTokens)
+                    return@withContext zenChatWithRotation(userPrompt, systemPrompt, maxTokens, override)
                 }
                 // Временные сбои сети/прокси ретраим на той же модели,
                 // прежде чем считать OpenRouter «упавшим».
@@ -283,12 +293,12 @@ object AiAssistant {
                 }
                 if (reply != null || !p.aiAutoRotate().get()) return@withContext reply
                 // Автосмена: OpenRouter реально недоступен → пробуем Zen
-                return@withContext zenChatWithRotation(userPrompt, systemPrompt, maxTokens)
+                return@withContext zenChatWithRotation(userPrompt, systemPrompt, maxTokens, override)
             }
             if (provider == PROVIDER_OPENROUTER) {
                 logcat(LogPriority.WARN) { "OpenRouter selected but no API key; falling back to Zen" }
             }
-            zenChatWithRotation(userPrompt, systemPrompt, maxTokens)
+            zenChatWithRotation(userPrompt, systemPrompt, maxTokens, override)
         }
 
     /**
@@ -305,8 +315,14 @@ object AiAssistant {
      *    моргнувшей сети;
      *  • фатальная ошибка → следующая модель.
      */
-    private suspend fun zenChatWithRotation(userPrompt: String, systemPrompt: String?, maxTokens: Int): ChatReply? {
-        val preferred = prefs().zenModel().get().ifBlank { ZEN_MODELS.first() }
+    private suspend fun zenChatWithRotation(
+        userPrompt: String,
+        systemPrompt: String?,
+        maxTokens: Int,
+        preferredOverride: String? = null,
+    ): ChatReply? {
+        val preferred = preferredOverride?.takeIf { it in ZEN_MODELS }
+            ?: prefs().zenModel().get().ifBlank { ZEN_MODELS.first() }
         val configuredOrder = if (prefs().aiAutoRotate().get()) {
             listOf(preferred) + ZEN_MODELS.filter { it != preferred }
         } else {

@@ -100,6 +100,11 @@ object AiAgent {
             "@tool web_fetch {\"url\":\"https://...\",\"maxChars\":4000} — скачать страницу и вернуть её текст без разметки\n" +
             "@tool book_recall {} — что уже известно о текущей книге (где читать, о чём, как читать, заметки, советы)\n" +
             "@tool book_remember {\"kind\":\"site|summary|fact|advice|заметка\",\"text\":\"значение\"} — сохранить знание о книге\n" +
+            "@tool book_learn {\"url\":\"https://...\"} — прочитать страницу и сохранить её как источник правил\n" +
+            "@tool book_learn {\"kind\":\"reading_order|region|bubble|transcription|voice|advice\",\"text\":\"правило\"} — " +
+            "выучить правило книги: порядок чтения, область/рамка, баблы, расшифровка, голоса и роли\n" +
+            "@tool book_learn {\"kind\":\"...\",\"text\":\"- правило\\n- правило\",\"user\":true} — список правил; " +
+            "user=true, если правило продиктовал пользователь\n" +
             "@tool reader_actions {} — какие действия доступны в открытой читалке\n" +
             "@tool reader_do {\"action\":\"speak_page\"} — выполнить действие читалки: " +
             "speak_page (озвучить текущую страницу), speak_chapter (озвучивать всю главу), " +
@@ -247,9 +252,23 @@ object AiAgent {
             (if (role == "user") "Пользователь: " else "Ассистент: ") + c.take(280)
         }
         val capabilityBlock = runCatching { AiCapabilityReporter.renderForPrompt(context) }.getOrNull().orEmpty()
+        // Сессия книги создаётся при первом обращении к AI. Пока правил нет,
+        // агенту говорится: сначала изучи источник и зафиксируй правила, иначе
+        // он ответит по общему пресету и «выучит» потом неправильный порядок.
+        val bookSession = mangaId?.let { BookKnowledge.ensureSession(context, it) }
+        val onboarding = when {
+            bookSession == null -> null
+            bookSession.book.rules.isNotEmpty() -> null
+            else -> "СЕССИЯ КНИГИ НОВАЯ (${bookSession.book.sessionId}). Правил о книге ещё нет. " +
+                "Прежде чем отвечать по существу: web_search «<название> где читать/описание» → " +
+                "book_learn {\"url\":\"<найденная страница>\"} → выведи конкретные правила книги " +
+                "(порядок чтения, области и рамки, баблы, расшифровка, голоса и роли) и зафиксируй их " +
+                "вызовами book_learn с kind. Не выдумывай правил: если источник не нашёлся — скажи об этом."
+        }
         val prompt = buildString {
             if (historyBlock.isNotBlank()) append("Контекст диалога (последние $historyLimit, бюджет ${tokenBudget} токенов):\n").append(historyBlock).append("\n\n")
             if (!bookContext.isNullOrBlank()) append(bookContext).append("\n\n")
+            if (onboarding != null) append(onboarding).append("\n\n")
             if (!attachmentsInfo.isNullOrBlank()) append("Вложения пользователя:\n").append(attachmentsInfo).append("\n\n")
             if (capabilityBlock.isNotBlank()) append(capabilityBlock).append("\n\n")
             append(userText)
@@ -388,7 +407,7 @@ object AiAgent {
     private fun knownToolNames(context: Context): Set<String> =
         setOf(
             "write_file", "edit_file", "append_file", "read_file", "gen_image",
-            "check_site", "web_search", "web_fetch", "book_recall", "book_remember",
+            "check_site", "web_search", "web_fetch", "book_recall", "book_remember", "book_learn",
             "reader_actions", "reader_do",
             "list_ext", "filter_ext", "find_manga", "zip_workspace",
             "plugin_create", "plugin_edit", "plugin_delete", "plugin_list",
@@ -737,6 +756,84 @@ object AiAgent {
         "reader_do" -> {
             val action = call.args.optString("action")
             ToolResult("reader_do", ReaderAiActions.run(action, call.args))
+        }
+
+        "book_learn" -> {
+            val manga = mangaId
+            if (manga == null) {
+                ToolResult(
+                    "book_learn",
+                    "ОШИБКА: книга не задана — правила сохраняются только в читалке",
+                    status = "error",
+                )
+            } else {
+                val url = call.args.optString("url").trim()
+                val kind = call.args.optString("kind")
+                val text = call.args.optString("text").ifBlank { call.args.optString("value") }
+                // Правило, продиктованное читателем, помечается user=true — иначе
+                // в источниках книги нельзя отличить слова пользователя от
+                // догадок агента.
+                val fromUser = call.args.optBoolean("user", false)
+                if (url.isBlank() && text.isBlank()) {
+                    ToolResult(
+                        "book_learn",
+                        "ОШИБКА: нужен url страницы или text правила",
+                        status = "error",
+                    )
+                } else if (url.isNotBlank()) {
+                    if (!BookLearning.isHttpUrl(url)) {
+                        ToolResult(
+                            name = "book_learn",
+                            output = "ОШИБКА: нужен обычный http(s)-адрес страницы",
+                            status = "error",
+                        )
+                    } else {
+                        // Страница целиком в знания не пишется: она приходит как
+                        // источник, а правила модель выводит следующим вызовом.
+                        val fetched = BookLearning.sanitize(webFetch(url, 20_000))
+                        if (fetched.startsWith("ОШИБКА") || fetched.endsWith("— страница без текста")) {
+                            ToolResult(
+                                "book_learn",
+                                "ОШИБКА чтения источника: $fetched",
+                                status = "error",
+                            )
+                        } else {
+                            val fresh = BookKnowledge.addSource(context, manga, url)
+                            ToolResult(
+                                name = "book_learn",
+                                output = buildString {
+                                    append(if (fresh) "Источник прочитан и записан: " else "Источник уже был записан: ")
+                                    append(url)
+                                    append(". Теперь выведи из него конкретные правила книги и ")
+                                    append("зафиксируй их вызовами book_learn с kind (reading_order, region, ")
+                                    append("bubble, transcription, voice) — без них авточтение ведёт себя ")
+                                    append("по общему пресету.")
+                                },
+                                status = "ok",
+                            )
+                        }
+                    }
+                } else {
+                    val author = if (fromUser) BookLearning.AUTHOR_USER else BookLearning.AUTHOR_AGENT
+                    val stored = BookKnowledge.learn(
+                        context = context,
+                        mangaId = manga,
+                        kind = kind.ifBlank { BookLearning.KIND_ADVICE },
+                        text = text,
+                        source = if (author == BookLearning.AUTHOR_USER) BookLearning.AUTHOR_USER else "",
+                        author = author,
+                    )
+                    ToolResult(
+                        name = "book_learn",
+                        output = if (stored > 0) {
+                            "Выучено правил: $stored (${BookLearning.kindTitle(kind)})"
+                        } else {
+                            "Такое правило уже выучено или текст пустой — не дублирую"
+                        },
+                        status = "ok",
+                    )
+                }
+            }
         }
 
         "book_remember" -> {

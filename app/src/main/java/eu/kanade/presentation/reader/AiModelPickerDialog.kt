@@ -10,6 +10,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -57,6 +58,16 @@ fun AiModelPickerDialog(
     var orKey by remember { mutableStateOf(prefs.openrouterApiKey().get()) }
     var orModels by remember { mutableStateOf<List<String>>(emptyList()) }
 
+    // Оркестратор — агент читалки. Пусто = «как у чата», поэтому поведение
+    // по умолчанию не меняется, но роль можно увести на другой бэкенд/модель.
+    var orchBackend by remember { mutableStateOf(prefs.aiOrchestratorBackend().get()) }
+    var orchModel by remember { mutableStateOf(prefs.aiOrchestratorModel().get()) }
+
+    // Локальная LLM и ранер работают на своей модели: роль может выбрать
+    // бэкенд, но поле модели там было бы обещанием, которое не выполняется.
+    val orchModelAllowed = orchBackend.isBlank() ||
+        eu.kanade.tachiyomi.data.ai.AiBackends.byId(orchBackend).supportsModelChoice
+
     val userProviders = remember(context) {
         eu.kanade.tachiyomi.data.ai.AiProviders.list(context)
     }
@@ -75,7 +86,23 @@ fun AiModelPickerDialog(
         prefs.zenModel().set(zenModel)
         prefs.openrouterFreeModel().set(orFreeModel)
         prefs.openrouterApiKey().set(orKey.trim())
-        context.toast("AI-модель: ${currentModelLabel(aiProvider, zenModel, orFreeModel, userProviders)}")
+        prefs.aiOrchestratorBackend().set(orchBackend)
+        // Модель, которую бэкенд всё равно игнорирует, не сохраняем: иначе
+        // она всплыла бы при возврате роли на онлайн как «своя».
+        val orchModelValue = if (orchModelAllowed) orchModel.trim() else ""
+        prefs.aiOrchestratorModel().set(orchModelValue)
+        val orchestrator = eu.kanade.tachiyomi.data.ai.AiModelRoles.orchestratorTarget(
+            chatBackend = prefs.aiBackend().get(),
+            chatProvider = aiProvider,
+            chatModel = currentModelLabel(aiProvider, zenModel, orFreeModel, userProviders),
+            orchestratorBackend = orchBackend,
+            orchestratorModel = orchModelValue,
+            backendState = eu.kanade.tachiyomi.data.ai.AiBackends.state(context, prefs),
+        )
+        context.toast(
+            "Чат: ${currentModelLabel(aiProvider, zenModel, orFreeModel, userProviders)}" +
+                " · Оркестратор: ${orchestrator.backendTitle} · ${orchestrator.model}",
+        )
         onDismissRequest()
     }
 
@@ -199,6 +226,78 @@ fun AiModelPickerDialog(
                         )
                     }
                 }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
+
+                // Модели ролей: OCR выбирается в настройках распознавания,
+                // оркестратор (агент читалки) — здесь, чат — выше.
+                Text(
+                    text = "Какая модель что делает",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = "OCR: ${mihon.data.ocr.OcrPlugins.byModel(prefs.ocrModel().get()).title}" +
+                        " — движок меняется в настройках распознавания",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                Text(
+                    text = "Чат: ${currentModelLabel(aiProvider, zenModel, orFreeModel, userProviders)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = "Оркестратор (вызовы инструментов, правила книги):",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+                Row(modifier = Modifier.padding(top = 4.dp)) {
+                    FilterChip(
+                        selected = orchBackend.isBlank(),
+                        onClick = { orchBackend = "" },
+                        label = { Text("Как у чата") },
+                        modifier = Modifier.padding(end = 6.dp),
+                    )
+                    eu.kanade.tachiyomi.data.ai.AiBackends.ALL.forEach { backend ->
+                        FilterChip(
+                            selected = orchBackend == backend.id,
+                            onClick = { orchBackend = backend.id },
+                            label = { Text(backend.title.substringBefore(' ').take(12)) },
+                            modifier = Modifier.padding(end = 6.dp),
+                        )
+                    }
+                }
+                OutlinedTextField(
+                    value = orchModel,
+                    onValueChange = { orchModel = it },
+                    label = {
+                        Text(
+                            if (orchModelAllowed) {
+                                "Модель оркестратора (пусто = как у чата)"
+                            } else {
+                                "Модель оркестратора (её выбирает бэкенд)"
+                            },
+                        )
+                    },
+                    supportingText = if (orchModelAllowed) {
+                        null
+                    } else {
+                        {
+                            Text(
+                                "У этого бэкенда модель выбирается в его настройках, " +
+                                    "для роли доступен только выбор бэкенда",
+                            )
+                        }
+                    },
+                    enabled = orchModelAllowed,
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                )
             }
         },
         confirmButton = {

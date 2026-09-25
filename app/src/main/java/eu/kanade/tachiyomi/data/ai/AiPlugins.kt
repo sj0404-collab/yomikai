@@ -82,6 +82,10 @@ object AiPlugins {
     val RESERVED_TOOL_NAMES = setOf(
         "write_file", "edit_file", "append_file", "read_file", "gen_image",
         "check_site", "list_ext", "filter_ext", "find_manga", "zip_workspace",
+        // Сеть и знания о книге: плагин разработчика не должен перехватывать
+        // web_search/web_fetch и запись правил книги (book_remember/book_learn) —
+        // иначе «выученное» уходило бы в пользовательский плагин.
+        "web_search", "web_fetch", "book_recall", "book_remember", "book_learn",
         "plugin_create", "plugin_edit", "plugin_delete", "plugin_list",
         // Ранер и GitHub отсутствовали в списке, хотя такие инструменты у
         // агента есть: плагин разработчика с именем runner_chat перехватывал

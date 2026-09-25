@@ -108,6 +108,7 @@ fun ReaderAiChatOverlay(
     var activity by remember { mutableStateOf("") }
     var elapsed by remember { mutableStateOf(0L) }
     var backendLine by remember { mutableStateOf("") }
+    var sessionLine by remember { mutableStateOf("") }
 
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -123,14 +124,37 @@ fun ReaderAiChatOverlay(
 
     LaunchedEffect(Unit) {
         val prefs = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+        val state = eu.kanade.tachiyomi.data.ai.AiBackends.state(context, prefs)
         val backend = eu.kanade.tachiyomi.data.ai.AiBackends.byId(prefs.aiBackend().get())
         val status = eu.kanade.tachiyomi.data.ai.AiBackends.statusOf(
             backend,
-            eu.kanade.tachiyomi.data.ai.AiBackends.state(context, prefs),
+            state,
             prefs.aiProvider().get(),
         )
+        val chatTarget = eu.kanade.tachiyomi.data.ai.AiModelRoles.chatTarget(
+            chatBackend = prefs.aiBackend().get(),
+            chatProvider = prefs.aiProvider().get(),
+            chatModel = chatModelLabel(context, prefs),
+        )
+        val orchestrator = eu.kanade.tachiyomi.data.ai.AiModelRoles.orchestratorTarget(
+            chatBackend = prefs.aiBackend().get(),
+            chatProvider = prefs.aiProvider().get(),
+            chatModel = chatTarget.model,
+            orchestratorBackend = prefs.aiOrchestratorBackend().get(),
+            orchestratorModel = prefs.aiOrchestratorModel().get(),
+            backendState = state,
+        )
+        val ocrEngine = prefs.ocrModel().get()
+        val lines = eu.kanade.tachiyomi.data.ai.AiModelRoles.statusLines(
+            eu.kanade.tachiyomi.data.ai.AiModelRoles.ocrTarget(
+                engineId = ocrEngine.name,
+                engineTitle = mihon.data.ocr.OcrPlugins.byModel(ocrEngine).title,
+            ),
+            chatTarget,
+            orchestrator,
+        )
         backendLine = if (status.available) {
-            "${backend.title} · ${status.detail}"
+            lines.joinToString(" · ")
         } else {
             "${backend.title} · недоступно: ${status.missing.joinToString(", ")}"
         }
@@ -175,6 +199,16 @@ fun ReaderAiChatOverlay(
         history.clear()
         history.addAll(AiHistoryManager.load(context, mangaId))
         runCatching { listState.scrollToItem((history.size - 1).coerceAtLeast(0)) }
+        // Сессия книги создаётся при первом входе в чат, чтобы знания и
+        // история этой книги не смешивались с глобальным AI-чатом.
+        if (mangaId != null) {
+            sessionLine = withContext(Dispatchers.IO) {
+                eu.kanade.tachiyomi.data.ai.BookKnowledge.ensureSession(context, mangaId)
+                eu.kanade.tachiyomi.data.ai.BookKnowledge.summaryLine(context, mangaId)
+            }
+        } else {
+            sessionLine = eu.kanade.tachiyomi.data.ai.BookKnowledge.summaryLine(context, null)
+        }
     }
 
     val fileLauncher = rememberLauncherForActivityResult(
@@ -226,6 +260,14 @@ fun ReaderAiChatOverlay(
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 2,
+                            )
+                        }
+                        if (sessionLine.isNotBlank()) {
+                            Text(
+                                "Сессия книги: $sessionLine",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
                             )
                         }
                     }
@@ -495,6 +537,23 @@ private fun sendMessage(
     }
 }
 
+private val linkRe = Regex("https?://[^\\s)\\]}\"']+", RegexOption.IGNORE_CASE)
+
+/** Модель чата по текущему провайдеру — для заголовка и выбора ролей. */
+private fun chatModelLabel(
+    context: Context,
+    prefs: mihon.domain.ocr.service.OcrPreferences,
+): String {
+    val provider = prefs.aiProvider().get()
+    return when (provider) {
+        eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_ZEN ->
+            prefs.zenModel().get().ifBlank { eu.kanade.tachiyomi.data.ai.AiAssistant.ZEN_MODELS.first() }
+        eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_OPENROUTER -> prefs.openrouterFreeModel().get()
+            .ifBlank { eu.kanade.tachiyomi.data.ai.AiAssistant.OPENROUTER_FREE_FALLBACK.first() }
+        else -> eu.kanade.tachiyomi.data.ai.AiProviders.userProvider(context, provider)?.model ?: provider
+    }
+}
+
 private suspend fun chatOnce(
     context: Context,
     mangaId: Long?,
@@ -508,7 +567,18 @@ private suspend fun chatOnce(
 ): AiAgent.AgentReply =
     withContext(Dispatchers.IO) {
         val prefs = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
-        val resolution = AiBackends.resolve(context, prefs.aiBackend().get())
+        val orchestrator = eu.kanade.tachiyomi.data.ai.AiModelRoles.orchestratorTarget(
+            chatBackend = prefs.aiBackend().get(),
+            chatProvider = prefs.aiProvider().get(),
+            chatModel = chatModelLabel(context, prefs),
+            orchestratorBackend = prefs.aiOrchestratorBackend().get(),
+            orchestratorModel = prefs.aiOrchestratorModel().get(),
+        )
+        val resolution = AiBackends.resolve(
+            context = context,
+            backendId = orchestrator.backendId,
+            modelOverride = orchestrator.modelOverride,
+        )
         val chat = resolution.chat
         if (chat == null) {
             return@withContext AiAgent.AgentReply(
@@ -532,10 +602,22 @@ private suspend fun chatOnce(
             .map { it.role to it.text }
             .takeLast(6)
         val knowledge = eu.kanade.tachiyomi.data.ai.BookKnowledge.render(context, mangaId)
-            .ifBlank { "ЗНАНИЕ О КНИГЕ: пока ничего не проверено — при необходимости выясни через web_search и сохрани через book_remember." }
+            .ifBlank {
+                "ЗНАНИЕ О КНИГЕ: пока ничего не проверено — выясни через web_search, " +
+                    "прочитай найденную страницу через book_learn {\"url\":…} и сохрани правила."
+            }
+        // Присланная пользователем ссылка — это источник, а не вопрос: говорим
+        // модели прямо, чтобы она прочитала страницу и зафиксировала правила.
+        val links = linkRe.findAll(input).map { it.value }.distinct().take(3).toList()
         val prompt = buildString {
             append("Книга: ").append(mangaTitle)
             if (!chapterTitle.isNullOrBlank()) append("\nГлава: ").append(chapterTitle)
+            if (links.isNotEmpty()) {
+                append("\nПользователь прислал источник: ").append(links.joinToString(", "))
+                append("\nПрочитай источник через book_learn {\"url\":\"…\"}, выведи из него правила ")
+                append("(порядок чтения, области и рамки, баблы, расшифровка, голоса и роли) ")
+                append("и зафиксируй их book_learn с kind. Если правил нет — так и скажи.")
+            }
             append("\nВопрос: ").append(input)
         }
         AiAgent.run(

@@ -230,6 +230,54 @@ class AutoReadEngine(
     fun clearHistory() = spokenTexts.clear()
 
     /**
+     * Порядок чтения кадра: сначала выученное правило книги, иначе пресет
+     * типа контента. Правило книги ([BookLearning.KIND_READING_ORDER]) задаёт
+     * агент по сайту книги, поэтому оно важнее общего пресета — иначе
+     * «наученные» правила остались бы только текстом в чате.
+     */
+    private fun bookReadingOrder(rules: List<eu.kanade.tachiyomi.data.ai.LearningRule>): String =
+        eu.kanade.tachiyomi.data.ai.BookLearning
+            .lastOf(rules, eu.kanade.tachiyomi.data.ai.BookLearning.KIND_READING_ORDER)
+            ?.text
+            ?.let { eu.kanade.tachiyomi.data.ai.BookLearning.readingOrderOf(it) }
+            // Знания, записанные до появления rules, хранят порядок в старом
+            // поле — иначе после обновления они молча перестали бы действовать.
+            ?: legacyBookReadingOrder()
+            ?: OcrRegionRules.readingOrderFor(prefs)
+
+    /** Старое одиночное поле `readingOrder` из файла знаний книги. */
+    private fun legacyBookReadingOrder(): String? {
+        val mangaId = mihon.data.ocr.ReaderContextBus.current.value?.mangaId ?: return null
+        val stored = runCatching {
+            eu.kanade.tachiyomi.data.ai.BookKnowledge
+                .readingOrderOf(context, mangaId)
+        }.getOrNull()
+        return stored?.takeIf { it != "auto" && it.isNotBlank() }
+    }
+
+    /**
+     * Правило «у этой книги читать только облачки». Полностраничный движок
+     * обычно отдаёт весь текст кадра одним блоком, и детектор баллонов
+     * включается лишь запасным путём; выученное правило книги поднимает его
+     * в основной, иначе авточтение озвучивало бы в том числе текст мимо
+     * реплик.
+     */
+    private fun bubblesOnly(rules: List<eu.kanade.tachiyomi.data.ai.LearningRule>): Boolean {
+        val rule = eu.kanade.tachiyomi.data.ai.BookLearning
+            .lastOf(rules, eu.kanade.tachiyomi.data.ai.BookLearning.KIND_BUBBLE)
+            ?: return false
+        val text = rule.text.lowercase()
+        return BUBBLES_ONLY_MARKERS.any { it in text }
+    }
+
+    /** Правила книги текущей книги (пусто, если книга не задана). */
+    private fun loadBookRules(): List<eu.kanade.tachiyomi.data.ai.LearningRule> =
+        eu.kanade.tachiyomi.data.ai.BookKnowledge.rulesOf(
+            context,
+            mihon.data.ocr.ReaderContextBus.current.value?.mangaId,
+        )
+
+    /**
      * Прочитать кадр. [onPageFinished] вызывается ПОСЛЕ озвучки всех реплик —
      * там вызывающая сторона листает/скроллит дальше. Если нового текста нет
      * (всё уже в истории) — завершится сразу.
@@ -306,10 +354,15 @@ class AutoReadEngine(
 
                 val language = prefs.autoReadLanguage().get()
                 val translate = prefs.autoReadTranslate().get()
+                // Правила книги (порядок чтения, «только облачки») читаем один
+                // раз на кадр: файл на книгу один, а нужны они в двух местах.
+                val bookRules = loadBookRules()
                 // Порядок чтения берём из пресета типа контента (манхва/вебтун →
                 // «vertical» сверху вниз), а не из старого `scanReadingOrder`,
                 // который по умолчанию «rtl» и ломал подсветку на вебтунах.
-                val order = OcrRegionRules.readingOrderFor(prefs)
+                // Выученное агентом правило книги важнее пресета: ради него
+                // книга и изучается по сайту.
+                val order = bookReadingOrder(bookRules)
 
                 // ===== БАЛЛОНЫ ВМЕСТО «ВСЕЙ СТРАНИЦЫ» (фикс по скриншотам) =====
                 // Полностраничные движки возвращают один регион 0,0-1,1.
@@ -336,7 +389,11 @@ class AutoReadEngine(
                 if (wholePage && !ocrBitmap.isRecycled) {
                     val wholeText = lines.firstOrNull()?.text.orEmpty()
                     val usableWhole = wholeText.count(Char::isLetter) >= 4
-                    lines = if (usableWhole) {
+                    // Правило книги «читать только облачки» перевешивает
+                    // полностраничный текст: выученное правило должно менять
+                    // конвейер, а не просто лежать в чате.
+                    val bubblesFirst = bubblesOnly(bookRules)
+                    lines = if (usableWhole && !bubblesFirst) {
                         splitWholePageToLines(lines.first())
                     } else {
                         val bubbleLines = runCatching { readBubbles(ocrBitmap, chapterId, pageIndex, order) }
@@ -1186,6 +1243,22 @@ class AutoReadEngine(
          * онлайн-результата запускается локальный добор баллонов.
          */
         private const val SUPPLEMENT_BUBBLES_MIN = 3
+
+        /**
+         * Формулировки выученного правила «баллоны», при которых авточтение
+         * берёт облачки основным путём, а текст полной страницы — запасным.
+         * Правило пишет агент (или пользователь) обычными словами, поэтому
+         * список короткий и явный: что не распознали — остаётся как было.
+         */
+        private val BUBBLES_ONLY_MARKERS = listOf(
+            "только бабл",
+            "только облачк",
+            "только реплик",
+            "без текста страницы",
+            "не читать текст страницы",
+            "игнорировать текст страницы",
+            "пропускать текст страницы",
+        )
 
         /** Возвращает кадр в минимально читаемом разрешении (сам же, если он уже мал). */
         private fun downscaleForScan(src: Bitmap): Bitmap {

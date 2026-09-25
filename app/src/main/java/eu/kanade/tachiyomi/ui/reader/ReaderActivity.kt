@@ -211,6 +211,13 @@ class ReaderActivity : BaseActivity() {
     private val autoLookedUpChapters = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
 
     /**
+     * Показ AI-чата книги. Живёт на уровне activity, а не внутри composable,
+     * потому что чат открывается не только кнопкой меню, но и автоматически
+     * при первом авточтении — из обычного метода [startAutoReadLoop].
+     */
+    private val aiChatVisible = kotlinx.coroutines.flow.MutableStateFlow(false)
+
+    /**
      * Реальная автопрокрутка вместо прежней тост-заглушки: вебтун плавно
      * скроллится, пейджер листает страницы с интервалом, зависящим от скорости.
      */
@@ -829,7 +836,7 @@ class ReaderActivity : BaseActivity() {
                 // AI-кнопка теперь открывает «Сменить AI-модель», а из него уже
                 // можно попасть в полный диалог озвучки.
                 var showModelPicker by remember { mutableStateOf(false) }
-                var showAiChat by remember { mutableStateOf(false) }
+                val showAiChat by aiChatVisible.collectAsState()
                 if (showModelPicker) {
                     eu.kanade.presentation.reader.AiModelPickerDialog(
                         onDismissRequest = { showModelPicker = false },
@@ -1043,7 +1050,10 @@ class ReaderActivity : BaseActivity() {
                     onOpenFullOcrSettings = {
                         showOcrBubbleSettings = true
                     },
-                    onOpenAiChat = { showAiChat = true },
+                    onOpenAiChat = {
+                        ensureBookAiSession(openChat = false)
+                        aiChatVisible.value = true
+                    },
 
                     onScanRegionChange = { region ->
                         uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>().scanRegion().set(region)
@@ -1285,7 +1295,7 @@ class ReaderActivity : BaseActivity() {
                         mangaId = state.manga?.id,
                         mangaTitle = state.manga?.title ?: "книга",
                         chapterTitle = state.currentChapter?.chapter?.name,
-                        onClose = { showAiChat = false },
+                        onClose = { aiChatVisible.value = false },
                     )
                 }
             }
@@ -1611,7 +1621,24 @@ class ReaderActivity : BaseActivity() {
         autoReadActive = true
         autoReadEngine.clearHistory()
         toast("▶ Авточтение включено")
+        ensureBookAiSession(openChat = true)
         readCurrentPage(thenAdvance = true)
+    }
+
+    /**
+     * Сессия AI этой книги. Создаётся один раз — при первом авточтении или
+     * первом входе в AI-чат — и переиспользуется при следующих главах, поэтому
+     * накопленные правила не теряются. При самом первом авточтении чат
+     * открывается сам: пользователь сразу видит, что книга изучена и какие
+     * правила действуют.
+     */
+    private fun ensureBookAiSession(openChat: Boolean) {
+        val mangaId = viewModel.manga?.id ?: return
+        lifecycleScope.launchIO {
+            val session = eu.kanade.tachiyomi.data.ai.BookKnowledge
+                .ensureSession(this@ReaderActivity, mangaId)
+            if (openChat && session.created) withUIContext { aiChatVisible.value = true }
+        }
     }
 
     @Volatile

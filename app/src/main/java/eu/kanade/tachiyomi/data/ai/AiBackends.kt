@@ -103,6 +103,13 @@ object AiBackends {
         val requirements: List<AiRequirement>,
         /** Требования-подсказки: их отсутствие не блокирует работу. */
         val optionalRequirements: List<AiRequirement> = emptyList(),
+        /**
+         * Умеет ли бэкенд работать на конкретной модели — нужно ролям вроде
+         * оркестратора. У онлайна выбор есть (OpenRouter принимает любой id
+         * каталога, Zen — из `AiAssistant.ZEN_MODELS`), а локальная модель и
+         * ранер модель выбирают сами: там роль может выбрать только бэкенд.
+         */
+        val supportsModelChoice: Boolean = true,
     )
 
     val ONLINE = Plugin(
@@ -122,6 +129,7 @@ object AiBackends {
             "инструменты агента доступны так же, как и онлайн.",
         offline = true,
         requirements = listOf(AiRequirement.MODEL_DOWNLOAD),
+        supportsModelChoice = false,
     )
 
     val RUNNER = Plugin(
@@ -136,6 +144,7 @@ object AiBackends {
             AiRequirement.RUNNER_ALLOWED,
             AiRequirement.RUNNER_SESSION,
         ),
+        supportsModelChoice = false,
     )
 
     val ALL = listOf(ONLINE, LOCAL, RUNNER)
@@ -272,6 +281,7 @@ object AiBackends {
         backendId: String?,
         state: AiBackendState = state(context),
         maxTokens: Int = DEFAULT_MAX_TOKENS,
+        modelOverride: String? = null,
     ): Resolution {
         val plugin = byId(backendId)
         val route = route(plugin.id, state)
@@ -311,7 +321,7 @@ val session = liveRunnerSession(context)
 
             else -> Resolution(
                 backendId = plugin.id,
-                chat = { prompt, system -> AiAssistant.chatFull(prompt, system, maxTokens) },
+                chat = { prompt, system -> AiAssistant.chatFull(prompt, system, maxTokens, modelOverride) },
             )
         }
     }
