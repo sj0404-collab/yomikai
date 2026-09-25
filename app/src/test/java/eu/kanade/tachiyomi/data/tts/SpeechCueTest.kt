@@ -23,8 +23,8 @@ class SpeechCueTest {
         // Раньше ремарка попадала в `SpeechMarkup.strip` и исчезала, а
         // вздох читался словом «вздох». Теперь это вытянутое «А-а-а».
         d.first().text shouldBe "А-а-а..."
-        d.first().pitch < 1f shouldBe true
-        d.first().rate < 1f shouldBe true
+        (d.first().pitch < 1f) shouldBe true
+        (d.first().rate < 1f) shouldBe true
         d.last().text shouldBe "Я не выдержу."
     }
 
@@ -45,7 +45,7 @@ class SpeechCueTest {
 
         cry.pitch shouldBe 1.28f
         cry.rate shouldBe 1.10f
-        cry.pitch > sigh.pitch shouldBe true
+        (cry.pitch > sigh.pitch) shouldBe true
     }
 
     @Test
@@ -70,7 +70,7 @@ class SpeechCueTest {
 
         d shouldHaveSize 2
         d.first().text shouldBe "Ааа"
-        d.first().pitch > 1f shouldBe true
+        (d.first().pitch > 1f) shouldBe true
     }
 
     // --- «а», «аа», «ааа» означают разное ---
@@ -82,11 +82,11 @@ class SpeechCueTest {
         val three = SpeechCue.deliveries("Ааа!").first()
 
         // Удивление → попытка закричать → крик.
-        one.pitch < two.pitch shouldBe true
-        two.pitch < three.pitch shouldBe true
-        two.rate < one.rate shouldBe true
-        three.rate > two.rate shouldBe true
-        one.pauseAfterMs < three.pauseAfterMs shouldBe true
+        (one.pitch < two.pitch) shouldBe true
+        (two.pitch < three.pitch) shouldBe true
+        (two.rate < one.rate) shouldBe true
+        (three.rate > two.rate) shouldBe true
+        (one.pauseAfterMs < three.pauseAfterMs) shouldBe true
     }
 
     @Test
@@ -122,8 +122,8 @@ class SpeechCueTest {
         val breath = SpeechCue.deliveries("Аах!").first()
         val shout = SpeechCue.deliveries("Ааа!").first()
 
-        breath.pitch < shout.pitch shouldBe true
-        breath.rate < shout.rate shouldBe true
+        (breath.pitch < shout.pitch) shouldBe true
+        (breath.rate < shout.rate) shouldBe true
     }
 
     @Test
@@ -179,7 +179,7 @@ class SpeechCueTest {
 
         d shouldHaveSize 1
         d.first().text shouldBe "Подожди меня тут."
-        d.first().rate < 1f shouldBe true
+        (d.first().rate < 1f) shouldBe true
     }
 
     @Test
@@ -188,10 +188,10 @@ class SpeechCueTest {
         val tired = SpeechCue.deliveries("(устал) Еле иду.").first()
         val weak = SpeechCue.deliveries("(слабость) Не могу.").first()
 
-        run.rate > 1f shouldBe true
-        tired.rate < 1f shouldBe true
-        weak.rate < tired.rate shouldBe true
-        weak.pitch < tired.pitch shouldBe true
+        (run.rate > 1f) shouldBe true
+        (tired.rate < 1f) shouldBe true
+        (weak.rate < tired.rate) shouldBe true
+        (weak.pitch < tired.pitch) shouldBe true
     }
 
     @Test
@@ -203,14 +203,14 @@ class SpeechCueTest {
         d shouldHaveSize 2
         val shout = d.first()
         shout.pitch shouldBe 1.16f * 1.0f
-        shout.rate < 0.9f shouldBe true
+        (shout.rate < 0.9f) shouldBe true
     }
 
     @Test
     fun `most noticeable state wins when several are mentioned`() {
         val d = SpeechCue.deliveries("(устал) (бегом) Вперёд!").first()
 
-        d.rate > 1f shouldBe true
+        (d.rate > 1f) shouldBe true
     }
 
     // --- мусор не попадает в синтез ---
@@ -219,8 +219,8 @@ class SpeechCueTest {
     fun `orphan formatting marks are not spoken`() {
         val d = SpeechCue.deliveries("*(смеётся) Ха!")
 
-        d.none { it.text == "*" } shouldBe true
-        d.any { it.text == "Ха-ха-ха!" } shouldBe true
+        (d.none { it.text == "*" }) shouldBe true
+        (d.any { it.text == "Ха-ха-ха!" }) shouldBe true
     }
 
     @Test
