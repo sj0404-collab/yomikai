@@ -149,6 +149,7 @@ fun ReaderAiChatOverlay(
             backendState = state,
         )
         val ocrEngine = prefs.ocrModel().get()
+        val autoRotate = prefs.aiAutoRotate().get()
         val lines = eu.kanade.tachiyomi.data.ai.AiModelRoles.statusLines(
             eu.kanade.tachiyomi.data.ai.AiModelRoles.ocrTarget(
                 engineId = ocrEngine.name,
@@ -158,7 +159,11 @@ fun ReaderAiChatOverlay(
             orchestrator,
         )
         backendLine = if (status.available) {
-            lines.joinToString(" · ")
+            // При включённой автосмене отвечать может не та модель, что выбрана,
+            // и без подписи это выглядит как «выбрали не ту». Имя ответившей
+            // модели показывается в подвале каждого сообщения.
+            val rotationNote = if (autoRotate) " · автосмена моделей" else ""
+            (lines.joinToString(" · ") + rotationNote).trim()
         } else {
             "${backend.title} · недоступно: ${status.missing.joinToString(", ")}"
         }
