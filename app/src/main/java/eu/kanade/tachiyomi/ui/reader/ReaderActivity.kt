@@ -517,15 +517,21 @@ class ReaderActivity : BaseActivity() {
             val root = binding.root
             if (root.width <= 0 || root.height <= 0) return@LaunchedEffect
             val frame = android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
-            val bitmap = cropCurrentSelectionBitmap(frame) ?: return@LaunchedEffect
+            // Фоновая задача не имеет права ронять читатель: любой сбой
+            // (страница не отрисована, сеть, разбор JSON, запись файла) гасим
+            // здесь, иначе необработанное исключение из корутины убивает процесс.
+            val bitmap = runCatching { cropCurrentSelectionBitmap(frame) }.getOrNull()
+                ?: return@LaunchedEffect
             try {
-                val summary = eu.kanade.tachiyomi.data.ai.ReaderBookLookup.inspect(
-                    context = this@ReaderActivity,
-                    mangaId = manga.id,
-                    mangaTitle = manga.title,
-                    chapterName = chapter.name,
-                    bitmap = bitmap,
-                )
+                val summary = runCatching {
+                    eu.kanade.tachiyomi.data.ai.ReaderBookLookup.inspect(
+                        context = this@ReaderActivity,
+                        mangaId = manga.id,
+                        mangaTitle = manga.title,
+                        chapterName = chapter.name,
+                        bitmap = bitmap,
+                    )
+                }.getOrNull()
                 if (summary != null) withUIContext { toast(summary.lineSequence().first()) }
             } finally {
                 if (!bitmap.isRecycled) bitmap.recycle()
@@ -1891,6 +1897,14 @@ class ReaderActivity : BaseActivity() {
         rect: android.graphics.RectF,
     ): Bitmap? {
         val captures = resolveSelectionCaptures(rect)
+        // Страница может быть ещё не отрисована (или у вебтуна нет разрешимой
+        // области выделения) — это обычное состояние, а не ошибка. Раньше здесь
+        // бросалось IllegalStateException, и авто-поиск издания при открытии главы
+        // (LaunchedEffect) ронял приложение необработанным исключением из корутины.
+        if (captures.isEmpty()) {
+            logcat(LogPriority.DEBUG) { "Selection not ready for crop, skipping" }
+            return null
+        }
         val manga = viewModel.manga ?: throw IllegalStateException("Manga unavailable")
         return selectionBitmapCropper.cropSelectionBitmap(
             manga = manga,
@@ -1915,12 +1929,12 @@ class ReaderActivity : BaseActivity() {
             resolvedCaptures
         }
             .orEmpty()
-            .takeIf { it.isNotEmpty() }
-            ?: throw IllegalStateException("Failed to resolve current page region")
 
-        logcat(LogPriority.DEBUG) {
-            "Selection resolved ${captures.size} capture(s) for screenRect=" +
-                "${screenRect.left},${screenRect.top},${screenRect.right},${screenRect.bottom}"
+        if (captures.isNotEmpty()) {
+            logcat(LogPriority.DEBUG) {
+                "Selection resolved ${captures.size} capture(s) for screenRect=" +
+                    "${screenRect.left},${screenRect.top},${screenRect.right},${screenRect.bottom}"
+            }
         }
         return captures
     }
