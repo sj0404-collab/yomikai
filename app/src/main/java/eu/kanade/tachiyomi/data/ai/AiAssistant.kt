@@ -297,6 +297,9 @@ object AiAssistant {
                     break
                 }
                 if (reply == null) {
+                    // Закрыт бесплатный Zen целиком — ротация и cooldown тут
+                    // только вредят, выходим сразу.
+                    if (lastOutcome == Outcome.FreeTierBlocked) return@withContext null
                     coolDown(
                         model,
                         when (lastOutcome) {
@@ -369,6 +372,10 @@ object AiAssistant {
                         coolDown(m, 5 * 60_000L)
                         break
                     }
+                    // Закрыт весь бесплатный Zen разом: следующие модели из
+                    // каталога дадут тот же 403, а cooldown на них убьёт даже
+                    // рабочий путь на минуты. Выходим сразу.
+                    Outcome.FreeTierBlocked -> return null
                     Outcome.Transient -> {
                         if (attempt >= retryDelaysMs.size) {
                             coolDown(m, 90_000L)
@@ -401,7 +408,31 @@ object AiAssistant {
         object RateLimited : Outcome()
         object Transient : Outcome()
         object Fatal : Outcome()
+        /**
+         * Бесплатные модели Zen закрыты для сторонних клиентов самим
+         * OpenCode. Ротация тут бессильна: заблокированы ВСЕ модели сразу.
+         */
+        object FreeTierBlocked : Outcome()
     }
+
+    /**
+     * Ответ, которым OpenCode отказывает стороннему клиенту на бесплатных
+     * моделях Zen: HTTP 403 c `FreeTierError` / «can only be used from within
+     * OpenCode». Проверяется по телу ответа, а не по коду: 403 у провайдера
+     * бывает и по другим причинам.
+     */
+    internal fun isZenFreeTierBlocked(code: Int, body: String): Boolean =
+        code == 403 && (
+            body.contains("FreeTierError", ignoreCase = true) ||
+                body.contains("only be used from within OpenCode", ignoreCase = true)
+            )
+
+    /** Правдивое объяснение вместо «проверьте прокси»: прокси тут ни при чём. */
+    const val FREE_TIER_BLOCKED_MESSAGE =
+        "OpenCode отдаёт бесплатные модели Zen только своему собственному клиенту " +
+            "(HTTP 403 FreeTierError) — ни ключ, ни прокси, ни смена модели это не лечит. " +
+            "Бесплатно и легально: модели «:free» в OpenRouter (ключ бесплатный), " +
+            "локальная LLM или бэкенд «Полу-онлайн», где крутится настоящий opencode."
 
     private fun chatRawOutcome(
         url: String,
@@ -439,6 +470,17 @@ object AiAssistant {
                 ?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
             conn.disconnect()
             if (code !in 200..299) {
+                // Отдельная судьба для «бесплатных» моделей Zen: OpenCode
+                // отдаёт их только своему же клиенту (проверка по User-Agent),
+                // поэтому ни ключ, ни прокси, ни ротация тут не помогут. Ловим
+                // ДО классификации по коду, иначе 403 уходит в Fatal, и каждая
+                // модель каталога получает cooldown — после чего даже рабочий
+                // путь выглядит сломанным на 5 минут.
+                if (isZenFreeTierBlocked(code, text)) {
+                    lastFailureMessage = FREE_TIER_BLOCKED_MESSAGE
+                    logcat(LogPriority.WARN) { "Zen free tier blocked for $model (HTTP $code)" }
+                    return Outcome.FreeTierBlocked
+                }
                 lastFailureMessage = "$model: HTTP $code — ${text.take(160)}"
                 logcat(LogPriority.WARN) { "AI assistant HTTP $code ($model): ${text.take(160)}" }
                 addLog(

@@ -284,11 +284,20 @@ object AiAgent {
         var reply = reliableChat(chat, prompt, systemPromptEffective)
             ?: return@withContext AgentReply(
                 buildString {
-                    append("Нет ответа от AI-бэкенда после повторов и ротации.")
-                    AiAssistant.lastFailure().takeIf { it.isNotBlank() }?.let {
-                        append(" Последняя ошибка: ").append(it)
+                    val failure = AiAssistant.lastFailure()
+                    // Закрытый провайдером бесплатный уровень — это не «проверьте
+                    // прокси»: сначала показываем причину, иначе пользователь
+                    // по кругу чинит то, что сломано не у него.
+                    val blockedFreeTier = failure == AiAssistant.FREE_TIER_BLOCKED_MESSAGE
+                    if (blockedFreeTier) {
+                        append(failure)
+                    } else {
+                        append("Нет ответа от AI-бэкенда после повторов и ротации.")
+                        failure.takeIf { it.isNotBlank() }?.let {
+                            append(" Последняя ошибка: ").append(it)
+                        }
+                        append(" Проверьте прокси в ⚙ или смените бэкенд.")
                     }
-                    append(" Проверьте прокси в ⚙ или смените бэкенд.")
                 },
                 emptyList(), emptyList(),
             )
