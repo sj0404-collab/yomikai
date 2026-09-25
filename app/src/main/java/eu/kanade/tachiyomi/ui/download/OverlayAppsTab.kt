@@ -7,12 +7,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -23,6 +21,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -93,7 +93,7 @@ fun OverlayAppsTab() {
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             entry.icon?.let { icon ->
-                                Icon(icon, contentDescription = null, modifier = Modifier.size(36.dp))
+                                AppIcon(icon)
                                 Spacer(Modifier.width(12.dp))
                             }
                             Text(
@@ -109,4 +109,37 @@ fun OverlayAppsTab() {
             }
         }
     }
+}
+
+/**
+ * Иконка приложения.
+ *
+ * `Icon()` умеет только [androidx.compose.ui.graphics.vector.ImageVector] и
+ * Painter, а PackageManager отдаёт Drawable. Конвертируем в картинку сами:
+ * тянуть accompanist ради одного значка незачем.
+ */
+@Composable
+private fun AppIcon(drawable: android.graphics.drawable.Drawable) {
+    val size = 36
+    val bitmap = remember(drawable) {
+        runCatching {
+            if (drawable.intrinsicWidth <= 0 || drawable.intrinsicHeight <= 0) return@runCatching null
+            android.graphics.Bitmap
+                .createBitmap(drawable.intrinsicWidth, drawable.intrinsicHeight, android.graphics.Bitmap.Config.ARGB_8888)
+                .also { bmp ->
+                    val canvas = android.graphics.Canvas(bmp)
+                    drawable.setBounds(0, 0, canvas.width, canvas.height)
+                    drawable.draw(canvas)
+                }
+        }.getOrNull()
+    }
+    if (bitmap == null) {
+        Spacer(Modifier.size(36.dp))
+        return
+    }
+    androidx.compose.foundation.Image(
+        bitmap = bitmap.asImageBitmap(),
+        contentDescription = null,
+        modifier = Modifier.size(36.dp),
+    )
 }
