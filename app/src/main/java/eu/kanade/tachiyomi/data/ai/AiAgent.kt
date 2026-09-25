@@ -101,6 +101,8 @@ object AiAgent {
             "@tool book_recall {} — что уже известно о текущей книге (где читать, о чём, как читать, заметки, советы)\n" +
             "@tool book_remember {\"kind\":\"site|summary|fact|advice|заметка\",\"text\":\"значение\"} — сохранить знание о книге\n" +
             "@tool book_learn {\"url\":\"https://...\"} — прочитать страницу и сохранить её как источник правил\n" +
+            "@tool book_learn {\"edition\":\"название издания/перевода\"} — зафиксировать, какое издание читаем; " +
+            "сначала web_search, если переводов несколько\n" +
             "@tool book_learn {\"kind\":\"reading_order|region|bubble|transcription|voice|advice\",\"text\":\"правило\"} — " +
             "выучить правило книги: порядок чтения, область/рамка, баблы, расшифровка, голоса и роли\n" +
             "@tool book_learn {\"kind\":\"...\",\"text\":\"- правило\\n- правило\",\"user\":true} — список правил; " +
@@ -266,18 +268,42 @@ object AiAgent {
                 "Прежде чем отвечать по существу: web_search «<название> где читать/описание» → " +
                 "book_learn {\"url\":\"<найденная страница>\"} → выведи конкретные правила книги " +
                 "(порядок чтения, области и рамки, баблы, расшифровка, голоса и роли) и зафиксируй их " +
-                "вызовами book_learn с kind. Не выдумывай правил: если источник не нашёлся — скажи об этом."
+                "вызовами book_learn с kind. Не выдумывай правил: если источник не нашёлся — скажи об этом. " +
+                "У этой манги обычно несколько переводов, и они отличаются словарём и порядком сцен. " +
+                "Найди web_search, какие издания/переводы существуют, и book_learn {\"edition\":\"<перевод, год, " +
+                "группа>\"} — какое издание читаем. Если перевод не уточнён читателем, спроси один раз и " +
+                "запомни ответ, а не выбирай молча."
         }
         // Память из других книг: имена персонажей, термины серии и особенности
         // перевода не должны открываться заново в каждой манге.
         val sharedMemory = bookSession?.book?.title
             ?.let { BookSharedMemory.render(context, it) }
             .orEmpty()
+        // Как работать с ЭТОЙ книгой: режим (чат/отыгрыш), 18+, цензура и
+        // издание. Выбрано читателем, поэтому идёт жёстким блоком, а не
+        // просьбой модели решить самой. Вне читалки книги нет — блок не нужен
+        // и только путал бы общий чат словами про «книгу».
+        val chatSettings = BookKnowledge.profile(context, mangaId)
+        val modeBlock = if (mangaId == null) {
+            ""
+        } else {
+            BookChatProfile.render(
+                mode = chatSettings.mode,
+                matureAllowed = chatSettings.matureAllowed,
+                censorship = chatSettings.censorship,
+                bookTitle = chatSettings.title.ifBlank { bookSession?.book?.title.orEmpty() },
+            )
+        }
+        val editionHint = chatSettings.edition.takeIf { it.isNotBlank() }?.let {
+            "ИЗДАНИЕ КНИГИ (читать именно его): $it"
+        }.orEmpty()
         val prompt = buildString {
             if (historyBlock.isNotBlank()) append("Контекст диалога (последние $historyLimit, бюджет ${tokenBudget} токенов):\n").append(historyBlock).append("\n\n")
             if (!bookContext.isNullOrBlank()) append(bookContext).append("\n\n")
+            if (editionHint.isNotBlank()) append(editionHint).append("\n\n")
             if (sharedMemory.isNotBlank()) append(sharedMemory).append("\n\n")
             if (onboarding != null) append(onboarding).append("\n\n")
+            if (modeBlock.isNotBlank()) append(modeBlock).append("\n\n")
             if (!attachmentsInfo.isNullOrBlank()) append("Вложения пользователя:\n").append(attachmentsInfo).append("\n\n")
             if (capabilityBlock.isNotBlank()) append(capabilityBlock).append("\n\n")
             append(userText)
@@ -788,11 +814,25 @@ object AiAgent {
                 val url = call.args.optString("url").trim()
                 val kind = call.args.optString("kind")
                 val text = call.args.optString("text").ifBlank { call.args.optString("value") }
+                // Какое именно издание/перевод читать. Разные переводы одной
+                // манги отличаются словарём и порядком сцен, поэтому агенту
+                // надо знать свой экземпляр, а не гадать.
+                val edition = call.args.optString("edition").trim()
                 // Правило, продиктованное читателем, помечается user=true — иначе
                 // в источниках книги нельзя отличить слова пользователя от
                 // догадок агента.
                 val fromUser = call.args.optBoolean("user", false)
-                if (url.isBlank() && text.isBlank()) {
+                if (edition.isNotBlank()) {
+                    val stored = BookKnowledge.updateProfile(context, manga) {
+                        it.edition = BookLearning.sanitize(edition, 300)
+                    }.edition
+                    ToolResult(
+                        name = "book_learn",
+                        output = "Издание зафиксировано: $stored. Дальше опирайся на него, " +
+                            "а не на другой перевод той же манги.",
+                        status = "ok",
+                    )
+                } else if (url.isBlank() && text.isBlank()) {
                     ToolResult(
                         "book_learn",
                         "ОШИБКА: нужен url страницы или text правила",

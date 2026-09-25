@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -47,6 +48,7 @@ import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -84,6 +86,8 @@ import eu.kanade.tachiyomi.data.ai.AiAgent
 import eu.kanade.tachiyomi.data.ai.AiBackends
 import eu.kanade.tachiyomi.data.ai.AiHistoryManager
 import eu.kanade.tachiyomi.data.ai.AiHistoryManager.Msg
+import eu.kanade.tachiyomi.data.ai.BookChatProfile
+import eu.kanade.tachiyomi.data.ai.BookKnowledge
 import eu.kanade.tachiyomi.data.tts.TtsSpeaker
 import eu.kanade.tachiyomi.util.storage.getUriCompat
 import eu.kanade.tachiyomi.util.system.toast
@@ -111,6 +115,12 @@ fun ReaderAiChatOverlay(
     var elapsed by remember { mutableStateOf(0L) }
     var backendLine by remember { mutableStateOf("") }
     var sessionLine by remember { mutableStateOf("") }
+    // Как работаем с этой книгой: чат/отыгрыш, 18+, цензура. Заполняется
+    // из файла книги и меняется чипами прямо в шапке. Ключ — mangaId, иначе
+    // при переходе на другую книгу остались бы настройки предыдущей.
+    var bookSettings by remember(mangaId) {
+        mutableStateOf(BookKnowledge.profile(context, mangaId))
+    }
     // Растёт после каждого ответа: эффект ниже перечитывает сводку сессии.
     var sessionRefresh by remember { mutableStateOf(0) }
 
@@ -197,6 +207,7 @@ fun ReaderAiChatOverlay(
                 history = history,
                 loading = { loading = it },
                 onScroll = scrollTo,
+                censorship = bookSettings.censorship,
                 onActivity = setActivity,
                 onDone = { sessionRefresh += 1 },
             )
@@ -291,6 +302,49 @@ fun ReaderAiChatOverlay(
                     }
                     IconButton(onClick = onClose) {
                         Icon(Icons.Outlined.Close, contentDescription = "Скрыть AI-чат")
+                    }
+                }
+                // Настройки работы с этой книгой: режим, 18+, цензура. Отдельный
+                // рядом, а не в меню: переключать их надо прямо по ходу чтения.
+                if (mangaId != null) {
+                    val bookId = mangaId
+                    // Профиль книги, а не Book: в UI нужны только настройки.
+                    val applyProfile: ((BookKnowledge.Book) -> Unit) -> Unit = { mutate ->
+                        bookSettings = BookKnowledge.updateProfile(context, bookId, mutate)
+                            .let { BookChatProfile.Settings(it.mode, it.matureAllowed, it.censorship, it.title, it.edition) }
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        FilterChip(
+                            selected = bookSettings.mode == BookChatProfile.MODE_ROLEPLAY,
+                            onClick = {
+                                val next = if (bookSettings.mode == BookChatProfile.MODE_ROLEPLAY) {
+                                    BookChatProfile.MODE_CHAT
+                                } else {
+                                    BookChatProfile.MODE_ROLEPLAY
+                                }
+                                applyProfile { it.mode = next }
+                            },
+                            label = { Text(BookChatProfile.modeTitle(bookSettings.mode)) },
+                            modifier = Modifier.height(30.dp),
+                        )
+                        FilterChip(
+                            selected = bookSettings.matureAllowed,
+                            onClick = { applyProfile { it.matureAllowed = !it.matureAllowed } },
+                            label = { Text("18+") },
+                            modifier = Modifier.height(30.dp),
+                        )
+                        FilterChip(
+                            selected = bookSettings.censorship,
+                            onClick = { applyProfile { it.censorship = !it.censorship } },
+                            label = { Text("Цензура") },
+                            modifier = Modifier.height(30.dp),
+                        )
                     }
                 }
                 if (loading || activity.isNotBlank()) {
@@ -495,6 +549,8 @@ private fun sendMessage(
     history: SnapshotStateList<Msg>,
     loading: (Boolean) -> Unit,
     onScroll: (Int) -> Unit,
+    /** Настройки книги на момент отправки: цензура применяется к ответу. */
+    censorship: Boolean = true,
     onActivity: (String) -> Unit = {},
     /** Вызывается после сохранения ответа: пора перечитать сводку сессии. */
     onDone: () -> Unit = {},
@@ -523,6 +579,14 @@ private fun sendMessage(
                 images = emptyList(),
             )
         }
+        // Фильтр грубых слов — настройка читателя, применяется к тому, что
+        // реально попадёт в чат и в историю, иначе «цензура» была бы только
+        // словами в промпте.
+        val shown = if (censorship) {
+            BookChatProfile.maskCensored(reply.text)
+        } else {
+            reply.text
+        }
         val files = (reply.toolResults.mapNotNull { it.fileProduced } + reply.images)
             .distinct()
             .mapNotNull { eu.kanade.tachiyomi.data.ai.AiWorkspace.relPathOrNull(context, it) }
@@ -531,7 +595,7 @@ private fun sendMessage(
             history = history,
             msg = Msg(
                 role = "ai",
-                text = reply.text,
+                text = shown,
                 time = System.currentTimeMillis(),
                 tokens = reply.tokens,
                 model = reply.model,

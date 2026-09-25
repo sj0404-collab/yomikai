@@ -52,6 +52,20 @@ object BookKnowledge {
         var rules: MutableList<LearningRule> = mutableListOf(),
         /** Откуда брались знания: URL сайтов, «пользователь», «агент». */
         var sources: MutableList<String> = mutableListOf(),
+        /**
+         * Режим работы ассистента с книгой: обычный чат или отыгрыш.
+         * Читатель переключает прямо в чате читалки.
+         */
+        var mode: String = BookChatProfile.MODE_CHAT,
+        /** Книга помечена 18+: зрелые темы обсуждаются в рамках сюжета. */
+        var matureAllowed: Boolean = false,
+        /** Фильтр грубых слов в ответах ассистента. */
+        var censorship: Boolean = true,
+        /**
+         * Какое именно издание/перевод читать: разные переводы одной манги
+         * отличаются, и агент обязан знать, к какому он обращается.
+         */
+        var edition: String = "",
     ) {
         val researched: Boolean
             get() = site.isNotBlank() || summary.isNotBlank() || facts.isNotEmpty() || rules.isNotEmpty()
@@ -322,5 +336,32 @@ object BookKnowledge {
         val parts = mutableListOf("${book.rules.size} правил")
         if (book.sources.isNotEmpty()) parts.add("источников: ${book.sources.size}")
         return parts.joinToString(" · ")
+    }
+
+    /**
+     * Настройки работы ассистента с книгой (режим, 18+, цензура). Хранятся в
+     * файле книги, потому что относятся именно к ней: одну и ту же мангу
+     * можно читать строго, а другую — с отыгрышем.
+     *
+     * [mutate] применяется к уже загруженной книге и сохраняется один раз.
+     */
+    fun updateProfile(context: Context, mangaId: Long, mutate: (Book) -> Unit): Book {
+        val book = load(context, mangaId)
+        mutate(book)
+        save(context, book)
+        return book
+    }
+
+    /** Профиль книги для промпта; для книги без сессии — значения по умолчанию. */
+    fun profile(context: Context, mangaId: Long?): BookChatProfile.Settings {
+        if (mangaId == null) return BookChatProfile.Settings()
+        val book = load(context, mangaId)
+        return BookChatProfile.Settings(
+            mode = book.mode,
+            matureAllowed = book.matureAllowed,
+            censorship = book.censorship,
+            title = book.title,
+            edition = book.edition,
+        )
     }
 }
