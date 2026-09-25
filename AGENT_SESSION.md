@@ -3,7 +3,7 @@
 - Дата: 2026-09-25
 - Репозиторий: `/home/runner/hub-work/yomikai/code`
 - Ветка: `main`
-- Последний подтверждённый коммит: `1705646 fix(ai): honest role status, manual book-source actions and alias fixes`
+- Последний подтверждённый коммит: `3a8ebc4 fix(ai): apply the model a role actually chose, and say who answered`
 
 ## Контекст
 
@@ -123,6 +123,8 @@
   теста — строка роли «Чат» лишней пометкой «как у чата» и псевдоним «облачка».
 - `Tests` (run `36157207022`, коммит `1705646`): успешно (unit-тесты, spotless,
   verifySqlDelightMigration).
+- `Tests` (run `36159022852`, коммит `3a8ebc4`, аудит маршрутизации моделей):
+  успешно — `spotlessCheck`, unit-тесты и verifySqlDelightMigration зелёные.
 - Локальные сборки не запускались — по `MANIFEST.md` только CI.
 
 ## Diff локального клона
