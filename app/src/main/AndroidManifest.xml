@@ -51,6 +51,14 @@
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
+        <!-- Список запускаемых приложений для вкладки оверлея. Именно
+             launcher-интент, а не QUERY_ALL_PACKAGES: Android 11+ показывает
+             только то, что мы явно спросили, а широкое разрешение в Google Play
+             не проходит. -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
     </queries>
 
     <application

@@ -207,6 +207,11 @@ object OcrQueueScreen : Screen() {
                         onClick = { currentTab = 1 },
                         text = { Text("Голоса") },
                     )
+                    Tab(
+                        selected = currentTab == 2,
+                        onClick = { currentTab = 2 },
+                        text = { Text("Приложения") },
+                    )
                 }
                 when (currentTab) {
                     0 -> RecognitionTab(
@@ -216,7 +221,10 @@ object OcrQueueScreen : Screen() {
                         ocrPreferences = ocrPreferences,
                         nestedScrollConnection = nestedScrollConnection,
                     )
-                    else -> VoicesTab(ocrPreferences = ocrPreferences)
+                    1 -> VoicesTab(ocrPreferences = ocrPreferences)
+                    // Приложения телефона: на них оверлей кладётся поверх —
+                    // игра на чужом языке, текст без озвучки, субтитры к видео.
+                    else -> OverlayAppsTab()
                 }
             }
         }
