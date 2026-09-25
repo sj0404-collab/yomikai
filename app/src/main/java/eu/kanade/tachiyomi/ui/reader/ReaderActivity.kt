@@ -1609,6 +1609,30 @@ class ReaderActivity : BaseActivity() {
                 }
             }
         }
+        // Глаза оркестратора: картинку открытой страницы описывает та же
+        // vision-модель, что выбрана для OCR, а агент продолжает свой цикл с
+        // web/file-инструментами. Вопрос обязателен — «просто посмотри» для
+        // модели не значит ничего полезного.
+        actions.register("${READER_ACTION_PREFIX}see_page") { args ->
+            val question = args.optString("question").trim()
+            if (question.isEmpty()) {
+                return@register "Нужен вопрос: {\"action\":\"see_page\",\"question\":\"...\"}"
+            }
+            val root = binding.root
+            val rect = android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
+            val bitmap = cropCurrentSelectionBitmap(rect)
+            if (bitmap == null) {
+                "Не удалось получить кадр страницы"
+            } else {
+                try {
+                    eu.kanade.tachiyomi.data.ai.AiAgent.askAboutPage(bitmap, question)
+                        ?: "Выбранная vision-модель не ответила. Спроси иначе или " +
+                        "работай по распознанному тексту (page_text)."
+                } finally {
+                    if (!bitmap.isRecycled) bitmap.recycle()
+                }
+            }
+        }
     }
 
     /**

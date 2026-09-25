@@ -376,6 +376,33 @@ class OcrRepositoryImpl(
         }
     }
 
+    /**
+     * Вопрос к vision-модели по выбранному движку.
+     *
+     * Умеют не все: локальный кириллический распознаватель и ML Kit работают
+     * только с текстом. Для них возвращается null, чтобы вызывающий код
+     * продолжил разговор без взгляда на страницу, а не упал.
+     */
+    override suspend fun askAboutImage(image: OcrImage, question: String): String? {
+        val text = question.trim()
+        if (text.isEmpty()) return null
+        return withActiveOperation {
+            submitTask(PrioritizedTaskQueue.Priority.HIGH) {
+                image.useBitmap { bitmap ->
+                    // Тот же движок, что и у OCR, но с вопросом вместо
+                    // «распознай текст». Умеют только vision-движки; остальные
+                    // (кириллический, ML Kit, Lens) вернут null.
+                    when (val engine = engineFor(selectedEngineType())) {
+                        is ZenFreeOcrEngine -> engine.askAboutPage(bitmap, text)
+                        is GoogleAiOcrEngine -> engine.askAboutPage(bitmap, text)
+                        is OpenRouterOcrEngine -> engine.askAboutPage(bitmap, text)
+                        else -> null
+                    }
+                }
+            }
+        }
+    }
+
     override suspend fun scanPage(
         chapterId: Long,
         pageIndex: Int,

@@ -104,6 +104,88 @@ internal class OpenRouterOcrEngine(
 
     override fun close() = Unit
 
+    /**
+     * Произвольный вопрос о странице. Тот же формат multimodal, что у
+     * [recognizeText], но вместо «OCR ONLY» модель получает вопрос — это
+     * «глаза» агента-оркестратора. null при любой ошибке: вызывающий код
+     * обязан продолжить разговор без взгляда на страницу.
+     */
+    suspend fun askAboutPage(image: Bitmap, question: String): String? = withContext(Dispatchers.IO) {
+        val text = question.trim()
+        if (text.isEmpty() || image.isRecycled) return@withContext null
+        val apiKey = ocrPreferences.openrouterApiKey().get()
+        if (apiKey.isBlank()) return@withContext null
+        val model = ocrPreferences.openrouterModel().get().ifBlank { "google/gemini-2.5-flash" }
+        val jsonBody = JSONObject().apply {
+            put("model", model)
+            put("temperature", 0.2)
+            put(
+                "messages",
+                JSONArray().put(
+                    JSONObject().apply {
+                        put("role", "user")
+                        put(
+                            "content",
+                            JSONArray()
+                                .put(
+                                    JSONObject().apply {
+                                        put(
+                                            "type", "text"
+                                        )
+                                        put(
+                                            "text",
+                                            "You are the eyes of a reading assistant. Look at this page " +
+                                                "image and answer the question about it. Describe only what " +
+                                                "is actually visible: characters, actions, panel layout, art " +
+                                                "style and readable text. If the answer needs context that " +
+                                                "is not on the image, say so instead of inventing it. Answer " +
+                                                "in the language of the question, plain text, no JSON.\n\n" +
+                                                "QUESTION: $text",
+                                        )
+                                    },
+                                )
+                                .put(
+                                    JSONObject().apply {
+                                        put("type", "image_url")
+                                        put(
+                                            "image_url",
+                                            JSONObject().apply {
+                                                put("url", "data:image/jpeg;base64,${encodeBitmapToBase64(image)}")
+                                            },
+                                        )
+                                    },
+                                ),
+                        )
+                    },
+                ),
+            )
+        }
+        runCatching {
+            val connection = (URL("https://openrouter.ai/api/v1/chat/completions").openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                doOutput = true
+                connectTimeout = 15_000
+                readTimeout = 60_000
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("Authorization", "Bearer $apiKey")
+                setRequestProperty("HTTP-Referer", "https://yomihon.github.io")
+                setRequestProperty("X-Title", "Yomihon")
+            }
+            try {
+                connection.outputStream.use { it.write(jsonBody.toString().toByteArray(Charsets.UTF_8)) }
+                val code = connection.responseCode
+                val body = (if (code in 200..299) connection.inputStream else connection.errorStream)
+                    ?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
+                if (code !in 200..299) return@runCatching null
+                val answer = JSONObject(body).optJSONArray("choices")
+                    ?.optJSONObject(0)?.optJSONObject("message")?.optString("content", "")
+                answer?.trim()?.takeIf { it.isNotEmpty() }
+            } finally {
+                connection.disconnect()
+            }
+        }.getOrNull()
+    }
+
     private companion object {
         /** Длинная сторона страницы перед отправкой в vision-модель. */
         const val MAX_IMAGE_SIDE = 1080

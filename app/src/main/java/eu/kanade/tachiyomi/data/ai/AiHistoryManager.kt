@@ -46,10 +46,33 @@ object AiHistoryManager {
 
     private fun prefs(): OcrPreferences = Injekt.get()
 
-    fun historyFile(context: Context, mangaId: Long? = null): File {
+    /**
+     * Канал истории. У книги их два: обычный чат и отыгрыш.
+     *
+     * Раньше файл был один на `mangaId`, поэтому переключение режима
+     * подмешивало в реплику чужой разговор: в чате могли всплыть слова
+     * отыгрыша, и наоборот. У отыгрыша своя история, общие знания книги
+     * при этом остаются общими — изолируется переписка, а не память.
+     */
+    const val CHANNEL_CHAT = "chat"
+    const val CHANNEL_ROLEPLAY = "roleplay"
+
+    fun channelOf(mode: String): String =
+        if (mode == BookChatProfile.MODE_ROLEPLAY) CHANNEL_ROLEPLAY else CHANNEL_CHAT
+
+    /**
+     * Файл истории. Старые файлы книг (`ai_history_<id>.json`) остаются
+     * историей обычного чата — переименовывать их не нужно, иначе читатель
+     * потерял бы переписку при обновлении.
+     */
+    fun historyFile(context: Context, mangaId: Long? = null, channel: String = CHANNEL_CHAT): File {
         val ws = aiWorkspaceDir(context)
         ws.mkdirs()
-        return if (mangaId != null) File(ws, "ai_history_${mangaId}.json") else File(ws, FILE)
+        return when {
+            mangaId == null -> File(ws, FILE)
+            channel == CHANNEL_CHAT -> File(ws, "ai_history_${mangaId}.json")
+            else -> File(ws, "ai_history_${mangaId}_$channel.json")
+        }
     }
 
     private fun aiWorkspaceDir(context: Context): File {
@@ -60,8 +83,8 @@ object AiHistoryManager {
         return if (candidate.exists() || candidate.mkdirs()) candidate else File(context.filesDir, "ai_workspace")
     }
 
-    fun load(context: Context, mangaId: Long? = null): MutableList<Msg> {
-        val f = historyFile(context, mangaId)
+    fun load(context: Context, mangaId: Long? = null, channel: String = CHANNEL_CHAT): MutableList<Msg> {
+        val f = historyFile(context, mangaId, channel)
         if (!f.exists()) return mutableListOf()
         return try {
             val raw = f.readText()
@@ -75,17 +98,23 @@ object AiHistoryManager {
         }
     }
 
-    fun save(context: Context, history: List<Msg>, mangaId: Long? = null) {
+    fun save(context: Context, history: List<Msg>, mangaId: Long? = null, channel: String = CHANNEL_CHAT) {
         try {
             val limit = prefs().aiHistoryLimit().get().coerceIn(4, 100)
             val toSave = history.takeLast(limit)
-            historyFile(context, mangaId).writeText(json.encodeToString(toSave))
+            historyFile(context, mangaId, channel).writeText(json.encodeToString(toSave))
         } catch (e: Exception) {
             logcat(LogPriority.WARN, e) { "AiHistoryManager save failed" }
         }
     }
 
-    fun append(context: Context, history: MutableList<Msg>, msg: Msg, mangaId: Long? = null) {
+    fun append(
+        context: Context,
+        history: MutableList<Msg>,
+        msg: Msg,
+        mangaId: Long? = null,
+        channel: String = CHANNEL_CHAT,
+    ) {
         history.add(msg)
         val limit = prefs().aiHistoryLimit().get().coerceIn(4, 100)
         while (history.size > limit) {
@@ -100,7 +129,7 @@ object AiHistoryManager {
             }
             history.add(0, Msg(role = "ai", text = summary, time = System.currentTimeMillis()))
         }
-        save(context, history, mangaId)
+        save(context, history, mangaId, channel)
     }
 
     /**

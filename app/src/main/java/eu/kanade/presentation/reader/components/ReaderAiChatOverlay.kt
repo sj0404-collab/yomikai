@@ -121,6 +121,9 @@ fun ReaderAiChatOverlay(
     var bookSettings by remember(mangaId) {
         mutableStateOf(BookKnowledge.profile(context, mangaId))
     }
+    // У отыгрыша своя история: канал определяется режимом и объявлен здесь,
+    // до лямбды отправки, которая его использует.
+    val historyChannel = AiHistoryManager.channelOf(bookSettings.mode)
     // Растёт после каждого ответа: эффект ниже перечитывает сводку сессии.
     var sessionRefresh by remember { mutableStateOf(0) }
 
@@ -208,6 +211,7 @@ fun ReaderAiChatOverlay(
                 loading = { loading = it },
                 onScroll = scrollTo,
                 censorship = bookSettings.censorship,
+                historyChannel = historyChannel,
                 onActivity = setActivity,
                 onDone = { sessionRefresh += 1 },
             )
@@ -219,9 +223,11 @@ fun ReaderAiChatOverlay(
     // История книги грузится один раз на книгу: перечитывать её на каждый
     // ответ нельзя — файл на диске ещё не дописан, и перезагрузка стирала бы
     // сообщение, которое агент только что сохранил.
-    LaunchedEffect(mangaId) {
+    // Канал входит в ключ: у отыгрыша своя переписка, и переключение режима
+    // должно показывать именно её, а не смешанную с обычным чатом.
+    LaunchedEffect(mangaId, historyChannel) {
         history.clear()
-        history.addAll(AiHistoryManager.load(context, mangaId))
+        history.addAll(AiHistoryManager.load(context, mangaId, historyChannel))
         runCatching { listState.scrollToItem((history.size - 1).coerceAtLeast(0)) }
     }
 
@@ -420,7 +426,7 @@ fun ReaderAiChatOverlay(
                             },
                             onDelete = {
                                 history.remove(msg)
-                                AiHistoryManager.save(context, history, mangaId)
+                                AiHistoryManager.save(context, history, mangaId, historyChannel)
                             },
                             onSpeak = {
                                 TtsSpeaker.speak(context, msg.text)
@@ -523,7 +529,7 @@ fun ReaderAiChatOverlay(
             confirmButton = {
                 Button(onClick = {
                     history.clear()
-                    AiHistoryManager.save(context, history, mangaId)
+                    AiHistoryManager.save(context, history, mangaId, historyChannel)
                     showClearConfirm = false
                     showToast("История очищена")
                 }) {
@@ -551,11 +557,13 @@ private fun sendMessage(
     onScroll: (Int) -> Unit,
     /** Настройки книги на момент отправки: цензура применяется к ответу. */
     censorship: Boolean = true,
+    /** Канал истории на момент отправки, чтобы ответ не попал в чужую переписку. */
+    historyChannel: String = AiHistoryManager.CHANNEL_CHAT,
     onActivity: (String) -> Unit = {},
     /** Вызывается после сохранения ответа: пора перечитать сводку сессии. */
     onDone: () -> Unit = {},
 ) {
-    AiHistoryManager.append(context, history, Msg(role = "user", text = input), mangaId)
+    AiHistoryManager.append(context, history, Msg(role = "user", text = input), mangaId, historyChannel)
     loading(true)
     onActivity("Запрос к модели…")
     scope.launch {
@@ -616,6 +624,7 @@ private fun sendMessage(
                 files = files,
             ),
             mangaId = mangaId,
+            channel = historyChannel,
         )
         loading(false)
         onActivity("Готово")

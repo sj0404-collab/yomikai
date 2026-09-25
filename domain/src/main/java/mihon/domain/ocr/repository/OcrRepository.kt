@@ -6,6 +6,17 @@ import mihon.domain.ocr.model.OcrPageResult
 interface OcrRepository {
     suspend fun recognizeText(image: OcrImage): String
 
+    /**
+     * Спросить у ВЫБРАННОЙ vision-модели произвольный вопрос о картинке.
+     *
+     * Нужна агенту-оркестратору: OCR отдаёт только текст страницы, а
+     * оркестратору нужно понимать изображение — что нарисовано, кто с кем,
+     * что происходит в сцене. null означает «выбранный движок не умеет
+     * отвечать на вопросы» (локальный Tesseract, например), и вызывающий код
+     * обязан продолжить без взгляда на страницу, а не падать.
+     */
+    suspend fun askAboutImage(image: OcrImage, question: String): String?
+
     suspend fun scanPage(
         chapterId: Long,
         pageIndex: Int,

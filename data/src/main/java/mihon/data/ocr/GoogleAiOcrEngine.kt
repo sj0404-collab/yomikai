@@ -105,6 +105,81 @@ internal class GoogleAiOcrEngine(
 
     override fun close() = Unit
 
+    /**
+     * Произвольный вопрос о странице. Тот же endpoint и та же картинка, что у
+     * [recognizeText], но вместо «OCR ONLY» модель получает вопрос — это
+     * «глаза» агента-оркестратора. null при любой ошибке: вызывающий код
+     * обязан продолжить разговор без взгляда на страницу.
+     */
+    suspend fun askAboutPage(image: Bitmap, question: String): String? = withContext(Dispatchers.IO) {
+        val text = question.trim()
+        if (text.isEmpty() || image.isRecycled) return@withContext null
+        val apiKey = ocrPreferences.googleApiKey().get()
+        if (apiKey.isBlank()) return@withContext null
+        val model = ocrPreferences.googleModel().get().ifBlank { "gemini-2.5-flash" }
+        val jsonBody = JSONObject().apply {
+            put("generationConfig", JSONObject().apply { put("temperature", 0.2) })
+            put(
+                "contents",
+                JSONArray().put(
+                    JSONObject().apply {
+                        put(
+                            "parts",
+                            JSONArray()
+                                .put(
+                                    JSONObject().apply {
+                                        put(
+                                            "text",
+                                            "You are the eyes of a reading assistant. Look at this page " +
+                                                "image and answer the question about it. Describe only what " +
+                                                "is actually visible: characters, actions, panel layout, art " +
+                                                "style and readable text. If the answer needs context that " +
+                                                "is not on the image, say so instead of inventing it. Answer " +
+                                                "in the language of the question, plain text, no JSON.\n\n" +
+                                                "QUESTION: $text",
+                                        )
+                                    },
+                                )
+                                .put(
+                                    JSONObject().apply {
+                                        put(
+                                            "inline_data",
+                                            JSONObject().apply {
+                                                put("mime_type", "image/jpeg")
+                                                put("data", encodeBitmapToBase64(image))
+                                            },
+                                        )
+                                    },
+                                ),
+                        )
+                    },
+                ),
+            )
+        }
+        runCatching {
+            val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
+            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                doOutput = true
+                connectTimeout = 15_000
+                readTimeout = 60_000
+                setRequestProperty("Content-Type", "application/json")
+            }
+            try {
+                connection.outputStream.use { it.write(jsonBody.toString().toByteArray(Charsets.UTF_8)) }
+                val code = connection.responseCode
+                val body = (if (code in 200..299) connection.inputStream else connection.errorStream)
+                    ?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
+                if (code !in 200..299) return@runCatching null
+                val parts = JSONObject(body).optJSONArray("candidates")
+                    ?.optJSONObject(0)?.optJSONObject("content")?.optJSONArray("parts")
+                parts?.optJSONObject(0)?.optString("text", "")?.trim()?.takeIf { it.isNotEmpty() }
+            } finally {
+                connection.disconnect()
+            }
+        }.getOrNull()
+    }
+
     private companion object {
         /** Длинная сторона страницы перед отправкой в vision-модель. */
         const val MAX_IMAGE_SIDE = 1080

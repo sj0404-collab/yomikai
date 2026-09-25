@@ -114,6 +114,9 @@ object AiAgent {
             "@tool reader_do {\"action\":\"speak_page\"} — выполнить действие читалки: " +
             "speak_page (озвучить текущую страницу), speak_chapter (озвучивать всю главу), " +
             "stop_speak (прекратить озвучку), page_text (распознать текст текущей страницы), " +
+            "see_page (СПРОСИТЬ ВИЖУЩУЮ МОДЕЛЬ про открытую страницу, обязательно с вопросом: " +
+            "{\"action\":\"see_page\",\"question\":\"что нарисовано на этой странице?\"} — " +
+            "это твои глаза: картинку вижу я, модель описывает её), " +
             "page_count (сколько страниц в главе)\n" +
             "@tool list_ext {} — список установленных расширений-источников с их доменами\n" +
             "@tool filter_ext {\"hide\":\"подстрока\",\"show\":\"подстрока\"} — скрыть/показать источники по имени/языку\n" +
@@ -1465,6 +1468,48 @@ object AiAgent {
             null
         }
     }
+
+    /**
+     * Спросить у выбранной vision-модели про кадр страницы.
+     *
+     * Это «глаза» оркестратора: текст страницы он и так читает через OCR, а
+     * здесь получает возможность понять изображение — кто нарисован, что
+     * происходит, как разбит на панели. null означает «движок не умеет
+     * отвечать на вопросы» (локальный распознаватель) или ответ не пришёл;
+     * оба случая не фатальны, вызывающий код продолжает разговор.
+     */
+    suspend fun askAboutPage(bitmap: Bitmap, question: String): String? = withContext(Dispatchers.IO) {
+        runCatching {
+            if (bitmap.isRecycled) return@runCatching null
+            val maxSide = maxOf(bitmap.width, bitmap.height)
+            val source = if (maxSide > VISION_MAX_SIDE) {
+                val scale = VISION_MAX_SIDE.toFloat() / maxSide
+                Bitmap.createScaledBitmap(
+                    bitmap,
+                    (bitmap.width * scale).toInt().coerceAtLeast(1),
+                    (bitmap.height * scale).toInt().coerceAtLeast(1),
+                    true,
+                )
+            } else {
+                null
+            }
+            try {
+                val scaled = source ?: bitmap
+                val pixels = IntArray(scaled.width * scaled.height)
+                scaled.getPixels(pixels, 0, scaled.width, 0, 0, scaled.width, scaled.height)
+                val image = OcrImage(scaled.width, scaled.height, pixels)
+                Injekt.get<OcrRepository>().askAboutImage(image, question)?.trim()
+                    ?.takeIf { it.isNotEmpty() }
+            } finally {
+                if (source != null && !source.isRecycled) source.recycle()
+            }
+        }.getOrElse {
+            logcat(LogPriority.WARN, it) { "AI page vision failed" }
+            null
+        }
+    }
+
+    private const val VISION_MAX_SIDE = 1600
 
     // JSONArray импортирован для будущих инструментов; подавляем предупреждение
     @Suppress("unused")

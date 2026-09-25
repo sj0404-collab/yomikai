@@ -45,6 +45,22 @@ import kotlin.coroutines.resume
 object TtsSpeaker {
 
     /**
+     * Один кусок озвучки: текст и всё, что на него действует.
+     *
+     * Раньше куском был целое предложение. Теперь предложение распадается на
+     * куски, потому что звук из ремарки и «ааа» произносятся отдельно от
+     * остального текста. Словарь интонаций при этом остаётся привязан к
+     * предложению целиком, поэтому его множители лежат здесь, рядом с
+     * разметкой куска, а не в общем списке.
+     */
+    private class TtsUnit(
+        val delivery: SpeechCue.Delivery,
+        val intonationPitch: Float,
+        val intonationRate: Float,
+        val intonationPause: Int,
+    )
+
+    /**
      * Предел одной utterance. TextToSpeech.getMaxSpeechInputLength() почти
      * везде равен 4000; берём с запасом, чтобы не зависеть от прошивки.
      */
@@ -623,7 +639,28 @@ object TtsSpeaker {
             }
             val sentences = splitSentences(spokenText)
             if (sentences.isEmpty()) { setSpeaking(false); return@ensureSystem }
-            val lastId = "yk_${sentences.size - 1}"
+            // Предложение может распасться на несколько кусков: звук из
+            // ремарки и «ааа» произносятся отдельно от остального текста, со
+            // своей подачей. Плоский список нужен ещё и для того, чтобы
+            // `lastId` указывал на последний utterance, а не на последнее
+            // предложение.
+            val units = mutableListOf<TtsUnit>()
+            for (sentence in sentences) {
+                val trimmed = sentence.trim()
+                if (trimmed.isEmpty()) continue
+                // Словарь интонаций: узор фразы → пауза/питч/темп. Правило
+                // ищется по всему предложению и умножается на все его куски,
+                // иначе «Ааа! Прости...» не нашло бы узор по целой фразе.
+                val intonation = VoiceIntonationDictionary.matchRule(p, trimmed)
+                val intonationPitch = intonation?.pitch?.takeIf { it > 0f && it != 1f } ?: 1f
+                val intonationRate = intonation?.rate?.takeIf { it > 0f && it != 1f } ?: 1f
+                val intonationPause = intonation?.pauseMs?.takeIf { it > 0 } ?: 0
+                for (d in SpeechCue.deliveries(trimmed)) {
+                    units += TtsUnit(d, intonationPitch, intonationRate, intonationPause)
+                }
+            }
+            if (units.isEmpty()) { setSpeaking(false); return@ensureSystem }
+            val lastId = "yk_${units.size - 1}"
             engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) {
                     if (utteranceId == "yk_0") setSpeaking(true)
@@ -654,18 +691,17 @@ object TtsSpeaker {
             val basePitch = (p.speechPitch().get() * genderPitchMod *
                 presetGender.pitch * presetAge.pitch * rolePitch).coerceIn(0.5f, 2f)
             var queued = false
-            sentences.forEachIndexed { i, sentence ->
-                val trimmed = sentence.trim()
+            units.forEachIndexed { i, unit ->
+                val trimmed = unit.delivery.text.trim()
                 if (trimmed.isEmpty()) return@forEachIndexed
-                // Словарь интонаций: узор фразы → пауза/питч/темп именно этого
-                // предложения. Перекрывает знаковую пунктуацию.
-                val intonation = VoiceIntonationDictionary.matchRule(p, trimmed)
-                val intonationPitch = intonation?.pitch?.takeIf { it > 0f && it != 1f } ?: 1f
-                val intonationRate = intonation?.rate?.takeIf { it > 0f && it != 1f } ?: 1f
+                val cue = unit.delivery
                 when {
-                    intonation != null -> {
-                        engine.setPitch((basePitch * intonationPitch).coerceIn(0.5f, 2f))
-                        engine.setSpeechRate((baseRate * intonationRate).coerceIn(0.5f, 2f))
+                    // Звук из ремарки или междометие: подача уже задана, знаки
+                    // препинания поверх неё не добавляются — иначе «Ааа!»
+                    // получил бы крик дважды.
+                    cue.fromCue || unit.intonationPitch != 1f || unit.intonationRate != 1f -> {
+                        engine.setPitch((basePitch * unit.intonationPitch * cue.pitch).coerceIn(0.5f, 2f))
+                        engine.setSpeechRate((baseRate * unit.intonationRate * cue.rate).coerceIn(0.5f, 2f))
                     }
                     trimmed.endsWith("?") || trimmed.endsWith("?!") || trimmed.endsWith("⁇") -> {
                         engine.setPitch((basePitch * 1.12f).coerceAtMost(2f))
@@ -676,8 +712,10 @@ object TtsSpeaker {
                         engine.setSpeechRate((baseRate * 1.05f).coerceAtMost(2f))
                     }
                     else -> {
-                        engine.setPitch(basePitch)
-                        engine.setSpeechRate(baseRate)
+                        // Состояние из ремарки (шёпот, бег, слабость) — это
+                        // множитель всей реплики, а не отдельного слова.
+                        engine.setPitch((basePitch * cue.pitch).coerceIn(0.5f, 2f))
+                        engine.setSpeechRate((baseRate * cue.rate).coerceIn(0.5f, 2f))
                     }
                 }
                 val mode = if (queued) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH
@@ -688,10 +726,11 @@ object TtsSpeaker {
                     TextToSpeech.ERROR
                 }
                 if (r == TextToSpeech.SUCCESS) queued = true
-                val pauseMs = intonation?.let { r ->
-                    // Словарь интонаций задал свою длину паузы после фразы.
-                    if (r.pauseMs > 0) r.pauseMs.toLong() else null
-                } ?: when {
+                val pauseMs = when {
+                    // Сначала словарь интонаций, затем ремарка: её пауза
+                    // относится к конкретному куску, а не ко всей фразе.
+                    unit.intonationPause > 0 -> unit.intonationPause.toLong()
+                    cue.pauseAfterMs > 0 -> cue.pauseAfterMs.toLong()
                     trimmed.endsWith("!") || trimmed.endsWith("?") ||
                         trimmed.endsWith("‼") || trimmed.endsWith("⁇") -> 420L
                     trimmed.endsWith(",") || trimmed.endsWith(";") -> 160L
@@ -774,7 +813,9 @@ object TtsSpeaker {
         currentJob = scope.launch {
             setSpeaking(true)
             val url = p.remoteTtsUrl().get().trim()
-            val sentences = splitSentences(text)
+            // Предложения разворачиваются в куски с подачей, чтобы «ааа» и
+            // вздох из ремарки ушли отдельным запросом со своим темпом.
+            val sentences = splitSentences(text).flatMap { splitForRemote(it) }
             if (url.isBlank()) {
                 withContext(Dispatchers.Main) { speakSystem(context, text, gender) }
                 return@launch
@@ -784,8 +825,8 @@ object TtsSpeaker {
             try {
                 for (sentence in sentences) {
                     if (currentJob?.isActive != true) break
-                    val trimmed = sentence.trim()
-                    val wav = synthesizeRemote(context, url, trimmed, gender)
+                    val trimmed = sentence.text.trim()
+                    val wav = synthesizeRemote(context, url, trimmed, gender, sentence.rate)
                     if (wav == null) {
                         failed = true
                         break
@@ -802,7 +843,7 @@ object TtsSpeaker {
                 failed = true
             }
             if (failed && doneUpTo < sentences.size && currentJob?.isActive == true) {
-                val rest = sentences.subList(doneUpTo, sentences.size).joinToString(" ")
+                val rest = sentences.drop(doneUpTo).joinToString(" ") { it.text }
                 logcat(LogPriority.WARN) { "remote TTS fallback to system from sentence $doneUpTo" }
                 withContext(Dispatchers.Main) { speakSystem(context, rest, gender) }
             } else {
@@ -811,12 +852,27 @@ object TtsSpeaker {
         }
     }
 
+    /** Кусок для удалённого движка: текст и множитель темпа. */
+    private class RemoteChunk(val text: String, val rate: Float)
+
+    /**
+     * Разворачивает предложение в куски для удалённого движка. Разбиение
+     * общее с системным ([SpeechCue.deliveries]), но темп передаётся в
+     * параметре `speed` запроса, потому что у сервера нет сетевого тона.
+     */
+    private fun splitForRemote(sentence: String): List<RemoteChunk> {
+        val trimmed = sentence.trim()
+        if (trimmed.isEmpty()) return emptyList()
+        return SpeechCue.deliveries(trimmed).map { RemoteChunk(it.text, it.rate) }
+    }
+
     /** POST {text, voice, speed} на /tts сервера; ответ — wav-байты. */
     private suspend fun synthesizeRemote(
         context: Context,
         url: String,
         text: String,
         gender: String?,
+        rateFactor: Float = 1f,
     ): File? = withContext(Dispatchers.IO) {
         runCatching {
             val conn = java.net.URL(url.trimEnd('/') + "/tts").openConnection()
@@ -826,7 +882,7 @@ object TtsSpeaker {
             conn.requestMethod = "POST"
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json")
-            val speed = prefs().speechRate().get().coerceIn(0.5f, 2f)
+            val speed = (prefs().speechRate().get() * rateFactor).coerceIn(0.5f, 2f)
             val body = "{\"text\":${jsonQuote(text)},\"voice\":${jsonQuote(gender ?: "auto")},\"speed\":$speed}"
             conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
             if (conn.responseCode != 200) {

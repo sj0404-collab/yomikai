@@ -463,6 +463,19 @@ fun TtsSettingsDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                // Встроенные ремарки работают без настроек, но словарь
+                // умножается поверх них — это способ переопределить тон
+                // вздоха или крика под конкретный голос.
+                Text(
+                    "Ремарки в скобках произносятся сами: вздох, вдох, стон, " +
+                        "крик, крик помощи, смех, кашель. Состояния меняют " +
+                        "подачу: шёпот, бег, усталость, слабость, боль, испуг, " +
+                        "злость, удивление. Междометия «а», «аа», «ааа», «ах» " +
+                        "различаются по длине: удивление, попытка закричать, крик. " +
+                        "Правило ниже переопределяет их поверх.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 rules.forEachIndexed { idx, rule ->
                     val ruleParams = buildString {
                         if (rule.pauseMs > 0) append(" • пауза ${rule.pauseMs}мс")

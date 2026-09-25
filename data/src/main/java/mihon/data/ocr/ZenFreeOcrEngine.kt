@@ -89,6 +89,87 @@ internal class ZenFreeOcrEngine : OcrEngine {
         }
     }
 
+    /**
+     * Произвольный вопрос о странице той же vision-моделью.
+     *
+     * Запрос уходит тем же прямым соединением, что и OCR (решение владельца
+     * проекта — без прокси-абстракции), но вместо JSON с боксами модель
+     * отвечает обычным текстом. Это «глаза» агента-оркестратора: он видит
+     * кадр и продолжает свой цикл с web/file-инструментами.
+     */
+    suspend fun askAboutPage(image: Bitmap, question: String): String? = withContext(Dispatchers.IO) {
+        require(!image.isRecycled) { "Input bitmap is recycled" }
+        val prompt = question.trim()
+        if (prompt.isEmpty()) return@withContext null
+        val payload = JSONObject().apply {
+            put("model", MODEL)
+            put("max_tokens", ASK_MAX_TOKENS)
+            put("stream", false)
+            put(
+                "messages",
+                JSONArray().put(
+                    JSONObject().apply {
+                        put("role", "user")
+                        put(
+                            "content",
+                            JSONArray()
+                                .put(
+                                    JSONObject().apply {
+                                        put("type", "text")
+                                        put("text", ASK_PROMPT)
+                                    },
+                                )
+                                .put(
+                                    JSONObject().apply {
+                                        put("type", "image_url")
+                                        put(
+                                            "image_url",
+                                            JSONObject().apply {
+                                                put("url", "data:image/jpeg;base64,${encodeBitmap(image)}")
+                                            },
+                                        )
+                                    },
+                                ),
+                        )
+                    },
+                ),
+            )
+        }
+        val answer = postAndReadText(payload)
+        answer?.trim()?.takeIf { it.isNotEmpty() && !it.contains("FreeTierError") }
+    }
+
+    /** POST с готовым payload и чтение строкового ответа. null при сетевой ошибке. */
+    private fun postAndReadText(payload: JSONObject): String? {
+        val connection = URL(ENDPOINT).openConnection() as HttpURLConnection
+        return try {
+            connection.requestMethod = "POST"
+            connection.doOutput = true
+            connection.connectTimeout = CONNECT_TIMEOUT_MS
+            connection.readTimeout = READ_TIMEOUT_MS
+            connection.setRequestProperty("Content-Type", "application/json")
+            connection.setRequestProperty("Accept", "application/json")
+            connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+            val status = connection.responseCode
+            val body = (if (status in 200..299) connection.inputStream else connection.errorStream)
+                ?.bufferedReader()
+                ?.use { it.readText() }
+                .orEmpty()
+            if (status !in 200..299) {
+                // Free tier закрыт для стороннего клиента — это не повод
+                // ронять разговор, агент просто продолжит без взгляда.
+                null
+            } else {
+                extractMessageContent(JSONObject(body).optJSONArray("choices")?.optJSONObject(0)
+                    ?.optJSONObject("message") ?: JSONObject())
+            }
+        } catch (e: Exception) {
+            null
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     override fun close() = Unit
 
     private fun extractMessageContent(message: JSONObject): String {
@@ -132,8 +213,15 @@ internal class ZenFreeOcrEngine : OcrEngine {
         private const val MAX_IMAGE_SIDE = 1080
         private const val JPEG_QUALITY = 78
         private const val MAX_TOKENS = 4096
+        private const val ASK_MAX_TOKENS = 1024
         private const val CONNECT_TIMEOUT_MS = 15_000
         private const val READ_TIMEOUT_MS = 90_000
+        private val ASK_PROMPT =
+            "You are the eyes of a reading assistant. Look at this page image and answer the question " +
+                "about it. Describe only what is actually visible: characters, actions, panel layout, " +
+                "art style, and the text you can read. If the question needs context that is not on the " +
+                "image, say so plainly instead of inventing it. Answer in the language of the question. " +
+                "Be concise, plain text, no JSON and no markdown."
         private val OCR_PROMPT =
             "Transcribe every visible text block in this image. Preserve the original reading order, " +
                 "language, spelling, punctuation, and line breaks. Do not translate, explain, or invent text. " +
