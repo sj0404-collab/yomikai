@@ -215,6 +215,9 @@ fun ReaderAiChatOverlay(
 
     val send: (String, String?, ByteArray?) -> Unit = { text, fileName, fileBytes ->
         if (text.isNotBlank() && !loading) {
+            // Поле очищаем сразу при отправке: оставлять отправленный текст в
+            // поле нельзя — читатель видит «не отправлено» и ждёт второй раз.
+            input = ""
             sendMessage(
                 context = context,
                 scope = scope,

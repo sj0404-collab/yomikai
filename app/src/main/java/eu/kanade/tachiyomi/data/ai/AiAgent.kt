@@ -578,6 +578,41 @@ object AiAgent {
     }
 
     /** Убирает из видимого текста все формы tool-вызовов (строчные и XML). */
+    /**
+     * Убирает незакрытые вызовы инструментов целиком.
+     *
+     * Список известных имён не спасал: действия читалки (`see_page`,
+     * `page_count`) знакомыми не считаются — они аргументы `reader_do`. А
+     * модель часто пишет `@tool page_text {` без закрывающей скобки, такой
+     * вызов не разбирается, и сырой `@tool` с JSON-аргументами уезжал в
+     * ответ как «размышления». Ловим по началу строки и снимаем блок, пока
+     * скобки не сойдутся.
+     */
+    fun stripToolFragments(text: String): String {
+        val out = StringBuilder()
+        var skipping = false
+        var depth = 0
+        for (line in text.lines()) {
+            val t = line.trim()
+            if (skipping) {
+                depth += t.count { it == '{' } - t.count { it == '}' }
+                if (depth <= 0) skipping = false
+                continue
+            }
+            val isToolStart = t.startsWith("@tool") || (t.startsWith("@") && t.contains(Regex("\\w+\\s*[\\{\\s]")))
+            if (isToolStart) {
+                depth = t.count { it == '{' } - t.count { it == '}' }
+                // Незакрытый вызов: снимаем и его хвост до баланса скобок.
+                skipping = depth > 0
+                continue
+            }
+            // Одиночный JSON-аргумент без строки @tool — тоже мусор.
+            if (t.startsWith("{") && t.endsWith("}") && t.contains("\"")) continue
+            out.append(line).append('\n')
+        }
+        return out.toString().trim()
+    }
+
     fun stripToolSyntax(context: Context, text: String): String {
         val known = knownToolNames(context)
         var cleaned = text.replace(
@@ -599,7 +634,7 @@ object AiAgent {
                 line.trimStart().startsWith("@") || t.contains("{") || t.substringBefore(' ') == t
                 )
         }.joinToString("\n")
-        return cleaned.trim()
+        return stripToolFragments(cleaned)
     }
 
     private suspend fun execute(
