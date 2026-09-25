@@ -94,6 +94,11 @@ object AiModelRoles {
             ?: AiBackends.byId(chatBackend).id
         val backend = AiBackends.byId(backendId)
         val requested = orchestratorModel?.takeIf { it.isNotBlank() }
+        // Модель роли применяется у онлайн-провайдера: у Zen и OpenRouter она
+        // идёт в тело запроса, у своего провайдера — в модель payload с
+        // откатом на его собственную. Локальная LLM и ранер работают на той
+        // модели, что выбрали в их настройках, поэтому роль может выбрать
+        // только бэкенд; иначе статус врал бы пользователю.
         val honoured = backend.supportsModelChoice
         val own = backendId != AiBackends.byId(chatBackend).id || requested != null
         val backendModel = if (honoured || backendState == null) {

@@ -95,6 +95,7 @@ object AiAssistant {
         userPrompt: String,
         systemPrompt: String?,
         maxTokens: Int,
+        modelOverride: String? = null,
     ): ChatReply? {
         val url = AiProviders.chatCompletionsUrl(spec.baseUrl)
         if (url == null) {
@@ -102,20 +103,32 @@ object AiAssistant {
             logcat(LogPriority.WARN) { "Custom provider ${spec.id} has an invalid baseUrl" }
             return null
         }
+        // Модель роли идёт первой: провайдер OpenAI-совместим, и человек,
+        // выбравший её для роли, ждёт именно её. Свою модель оставляем
+        // запасным вариантом, чтобы опечатка в id не убивала чат целиком.
+        val models = listOfNotNull(modelOverride?.takeIf { it.isNotBlank() }, spec.model)
+            .distinct()
         var reply: ChatReply? = null
-        for (delayMs in longArrayOf(0, 1_200, 2_500)) {
-            if (delayMs > 0) kotlinx.coroutines.delay(delayMs)
-            when (val outcome = chatRawOutcome(url, spec.model, spec.apiKey, userPrompt, systemPrompt, maxTokens)) {
-                is Outcome.Ok -> {
-                    reply = outcome.reply
-                    break
+        for (model in models) {
+            var got: ChatReply? = null
+            for (delayMs in longArrayOf(0, 1_200, 2_500)) {
+                if (delayMs > 0) kotlinx.coroutines.delay(delayMs)
+                when (val outcome = chatRawOutcome(url, model, spec.apiKey, userPrompt, systemPrompt, maxTokens)) {
+                    is Outcome.Ok -> {
+                        got = outcome.reply
+                        break
+                    }
+                    Outcome.Transient -> continue
+                    else -> break
                 }
-                Outcome.Transient -> continue
-                else -> break
+            }
+            if (got != null) {
+                reply = got
+                break
             }
         }
         if (reply == null) {
-            logcat(LogPriority.WARN) { "Custom provider ${spec.id} (${spec.model}) did not answer" }
+            logcat(LogPriority.WARN) { "Custom provider ${spec.id} (${models.joinToString()}) did not answer" }
         }
         return reply
     }
@@ -250,7 +263,9 @@ object AiAssistant {
             // Zen/OpenRouter ниже не затрагиваются.
             val custom = AiProviders.userProvider(appContext(), provider)
             if (custom != null) {
-                return@withContext customProviderChat(custom, userPrompt, systemPrompt, maxTokens)
+                return@withContext customProviderChat(
+                    custom, userPrompt, systemPrompt, maxTokens, override,
+                )
             }
 
             val key = p.openrouterApiKey().get()
@@ -321,7 +336,10 @@ object AiAssistant {
         maxTokens: Int,
         preferredOverride: String? = null,
     ): ChatReply? {
-        val preferred = preferredOverride?.takeIf { it in ZEN_MODELS }
+        // Модель, названная ролью, идёт первой ЛЮБОЙ: каталог [ZEN_MODELS] — это
+        // список для ротации, а не белый список. Раньше незнакомый id молча
+        // заменялся моделью чата, и статус обещал несуществующий выбор.
+        val preferred = preferredOverride?.takeIf { it.isNotBlank() }
             ?: prefs().zenModel().get().ifBlank { ZEN_MODELS.first() }
         val configuredOrder = if (prefs().aiAutoRotate().get()) {
             listOf(preferred) + ZEN_MODELS.filter { it != preferred }

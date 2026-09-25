@@ -193,19 +193,25 @@ fun ReaderAiChatOverlay(
                 loading = { loading = it },
                 onScroll = scrollTo,
                 onActivity = setActivity,
+                onDone = { sessionRefresh += 1 },
             )
             attachedName = null
             attachedBytes = null
-            // После ответа агент мог выучить правила — сводка сессии должна
-            // обновиться, иначе строка «N правил» вечно показывала бы старое.
-            sessionRefresh += 1
         }
     }
 
-    LaunchedEffect(mangaId, sessionRefresh) {
+    // История книги грузится один раз на книгу: перечитывать её на каждый
+    // ответ нельзя — файл на диске ещё не дописан, и перезагрузка стирала бы
+    // сообщение, которое агент только что сохранил.
+    LaunchedEffect(mangaId) {
         history.clear()
         history.addAll(AiHistoryManager.load(context, mangaId))
         runCatching { listState.scrollToItem((history.size - 1).coerceAtLeast(0)) }
+    }
+
+    // Сводка сессии — отдельный эффект: она меняется после ответа агента,
+    // когда выучены новые правила/источники.
+    LaunchedEffect(mangaId, sessionRefresh) {
         // Сессия книги создаётся при первом входе в чат, чтобы знания и
         // история этой книги не смешивались с глобальным AI-чатом.
         if (mangaId != null) {
@@ -485,6 +491,8 @@ private fun sendMessage(
     loading: (Boolean) -> Unit,
     onScroll: (Int) -> Unit,
     onActivity: (String) -> Unit = {},
+    /** Вызывается после сохранения ответа: пора перечитать сводку сессии. */
+    onDone: () -> Unit = {},
 ) {
     AiHistoryManager.append(context, history, Msg(role = "user", text = input), mangaId)
     loading(true)
@@ -543,6 +551,7 @@ private fun sendMessage(
         loading(false)
         onActivity("Готово")
         onScroll(history.size - 1)
+        onDone()
     }
 }
 
@@ -807,9 +816,21 @@ private fun ChatBubble(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(msg.time)),
+                        buildString {
+                            append(SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(msg.time)))
+                            // Кто реально ответил: при автосмене моделей это не
+                            // обязана быть выбранная в шапке, и без подписи это
+                            // выглядит как «выбрали не ту модель».
+                            if (msg.model.isNotBlank()) {
+                                append(" · ").append(msg.model)
+                            }
+                            if (msg.tokens > 0) {
+                                append(" · ").append(msg.tokens).append(" ток")
+                            }
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
                         modifier = Modifier.weight(1f),
                     )
                     IconButton(onClick = onCopy, modifier = Modifier.size(26.dp)) {

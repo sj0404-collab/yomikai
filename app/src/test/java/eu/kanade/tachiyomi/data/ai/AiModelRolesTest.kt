@@ -109,6 +109,44 @@ class AiModelRolesTest {
     }
 
     @Test
+    fun `own provider honours the orchestrator model`() {
+        // Свой провайдер OpenAI-совместим, и выбранная модель уходит в тело
+        // запроса (с откатом на его модель, если сервер её не знает), поэтому
+        // роль вправе выбрать модель.
+        val target = AiModelRoles.orchestratorTarget(
+            chatBackend = "online",
+            chatProvider = "мой-ollama",
+            chatModel = "qwen3:8b",
+            orchestratorBackend = "",
+            orchestratorModel = "glm-4.6",
+        )
+        target.backendId shouldBe "online"
+        target.model shouldBe "glm-4.6"
+        target.modelOverride shouldBe "glm-4.6"
+        target.modelHonoured shouldBe true
+        target.own shouldBe true
+        AiModelRoles.statusLines(target) shouldContainExactly listOf(
+            "Оркестратор: Онлайн (Zen / OpenRouter) · мой-ollama · glm-4.6",
+        )
+    }
+
+    @Test
+    fun `own provider without its own choice still follows the chat`() {
+        val lines = AiModelRoles.statusLines(
+            AiModelRoles.orchestratorTarget(
+                chatBackend = "online",
+                chatProvider = "мой-ollama",
+                chatModel = "qwen3:8b",
+                orchestratorBackend = "",
+                orchestratorModel = "",
+            ),
+        )
+        lines shouldContainExactly listOf(
+            "Оркестратор: Онлайн (Zen / OpenRouter) · мой-ollama · qwen3:8b · как у чата",
+        )
+    }
+
+    @Test
     fun `status shows all three roles`() {
         val lines = AiModelRoles.statusLines(
             AiModelRoles.ocrTarget("CYRILLIC", "Cyrillic PP-OCR (офлайн)"),
