@@ -3,7 +3,7 @@
 - Дата: 2026-09-25
 - Репозиторий: `/home/runner/hub-work/yomikai/code`
 - Ветка: `main`
-- Последний подтверждённый коммит: `567b111 feat(ai): per-book AI session, learned rules and split model roles`
+- Последний подтверждённый коммит: `1705646 fix(ai): honest role status, manual book-source actions and alias fixes`
 
 ## Контекст
 
@@ -77,6 +77,14 @@
   (подставляют готовую формулировку в поле ввода), сводка сессии
   обновляется после каждого ответа.
 - Тесты: `BookLearningTest.kt` (17 проверок), `AiModelRolesTest.kt` (6 проверок).
+
+## Проверка в GitHub Actions
+
+- `Tests` (run `36156761165`, коммит `567b111`): компиляция прошла, упали два
+  теста — строка роли «Чат» лишней пометкой «как у чата» и псевдоним «облачка».
+- `Tests` (run `36157207022`, коммит `1705646`): успешно (unit-тесты, spotless,
+  verifySqlDelightMigration).
+- Локальные сборки не запускались — по `MANIFEST.md` только CI.
 
 ## Diff локального клона
 
