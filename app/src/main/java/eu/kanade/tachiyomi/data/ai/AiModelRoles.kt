@@ -63,6 +63,9 @@ object AiModelRoles {
             backendTitle = backendTitle(chatBackend.orEmpty()),
             provider = chatProvider,
             model = chatModel,
+            // У чата свой выбор по определению: «как у чата» в его строке было бы
+            // тавтологией.
+            own = true,
         )
 
     /**

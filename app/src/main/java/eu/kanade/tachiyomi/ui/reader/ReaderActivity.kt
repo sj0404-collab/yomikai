@@ -211,9 +211,9 @@ class ReaderActivity : BaseActivity() {
     private val autoLookedUpChapters = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
 
     /**
-     * Показ AI-чата книги. Живёт на уровне activity, а не внутри composable,
-     * потому что чат открывается не только кнопкой меню, но и автоматически
-     * при первом авточтении — из обычного метода [startAutoReadLoop].
+     * Показ AI-чата книги. Живёт на уровне activity, а не внутри composable:
+     * состояние должно пережить пересборку composable (поворот экрана, смена
+     * главы) и открываться из разных точек — меню и авто-действий агента.
      */
     private val aiChatVisible = kotlinx.coroutines.flow.MutableStateFlow(false)
 
@@ -1051,7 +1051,7 @@ class ReaderActivity : BaseActivity() {
                         showOcrBubbleSettings = true
                     },
                     onOpenAiChat = {
-                        ensureBookAiSession(openChat = false)
+                        ensureBookAiSession(announce = false)
                         aiChatVisible.value = true
                     },
 
@@ -1621,23 +1621,26 @@ class ReaderActivity : BaseActivity() {
         autoReadActive = true
         autoReadEngine.clearHistory()
         toast("▶ Авточтение включено")
-        ensureBookAiSession(openChat = true)
+        ensureBookAiSession(announce = true)
         readCurrentPage(thenAdvance = true)
     }
 
     /**
      * Сессия AI этой книги. Создаётся один раз — при первом авточтении или
      * первом входе в AI-чат — и переиспользуется при следующих главах, поэтому
-     * накопленные правила не теряются. При самом первом авточтении чат
-     * открывается сам: пользователь сразу видит, что книга изучена и какие
-     * правила действуют.
+     * накопленные правила не теряются. При создании показывается короткая
+     * подсказка, но сам чат не навязывается: авточтение только что стартовало,
+     * и перекрывать кадр окном было бы неуместно.
      */
-    private fun ensureBookAiSession(openChat: Boolean) {
+    private fun ensureBookAiSession(announce: Boolean) {
         val mangaId = viewModel.manga?.id ?: return
         lifecycleScope.launchIO {
             val session = eu.kanade.tachiyomi.data.ai.BookKnowledge
                 .ensureSession(this@ReaderActivity, mangaId)
-            if (openChat && session.created) withUIContext { aiChatVisible.value = true }
+            if (!announce || !session.created) return@launchIO
+            val summary = eu.kanade.tachiyomi.data.ai.BookKnowledge
+                .summaryLine(this@ReaderActivity, mangaId)
+            withUIContext { toast("AI-сессия книги создана · $summary") }
         }
     }
 

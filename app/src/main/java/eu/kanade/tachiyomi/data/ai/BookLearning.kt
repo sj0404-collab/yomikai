@@ -86,12 +86,18 @@ object BookLearning {
         "рамка" to KIND_REGION,
         "bubble" to KIND_BUBBLE,
         "бабл" to KIND_BUBBLE,
+        "баблы" to KIND_BUBBLE,
         "облачко" to KIND_BUBBLE,
+        "облачка" to KIND_BUBBLE,
+        "облачки" to KIND_BUBBLE,
+        "облачков" to KIND_BUBBLE,
         "transcription" to KIND_TRANSCRIPTION,
         "расшифровка" to KIND_TRANSCRIPTION,
         "voice" to KIND_VOICE,
         "голос" to KIND_VOICE,
+        "голоса" to KIND_VOICE,
         "роль" to KIND_VOICE,
+        "роли" to KIND_VOICE,
         "note" to KIND_NOTE,
         "заметка" to KIND_NOTE,
     )
@@ -102,7 +108,14 @@ object BookLearning {
         if (key.isBlank()) return KIND_NOTE
         ALIASES[key]?.let { return it }
         ALIASES[key.replace(' ', '_')]?.let { return it }
-        return if (key in KINDS) key else KIND_NOTE
+        if (key in KINDS) return key
+        // Агент пишет вид своими словами («облачки и баблы», «region rule»),
+        // поэтому длинное известное слово внутри фразы тоже считаем совпадением.
+        // Короткие слова для этого не берутся: «роль» внутри «король» — не роль.
+        return ALIASES.entries
+            .firstOrNull { (alias, _) -> alias.length >= 5 && alias in key }
+            ?.value
+            ?: KIND_NOTE
     }
 
     /** Человекочитаемое название вида правила — для UI и отчётов. */

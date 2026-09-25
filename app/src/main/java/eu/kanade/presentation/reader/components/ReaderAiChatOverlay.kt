@@ -40,6 +40,8 @@ import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.Videocam
@@ -109,6 +111,8 @@ fun ReaderAiChatOverlay(
     var elapsed by remember { mutableStateOf(0L) }
     var backendLine by remember { mutableStateOf("") }
     var sessionLine by remember { mutableStateOf("") }
+    // Растёт после каждого ответа: эффект ниже перечитывает сводку сессии.
+    var sessionRefresh by remember { mutableStateOf(0) }
 
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -192,10 +196,13 @@ fun ReaderAiChatOverlay(
             )
             attachedName = null
             attachedBytes = null
+            // После ответа агент мог выучить правила — сводка сессии должна
+            // обновиться, иначе строка «N правил» вечно показывала бы старое.
+            sessionRefresh += 1
         }
     }
 
-    LaunchedEffect(mangaId) {
+    LaunchedEffect(mangaId, sessionRefresh) {
         history.clear()
         history.addAll(AiHistoryManager.load(context, mangaId))
         runCatching { listState.scrollToItem((history.size - 1).coerceAtLeast(0)) }
@@ -387,6 +394,8 @@ fun ReaderAiChatOverlay(
                     onAudio = { input = "Создай аудиофайл (render_audio): " },
                     onVideo = { input = "Сделай видео: " },
                     onZip = { send("Упакуй workspace в zip и покажи готовый файл", null, null) },
+                    onSource = { input = "Прочитай источник и выучи правила книги: " },
+                    onRules = { input = "Выучи правила книги по этому тексту:\n" },
                 )
 
                 Row(
@@ -618,6 +627,12 @@ private suspend fun chatOnce(
                 append("(порядок чтения, области и рамки, баблы, расшифровка, голоса и роли) ")
                 append("и зафиксируй их book_learn с kind. Если правил нет — так и скажи.")
             }
+            // Читатель может сам продиктовать правило: такие слова помечаются
+            // user=true, иначе в источниках книги не отличить его от догадок.
+            if (mangaId != null) {
+                append("\nЕсли в сообщении пользователя есть новые правила книги — сохрани их ")
+                append("вызовами book_learn с kind и user=true, не пересказывая правило только текстом.")
+            }
             append("\nВопрос: ").append(input)
         }
         AiAgent.run(
@@ -824,6 +839,8 @@ private fun QuickActionsRow(
     onAudio: () -> Unit,
     onVideo: () -> Unit,
     onZip: () -> Unit,
+    onSource: () -> Unit,
+    onRules: () -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -856,6 +873,20 @@ private fun QuickActionsRow(
             icon = { Icon(Icons.Outlined.Archive, null, modifier = Modifier.size(14.dp)) },
             enabled = enabled,
             onClick = onZip,
+        )
+        // Ручное обучение книге: пользователь вставляет ссылку или диктует
+        // правила — агент читает источник и фиксирует правила через book_learn.
+        QuickActionButton(
+            label = "Источник книги",
+            icon = { Icon(Icons.Outlined.Link, null, modifier = Modifier.size(14.dp)) },
+            enabled = enabled,
+            onClick = onSource,
+        )
+        QuickActionButton(
+            label = "Правила книги",
+            icon = { Icon(Icons.Outlined.MenuBook, null, modifier = Modifier.size(14.dp)) },
+            enabled = enabled,
+            onClick = onRules,
         )
     }
 }
