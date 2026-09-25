@@ -226,23 +226,10 @@ class OcrTextCleanerTest {
     }
 
     @Test
-    fun `ml kit clean line fixes latin lookalikes inside cyrillic words`() {
-        // «ЛPHИВЕТ» — типичный вывод латинской модели ML Kit на русском тексте.
-        OcrTextCleaner.cleanMlKitLine("ЛPHИВЕТ!") shouldBe "ЛРНИВЕТ!"
-    }
-
-    @Test
-    fun `ml kit clean line drops latin garbage from a cyrillic line`() {
-        // «Vorld» не вошёл в белый список — как и у кириллического движка,
-        // мусорный токен уходит, чистая фраза остаётся.
-        OcrTextCleaner.cleanMlKitLine("ПРИВЕТ Vorld") shouldBe "ПРИВЕТ"
-    }
-
-    @Test
-    fun `ml kit clean line rejects non-lookalike mixed-script garbage`() {
-        // «q» нет в таблице омоглифов: слово остаётся смешанным, а смешанный
-        // токен не является чистой кириллицей — строка отбрасывается целиком.
-        OcrTextCleaner.cleanMlKitLine("Прqaмер") shouldBe ""
+    fun `ml kit clean line preserves the cyrillic recognizer output`() {
+        OcrTextCleaner.cleanMlKitLine("ЛPHИВЕТ!") shouldBe "ЛPHИВЕТ!"
+        OcrTextCleaner.cleanMlKitLine("ПРИВЕТ Vorld") shouldBe "ПРИВЕТ Vorld"
+        OcrTextCleaner.cleanMlKitLine("Прqaмер") shouldBe "Прqaмер"
     }
 
     @Test

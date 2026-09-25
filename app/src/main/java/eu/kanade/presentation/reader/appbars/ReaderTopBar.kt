@@ -187,7 +187,7 @@ private fun OcrModelQuickSwitcher() {
                 downloading -> "загрузка ${(progressMap[pack]!! * 100).toInt()}%"
                 model == OcrModel.CYRILLIC && !installed -> "офлайн • скачать ~21 МБ"
                 model == OcrModel.CYRILLIC -> "офлайн • русский PP-OCR ✅"
-                model == OcrModel.MLKIT -> "офлайн • встроена в APK, без скачивания ✅"
+                model == OcrModel.MLKIT -> "офлайн • латиница, встроена в APK ✅"
                 pack != null && !installed -> "локальная • нажмите, чтобы скачать"
                 pack != null -> "локальная • скачана ✅"
                 model == OcrModel.OWOCR -> "внешний сервер OwOCR (ПК, WebSocket)"

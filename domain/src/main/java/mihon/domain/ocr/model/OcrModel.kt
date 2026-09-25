@@ -52,9 +52,8 @@ enum class OcrModel {
     TESSERACT,
 
     /**
-     * Google ML Kit Text Recognition (on-device, модель внутри APK, сеть не
-     * нужна). Отдаёт текст построчно с координатами строк; используется и как
-     * альтернатива кириллическому PP-OCR, и как детектор областей.
+     * Google ML Kit Text Recognition для латинского текста (on-device, модель
+     * внутри APK, сеть не нужна). Отдаёт текст построчно с координатами строк.
      */
     MLKIT,
 }

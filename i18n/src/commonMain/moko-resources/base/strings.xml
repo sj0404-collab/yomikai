@@ -1241,7 +1241,7 @@
     <string name="ocr_model_zen_free">Space Bunny Free (OpenCode Zen)</string>
     <string name="ocr_model_tesseract">Tesseract (устаревший)</string>
     <string name="ocr_model_cyrillic">Русский Cyrillic OCR (офлайн, PP-OCR)</string>
-    <string name="ocr_model_mlkit">Google ML Kit (офлайн, встроенная модель)</string>
+    <string name="ocr_model_mlkit">Google ML Kit (латиница, офлайн)</string>
 
     <!-- Voice / Text-to-Speech Settings -->
     <string name="pref_category_voice">Voices &amp; Text-to-Speech</string>

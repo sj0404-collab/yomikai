@@ -936,7 +936,7 @@
     <string name="ocr_model_openrouter">OpenRouter AI Vision</string>
     <string name="ocr_model_google">Google AI / Gemini Vision</string>
     <string name="ocr_model_zen_free">Space Bunny Free (OpenCode Zen)</string>
-    <string name="ocr_model_mlkit">Google ML Kit (офлайн, встроенная модель)</string>
+    <string name="ocr_model_mlkit">Google ML Kit (латиница, офлайн)</string>
 
     <!-- Voice / Text-to-Speech Settings -->
     <string name="pref_category_voice">Голоса и Озвучка (TTS)</string>

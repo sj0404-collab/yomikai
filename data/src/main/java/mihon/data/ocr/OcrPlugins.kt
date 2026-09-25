@@ -82,8 +82,8 @@ object OcrPlugins {
         id = "mlkit",
         model = OcrModel.MLKIT,
         title = "Google ML Kit",
-        summary = "Офлайн-модель Google ML Kit внутри APK. Читает латиницу и кириллицу, " +
-            "отдаёт строки с координатами. Сеть и загрузка моделей не нужны.",
+        summary = "Офлайн-модель Google ML Kit внутри APK для латинского текста. " +
+            "Отдаёт строки с координатами. Сеть и загрузка моделей не нужны.",
         engineType = "MLKIT",
         online = false,
         requirements = emptySet(),
