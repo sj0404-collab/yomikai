@@ -798,24 +798,44 @@ class AutoReadEngine(
 
     /** Озвучка с ожиданием реального окончания фразы. */
     private suspend fun speakAndAwait(text: String, gender: String? = null, speakerSlot: Int = 0) {
-        var started = false
-        // Флаг фактического завершения фразы. MutableStateFlow, потому что onState
-        // приходит из потока TTS, а читается из этой корутины (диспетчер IO).
+        // Оба флага — MutableStateFlow: onState приходит из потока TTS, а читается
+        // из этой корутины (диспетчер IO). Обычный var здесь означает гонку — цикл
+        // ожидания мог бы не увидеть `started = true` и сочти фразу неозвученной.
+        val started = MutableStateFlow(false)
+        // Флаг фактического завершения фразы.
         val done = MutableStateFlow(false)
         val t0 = System.currentTimeMillis()
         TtsSpeaker.speakAs(context, text, gender, speakerSlot) { speaking ->
-            if (speaking && !started) {
-                started = true
+            if (speaking && !started.value) {
+                started.value = true
                 logcat(LogPriority.DEBUG) { "TTS started (${System.currentTimeMillis() - t0}ms): ${text.take(60)}" }
             }
-            if (!speaking && started) {
+            if (!speaking && started.value) {
                 done.value = true
                 logcat(LogPriority.DEBUG) { "TTS done in ${System.currentTimeMillis() - t0}ms" }
                 OcrHistoryStore.addAutoRead(true, "озвучено (${System.currentTimeMillis() - t0} мс)", text.take(60))
             }
         }
-        val timeoutMs = ttsTimeoutMs(text.length, prefs.speechRate().get())
         val start = System.currentTimeMillis()
+        // Фаза 1: ждём, пока движок начнёт говорить. Если за TTS_START_GRACE_MS
+        // реплика не стартовала, произносить просто нечего: пустой текст после
+        // снятия разметки, ремарка без звучания, незагруженный голос. Ждать
+        // полный таймаут нельзя — на странице из одной реплики это и была
+        // «остановка»: цикл молчал 8+ секунд, ничего не говоря.
+        while (!ttsStartedOrGiveUp(started.value, System.currentTimeMillis() - start)) {
+            if (job?.isActive != true) {
+                TtsSpeaker.stop()
+                return
+            }
+            delay(20)
+        }
+        if (!started.value) {
+            logcat(LogPriority.WARN) { "TTS never started, skipping line: ${text.take(60)}" }
+            OcrHistoryStore.addAutoRead(false, "TTS не запустился", text.take(60))
+            return
+        }
+        // Фаза 2: реплика пошла — ждём завершения по onState.
+        val timeoutMs = ttsTimeoutMs(text.length, prefs.speechRate().get())
         while (!done.value && System.currentTimeMillis() - start < timeoutMs) {
             if (job?.isActive != true) {
                 TtsSpeaker.stop()
@@ -824,14 +844,11 @@ class AutoReadEngine(
             delay(40) // быстрый опрос: между репликами нет лишней паузы
         }
         // Диагностика недоговорённых реплик: TTS мог прерваться без onDone.
-        if (started && !done.value) {
+        if (!done.value) {
             logcat(LogPriority.WARN) {
                 "TTS timeout without onDone: ${text.take(60)} (waited ${System.currentTimeMillis() - start}ms)"
             }
             OcrHistoryStore.addAutoRead(false, "TTS без завершения", text.take(60))
-        } else if (!started) {
-            logcat(LogPriority.WARN) { "TTS never started: ${text.take(60)}" }
-            OcrHistoryStore.addAutoRead(false, "TTS не запустился", text.take(60))
         }
     }
 
@@ -1288,6 +1305,23 @@ class AutoReadEngine(
          * заморозить авточтение навсегда. По таймауту кадр считается пустым.
          */
         internal const val OCR_FRAME_TIMEOUT_MS = 25_000L
+
+        /**
+         * Сколько ждать первого `onStart`, прежде чем признать реплику
+         * неозвучиваемой. Раньше ожидание шло полным [ttsTimeoutMs] (минимум 8 с)
+         * на КАЖДУЮ реплику, которую движок не смог произнести: пустой текст после
+         * снятия разметки, ремарка без звучания, незагруженный голос. На странице
+         * из одной реплики это выглядело как «авточтение остановилось»: ждать
+         * больше нечего, но цикл молчал 8+ секунд и только потом листал дальше.
+         */
+        internal const val TTS_START_GRACE_MS = 1_200L
+
+        /**
+         * Граница, после которой не запустившуюся реплику ждать бессмысленно.
+         * Вынесена отдельно, чтобы [speakAndAwait] не ждал полный таймаут.
+         */
+        internal fun ttsStartedOrGiveUp(started: Boolean, elapsedMs: Long): Boolean =
+            started || elapsedMs >= TTS_START_GRACE_MS
 
         fun ttsTimeoutMs(textLength: Int, speechRate: Float): Long {
             val rate = speechRate.takeIf { it.isFinite() && it > 0f }?.coerceIn(0.5f, 2f) ?: 1f

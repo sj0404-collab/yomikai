@@ -150,4 +150,41 @@ class AutoReadEngineCleanTest {
         assertTrue(AutoReadEngine.isMeaningful("Столичный город Арзия", "ru"))
         assertFalse(AutoReadEngine.isMeaningful("REMANGA.ORG ЧИТАЙ РАНЬШЕ ВСЕХ", "ru"))
     }
+
+    @Test
+    fun `an unstarted line stops blocking auto read after a short grace`() {
+        // Регрессия: страница из одной реплики, которую движок не смог произнести,
+        // ждала полный таймаут (минимум 8 с) и выглядела как остановка.
+        val fullTimeout = AutoReadEngine.ttsTimeoutMs(0, 1f)
+        assertTrue(
+            "полный таймаут реплики должен быть заметно больше терпения к старту",
+            fullTimeout > AutoReadEngine.TTS_START_GRACE_MS * 2,
+        )
+
+        // На старте реплика ещё не пошла — ждать имело смысл.
+        assertFalse(AutoReadEngine.ttsStartedOrGiveUp(started = false, elapsedMs = 0))
+        assertFalse(
+            AutoReadEngine.ttsStartedOrGiveUp(
+                started = false,
+                elapsedMs = AutoReadEngine.TTS_START_GRACE_MS - 1,
+            ),
+        )
+
+        // Как только терпение вышло — ждать больше нечего, идём к следующей
+        // реплике вместо того, чтобы висеть до конца таймаута.
+        assertTrue(
+            AutoReadEngine.ttsStartedOrGiveUp(
+                started = false,
+                elapsedMs = AutoReadEngine.TTS_START_GRACE_MS,
+            ),
+        )
+    }
+
+    @Test
+    fun `a started line is never given up on`() {
+        // Реплика, которая пошла, должна доигрываться: терпение к старту на неё
+        // не действует, сколько бы времени она ни звучала.
+        assertTrue(AutoReadEngine.ttsStartedOrGiveUp(started = true, elapsedMs = 0))
+        assertTrue(AutoReadEngine.ttsStartedOrGiveUp(started = true, elapsedMs = 60_000))
+    }
 }
