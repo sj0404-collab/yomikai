@@ -202,8 +202,12 @@ class SpeechCueTest {
 
         d shouldHaveSize 2
         val shout = d.first()
-        shout.pitch shouldBe 1.16f * 1.0f
+        // Питч крика не меняется: шёпот — это темп и громкость, а не высота
+        // вокала. Темп при этом должен упасть с 1.12 до 0.81.
+        shout.pitch shouldBe 1.28f
         (shout.rate < 0.9f) shouldBe true
+        // Соседняя фраза без ремарки тоже тише и медленнее.
+        (d.last().rate < 1f) shouldBe true
     }
 
     @Test
@@ -241,5 +245,71 @@ class SpeechCueTest {
     @Test
     fun `render keeps plain text untouched`() {
         SpeechCue.render("Обычный текст.") shouldBe "Обычный текст."
+    }
+
+    @Test
+    fun `starred remark is parsed like a plain one`() {
+        // `(*шёпотом*)` и `(шёпотом)` — одна и та же ремарка. Раньше `*` внутри
+        // скобок ломал разбор, и на движок уходили отдельными вызовами «(» и «)».
+        val starred = SpeechCue.deliveries("(*шёпотом*) Прости.")
+        val plain = SpeechCue.deliveries("(шёпотом) Прости.")
+
+        starred.map { it.text } shouldBe plain.map { it.text }
+        starred.map { it.rate } shouldBe plain.map { it.rate }
+    }
+
+    @Test
+    fun `no unit is ever made of bare punctuation`() {
+        // Ни один кусок не должен уйти в движок без букв или цифр: скобки от
+        // незакрытой разметки он либо пропустит, либо прочтёт вслух.
+        for (line in listOf("(*шёпотом*)", "(шёпотом)", "*Ааа!*", "()", "*~*", "(вздох)")) {
+            val units = SpeechCue.deliveries(line)
+            units.map { it.text }.filterNot { SpeechCue.isAudible(it) } shouldBe emptyList()
+        }
+    }
+
+    @Test
+    fun `interjection is recognized despite trailing punctuation`() {
+        // В наборе лежит «Ааа»; «Ааа!» — то же междометие с восклицательным
+        // знаком. Раньше `*Ааа!*` и `[Ааа!]` молчали целиком.
+        for (token in listOf("Ааа!", "Ааа!", "ах…", "ах", "А")) {
+            SpeechCue.isInterjection(token) shouldBe true
+        }
+        SpeechCue.isInterjection("Прости.") shouldBe false
+
+        val d = SpeechCue.deliveries("*Ааа!*")
+        d shouldHaveSize 1
+        d.first().fromCue shouldBe true
+    }
+
+    @Test
+    fun `audibility requires a letter or a digit`() {
+        SpeechCue.isAudible("Ааа!") shouldBe true
+        SpeechCue.isAudible("2024") shouldBe true
+        SpeechCue.isAudible("(") shouldBe false
+        SpeechCue.isAudible(" ) ") shouldBe false
+        SpeechCue.isAudible("") shouldBe false
+    }
+
+    @Test
+    fun `starred word is text and must not be dropped`() {
+        // Регрессия: `*Привет* мир` терял слово «Привет» — звёздочки читались как
+        // неизвестная ремарка и выбрасывались вместе с текстом.
+        val d = SpeechCue.deliveries("*Привет* мир")
+        d.map { it.text } shouldBe listOf("Привет", "мир")
+
+        // На экране (`render`) и в озвучке (`deliveries`) должно совпадать.
+        SpeechCue.render("*Привет* мир") shouldBe "Привет мир"
+        SpeechCue.deliveries("**Кричи**").map { it.text } shouldBe listOf("Кричи")
+    }
+
+    @Test
+    fun `unknown remark in brackets is still dropped`() {
+        // Скобки — это указание говорящему, неизвестное значение не читается.
+        SpeechCue.deliveries("(неизвестно) Текст.").map { it.text } shouldBe listOf("Текст.")
+        // А вот состояние подачу меняет, хоть и не произносится.
+        val w = SpeechCue.deliveries("(шёпотом) Текст.").first()
+        w.text shouldBe "Текст."
+        (w.rate < 1f) shouldBe true
     }
 }

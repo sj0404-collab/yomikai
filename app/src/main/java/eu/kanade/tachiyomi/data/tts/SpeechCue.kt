@@ -180,7 +180,11 @@ object SpeechCue {
      * части Android падает прямо на разборе шаблона (см. предупреждение
      * в [SpeechMarkup]).
      */
-    private val CUE_SPAN = Regex("""[(\[*]\s*([^()\[\]{}*]{1,60}?)\s*[)\]*]""")
+    // Внутренняя часть ремарки допускает `*`: разметка `(*шёпотом*)` и `(шёпотом)`
+    // должны разбираться одинаково. Запрещены только закрывающие скобки — иначе
+    // группа «съест» конец ремарки. Закрывающая часть — целая серия: у `(*шёпотом*)`
+    // их две (`*` и `)`), иначе хвост утекал бы в произносимый текст.
+    private val CUE_SPAN = Regex("""[(\[*]\s*([^()\[\]{}]{1,60}?)\s*[\)\]\*]+""")
 
     /**
      * Кандидат в междометие: короткая «слово-сгусток» из букв и дефисов,
@@ -233,8 +237,15 @@ object SpeechCue {
         return STATES.firstOrNull { s -> s.words.any { low.contains(it) } }
     }
 
-    /** Является ли токен междометием. */
-    fun isInterjection(token: String): Boolean = token.lowercase() in INTERJECTIONS
+    /**
+     * Является ли токен междометием.
+     *
+     * Хвостовая пунктуация не мешает: «Ааа!», «ах…» — это то же самое
+     * междометие, просто с восклицательным знаком. Без этого `*Ааа!*` и `[Ааа!]`
+     * молчали: в наборе лежит «Ааа», а проверяли мы «Ааа!».
+     */
+    fun isInterjection(token: String): Boolean =
+        token.lowercase().trimEnd(' ', '!', '?', '.', ',', ';', ':', '…', '‼', '⁇') in INTERJECTIONS
 
     /**
      * Подставляет вместо ремарок произносимое: звук → вытянутое междометие,
@@ -247,7 +258,11 @@ object SpeechCue {
             val remark = match.groupValues[1]
             soundOf(remark)?.spoken
                 ?: if (isInterjection(remark)) remark
-                else ""
+                // `*курсив*` — текст, который нужно показать и прочесть, а не
+                // указание говорящему. Согласуется с deliveries().
+                else if (match.value.trimStart().startsWith("*") && stateOf(remark) == null) {
+                    remark.replace(Regex("[*~]"), " ")
+                } else ""
         }
         out = out.replace(Regex("[*~]"), " ")
         out = out.replace(Regex(""" {2,}"""), " ")
@@ -332,19 +347,21 @@ object SpeechCue {
                 var end = m.range.last + 1
                 while (end < part.length && part[end] in TAIL_PUNCT) end++
                 val head = part.substring(last, m.range.first).trim()
-                if (head.isNotBlank()) out += Delivery(head, sp, sr, defaultPause(head))
+                if (isAudible(head)) out += Delivery(head, sp, sr, defaultPause(head))
                 val d = interjectionDelivery(part.substring(m.range.first, end))
-                out += Delivery(
-                    d.text,
-                    d.pitch * sp,
-                    d.rate * sr,
-                    d.pauseAfterMs,
-                    fromCue = true,
-                )
+                if (isAudible(d.text)) {
+                    out += Delivery(
+                        d.text,
+                        d.pitch * sp,
+                        d.rate * sr,
+                        d.pauseAfterMs,
+                        fromCue = true,
+                    )
+                }
                 last = end
             }
             val tail = part.substring(last).trim()
-            if (tail.isNotBlank()) out += Delivery(tail, sp, sr, defaultPause(tail))
+            if (isAudible(tail)) out += Delivery(tail, sp, sr, defaultPause(tail))
         }
 
         var cursor = 0
@@ -353,6 +370,10 @@ object SpeechCue {
             cursor = span.range.last + 1
             val remark = span.groupValues[1]
             val sound = soundOf(remark)
+            // `*курсив*` — обычный текст, а не ремарка. Молча выбрасывать слово
+            // нельзя: OCR вебтунов и переводов даёт звёздочки сплошь и рядом.
+            val starEmphasis = span.value.trimStart().startsWith("*") &&
+                sound == null && stateOf(remark) == null && !isInterjection(remark)
             when {
                 // Звук произносится сразу, собственным голосом: так вздох
                 // отличается от крика, а не читается тем же тоном, что весь
@@ -365,6 +386,9 @@ object SpeechCue {
                     fromCue = true,
                 )
                 isInterjection(remark) -> plain(remark)
+                // Звёздочки вокруг обычного слова — выделение, а не указание
+                // говорящему: произносим само слово.
+                starEmphasis -> plain(span.value)
                 // Состояние и неизвестная ремарка не произносятся: первое уже
                 // учтено множителем, второе не должно читаться как слово.
                 else -> Unit
@@ -374,10 +398,17 @@ object SpeechCue {
 
         if (out.isEmpty()) {
             val clean = render(sentence)
-            if (clean.isNotBlank()) out += Delivery(clean, sp, sr, defaultPause(clean))
+            if (isAudible(clean)) out += Delivery(clean, sp, sr, defaultPause(clean))
         }
         return out
     }
+
+    /**
+     * Произносим ли кусок: хотя бы одна буква или цифра. Одинокая пунктуация
+     * (`(` или `)` от незакрытой `(*ремарка*)`) не должна уходить в движок
+     * отдельным вызовом — он её либо пропустит, либо озвучит как символы.
+     */
+    internal fun isAudible(text: String): Boolean = text.any { it.isLetterOrDigit() }
 
     /** Пауза после куска: та же логика, что в движке, но по самому куску. */
     private fun defaultPause(text: String): Int = when {
