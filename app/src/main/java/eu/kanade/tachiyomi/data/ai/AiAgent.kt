@@ -134,6 +134,13 @@ object AiAgent {
             "@tool plugin_edit {\"name\":\"имя\",\"template\":\"новый шаблон\"} — исправить плагин (менять можно любое поле)\n" +
             "@tool plugin_delete {\"name\":\"имя\"} — удалить плагин\n" +
             "@tool plugin_list {} — список своих плагинов\n" +
+            "СВОИ НАВЫКИ (рецепты из перечисленных выше инструментов — если нужного тебе инструмента нет, " +
+            "собери его сам, не выдумывая новые команды):\n" +
+            "@tool skill_create {\"name\":\"имя\",\"description\":\"что делает\",\"steps\":[{\"tool\":\"write_file\",\"args\":{\"name\":\"book/{вход}.md\",\"content\":\"...\"}}]} — сохранить навык\n" +
+            "@tool skill_run {\"name\":\"имя\",\"input\":\"значение\"} — выполнить навык; {вход} в аргументах шага заменяется на input\n" +
+            "@tool skill_list {} — список навыков\n" +
+            "В steps можно ставить только инструменты из этого списка. Шаги выполняются по порядку, " +
+            "после первого с ошибкой выполнение останавливается.\n" +
             "ПРОВАЙДЕРЫ AI (сторонние сервисы и локальные LLM пользователя):\n" +
             "@tool provider_create {\"id\":\"ollama\",\"title\":\"название\",\"baseUrl\":\"http://192.168.1.10:11434/v1\"," +
             "\"model\":\"qwen2.5:7b\",\"apiKey\":\"\"} — подключить свой OpenAI-совместимый провайдер " +
@@ -327,7 +334,11 @@ object AiAgent {
             "принимают путь ОТНОСИТЕЛЬНО этого каталога (например book/заметка.md). " +
             "Не выдумывай другие пути (/sdcard/Yomikai и т.п.) — их на устройстве нет. " +
             "После записи назови путь результата из ответа инструмента, чтобы пользователь нашёл файл."
-        val systemPromptEffective = SYSTEM_PROMPT + "\n\n" + workspaceBlock + "\n\n" + capabilityBlock
+        // Список своих навыков — агент должен знать о них до просьбы читателя,
+        // иначе он создаст дубль уже существующему.
+        val skillsBlock = runCatching { AiSkills.promptLines(context) }.getOrElse { "" }
+        val systemPromptEffective = SYSTEM_PROMPT + "\n\n" + workspaceBlock + "\n\n" +
+            skillsBlock + "\n\n" + capabilityBlock
 
         val turnStarted = System.currentTimeMillis()
         onProgress?.invoke("Запрос к модели…")
@@ -494,11 +505,13 @@ object AiAgent {
             "reader_actions", "reader_do",
             "list_ext", "filter_ext", "find_manga", "zip_workspace",
             "plugin_create", "plugin_edit", "plugin_delete", "plugin_list",
+            "skill_create", "skill_list", "skill_run",
             "runner_chat", "runner_start", "github_api",
             "provider_create", "provider_edit", "provider_delete", "provider_list",
             "ui_action_create", "ui_action_edit", "ui_action_delete", "ui_action_list",
             "ui_tab_hide", "ui_tab_show", "ui_tab_list",
-        ) + AiReaderTools.TOOL_NAMES + AiChatTools.TOOL_NAMES + AiPlugins.list(context).map { it.name }
+        ) + AiReaderTools.TOOL_NAMES + AiChatTools.TOOL_NAMES +
+            AiPlugins.list(context).map { it.name } + AiSkills.list(context).map { it.name }
 
     /**
      * Разбор вызовов инструментов. Модели (особенно бесплатные) пишут вызов
@@ -864,6 +877,100 @@ object AiAgent {
                 "plugin_list",
                 if (ps.isEmpty()) "Плагинов нет" else ps.joinToString("\n") { "• ${it.name} (${it.kind}) — ${it.description.take(80)}" },
             )
+        }
+
+        // Навыки: рецепты из встроенных инструментов, которые агент создаёт
+        // сам. Читатель просил «инструмент, которого нет», и не хочет ждать
+        // ручной правки. Исполняется только то, что уже есть в приложении.
+        "skill_create" -> {
+            val raw = call.args.optString("json").ifBlank { call.args.toString() }
+            val parsed = AiSkills.parse(raw)
+            when {
+                parsed == null -> ToolResult(
+                    "skill_create",
+                    "ОШИБКА: нужен JSON с полями name, description и steps " +
+                        "[{\"tool\":\"имя_инструмента\",\"args\":{...}}] — минимум один шаг",
+                    status = "error",
+                )
+
+                !AiSkills.save(context, parsed) -> ToolResult(
+                    "skill_create",
+                    "ОШИБКА: не удалось сохранить навык «${parsed.name}»",
+                    status = "error",
+                )
+
+                else -> ToolResult(
+                    "skill_create",
+                    "Навык «${parsed.name}» создан, шагов: ${parsed.steps.size}. " +
+                        "Запуск: skill_run {\"name\":\"${parsed.name}\",\"input\":\"...\"}. " +
+                        "В аргументах шага {вход} заменяется на input.",
+                )
+            }
+        }
+
+        "skill_list" -> {
+            val list = AiSkills.list(context)
+            ToolResult(
+                "skill_list",
+                if (list.isEmpty()) {
+                    "Навыков нет"
+                } else {
+                    list.joinToString("\n") { "• ${it.name} — ${it.description} (шагов: ${it.steps.size})" }
+                },
+            )
+        }
+
+        "skill_run" -> {
+            val name = call.args.optString("name").trim()
+            val input = call.args.optString("input")
+            val skill = AiSkills.get(context, name)
+            when {
+                skill == null -> ToolResult(
+                    "skill_run",
+                    "ОШИБКА: навык «$name» не найден. Список: skill_list",
+                    status = "error",
+                )
+
+                else -> {
+                    val run = skill.withInput(input)
+                    val lines = mutableListOf<String>()
+                    val produced = mutableListOf<File>()
+                    var failed = false
+                    for ((index, step) in run.steps.withIndex()) {
+                        // Навык внутри навыка — это способ зациклить ход и
+                        // упереться в лимит шагов. Один уровень вложенности
+                        // не даёт, и пользы от него тут нет.
+                        if (step.tool == "skill_run") {
+                            failed = true
+                            lines += "${index + 1}/${run.steps.size} skill_run — ОТКАЗАНО: навык не может вызывать навык"
+                            break
+                        }
+                        // Шаг за шагом: следующий может работать с файлом,
+                        // который создал предыдущий, а после ошибки — уже нет.
+                        val r = runCatching { execute(context, AiSkills.toCall(step), chatFn, mangaId) }
+                            .getOrElse { e ->
+                                AiAgent.ToolResult(step.tool, "ОШИБКА: ${e.message?.take(160)}", status = "error")
+                            }
+                        produced += listOfNotNull(r.fileProduced)
+                        val isError = r.status == "error"
+                        lines += "${index + 1}/${run.steps.size} ${step.tool}" +
+                            (if (isError) " — ОШИБКА" else " — готово") +
+                            ": " + r.output.take(200).replace("\n", " ")
+                        if (isError) {
+                            failed = true
+                            break
+                        }
+                    }
+                    // Последний файл, который создал навык, попадает в карточку
+                    // чата: иначе результат не видно, пока не откроешь «Файлы».
+                    ToolResult(
+                        "skill_run",
+                        (listOf(run.summary) + lines).joinToString("\n"),
+                        produced.lastOrNull(),
+                        status = if (failed) "error" else "ok",
+                    )
+                }
+            }
         }
 
         "write_file" -> {
