@@ -676,7 +676,7 @@ internal class CyrillicOcrEngine(
             }
             return wholeLine
         }
-        val sb = StringBuilder()
+        val pieces = mutableListOf<String>()
         var confSum = 0f
         var inkSum = 0f
         var recognizedCount = 0
@@ -687,15 +687,20 @@ internal class CyrillicOcrEngine(
                     confSum += r.confidence
                     inkSum += r.inkRatio
                     recognizedCount++
-                    if (sb.isNotEmpty()) sb.append(' ')
-                    sb.append(r.text)
+                    pieces += r.text.trim()
                 }
             } finally {
                 piece.recycle()
             }
         }
+        // Нарезка режет СЛОВА, а не буквы. На коротком кропе (одно-три слова)
+        // вертикальная проекция находит щели внутри слов — «что-то» делилось
+        // на «ч»/«то»/«т», и результат склеивался с пробелами. Читатель
+        // получал «ч то т» вместо «что-то», при этом длинная строка читалась
+        // идеально: в ней CTC уже ставит пробелы и нарезка не запускается.
+        if (segmentationIsDestructive(wholeLine.text, pieces)) return wholeLine
         val segmented = Recognition(
-            text = sb.toString().trim(),
+            text = pieces.joinToString(" ").trim(),
             confidence = if (recognizedCount == 0) 0f else confSum / recognizedCount,
             model = wholeLine.model,
             coverage = wholeLine.coverage,
@@ -1461,6 +1466,43 @@ internal fun ocrWordGapThreshold(
     if (positive.size <= 2 || positive.first() == positive.last()) return minWordGapPx
     val lowerQuartile = positive[(positive.size - 1) / 4]
     return max(minWordGapPx, round(lowerQuartile * wordGapFactor).toInt())
+}
+
+/**
+ * Похоже ли, что нарезка на слова разрезала текст по БУКВАМ.
+ *
+ * Нарезка опирается на вертикальную проекцию чернил: щель между словами
+ * шире щели между буквами. На коротком кропе (одно-три слова, любой кегль)
+ * буквы оказываются шире разрыва между словами, проекция режет текст на
+ * фрагменты, а склейка результата с пробелами превращает «что-то» в
+ * «ч то т». Длинная строка сюда не попадает: распознаватель уже ставит в ней
+ * пробелы, и нарезка не запускается вовсе — поэтому длинный текст читается
+ * идеально, а короткий ломается.
+ *
+ * Два признака разрушающей нарезки:
+ * 1. медиана длины куска — одна буква: куски не слова, а огрызки;
+ * 2. в кусках потеряно больше [minKeptPercent]% символов целой строки: куски
+ *    вырезаны не из этого кропа или срезаны по краям.
+ *
+ * Одиночная короткая буква рядом с настоящими словами («да нет а») признаком
+ * не считается: медиана там длиннее, а символы не теряются.
+ *
+ * @param wholeLine текст, прочитанный целиком (эталон).
+ * @param pieces распознанные куски по порядку слева направо.
+ * @param minKeptPercent сколько процентов символов строки обязано уцелеть.
+ */
+internal fun segmentationIsDestructive(
+    wholeLine: String,
+    pieces: List<String>,
+    minKeptPercent: Int = 60,
+): Boolean {
+    val lengths = pieces.map { it.trim().length }.filter { it > 0 }.sorted()
+    if (lengths.isEmpty()) return false
+    if (lengths[lengths.size / 2] <= 1) return true
+    val whole = wholeLine.count { !it.isWhitespace() }
+    if (whole == 0) return false
+    val kept = pieces.sumOf { it.count { ch -> !ch.isWhitespace() } }
+    return kept * 100 < whole * minKeptPercent
 }
 
 /**
