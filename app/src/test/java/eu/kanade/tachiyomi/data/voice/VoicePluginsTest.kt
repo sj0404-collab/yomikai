@@ -138,15 +138,44 @@ class VoicePluginsTest {
     }
 
     @Test
-    fun `phone only reading ignores a network plugin in settings`() {
-        // Читатель попросил: и авточтение, и одиночная реплика произносятся
-        // голосом телефона, даже если в настройках выбран сетевой плагин.
-        // Иначе список голосов в настройках строился бы от сетевого плагина
-        // (обычно одна строка или пусто), а озвучка шла бы системным голосом.
-        resolvePlugin(engine = "google_web", phoneOnly = true) shouldBe VoicePlugins.SYSTEM_TTS
-        resolvePlugin(engine = "eleven_api", phoneOnly = true) shouldBe VoicePlugins.SYSTEM_TTS
-        resolvePlugin(engine = "onnx", phoneOnly = true) shouldBe VoicePlugins.SYSTEM_TTS
+    fun `phone only reading keeps an explicitly chosen network engine`() {
+        // Телефонный режим отменяет АВТОМАТИЧЕСКИЙ сетевой маршрут, но читатель,
+        // выбравший онлайн-голос вручную, ждёт именно его. Раньше выбор молча
+        // уходил в системный движок, и чтение требовало «установите TTS» для
+        // голоса, которого на устройстве нет и быть не должно.
+        resolvePlugin(engine = "google_web", phoneOnly = true) shouldBe VoicePlugins.GOOGLE_WEB
+        resolvePlugin(engine = "edge_tts", phoneOnly = true) shouldBe VoicePlugins.EDGE_TTS
+        resolvePlugin(engine = "eleven_api", phoneOnly = true) shouldBe VoicePlugins.ELEVEN_API
+        // Автовыбор и системный движок остаются голосом телефона.
         resolvePlugin(engine = "auto", phoneOnly = true) shouldBe VoicePlugins.SYSTEM_TTS
+        resolvePlugin(engine = "system_tts", phoneOnly = true) shouldBe VoicePlugins.SYSTEM_TTS
+    }
+
+    @Test
+    fun `an explicit network engine wins over phone only for synthesis`() {
+        val engine = { id: String, online: Boolean ->
+            VoicePlugins.resolveSpeakEngine(engineId = id, phoneOnly = true, online = online)
+        }
+        engine("google_web", online = true) shouldBe TtsSpeaker.ENGINE_GOOGLE_WEB
+        engine("edge_tts", online = true) shouldBe TtsSpeaker.ENGINE_EDGE_TTS
+        engine("eleven_api", online = true) shouldBe TtsSpeaker.ENGINE_ELEVENLABS
+        // Без сети сетевой движок всё равно недоступен — читаем системным.
+        engine("edge_tts", online = false) shouldBe TtsSpeaker.ENGINE_SYSTEM
+        // Автовыбор и системный движок телефонного режима не трогаем.
+        engine("auto", online = true) shouldBe TtsSpeaker.ENGINE_SYSTEM
+        engine("system_tts", online = true) shouldBe TtsSpeaker.ENGINE_SYSTEM
+        engine("onnx", online = true) shouldBe TtsSpeaker.ENGINE_SYSTEM
+    }
+
+    @Test
+    fun `a network engine is used when phone only reading is off`() {
+        resolveSpeak("auto", online = true) shouldBe TtsSpeaker.ENGINE_GOOGLE_WEB
+        resolveSpeak("auto", online = false) shouldBe TtsSpeaker.ENGINE_SYSTEM
+        resolveSpeak("google_web", online = true) shouldBe TtsSpeaker.ENGINE_GOOGLE_WEB
+        resolveSpeak("edge_tts", online = true) shouldBe TtsSpeaker.ENGINE_EDGE_TTS
+        resolveSpeak("eleven_api", online = true) shouldBe TtsSpeaker.ENGINE_ELEVENLABS
+        resolveSpeak("system_tts", online = true) shouldBe TtsSpeaker.ENGINE_SYSTEM
+        resolveSpeak("несуществующий", online = true) shouldBe TtsSpeaker.ENGINE_SYSTEM
     }
 
     @Test
@@ -160,4 +189,7 @@ class VoicePluginsTest {
 
     private fun resolvePlugin(engine: String, phoneOnly: Boolean): VoicePluginDescriptor =
         VoicePlugins.resolvePlugin(engineId = engine, phoneOnly = phoneOnly)
+
+    private fun resolveSpeak(engine: String, online: Boolean): String =
+        VoicePlugins.resolveSpeakEngine(engineId = engine, phoneOnly = false, online = online)
 }

@@ -895,7 +895,12 @@ class AutoReadEngine(
         val enginePref = runCatching { prefs.voiceEngine().get() }.getOrDefault("")
         val phoneOnly = runCatching { prefs.voicePhoneOnly().get() }.getOrDefault(true)
         val online = isNetworkAvailable(context)
-        if (phoneOnly) return TtsSpeaker.systemEngineInstalled(context)
+        val explicitOnline =
+            eu.kanade.tachiyomi.data.voice.VoicePlugins.isOnlineEngineId(enginePref)
+        // Телефонный режим не отменяет явно выбранный сетевой движок: иначе
+        // предпроверка требовала бы «установите TTS» для голоса, которого на
+        // устройстве и не должно быть.
+        if (phoneOnly && !explicitOnline) return TtsSpeaker.systemEngineInstalled(context)
         return when (enginePref) {
             TtsSpeaker.ENGINE_GOOGLE_WEB,
             TtsSpeaker.ENGINE_EDGE_TTS,

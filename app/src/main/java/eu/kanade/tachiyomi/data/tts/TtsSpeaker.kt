@@ -354,14 +354,18 @@ object TtsSpeaker {
         val edgeName = voiceName.endsWith("Neural", ignoreCase = true) ||
             voiceName.startsWith("ru-", ignoreCase = true) ||
             voiceName.startsWith("en-", ignoreCase = true)
-        val wantEdge = if (phoneOnly) {
-            // Только голос телефона: конкретный голос не должен уводить озвучку
-            // в сеть, иначе «проба» голоса звучала бы иначе, чем чтение.
-            false
-        } else if (forcedPkg.isNotBlank()) {
-            forcedPkg.startsWith("edge", ignoreCase = true)
-        } else {
-            enginePref == ENGINE_EDGE_TTS || (edgeName && !voiceSpec.contains("::"))
+        val wantEdge = when {
+            // Пакет в спецификации голоса — это осознанный выбор конкретного
+            // движка («edge::…», «com.github…::…»): телефонный режим его не
+            // отменяет, иначе проба звучала бы не тем голосом, что и чтение.
+            forcedPkg.isNotBlank() -> forcedPkg.startsWith("edge", ignoreCase = true)
+            // Явно выбранный сетевой движок — тоже осознанный выбор.
+            eu.kanade.tachiyomi.data.voice.VoicePlugins.isOnlineEngineId(enginePref) ->
+                enginePref == ENGINE_EDGE_TTS || edgeName
+            // Телефонный режим гасит только автоподстановку сетевого голоса
+            // по имени: конкретный голос не должен уводить озвучку в сеть.
+            phoneOnly -> false
+            else -> edgeName
         }
         if (wantEdge) {
             speakWithEdgeVoice(context, text, voiceName, onState)
@@ -487,19 +491,18 @@ object TtsSpeaker {
 // Имя говорящего ({имя:Аки}) нужно словарю голосовых ролей, чтобы
         // подобрать голос/питч/темп конкретного персонажа.
         val speakerName = SpeechMarkup.speakerName(text)
-        // v1.9.51: «веб-голоса онлайн, локальные оффлайн». С 2026-09-26
-        // по требованию читателя и авточтение, и одиночная реплика произносятся
-        // ГОЛОСОМ ТЕЛЕФОНА (pref_voice_phone_only, по умолчанию включено).
-        // Сетевой голос не связан с голосами устройства: список голосов в
-        // читалке к нему отношения не имеет, и на части страниц он молчит.
+        // «Только голос телефона» (pref_voice_phone_only, по умолчанию
+        // включено) убирает АВТОМАТИЧЕСКИЙ сетевой маршрут: без явного выбора
+        // движка читаем голосом устройства. Явно выбранный читателем сетевой
+        // движок — тоже выбор, и он побеждает: иначе голос, которого нет на
+        // устройстве, пришлось бы «устанавливать», вместо того чтобы звучать.
         val phoneOnly = runCatching { prefs().voicePhoneOnly().get() }.getOrDefault(true)
         val online = isNetworkAvailable(context)
-        val engine = when (val want = prefs().voiceEngine().get()) {
-            ENGINE_AUTO -> if (online) ENGINE_GOOGLE_WEB else ENGINE_SYSTEM
-            ENGINE_GOOGLE_WEB, ENGINE_EDGE_TTS, ENGINE_ELEVENLABS -> if (online) want else ENGINE_SYSTEM
-            else -> want
-        }
-        val effective = if (phoneOnly) ENGINE_SYSTEM else engine
+        val effective = eu.kanade.tachiyomi.data.voice.VoicePlugins.resolveSpeakEngine(
+            engineId = prefs().voiceEngine().get(),
+            phoneOnly = phoneOnly,
+            online = online,
+        )
         when (effective) {
             ENGINE_GOOGLE_WEB -> speakGoogleWeb(context, spoken)
             ENGINE_EDGE_TTS -> speakEdgeTts(context, spoken)

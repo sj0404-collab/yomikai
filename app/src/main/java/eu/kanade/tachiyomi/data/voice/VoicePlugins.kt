@@ -283,10 +283,9 @@ object VoicePlugins {
      * системный TTS — так же, как это уже делает `pref_voice_engine`.
      *
      * При включённом «только голос телефона» ([OcrPreferences.voicePhoneOnly])
-     * ответ всегда системный, даже если в настройках выбран сетевой плагин.
-     * Иначе список голосов в настройках строился бы от сетевого плагина, а
-     * озвучка шла бы системным голосом: настройка показывала бы не то, чем
-     * реально читают, и список выглядел пустым.
+     * ответ системный — но только если читатель не выбрал сетевой движок
+     * осознанно. Явный выбор важнее умолчания, иначе выбранный онлайн-голос
+     * не звучал бы вообще (см. [resolveSpeakEngine]).
      */
     fun current(prefs: OcrPreferences): VoicePluginDescriptor = resolvePlugin(
         engineId = prefs.voiceEngine().get(),
@@ -298,7 +297,39 @@ object VoicePlugins {
      * проверялось тестом, а не только глазами.
      */
     internal fun resolvePlugin(engineId: String?, phoneOnly: Boolean): VoicePluginDescriptor =
-        if (phoneOnly) SYSTEM_TTS else byId(engineId) ?: SYSTEM_TTS
+        if (phoneOnly && !isOnlineEngineId(engineId)) SYSTEM_TTS else byId(engineId) ?: SYSTEM_TTS
+
+    /**
+     * Сетевые id движков, которые читатель выбирает осознанно.
+     *
+     * Важно: «только голос телефона» отменяет АВТОМАТИЧЕСКИЙ сетевой маршрут
+     * (`system_tts`/`auto`), но не явный выбор. Иначе выбранный онлайн-голос
+     * молча уходил в системный движок, а тот его не имеет, и чтение требовало
+     * «установите TTS» вместо воспроизведения выбранного голоса.
+     */
+    internal fun isOnlineEngineId(engineId: String?): Boolean =
+        engineId != null && engineId in ONLINE_ENGINE_IDS
+
+    internal val ONLINE_ENGINE_IDS = setOf(
+        TtsSpeaker.ENGINE_GOOGLE_WEB,
+        TtsSpeaker.ENGINE_EDGE_TTS,
+        TtsSpeaker.ENGINE_ELEVENLABS,
+    )
+
+    /**
+     * Движок для синтеза: учитывает сеть и «только голос телефона».
+     *
+     * @param online доступна ли сеть; без неё сетевой движок не используется.
+     */
+    internal fun resolveSpeakEngine(engineId: String?, phoneOnly: Boolean, online: Boolean): String {
+        val explicitOnline = isOnlineEngineId(engineId)
+        val resolved = when (engineId) {
+            TtsSpeaker.ENGINE_AUTO -> if (online) TtsSpeaker.ENGINE_GOOGLE_WEB else TtsSpeaker.ENGINE_SYSTEM
+            in ONLINE_ENGINE_IDS -> if (online) engineId!! else TtsSpeaker.ENGINE_SYSTEM
+            else -> engineId
+        }
+        return if (phoneOnly && !explicitOnline) TtsSpeaker.ENGINE_SYSTEM else resolved
+    }
 
     /**
      * Сохранённые пресеты голосов. Список намеренно короткий: полный перечень
