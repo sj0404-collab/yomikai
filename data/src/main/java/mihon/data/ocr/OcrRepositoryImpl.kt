@@ -418,7 +418,7 @@ class OcrRepositoryImpl(
         chapterId: Long,
         pageIndex: Int,
         image: OcrImage,
-        onPartial: ((OcrRegion) -> Unit)? = null,
+        onPartial: ((OcrRegion) -> Unit)?,
     ): OcrPageResult {
         return withActiveOperation {
             val regionChoice = ocrPreferences.scanRegion().get()
