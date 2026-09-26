@@ -127,6 +127,12 @@ object AiAgent {
             "@tool filter_ext {\"hide\":\"подстрока\",\"show\":\"подстрока\"} — скрыть/показать источники по имени/языку\n" +
             "@tool find_manga {\"title\":\"название\"} — найти мангу по включённым источникам, вернёт где реально открывается\n" +
             "@tool zip_workspace {} — упаковать workspace в zip\n" +
+            "ПАПКА WORKSPACE (сначала осмотри её, потом действуй — не выдумывай имена файлов):\n" +
+            "@tool workspace_list {\"path\":\"book\",\"limit\":200} — что лежит в папке (пустое path — весь корень)\n" +
+            "@tool read_many {\"names\":[\"book/1.md\",\"book/2.md\"]} — прочитать несколько файлов по очереди в пределах бюджета; можно строкой через запятую\n" +
+            "Порядок работы с папкой: сначала workspace_list, потом read_many на нужное, и только потом правки. " +
+            "Не вываливай в ответ содержимое всего подряд. Если задача неоднозначна (какая глава, какой файл, " +
+            "что именно исправлять) — спроси читателя ДО того, как что-то менять, и перечисли варианты.\n" +
             "ПЛАГИНЫ (самодельные инструменты, без ограничений по количеству):\n" +
             "@tool plugin_create {\"name\":\"имя\",\"kind\":\"http|prompt\",\"description\":\"что делает\"," +
             "\"template\":\"https://api...?q={query} ИЛИ текст-инструкция с {input}\"," +
@@ -506,6 +512,7 @@ object AiAgent {
             "list_ext", "filter_ext", "find_manga", "zip_workspace",
             "plugin_create", "plugin_edit", "plugin_delete", "plugin_list",
             "skill_create", "skill_list", "skill_run",
+            "workspace_list", "read_many",
             "runner_chat", "runner_start", "github_api",
             "provider_create", "provider_edit", "provider_delete", "provider_list",
             "ui_action_create", "ui_action_edit", "ui_action_delete", "ui_action_list",
@@ -932,17 +939,17 @@ object AiAgent {
                 )
 
                 else -> {
-                    val run = skill.withInput(input)
+                    val steps = skill.withInput(input).steps
                     val lines = mutableListOf<String>()
                     val produced = mutableListOf<File>()
                     var failed = false
-                    for ((index, step) in run.steps.withIndex()) {
+                    for ((index, step) in steps.withIndex()) {
                         // Навык внутри навыка — это способ зациклить ход и
                         // упереться в лимит шагов. Один уровень вложенности
                         // не даёт, и пользы от него тут нет.
                         if (step.tool == "skill_run") {
                             failed = true
-                            lines += "${index + 1}/${run.steps.size} skill_run — ОТКАЗАНО: навык не может вызывать навык"
+                            lines += "${index + 1}/${steps.size} skill_run — ОТКАЗАНО: навык не может вызывать навык"
                             break
                         }
                         // Шаг за шагом: следующий может работать с файлом,
@@ -953,7 +960,7 @@ object AiAgent {
                             }
                         produced += listOfNotNull(r.fileProduced)
                         val isError = r.status == "error"
-                        lines += "${index + 1}/${run.steps.size} ${step.tool}" +
+                        lines += "${index + 1}/${steps.size} ${step.tool}" +
                             (if (isError) " — ОШИБКА" else " — готово") +
                             ": " + r.output.take(200).replace("\n", " ")
                         if (isError) {
@@ -963,9 +970,13 @@ object AiAgent {
                     }
                     // Последний файл, который создал навык, попадает в карточку
                     // чата: иначе результат не видно, пока не откроешь «Файлы».
+                    val header = buildString {
+                        append(if (failed) "Навык остановился с ошибкой" else "Навык выполнен")
+                        if (produced.isNotEmpty()) append(". Создано файлов: ${produced.size}")
+                    }
                     ToolResult(
                         "skill_run",
-                        (listOf(run.summary) + lines).joinToString("\n"),
+                        (listOf(header) + lines).joinToString("\n"),
                         produced.lastOrNull(),
                         status = if (failed) "error" else "ok",
                     )
@@ -1221,6 +1232,39 @@ object AiAgent {
                 ToolResult("read_file", "Содержимое $name (${f.length()} байт):\n$slice")
             } else {
                 ToolResult("read_file", "Файл не найден: $name")
+            }
+        }
+
+        // Обзор папки целиком: агент должен видеть, что в ней есть, прежде чем
+        // строить план. Раньше для этого надо было угадывать имена файлов.
+        "workspace_list" -> {
+            val root = AiWorkspace.root(context)
+            val path = call.args.optString("path")
+            val limit = call.args.optInt("limit", 200).coerceIn(1, 2_000)
+            ToolResult("workspace_list", AiWorkspaceSurvey.renderTree(root, path, limit))
+        }
+
+        // Чтение пачкой «по очереди»: книга разбита на главы, и агент должен
+        // прочитать их в правильном порядке, а не по одному файлу за ход.
+        "read_many" -> {
+            val root = AiWorkspace.root(context)
+            val names = call.args.optJSONArray("names")
+            val list = buildList {
+                if (names != null) {
+                    for (i in 0 until names.length()) add(names.optString(i))
+                } else {
+                    // Файлы передали строкой через запятую — модели так пишут
+                    // чаще, чем массивом, и раньше такой вызов молча ничего
+                    // не читал.
+                    call.args.optString("names").split(',').forEach {
+                        if (it.isNotBlank()) add(it.trim())
+                    }
+                }
+            }.filter { it.isNotBlank() }
+            if (list.isEmpty()) {
+                ToolResult("read_many", "ОШИБКА: передай names — массив имён или строку через запятую", status = "error")
+            } else {
+                ToolResult("read_many", AiWorkspaceSurvey.readMany(root, list))
             }
         }
 

@@ -50,26 +50,11 @@ object AiSkills {
         }
     }
 
-    /** Результат выполнения навыка: текст каждого шага и всё, что создано. */
-    data class RunResult(
-        val lines: List<String>,
-        val files: List<File>,
-        val failed: Boolean,
-    ) {
-        val summary: String
-            get() = buildString {
-                append(if (failed) "Навык остановился с ошибкой" else "Навык выполнен")
-                if (files.isNotEmpty()) {
-                    append(". Создано файлов: ${files.size}")
-                }
-            }
-    }
-
     private fun dir(context: Context): File =
         File(AiWorkspace.root(context), "skills").apply { mkdirs() }
 
     private fun fileOf(context: Context, name: String): File =
-        File(dir(context), AiWorkspace.sanitize(name) + ".json")
+        File(dir(context), AiWorkspacePaths.sanitize(name) + ".json")
 
     fun list(context: Context): List<Skill> =
         dir(context).listFiles { f -> f.extension == "json" }
