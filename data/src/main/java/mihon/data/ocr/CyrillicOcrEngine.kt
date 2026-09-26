@@ -529,11 +529,16 @@ internal class CyrillicOcrEngine(
             )
             val crop = if (kind == OcrBoxGeometry.Kind.VERTICAL) rotate90cw(image) else image
             try {
-                val result = recognizeLineBitmap(crop)
-                if (result.text.isBlank() || !acceptsConfidence(result)) {
-                    return@withLock ""
+                // Бокс детектора — это строка, но для колонок манхвы он вмещает
+                // несколько строк сразу. Режем их горизонтально и читаем по
+                // очереди: одна колонка больше не проходит через распознаватель
+                // как один 320×48-слепок.
+                val text = recognizeMultiLine(crop) ?: run {
+                    val result = recognizeLineBitmap(crop)
+                    if (result.text.isBlank() || !acceptsConfidence(result)) "" else result.text
                 }
-                cleanRecognition(textPostprocessor.postprocess(result.text))
+                if (text.isBlank()) return@withLock ""
+                cleanRecognition(textPostprocessor.postprocess(text))
             } finally {
                 if (crop !== image && !crop.isRecycled) crop.recycle()
             }
@@ -541,21 +546,107 @@ internal class CyrillicOcrEngine(
     }
 
     /**
-     * Распознаёт вырезанную детектором строку: сначала режет её на слова по
-     * вертикальной проекции «чернил» (как _split_horizontal_words в Python-
-     * пайплайне репозитория моделей), потом распознаёт каждое слово отдельно.
+     * Распознаёт кроп как несколько строк, если проекция строк это показывает.
+     * null — когда кроп уже одна строка и резать нечего.
+     */
+    private fun recognizeMultiLine(crop: Bitmap): String? {
+        val bands = lineBands(crop) ?: return null
+        val pieces = mutableListOf<String>()
+        var confidenceSum = 0f
+        var count = 0
+        for (band in bands) {
+            val piece = bandBitmap(crop, band) ?: continue
+            val recognition = try {
+                recognizeLineBitmap(piece)
+            } finally {
+                if (!piece.isRecycled) piece.recycle()
+            }
+            if (recognition.text.isNotBlank()) {
+                pieces += recognition.text
+                confidenceSum += recognition.confidence
+                count++
+            }
+        }
+        if (pieces.isEmpty()) return null
+        if (!acceptsConfidence(Recognition("", if (count == 0) 0f else confidenceSum / count))) return null
+        return pieces.joinToString(" ")
+    }
+
+    /**
+     * Полосы текста внутри кропа или null, если кроп — одна строка.
+     *
+     * Один детекторный бокс = одна строка почти всегда, поэтому критерии
+     * намеренно строгие: три и более строки сопоставимой высоты. Всё, что
+     * слабее, читается как раньше — целиком.
+     */
+    private fun lineBands(crop: Bitmap): List<IntRange>? {
+        if (crop.height < tuning().lineSplitMinHeightPx) return null
+        val w = crop.width
+        val h = crop.height
+        val pixels = IntArray(w * h)
+        crop.getPixels(pixels, 0, w, 0, 0, w, h)
+        val gray = IntArray(w * h)
+        val hist = IntArray(256)
+        for (i in pixels.indices) {
+            val p = pixels[i]
+            val lum = (77 * ((p shr 16) and 0xFF) + 150 * ((p shr 8) and 0xFF) + 29 * (p and 0xFF)) shr 8
+            gray[i] = lum
+            hist[lum]++
+        }
+        val otsu = otsuThreshold(gray, hist)
+        val rowInk = FloatArray(h)
+        for (y in 0 until h) {
+            val row = y * w
+            var ink = 0
+            for (x in 0 until w) {
+                if (gray[row + x] < otsu) ink++
+            }
+            rowInk[y] = ink.toFloat() / w
+        }
+        val minInk = tuning().lineSplitMinInkRatio
+        val bands = ocrLineBands(
+            rowInk = rowInk,
+            minInkRatio = minInk,
+            maxGapFactor = tuning().lineSplitMaxGapFactor,
+            minBandHeight = max(2, round(h * minInk * 0.5f).toInt()),
+        ).filter { it.count() * 3 >= h / 2 }
+        return bands.takeIf { it.size >= 3 }
+    }
+
+    /** Вырезает полосу строки с вертикальным запасом, чтобы не срезать край глифа. */
+    private fun bandBitmap(crop: Bitmap, band: IntRange): Bitmap? {
+        val top = max(0, band.first - tuning().lineSplitPadPx)
+        val bottom = min(crop.height, band.last + 1 + tuning().lineSplitPadPx)
+        if (bottom - top < 4) return null
+        return runCatching { Bitmap.createBitmap(crop, 0, top, crop.width, bottom - top) }
+            .onFailure { logcat(LogPriority.WARN) { "Line band crop failed: ${it.message}" } }
+            .getOrNull()
+    }
+
+    /**
+     * Распознаёт вырезанную детектором строку.
      *
      * Детектор PP-OCR склеивает короткую строку в один бокс, а распознаватель
      * обучен на отдельных словах и на целой строке не выдаёт пробелов:
-     * «И ПАЛ ПОД ЛЕЗВИЕМ» выходило как «ИПАЛПОДЛЕЗВИЕМ».
+     * «И ПАЛ ПОД ЛЕЗВИЕМ» выходило как «ИПАЛПОДЛЕЗВИЕМ». Раньше строка всегда
+     * читалась ДВАЖДЫ: целиком и по словам, а результат выбирался по оценке.
+     * Это удваивало-утраивало инференс каждой реплики ради сравнения, которое
+     * чаще всего выигрывала целая строка.
+     *
+     * Теперь нарезка на слова запускается только там, где она действительно
+     * нужна: если консервативная постобработка уже восстановила границы слов в
+     * целой строке, результат нечитаемым не будет и второй проход не нужен.
+     * На строке без пробелов (главный случай поломанного текста) нарезка
+     * остаётся, иначе TTS получил бы «ИПАЛПОДЛЕЗВИЕМ».
      */
     private fun recognizeLineBitmap(crop: Bitmap): Recognition {
-        val words = splitWords(crop)
         // PP-OCRv5 надёжно читает многие компактные строковые подписи целиком,
         // но в CTC-выходе не ставит пробелы. Не заменяем целую строку только
         // нарезанными словами: на тонких буквах нарезка может обрезать край
         // глифа и вернуть пустой результат, хотя полный кроп читается верно.
         val wholeLine = recognizeCrop(crop)
+        if (!needsWordSegmentation(wholeLine)) return wholeLine
+        val words = splitWords(crop)
         if (words.size == 1) {
             // Слишком широкий кроп (заголовок/надпись во всю страницу)
             // распознаватель ужимает до 320px, и текст становится нечитаемым,
@@ -598,6 +689,21 @@ internal class CyrillicOcrEngine(
     }
 
     /**
+     * Стоит ли тратить инференс на нарезку строки на слова.
+     *
+     * Если в целой строке уже есть границы слов (или она слишком короткая,
+     * чтобы что-то резать) — читаемый результат получен, второй проход
+     * ничего не добавит. Режем только строки, где слов нет вообще: это
+     * ровно тот случай, где TTS получает слитную кашу.
+     */
+    private fun needsWordSegmentation(wholeLine: Recognition): Boolean {
+        if (wholeLine.text.isBlank()) return true
+        if (wholeLine.text.count(Char::isWhitespace) > 0) return false
+        val restored = OcrTextCleaner.normalizeLocalCyrillicCaption(wholeLine.text)
+        return restored.count(Char::isWhitespace) == 0
+    }
+
+    /**
      * Выбирает между полной строкой и визуально разрезанными словами.
      * Полный вариант допускается только если консервативная постобработка уже
      * способна восстановить в нём реальные границы слов. Это не словарная
@@ -613,6 +719,35 @@ internal class CyrillicOcrEngine(
         val wholeQuality = candidateQuality(wholeLine) + if (restoresBoundaries) tuning().wholeLineBoundaryBonus else 0f
         val segmentedQuality = candidateQuality(segmented)
         return if (restoresBoundaries && wholeQuality >= segmentedQuality) wholeLine else segmented
+    }
+
+    /**
+     * Порог Оцу по гистограмме яркости: максимизирует межклассовую дисперсию.
+     * Один и тот же порог нужен и нарезке на слова, и разбору кропа на строки.
+     */
+    private fun otsuThreshold(gray: IntArray, hist: IntArray): Int {
+        var sumAll = 0L
+        for (v in 0..255) sumAll += v * hist[v]
+        val total = gray.size.toLong()
+        var sumB = 0L
+        var wB = 0L
+        var maxBetween = -1.0
+        var otsu = 127
+        for (v in 0..255) {
+            wB += hist[v]
+            if (wB == 0L) continue
+            val wF = total - wB
+            if (wF == 0L) break
+            sumB += v * hist[v]
+            val mB = sumB.toDouble() / wB
+            val mF = (sumAll - sumB).toDouble() / wF
+            val between = wB.toDouble() * wF * (mB - mF) * (mB - mF)
+            if (between > maxBetween) {
+                maxBetween = between
+                otsu = v
+            }
+        }
+        return otsu
     }
 
     /**
@@ -634,27 +769,7 @@ internal class CyrillicOcrEngine(
             hist[lum]++
         }
         // Порог Оцу по гистограмме яркости.
-        var sumAll = 0L
-        for (v in 0..255) sumAll += v * hist[v]
-        val total = (w * h).toLong()
-        var sumB = 0L
-        var wB = 0L
-        var maxBetween = -1.0
-        var otsu = 127
-        for (v in 0..255) {
-            wB += hist[v]
-            if (wB == 0L) continue
-            val wF = total - wB
-            if (wF == 0L) break
-            sumB += v * hist[v]
-            val mB = sumB.toDouble() / wB
-            val mF = (sumAll - sumB).toDouble() / wF
-            val between = wB.toDouble() * wF * (mB - mF) * (mB - mF)
-            if (between > maxBetween) {
-                maxBetween = between
-                otsu = v
-            }
-        }
+        val otsu = otsuThreshold(gray, hist)
         fun inkColumns(lightInk: Boolean): IntArray {
             // Balloon borders are often long solid black/white rows. Counting
             // their pixels as ink marks every column as occupied and prevents
@@ -1021,7 +1136,8 @@ internal class CyrillicOcrEngine(
         // Контрастный retry усиливает полупрозрачные водяные знаки так же
         // уверенно, как печатный текст; для кропа почти без чернил он лишь
         // делает водяной знак «надёжным» и тот начинает читаться вслух.
-        val allowContrastRetry = inkRatio >= tuning().contrastSkipInkThreshold
+        val allowContrastRetry = tuning().contrastRetryEnabled &&
+            inkRatio >= tuning().contrastSkipInkThreshold
         val candidates = mutableListOf(
             runRecognizer(crop, primary, primaryInput, primaryOutput, primaryChars, RecognitionModel.V3),
         )
@@ -1048,6 +1164,7 @@ internal class CyrillicOcrEngine(
         if (
             secondModel != null &&
             secondInput != null && secondOutput != null && secondChars != null &&
+            tuning().verifierEnabled &&
             !maySkipVerifier(candidates.maxByOrNull(::candidateQuality) ?: candidates.last())
         ) {
             // Device regression showed that v3 may assign a high confidence to
@@ -1328,4 +1445,63 @@ internal fun ocrWordGapThreshold(
     if (positive.size <= 2 || positive.first() == positive.last()) return minWordGapPx
     val lowerQuartile = positive[(positive.size - 1) / 4]
     return max(minWordGapPx, round(lowerQuartile * wordGapFactor).toInt())
+}
+
+/**
+ * Разбивает проекцию строк на полосы текста.
+ *
+ * Детектор PP-OCR склеивает в один бокс не только строку, но и целую колонку
+ * манхвы: пять строк подряд приходят одним прямоугольником. Такой кроп
+ * распознаватель ужимает до 320×48, пять строк схлопываются в кашу, а
+ * последующая нарезка на «слова» режет колонку вертикальными полосами —
+ * получаются вертикальные обрывки. Поэтому перед распознаванием кроп
+ * режется горизонтально: [rowInk] — доля строк пикселей с чернилами.
+ *
+ * Параметры подобраны так, чтобы поведение не изменилось у одиночных строк
+ * (детектор отдаёт их точно) и у одиночных крупных строк, а ломалось только
+ * там, где строк действительно несколько.
+ */
+internal fun ocrLineBands(
+    rowInk: FloatArray,
+    minInkRatio: Float,
+    maxGapFactor: Float,
+    minBandHeight: Int,
+): List<IntRange> {
+    if (rowInk.size < 2) return emptyList()
+    val on = rowInk.mapIndexed { index, ink -> index to ink }.filter { it.second > minInkRatio }
+    if (on.isEmpty()) return emptyList()
+
+    val runs = mutableListOf<IntRange>()
+    var start = on.first().first
+    var previous = on.first().first
+    for ((row) in on.drop(1)) {
+        if (row > previous + 1) {
+            runs += start..previous
+            start = row
+        }
+        previous = row
+    }
+    runs += start..previous
+    if (runs.size < 2) return emptyList()
+
+    // Первая и последняя строка детектора бывают срезанными по краю рамки:
+    // их полосы короче реальных. Ориентируемся на медиану — так одна крупная
+    // надпись не выдаст себя за «строку» и не испортит разбор колонки.
+    val heights = runs.map { it.count() }.sorted()
+    val referenceHeight = heights[heights.size / 2]
+    if (referenceHeight < minBandHeight) return emptyList()
+
+    val maxGap = max(1, round(referenceHeight * maxGapFactor).toInt())
+    val merged = mutableListOf<IntRange>()
+    for (run in runs) {
+        val last = merged.lastOrNull()
+        if (last != null && run.first - last.last <= maxGap + 1) {
+            merged[merged.lastIndex] = last.first..run.last
+        } else {
+            merged += run
+        }
+    }
+    if (merged.size < 2) return emptyList()
+    // Слишком низкие полосы — это ореолы рамки и остатки букв, а не строки.
+    return merged.filter { it.count() >= minBandHeight }
 }

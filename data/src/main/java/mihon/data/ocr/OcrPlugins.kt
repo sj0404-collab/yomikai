@@ -228,8 +228,25 @@ object OcrPlugins {
 data class OcrRegionProfile(
     val contentType: OcrContentType = OcrContentType.BALANCED,
     val scanRegion: ScanRegion = ScanRegion.FULL_PAGE,
+    val localMode: OcrLocalMode = OcrLocalMode.ACCURATE,
     val overrides: OcrTuningOverrides = OcrTuningOverrides(),
 ) {
     /** Итоговые параметры для движка. */
-    fun tuning(): OcrTuning = overrides.applyTo(OcrTuning.preset(contentType, scanRegion))
+    fun tuning(): OcrTuning = overrides.applyTo(
+        OcrTuning.preset(contentType, scanRegion).withLocalMode(localMode),
+    )
+}
+
+/**
+ * Кириллические языки чтения.
+ *
+ * Встроенный ML Kit содержит только латинскую модель (движок
+ * `com.google.mlkit:text-recognition-latin`), поэтому на русском тексте он не
+ * «медленный», а бесполезный: либо молчит, либо выдаёт латинский мусор, который
+ * авточтение произносит вслух. Такие страницы должны идти в локальный
+ * кириллический движок — и как основной, и в цепочке фолбэка.
+ */
+internal fun isCyrillicOcrLanguage(code: String?): Boolean = when (code?.lowercase()?.trim()) {
+    "ru", "uk", "be", "bg", "sr", "mk" -> true
+    else -> false
 }

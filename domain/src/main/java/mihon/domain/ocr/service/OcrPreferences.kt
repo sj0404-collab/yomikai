@@ -45,6 +45,13 @@ class OcrPreferences(
     /** Авто-пресет типа контента по геометрии страницы: on/off. */
     fun autoPreset() = preferenceStore.getString("pref_ocr_auto_preset", "on")
 
+    /**
+     * Насколько дорого распознавать локально: accurate (вторая модель и
+     * повтор с контрастом) или fast (один проход на реплику).
+     * См. mihon.data.ocr.OcrLocalMode.
+     */
+    fun localMode() = preferenceStore.getString("pref_ocr_local_mode", "accurate")
+
     /** Разметка ударений («+» после ударного гласного) для RHVoice. */
     fun ruStress() = preferenceStore.getString("pref_ru_stress", "on")
 

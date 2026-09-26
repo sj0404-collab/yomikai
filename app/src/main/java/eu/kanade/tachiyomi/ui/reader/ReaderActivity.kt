@@ -1018,6 +1018,15 @@ class ReaderActivity : BaseActivity() {
                 val frameRegions by autoReadEngine.frameRegions.collectAsState()
                 // Идёт ли чтение/озвучка — для состояния кнопки «Стоп чтения».
                 val readingActive by autoReadEngine.isReading.collectAsState()
+                // Озвучки на устройстве нет: авточтение останавливает себя само,
+                // а экран гасит переключатель и объясняет причину. Иначе читатель
+                // видел бы «чтение включено» и ждал страниц, которых не будет.
+                val voiceBlock by autoReadEngine.voiceBlock.collectAsState()
+                androidx.compose.runtime.LaunchedEffect(voiceBlock) {
+                    val reason = voiceBlock ?: return@LaunchedEffect
+                    stopAutoReadLoop()
+                    toast(reason)
+                }
 
                 // Значки 🔊 на рамках реплик: показываются по переключателю.
                 if (voiceIconsEnabled && frameRegions.isNotEmpty()) {

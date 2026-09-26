@@ -91,6 +91,7 @@ object OcrRegionRules {
     fun profileOf(prefs: OcrPreferences): OcrRegionProfile = OcrRegionProfile(
         contentType = OcrContentType.fromId(prefs.contentType().get()),
         scanRegion = effectiveRegion(prefs.presetScanRegion().get(), prefs.scanRegion().get()),
+        localMode = OcrLocalMode.fromId(prefs.localMode().get()),
         overrides = overridesOf(
             detectorThreshold = prefs.detectorThresholdOverride().get(),
             minComponentArea = prefs.minComponentAreaOverride().get(),

@@ -3,6 +3,9 @@ package eu.kanade.tachiyomi.data.tts
 import android.content.Context
 import android.graphics.Bitmap
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import mihon.data.ocr.OcrScreenshotBuffer
 import mihon.domain.ocr.model.OcrRegion
 import mihon.domain.ocr.model.OcrTextOrientation
@@ -28,6 +31,7 @@ import mihon.domain.ocr.model.OcrImage
 import mihon.domain.ocr.model.OcrModel
 import mihon.domain.ocr.model.normalizeOcrTextForDisplay
 import mihon.domain.ocr.service.OcrPreferences
+import tachiyomi.core.common.util.system.isNetworkAvailable
 import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -97,6 +101,12 @@ class AutoReadEngine(
     private val spokenLines = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private fun lineKey(t: String): String =
         t.lowercase().replace(Regex("[^\\p{L}0-9]+"), " ").trim()
+
+    /**
+     * Сколько реплик этого кадра уже озвучено потоковым проходом, пока OCR
+     * ещё дочитывает страницу. Сбрасывается на каждом кадре вместе с картой.
+     */
+    private val streamedRegionCount = java.util.concurrent.atomic.AtomicInteger(0)
     val frameRegions = _frameRegions.asStateFlow()
 
     /**
@@ -162,6 +172,23 @@ class AutoReadEngine(
 
     private val _isReading = MutableStateFlow(false)
     val isReading = _isReading.asStateFlow()
+
+    /**
+     * Почему авточтение остановилось из-за озвучки; null — озвучка в порядке.
+     *
+     * Отчёт читателя, который показывается один раз и сбрасывается в [stop].
+     */
+    private val _voiceBlock = MutableStateFlow<String?>(null)
+    val voiceBlock = _voiceBlock.asStateFlow()
+
+    /**
+     * Сколько подряд реплик движок принял и не произнёс.
+     *
+     * Разовый отказ — это нормально (пустой текст, ремарка без звучания, голос
+     * занят карточкой перевода). Серия отказов означает, что озвучки на
+     * устройстве нет, и авточтение обязано остановиться.
+     */
+    private var rejectedStreak = 0
 
     /** Был ли в последнем кадре новый текст (для темпа автоскролла). */
     @Volatile
@@ -296,6 +323,12 @@ class AutoReadEngine(
             _isReading.value = true
             var aiRefine: Job? = null
             try {
+                // Озвучивать нечем — не тратим время на распознавание кадра и
+                // не листаем страницы: читатель должен увидеть причину сразу.
+                if (!voicePathUsable()) {
+                    blockAutoread(NO_VOICE_MESSAGE)
+                    return@launch
+                }
                 // v1.9.91: кадр для OCR уменьшаем ДО минимально читаемого разрешения
                 // (детектор движка всё равно жмёт всё до ~736px). Так конвертация
                 // пикселей и онлайн-вызовы выполняются мгновенно в фоне, а текст
@@ -329,11 +362,66 @@ class AutoReadEngine(
                 // По таймауту кадр считается пустым: возвращаем пустой регион
                 // и идём по обычному конвейеру (пустой кадр → дочитывается и
                 // страница листается дальше, а не блокируется навсегда).
+                //
+                // Локальный движок отдаёт области по одной, и реплики уходят в
+                // озвучку ПРЯМО ВО ВРЕМЯ распознавания: раньше читатель ждал
+                // последнюю реплику страницы, чтобы услышать первую. Потоковый
+                // проход работает только в порядке «сверху вниз» (ltr/vertical):
+                // при RTL детектор отдаёт области слева направо, и озвучка на
+                // лету читала бы реплики в обратном порядке.
+                val streamOrder = bookReadingOrder(loadBookRules())
+                val streaming = orderAllowsStreaming(streamOrder)
+                val partials = Channel<OcrRegion>(Channel.UNLIMITED)
                 val result: mihon.domain.ocr.model.OcrPageResult = try {
-                    withTimeout(OCR_FRAME_TIMEOUT_MS) {
-                        scanPageOcr.await(chapterId, pageIndex, image)
+                    coroutineScope {
+                        val scan = async {
+                            try {
+                                withTimeout(OCR_FRAME_TIMEOUT_MS) {
+                                    scanPageOcr.await(
+                                        chapterId = chapterId,
+                                        pageIndex = pageIndex,
+                                        image = image,
+                                        onPartial = { region -> partials.trySend(region) },
+                                    )
+                                }
+                            } catch (e: TimeoutCancellationException) {
+                                logcat(LogPriority.WARN) {
+                                    "OCR frame timeout (${OCR_FRAME_TIMEOUT_MS}ms) pageIndex=$pageIndex"
+                                }
+                                OcrHistoryStore.addAutoRead(
+                                    false,
+                                    "OCR-кадр таймаут",
+                                    "${OCR_FRAME_TIMEOUT_MS / 1000}с pageIndex=$pageIndex",
+                                )
+                                mihon.domain.ocr.model.OcrPageResult(
+                                    chapterId = chapterId,
+                                    pageIndex = pageIndex,
+                                    ocrModel = prefs.ocrModel().get(),
+                                    imageWidth = ocrBitmap.width,
+                                    imageHeight = ocrBitmap.height,
+                                    regions = emptyList(),
+                                )
+                            } finally {
+                                partials.close()
+                            }
+                        }
+                        if (streaming) {
+                            for (region in partials) {
+                                if (myGen != generation || job?.isActive != true) {
+                                    scan.cancel()
+                                    break
+                                }
+                                if (!speakStreamingRegion(region, prefs.autoReadLanguage().get())) {
+                                    // Озвучки нет: дочитывать страницу незачем.
+                                    scan.cancel()
+                                    break
+                                }
+                            }
+                        }
+                        scan.await()
                     }
                 } catch (e: TimeoutCancellationException) {
+                    partials.close()
                     logcat(LogPriority.WARN) {
                         "OCR frame timeout (${OCR_FRAME_TIMEOUT_MS}ms) pageIndex=$pageIndex"
                     }
@@ -658,7 +746,22 @@ class AutoReadEngine(
                         0
                     }
 
-                    speakAndAwait(SpeechMarkup.strip(speakTextRaw), gender, slot)
+                    when (speakAndAwait(SpeechMarkup.strip(speakTextRaw), gender, slot)) {
+                        SpeakOutcome.SPOKEN, SpeakOutcome.SILENT -> rejectedStreak = 0
+                        SpeakOutcome.NO_ENGINE -> {
+                            blockAutoread(NO_VOICE_MESSAGE)
+                            return@launch
+                        }
+                        SpeakOutcome.REJECTED -> {
+                            // Разовый отказ — обычное дело. Серия отказов означает,
+                            // что озвучки нет: дальше листать нечего.
+                            rejectedStreak++
+                            if (rejectedStreak >= REJECTED_STOP_AFTER) {
+                                blockAutoread(REJECTED_VOICE_MESSAGE)
+                                return@launch
+                            }
+                        }
+                    }
                     // Плавный режим вебтуна: реплика дочитана — прокрутить ровно
                     // на её высоту, чтобы следующая была уже внизу вьюпорта.
                     if (onLineSpoken != null) {
@@ -676,6 +779,7 @@ class AutoReadEngine(
                 aiRefine?.cancel()
                 _currentRegion.value = null
                 _frameRegions.value = emptyList()
+                streamedRegionCount.set(0)
                 _isReading.value = false
                 // Колбэк только для АКТУАЛЬНОГО запуска: после stop() старый
                 // цикл не имеет права листать дальше или перезапускать чтение
@@ -760,16 +864,64 @@ class AutoReadEngine(
         return OcrImage(width, height, pixels)
     }
 
+    /**
+     * Озвучки на устройстве нет: останавливаем авточтение и говорим об этом.
+     *
+     * Раньше конвейел продолжал работу: распознавал страницу, подсвечивал
+     * реплики, листал дальше — и не произносил ни слова. Читатель видел
+     * «чтение идёт», а звука не было. Теперь `generation` увеличивается, чтобы
+     * колбэк «страница прочитана» не листал дальше, а `onPageFinished` не
+     * вызывался вовсе.
+     */
+    private fun blockAutoread(message: String) {
+        logcat(LogPriority.WARN) { "Autoread blocked: $message" }
+        _voiceBlock.value = message
+        OcrHistoryStore.addAutoRead(false, "озвучка недоступна", message)
+        rejectedStreak = 0
+        generation++
+        TtsSpeaker.stop()
+    }
+
+    /**
+     * Есть ли смысл начинать чтение: выбранный движок должен уметь озвучить.
+     *
+     * Сетевые голоса проверяются сетью, системный — наличием установленного
+     * TTS-движка (`PackageManager`, без блокировки). Проверка до распознавания:
+     * без неё кадр сначала уходит в OCR, и только потом выясняется, что
+     * произносить нечем.
+     */
+    private fun voicePathUsable(): Boolean {
+        val enginePref = runCatching { prefs.voiceEngine().get() }.getOrDefault("")
+        val online = isNetworkAvailable(context)
+        return when (enginePref) {
+            TtsSpeaker.ENGINE_GOOGLE_WEB,
+            TtsSpeaker.ENGINE_EDGE_TTS,
+            TtsSpeaker.ENGINE_ELEVENLABS,
+            -> online
+            TtsSpeaker.ENGINE_AUTO -> if (online) {
+                true
+            } else {
+                TtsSpeaker.systemEngineInstalled(context)
+            }
+            // Сетевой голос без сети и так падает на системный (см. speakAs), а
+            // удалённый — тоже. Проверяем именно системный движок.
+            else -> online || TtsSpeaker.systemEngineInstalled(context)
+        }
+    }
+
     fun stop() {
         spokenLines.clear()
         speakerSlots.clear()
         prevFrameGenders = emptyList()
+        rejectedStreak = 0
+        _voiceBlock.value = null
         generation++ // инвалидируем все pending-колбэки
         job?.cancel()
         job = null
         TtsSpeaker.stop()
         _currentRegion.value = null
         _frameRegions.value = emptyList()
+        streamedRegionCount.set(0)
         _isReading.value = false
     }
 
@@ -796,8 +948,110 @@ class AutoReadEngine(
         }
     }
 
+    /**
+     * Исход одной озвучки. `Boolean`-колбэк TTS не различает «движка нет» и
+     * «нечего произносить», и авточтение продолжало листать страницы, не
+     * сказав ни слова. Различаем явно.
+     */
+    private enum class SpeakOutcome {
+        /** Реплика произнесена. */
+        SPOKEN,
+
+        /** Произносить было нечего: пустой текст, ремарка без звучания. */
+        SILENT,
+
+        /** На устройстве нет TTS-движка. */
+        NO_ENGINE,
+
+        /** Движок есть, но текст принял и не озвучил. */
+        REJECTED,
+    }
+
+    /**
+     * Озвучивает реплику, распознанную локальным движком, не дожидаясь конца
+     * страницы, и помечает её прочитанной.
+     *
+     * Потоковый проход сознательно «глупый»: без определения пола по картинке,
+     * без перевода, без склейки соседних строк в одну реплику. Всё это требует
+     * знать всю страницу и не может работать на лету. Зато читатель слышит
+     * первую реплику сразу, а основной конвейер позже дочитывает остальные и
+     * пропускает уже озвученное через [spokenLines].
+     *
+     * Номера реплик в потоковом режиме не совпадают с итоговой нумерацией
+     * страницы: итоговую расставляет конвейер ниже, когда страница собрана.
+     *
+     * Возвращает false, когда продолжать незачем: озвучки на устройстве нет.
+     * Иначе цикл ждал бы по [TTS_START_GRACE_MS] на каждую реплику страницы.
+     */
+    private suspend fun speakStreamingRegion(
+        region: OcrRegion,
+        language: String,
+    ): Boolean {
+        val text = normalizeOcrTextForDisplay(
+            CyrillicTranslitFixer.autoFixCyrillic(region.text),
+        ).trim()
+        if (text.isBlank() || !matchesLanguage(text, language)) return true
+        if (lineKey(text) in spokenLines) return true
+        val index = streamedRegionCount.getAndIncrement()
+        _frameRegions.value = _frameRegions.value + FrameRegion(
+            region.boundingBox,
+            index + 1,
+            FrameRegion.State.CURRENT,
+            text,
+        )
+        return when (speakAndAwait(text, gender = null)) {
+            SpeakOutcome.SPOKEN -> {
+                spokenLines += lineKey(text)
+                markSpokenInFrame(text)
+                rejectedStreak = 0
+                true
+            }
+            SpeakOutcome.SILENT -> {
+                rejectedStreak = 0
+                true
+            }
+            SpeakOutcome.NO_ENGINE -> {
+                blockAutoread(NO_VOICE_MESSAGE)
+                false
+            }
+            SpeakOutcome.REJECTED -> {
+                rejectedStreak++
+                if (rejectedStreak >= REJECTED_STOP_AFTER) {
+                    blockAutoread(REJECTED_VOICE_MESSAGE)
+                    false
+                } else {
+                    true
+                }
+            }
+        }
+    }
+
+    /**
+     * Помечает уже озвученную потоковым проходом реплику прочитанной в карте
+     * кадра: на неё должна гореть галочка, а не «читается сейчас».
+     */
+    private fun markSpokenInFrame(text: String) {
+        val key = lineKey(text)
+        _frameRegions.value = _frameRegions.value.map { region ->
+            if (lineKey(region.text) == key) {
+                region.copy(state = FrameRegion.State.DONE)
+            } else {
+                region
+            }
+        }
+    }
+
+    /**
+     * Допустим ли потоковый порядок «сверху вниз».
+     *
+     * Локальный детектор отдаёт области по координате Y, а при RTL чтении
+     * реплики одной строки идут справа налево. Озвучка на лету тогда прочла бы
+     * реплики задом наперёд, поэтому для RTL остаётся пакетный режим.
+     */
+    internal fun orderAllowsStreaming(order: String): Boolean = order != "rtl"
+
     /** Озвучка с ожиданием реального окончания фразы. */
-    private suspend fun speakAndAwait(text: String, gender: String? = null, speakerSlot: Int = 0) {
+    private suspend fun speakAndAwait(text: String, gender: String? = null, speakerSlot: Int = 0): SpeakOutcome {
         // Оба флага — MutableStateFlow: onState приходит из потока TTS, а читается
         // из этой корутины (диспетчер IO). Обычный var здесь означает гонку — цикл
         // ожидания мог бы не увидеть `started = true` и сочти фразу неозвученной.
@@ -825,21 +1079,32 @@ class AutoReadEngine(
         while (!ttsStartedOrGiveUp(started.value, System.currentTimeMillis() - start)) {
             if (job?.isActive != true) {
                 TtsSpeaker.stop()
-                return
+                return SpeakOutcome.SILENT
             }
             delay(20)
         }
         if (!started.value) {
-            logcat(LogPriority.WARN) { "TTS never started, skipping line: ${text.take(60)}" }
-            OcrHistoryStore.addAutoRead(false, "TTS не запустился", text.take(60))
-            return
+            // Причина известна: либо движка нет вовсе, либо он отказал в тексте,
+            // либо произносить было нечего. Молча пропускать реплику можно только
+            // в последнем случае.
+            val failure = TtsSpeaker.lastFailure
+            val detail = TtsSpeaker.lastFailureDetail
+            logcat(LogPriority.WARN) {
+                "TTS never started (${failure.name}${if (detail.isBlank()) "" else ": $detail"}): ${text.take(60)}"
+            }
+            OcrHistoryStore.addAutoRead(false, "TTS не запустился", "${failure.name}: ${text.take(60)}")
+            return when (failure) {
+                TtsSpeaker.SpeakFailure.NO_ENGINE -> SpeakOutcome.NO_ENGINE
+                TtsSpeaker.SpeakFailure.REJECTED -> SpeakOutcome.REJECTED
+                TtsSpeaker.SpeakFailure.NONE -> SpeakOutcome.SILENT
+            }
         }
         // Фаза 2: реплика пошла — ждём завершения по onState.
         val timeoutMs = ttsTimeoutMs(text.length, prefs.speechRate().get())
         while (!done.value && System.currentTimeMillis() - start < timeoutMs) {
             if (job?.isActive != true) {
                 TtsSpeaker.stop()
-                return
+                return SpeakOutcome.SILENT
             }
             delay(40) // быстрый опрос: между репликами нет лишней паузы
         }
@@ -849,7 +1114,13 @@ class AutoReadEngine(
                 "TTS timeout without onDone: ${text.take(60)} (waited ${System.currentTimeMillis() - start}ms)"
             }
             OcrHistoryStore.addAutoRead(false, "TTS без завершения", text.take(60))
+            // onError приходит в том же Boolean-колбэке, что и onDone, поэтому
+            // сбой посреди фразы выглядел как «озвучено». Теперь он виден.
+            if (TtsSpeaker.lastFailure == TtsSpeaker.SpeakFailure.REJECTED) {
+                return SpeakOutcome.REJECTED
+            }
         }
+        return SpeakOutcome.SPOKEN
     }
 
     /**
@@ -1322,6 +1593,25 @@ class AutoReadEngine(
          */
         internal fun ttsStartedOrGiveUp(started: Boolean, elapsedMs: Long): Boolean =
             started || elapsedMs >= TTS_START_GRACE_MS
+
+        /**
+         * Сколько подряд неозвученных реплик считается «озвучки нет».
+         *
+         * Разовый отказ ничего не значит: ремарка без звучания, пустой текст
+         * после снятия разметки, занятый другим экраном голос. Рерия из трёх —
+         * уже не совпадение.
+         */
+        internal const val REJECTED_STOP_AFTER = 3
+
+        /** Сообщение читателю, когда системного TTS-движка на устройстве нет. */
+        internal const val NO_VOICE_MESSAGE =
+            "Авточтение остановлено: на устройстве нет TTS-движка. Установите голос " +
+                "(Настройки → Озвучка) или включите сетевой голос."
+
+        /** Сообщение читателю, когда движок есть, но текст он не принимает. */
+        internal const val REJECTED_VOICE_MESSAGE =
+            "Авточтение остановлено: голос не озвучивает текст. Проверьте язык и данные " +
+                "голоса в Настройках → Озвучка."
 
         fun ttsTimeoutMs(textLength: Int, speechRate: Float): Long {
             val rate = speechRate.takeIf { it.isFinite() && it > 0f }?.coerceIn(0.5f, 2f) ?: 1f

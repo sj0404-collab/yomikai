@@ -14,6 +14,7 @@ import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import mihon.data.ocr.OcrContentType
+import mihon.data.ocr.OcrLocalMode
 import mihon.data.ocr.OcrPluginAvailability
 import mihon.data.ocr.OcrPlugins
 import mihon.domain.ocr.model.OcrModel
@@ -48,6 +49,7 @@ object SettingsOcrScreen : SearchableSettings {
 
         val contentType by prefs.contentType().collectPreferenceAsState()
         val presetRegion by prefs.presetScanRegion().collectPreferenceAsState()
+        val localMode by prefs.localMode().collectPreferenceAsState()
 
         // Экран истории (две вкладки: авточтение и сканирование) открывается
         // полноэкранным диалогом прямо из настроек.
@@ -82,6 +84,7 @@ object SettingsOcrScreen : SearchableSettings {
 
         return listOf(
             getContentTypeGroup(prefs = prefs, contentType = contentType),
+            getLocalModeGroup(prefs = prefs, localMode = localMode),
             getRegionGroup(prefs = prefs, presetRegion = presetRegion),
             getTuningGroup(prefs = prefs),
             getVocabularyGroup(onOpenVocabulary = { showVocabulary = true }),
@@ -169,6 +172,32 @@ object SettingsOcrScreen : SearchableSettings {
                 Preference.PreferenceItem.InfoPreference(
                     title = stringResource(MR.strings.pref_ocr_content_type_reading_mode)
                         .format(current.viewer.title),
+                ),
+            ),
+        )
+    }
+
+    /**
+     * Точность против скорости локального распознавания.
+     *
+     * Разделение намеренно грубое и честное: обе стороны используют одни и те же
+     * модели, отличается только число проходов. «Точно» оставляет повтор с
+     * усиленным контрастом и вторую модель, «Быстро» — один проход на реплику.
+     */
+    @Composable
+    private fun getLocalModeGroup(
+        prefs: OcrPreferences,
+        localMode: String,
+    ): Preference.PreferenceGroup {
+        val current = OcrLocalMode.fromId(localMode)
+        return Preference.PreferenceGroup(
+            title = "Скорость и точность OCR",
+            preferenceItems = listOf(
+                Preference.PreferenceItem.ListPreference(
+                    preference = prefs.localMode(),
+                    entries = OcrLocalMode.entries.associate { it.id to it.title },
+                    title = "Режим распознавания",
+                    subtitleProvider = { _, _ -> current.hint },
                 ),
             ),
         )

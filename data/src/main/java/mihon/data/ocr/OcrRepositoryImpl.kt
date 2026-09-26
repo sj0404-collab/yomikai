@@ -58,6 +58,7 @@ class OcrRepositoryImpl(
     private fun regionProfile(): OcrRegionProfile = OcrRegionProfile(
         contentType = OcrContentType.fromId(ocrPreferences.contentType().get()),
         scanRegion = presetScanRegion(),
+        localMode = OcrLocalMode.fromId(ocrPreferences.localMode().get()),
         overrides = tuningOverrides(),
     )
 
@@ -145,7 +146,7 @@ class OcrRepositoryImpl(
     }
 
     private fun selectedEngineType(): EngineType {
-        return when (ocrModelPref.get()) {
+        val engine = when (ocrModelPref.get()) {
             OcrModel.CYRILLIC -> EngineType.CYRILLIC
             OcrModel.MLKIT -> EngineType.MLKIT
             // Old offline selections migrate transparently to the Russian
@@ -159,7 +160,14 @@ class OcrRepositoryImpl(
             OcrModel.ZEN_FREE -> EngineType.ZEN_FREE
             OcrModel.TESSERACT -> EngineType.CYRILLIC
         }
+        // ML Kit несёт в APK только латинскую модель. На кириллице он не
+        // «медленно», а просто нечитаем, поэтому и как основной движок, и в
+        // цепочке фолбэка для кириллического чтения он неуместен.
+        return if (engine == EngineType.MLKIT && readsCyrillic()) EngineType.CYRILLIC else engine
     }
+
+    /** Язык чтения страницы: кириллица не переваривается латинским движком. */
+    private fun readsCyrillic(): Boolean = isCyrillicOcrLanguage(ocrPreferences.autoReadLanguage().get())
 
     private fun isConnectivityFailure(error: Throwable): Boolean {
         var current: Throwable? = error
@@ -232,7 +240,10 @@ class OcrRepositoryImpl(
                 if (isNetworkAvailable()) online + offlineEngines else offlineEngines
             }
         }
-        return chain.filter { it != primary }
+        // Латинский ML Kit в кириллической цепочке — это не фолбэк, а шум:
+        // он либо не ответит, либо прочитает русский текст латиницей.
+        val cyrillic = readsCyrillic()
+        return chain.filter { it != primary && !(cyrillic && it == EngineType.MLKIT) }
     }
 
     private fun requireEnvironment(): Environment {
@@ -407,6 +418,7 @@ class OcrRepositoryImpl(
         chapterId: Long,
         pageIndex: Int,
         image: OcrImage,
+        onPartial: ((OcrRegion) -> Unit)? = null,
     ): OcrPageResult {
         return withActiveOperation {
             val regionChoice = ocrPreferences.scanRegion().get()
@@ -443,6 +455,7 @@ class OcrRepositoryImpl(
                         pageIndex = pageIndex,
                         image = crop,
                         primary = selectedEngineType(),
+                        onPartial = onPartial,
                     )
                 } finally {
                     if (crop !== originalBitmap && !crop.isRecycled) crop.recycle()
@@ -515,6 +528,7 @@ class OcrRepositoryImpl(
         pageIndex: Int,
         image: Bitmap,
         primary: EngineType,
+        onPartial: ((OcrRegion) -> Unit)? = null,
     ): OcrPageResult {
         val fallbackEnabled = useFallbackModelsPref.get()
         val engines = if (fallbackEnabled) listOf(primary) + fallbackChain(primary) else listOf(primary)
@@ -526,7 +540,10 @@ class OcrRepositoryImpl(
             if (engine in onlineEngines && !isNetworkAvailable()) continue
             attempted = true
             try {
-                val result = scanPageByEngine(chapterId, pageIndex, image, engine)
+                // Прогресс отдаётся только тому движку, который реально работает
+                // по областям: упавший движок мог наполнить канал мусором, и
+                // авточтение прочитало бы то, что потом отбросило.
+                val result = scanPageByEngine(chapterId, pageIndex, image, engine, onPartial)
                 val usable = result.withoutPromotionalRegions()
                 if (usable.regions.isNotEmpty()) return usable
                 lastResult = usable
@@ -549,10 +566,11 @@ class OcrRepositoryImpl(
         pageIndex: Int,
         image: Bitmap,
         type: EngineType,
+        onPartial: ((OcrRegion) -> Unit)? = null,
     ): OcrPageResult {
         return when (type) {
-            EngineType.CYRILLIC -> scanLocally(chapterId, pageIndex, image, OcrModel.CYRILLIC, type)
-            EngineType.MLKIT -> scanWithMlKit(chapterId, pageIndex, image, OcrModel.MLKIT)
+            EngineType.CYRILLIC -> scanLocally(chapterId, pageIndex, image, OcrModel.CYRILLIC, type, onPartial)
+            EngineType.MLKIT -> scanWithMlKit(chapterId, pageIndex, image, OcrModel.MLKIT, onPartial)
             EngineType.GLENS -> scanWithGlens(chapterId, pageIndex, image, OcrModel.GLENS)
             EngineType.OWOCR -> scanWithOwOcr(chapterId, pageIndex, image, OcrModel.OWOCR)
             EngineType.ZEN_FREE -> scanWithZenFree(chapterId, pageIndex, image)
@@ -561,7 +579,7 @@ class OcrRepositoryImpl(
             -> scanWithTextEngine(chapterId, pageIndex, image, type)
             EngineType.LEGACY,
             EngineType.FAST,
-            -> scanLocally(chapterId, pageIndex, image, OcrModel.CYRILLIC, EngineType.CYRILLIC)
+            -> scanLocally(chapterId, pageIndex, image, OcrModel.CYRILLIC, EngineType.CYRILLIC, onPartial)
         }
     }
 
@@ -639,6 +657,7 @@ class OcrRepositoryImpl(
         pageIndex: Int,
         image: Bitmap,
         modelKey: OcrModel,
+        onPartial: ((OcrRegion) -> Unit)? = null,
     ): OcrPageResult {
         val regions = submitTask(PrioritizedTaskQueue.Priority.NORMAL) {
             engineLocks.withTextEngineLock(EngineType.MLKIT) {
@@ -658,6 +677,9 @@ class OcrRepositoryImpl(
                 )
             }
         }
+        // Прогресс по мере готовности: движок уже вернул все области, но
+        // авточтение может начать читать их, не дожидаясь сборки страницы.
+        mapped.forEach { region -> onPartial?.invoke(region) }
 
         if (mapped.isEmpty()) {
             return OcrPageResult(
@@ -747,6 +769,7 @@ class OcrRepositoryImpl(
         image: Bitmap,
         modelKey: OcrModel,
         type: EngineType,
+        onPartial: ((OcrRegion) -> Unit)? = null,
     ): OcrPageResult {
         // Детектор областей работает на модели PP-OCRv4 из пака cyrillic_ocr
         // и даёт по региону на строку — благодаря этому тап по конкретной
@@ -786,14 +809,14 @@ class OcrRepositoryImpl(
             val regions = if (text.isBlank()) {
                 emptyList()
             } else {
-                listOf(
-                    OcrRegion(
-                        order = 0,
-                        text = text,
-                        boundingBox = OcrBoundingBox(0f, 0f, 1f, 1f),
-                        textOrientation = OcrTextOrientation.Horizontal,
-                    ),
+                val region = OcrRegion(
+                    order = 0,
+                    text = text,
+                    boundingBox = OcrBoundingBox(0f, 0f, 1f, 1f),
+                    textOrientation = OcrTextOrientation.Horizontal,
                 )
+                onPartial?.invoke(region)
+                listOf(region)
             }
             return OcrPageResult(
                 chapterId = chapterId,
@@ -805,8 +828,13 @@ class OcrRepositoryImpl(
             )
         }
 
-        val regions = usableBoxes.mapIndexedNotNull { index, box ->
-            val crop = cropBitmap(image, box) ?: return@mapIndexedNotNull null
+        val regions = mutableListOf<OcrRegion>()
+        // Области обрабатываются СТРОГО ПО ОЧЕРЕДИ, и каждая готовая реплика
+        // сразу уходит в onPartial. Раньше цикл был ленивым mapIndexedNotNull,
+        // который копил всё до конца: читатель ждал последнюю реплику страницы,
+        // чтобы услышать первую. Теперь озвучка идёт вслед за распознаванием.
+        for ((index, box) in usableBoxes.withIndex()) {
+            val crop = cropBitmap(image, box) ?: continue
             val orientation = if (
                 OcrBoxGeometry.classifyKind(0, 0, crop.width, crop.height, crop.width, crop.height) ==
                 OcrBoxGeometry.Kind.VERTICAL
@@ -815,8 +843,8 @@ class OcrRepositoryImpl(
             } else {
                 OcrTextOrientation.Horizontal
             }
-            try {
-                val text = submitTask(PrioritizedTaskQueue.Priority.NORMAL) {
+            val text = try {
+                submitTask(PrioritizedTaskQueue.Priority.NORMAL) {
                     engineLocks.withTextEngineLock(type) {
                         val engine = engineFor(type)
                         if (engine is LineOcrEngine) {
@@ -828,21 +856,20 @@ class OcrRepositoryImpl(
                         }
                     }
                 }.trim()
-                if (text.isBlank()) {
-                    null
-                } else {
-                    OcrRegion(
-                        order = index,
-                        text = text,
-                        boundingBox = box,
-                        textOrientation = orientation,
-                    )
-                }
             } finally {
                 if (!crop.isRecycled) {
                     crop.recycle()
                 }
             }
+            if (text.isBlank()) continue
+            val region = OcrRegion(
+                order = index,
+                text = text,
+                boundingBox = box,
+                textOrientation = orientation,
+            )
+            regions += region
+            onPartial?.invoke(region)
         }
 
         // Если детектор нашёл области, но каждая построчная попытка была
@@ -858,14 +885,14 @@ class OcrRepositoryImpl(
             if (text.isBlank()) {
                 emptyList()
             } else {
-                listOf(
-                    OcrRegion(
-                        order = 0,
-                        text = text,
-                        boundingBox = OcrBoundingBox(0f, 0f, 1f, 1f),
-                        textOrientation = OcrTextOrientation.Horizontal,
-                    ),
+                val region = OcrRegion(
+                    order = 0,
+                    text = text,
+                    boundingBox = OcrBoundingBox(0f, 0f, 1f, 1f),
+                    textOrientation = OcrTextOrientation.Horizontal,
                 )
+                onPartial?.invoke(region)
+                listOf(region)
             }
         }
 

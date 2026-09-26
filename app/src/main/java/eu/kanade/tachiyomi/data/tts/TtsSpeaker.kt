@@ -99,7 +99,40 @@ object TtsSpeaker {
     var isSpeaking: Boolean = false
         private set
 
+    /**
+     * Почему последняя озвучка не состоялась.
+     *
+     * Колбэк [speakAs] различает только «началось / закончилось», поэтому отказ
+     * движка и тишина после чужой озвучки выглядели одинаково — `false`. Авточтение
+     * видело «реплика не озвучена», рапортовало в журнал и всё равно листало
+     * страницу дальше: без единого слова на экране шли страницы, подсветка
+     * реплик и «прочитано». Теперь причина отказа известна явно.
+     */
+    enum class SpeakFailure {
+        /** Озвучка идёт штатно, либо произносить было нечего. */
+        NONE,
+
+        /** На устройстве нет рабочего TTS-движка: озвучивать нечем. */
+        NO_ENGINE,
+
+        /** Движок есть, но не принял текст: нет данных для языка, отказ speak(). */
+        REJECTED,
+    }
+
+    @Volatile
+    var lastFailure: SpeakFailure = SpeakFailure.NONE
+        private set
+
+    @Volatile
+    var lastFailureDetail: String = ""
+        private set
+
     private var onStateChange: ((Boolean) -> Unit)? = null
+
+    private fun markFailure(failure: SpeakFailure, detail: String = "") {
+        lastFailure = failure
+        lastFailureDetail = detail
+    }
 
     private fun prefs(): OcrPreferences = Injekt.get()
 
@@ -428,6 +461,9 @@ object TtsSpeaker {
     ) {
         stop()
         onStateChange = onState
+        // Сброс причины отказа на каждую попытку: иначе авточтение видело бы
+        // старую неудачу и останавливалось на заведомо рабочем движке.
+        markFailure(SpeakFailure.NONE)
         // Служебная разметка ({1}{ж}, ÷) не должна попасть в синтез, даже
         // если вызывающий код забыл её снять.
         val spoken = SpeechMarkup.forSpeech(SpeechMarkup.strip(text))
@@ -483,6 +519,28 @@ object TtsSpeaker {
         onStateChange?.invoke(value)
     }
 
+    /**
+     * Сбой utterance: помечаем причину и снимаем флаг речи. Вызывается из
+     * [android.speech.tts.UtteranceProgressListener.onError], поэтому не должен
+     * бросать — обратный вызов движка оборачивать исключения нельзя.
+     */
+    private fun utteranceFailed(detail: String) {
+        markFailure(SpeakFailure.REJECTED, detail)
+        runCatching { logcat(LogPriority.WARN) { "TTS utterance failed: $detail" } }
+        setSpeaking(false)
+    }
+
+    /**
+     * Есть ли на устройстве хоть один системный TTS-движок.
+     *
+     * Быстрая проверка через PackageManager: без защёлки на `TextToSpeech`
+     * и без блокировки, поэтому годится для предварительной проверки перед
+     * авточтением. Пустой список означает ровно одно: системным голосом
+     * озвучить нечего, и читать дальше бессмысленно.
+     */
+    fun systemEngineInstalled(context: Context): Boolean =
+        eu.kanade.tachiyomi.data.voice.VoicePlugins.installedSystemEngines(context).isNotEmpty()
+
     // region SYSTEM
 
     private fun speakSystem(
@@ -524,6 +582,14 @@ object TtsSpeaker {
             )?.ifBlank { null }
         ensureSystem(context, forcedPkg) { engine ->
             if (engine == null) {
+                // Движок не поднялся: onInit вернул не SUCCESS, конструктор
+                // бросил исключение на удалённом/невалидном пакете или движок
+                // завис в полуинициализированном состоянии. Дальше озвучивать
+                // нечем — вызывающий обязан это показать, а не листать страницы.
+                markFailure(
+                    SpeakFailure.NO_ENGINE,
+                    "TTS-движок не инициализирован: ${systemEnginePkg ?: "движок по умолчанию"}",
+                )
                 setSpeaking(false)
                 return@ensureSystem
             }
@@ -668,9 +734,13 @@ object TtsSpeaker {
                 override fun onDone(utteranceId: String?) {
                     if (utteranceId == lastId) setSpeaking(false)
                 }
+                // onError идёт в том же Boolean-колбэке, что и onDone, поэтому
+                // сбой посреди фразы выглядел как успех: в журнал попадало
+                // «озвучено», а голоса не было. Причину отказа помечаем явно.
                 @Deprecated("Deprecated in Java")
-                override fun onError(utteranceId: String?) = setSpeaking(false)
-                override fun onError(utteranceId: String?, errorCode: Int) = setSpeaking(false)
+                override fun onError(utteranceId: String?) = utteranceFailed("движок прервал озвучку")
+                override fun onError(utteranceId: String?, errorCode: Int) =
+                    utteranceFailed("движок вернул ошибку $errorCode")
             })
             val baseRate = (p.speechRate().get() * presetAge.rate * roleRate).coerceIn(0.5f, 2f)
             // Тон по полу: если для пола не нашлось ОТДЕЛЬНОГО голоса,
@@ -740,7 +810,10 @@ object TtsSpeaker {
                     engine.playSilentUtterance(pauseMs, TextToSpeech.QUEUE_ADD, "yk_p$i")
                 }
             }
-            if (!queued) setSpeaking(false)
+            if (!queued) {
+                markFailure(SpeakFailure.REJECTED, "движок не принял ни одной фразы")
+                setSpeaking(false)
+            }
         }
     }
 
