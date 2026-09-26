@@ -46,4 +46,13 @@ class OcrEvalMetricsTest {
     fun `whitespace never becomes an error`() {
         OcrEvalMetrics.normalize("  Два   слова\n\tи перенос  ") shouldBe "два слова и перенос"
     }
+
+    @Test
+    fun `punctuation between words leaves a single space`() {
+        // Регрессия: пунктуация схлопывалась как «удалить символ», и «Да» —
+        // слышу» превращалось в «да  слышу» с двумя пробелами. Лишний пробел
+        // не выглядит ошибкой, но CER считал её и показывал 11% вместо 0.
+        OcrEvalMetrics.normalize("«Да» — слышу.") shouldBe "да слышу"
+        OcrEvalMetrics.normalize("Съешь. Ещё! Мягких?") shouldBe "съешь ещё мягких"
+    }
 }
