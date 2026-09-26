@@ -156,15 +156,15 @@ class VoicePluginsTest {
         val engine = { id: String, online: Boolean ->
             VoicePlugins.resolveSpeakEngine(engineId = id, phoneOnly = true, online = online)
         }
-        engine("google_web", online = true) shouldBe TtsSpeaker.ENGINE_GOOGLE_WEB
-        engine("edge_tts", online = true) shouldBe TtsSpeaker.ENGINE_EDGE_TTS
-        engine("eleven_api", online = true) shouldBe TtsSpeaker.ENGINE_ELEVENLABS
+        engine("google_web", true) shouldBe TtsSpeaker.ENGINE_GOOGLE_WEB
+        engine("edge_tts", true) shouldBe TtsSpeaker.ENGINE_EDGE_TTS
+        engine("eleven_api", true) shouldBe TtsSpeaker.ENGINE_ELEVENLABS
         // Без сети сетевой движок всё равно недоступен — читаем системным.
-        engine("edge_tts", online = false) shouldBe TtsSpeaker.ENGINE_SYSTEM
+        engine("edge_tts", false) shouldBe TtsSpeaker.ENGINE_SYSTEM
         // Автовыбор и системный движок телефонного режима не трогаем.
-        engine("auto", online = true) shouldBe TtsSpeaker.ENGINE_SYSTEM
-        engine("system_tts", online = true) shouldBe TtsSpeaker.ENGINE_SYSTEM
-        engine("onnx", online = true) shouldBe TtsSpeaker.ENGINE_SYSTEM
+        engine("auto", true) shouldBe TtsSpeaker.ENGINE_SYSTEM
+        engine("system_tts", true) shouldBe TtsSpeaker.ENGINE_SYSTEM
+        engine("onnx", true) shouldBe TtsSpeaker.ENGINE_SYSTEM
     }
 
     @Test
