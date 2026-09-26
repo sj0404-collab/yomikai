@@ -61,8 +61,10 @@ import kotlinx.coroutines.withTimeout
 import logcat.LogPriority
 import mihon.domain.ocr.exception.OcrException
 import mihon.domain.ocr.interactor.OcrProcessor
+import mihon.domain.ocr.model.OcrModel
 import mihon.domain.ocr.model.flattenOcrTextForQuery
 import mihon.domain.ocr.repository.OcrRepository
+import mihon.domain.ocr.service.OcrPreferences
 import mihon.domain.panel.repository.PanelDetectionRepository
 import tachiyomi.core.common.preference.toggle
 import tachiyomi.core.common.util.lang.launchIO
@@ -945,7 +947,7 @@ class ReaderViewModel @JvmOverloads constructor(
      * Хранится в настройках как "left,top,right,bottom".
      */
     fun rememberOcrRegion(box: mihon.domain.ocr.model.OcrBoundingBox) {
-        val prefs = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+        val prefs = uy.kohesive.injekt.Injekt.get<OcrPreferences>()
         prefs.rememberedScanRegion().set(
             listOf(box.left, box.top, box.right, box.bottom).joinToString(","),
         )
@@ -998,6 +1000,7 @@ class ReaderViewModel @JvmOverloads constructor(
                         showOcrResult(
                             queryText = queryText,
                             origin = OcrResultOrigin.ManualSelection,
+                            engineLabel = ocrEngineLabel(),
                         )
                         mutableState.update { it.copy(isProcessingOcr = false) }
                     } else {
@@ -1116,9 +1119,34 @@ class ReaderViewModel @JvmOverloads constructor(
         queryText: String,
         origin: OcrResultOrigin,
         initialSearchText: String = queryText,
+        engineLabel: String = "",
     ) {
         mutableState.update {
-            it.copy(dialog = Dialog.OcrResult(queryText, origin, initialSearchText))
+            it.copy(dialog = Dialog.OcrResult(queryText, origin, initialSearchText, engineLabel))
+        }
+    }
+
+    /**
+     * Человеческое имя выбранного движка OCR — для подписи в окне результата.
+     *
+     * Показываем именно ВЫБРАННЫЙ движок, а не последний сработавший: при
+     * недоступной сети репозиторий молча уходит в резервную цепочку, и
+     * подпись «локальный» была бы враньём. Поэтому здесь только то, что
+     * читатель выбрал сам.
+     */
+    fun ocrEngineLabel(): String {
+        val model = Injekt.get<OcrPreferences>().ocrModel().get()
+        return when (model) {
+            OcrModel.CYRILLIC -> "PP-OCR локально"
+            OcrModel.LEGACY -> "OCR локально (медленно)"
+            OcrModel.FAST -> "OCR локально (быстро)"
+            OcrModel.MLKIT -> "ML Kit"
+            OcrModel.GLENS -> "Glens OCR"
+            OcrModel.OWOCR -> "OwOcr"
+            OcrModel.OPENROUTER -> "OpenRouter (онлайн)"
+            OcrModel.GOOGLE -> "Google OCR (онлайн)"
+            OcrModel.ZEN_FREE -> "Zen Free (онлайн)"
+            OcrModel.TESSERACT -> "Tesseract"
         }
     }
 
@@ -1293,6 +1321,13 @@ class ReaderViewModel @JvmOverloads constructor(
             val queryText: String,
             val origin: OcrResultOrigin,
             val initialSearchText: String,
+            /**
+             * Кто именно распознал текст. Читатель вручную выбирает области и
+             * видит, что качество зависит от размера выделения, но не понимает,
+             * какой движок это сделал — при локальном и онлайновом OCR разница
+             * в потере слов была неочевидной. Пустая строка — источник неизвестен.
+             */
+            val engineLabel: String = "",
         ) : Dialog
     }
 

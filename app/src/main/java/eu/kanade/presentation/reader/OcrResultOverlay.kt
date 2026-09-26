@@ -33,6 +33,12 @@ fun OcrResultOverlay(
     dimBackground: Boolean,
     queryText: String,
     initialSearchText: String = queryText,
+    /**
+     * Подпись «кто распознал»: при ручном выборе областей качество сильно
+     * зависит от движка, и без подписи непонятно, почему один и тот же
+     * фрагмент читается то лучше, то хуже. Пустая строка — не показываем.
+     */
+    engineLabel: String = "",
     anchorRect: RectF?,
     onCopyText: () -> Unit,
     searchState: DictionarySearchScreenModel.State,
@@ -69,6 +75,7 @@ fun OcrResultOverlay(
             noDictionaries -> {
                 OcrPlainTextCard(
                     text = queryText,
+                    engineLabel = engineLabel,
                     onDismissRequest = onDismissRequest,
                     onCopyText = onCopyText,
                     onSpeak = onSpeak,
@@ -112,6 +119,7 @@ fun OcrResultOverlay(
 @Composable
 private fun OcrPlainTextCard(
     text: String,
+    engineLabel: String,
     onCopyText: () -> Unit,
     onDismissRequest: () -> Unit,
     onSpeak: () -> Unit = {},
@@ -135,6 +143,16 @@ private fun OcrPlainTextCard(
             androidx.compose.foundation.layout.Column(
                 modifier = Modifier.padding(16.dp),
             ) {
+                if (engineLabel.isNotBlank()) {
+                    androidx.compose.material3.Text(
+                        text = "Распознано: $engineLabel",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    androidx.compose.foundation.layout.Spacer(
+                        modifier = Modifier.height(6.dp),
+                    )
+                }
                 androidx.compose.material3.Text(
                     text = text,
                     style = MaterialTheme.typography.bodyLarge,
