@@ -609,8 +609,11 @@ internal class CyrillicOcrEngine(
             minInkRatio = minInk,
             maxGapFactor = tuning().lineSplitMaxGapFactor,
             minBandHeight = max(2, round(h * minInk * 0.5f).toInt()),
+            // Две строки подряд дёшево прочитать целиком, и риск разрезать
+            // глифы не стоит лишнего прохода. Режем колонки от трёх строк.
+            minBands = 3,
         ).filter { it.count() * 3 >= h / 2 }
-        return bands.takeIf { it.size >= 3 }
+        return bands.takeIf { it.isNotEmpty() }
     }
 
     /** Вырезает полосу строки с вертикальным запасом, чтобы не срезать край глифа. */
@@ -1466,6 +1469,7 @@ internal fun ocrLineBands(
     minInkRatio: Float,
     maxGapFactor: Float,
     minBandHeight: Int,
+    minBands: Int = 2,
 ): List<IntRange> {
     if (rowInk.size < 2) return emptyList()
     val on = rowInk.mapIndexed { index, ink -> index to ink }.filter { it.second > minInkRatio }
@@ -1491,6 +1495,8 @@ internal fun ocrLineBands(
     val referenceHeight = heights[heights.size / 2]
     if (referenceHeight < minBandHeight) return emptyList()
 
+    // Зазор меньше трети высоты строки — это межстрочный интервал, а не
+    // граница строк: полосы разных строк сливаются в одну.
     val maxGap = max(1, round(referenceHeight * maxGapFactor).toInt())
     val merged = mutableListOf<IntRange>()
     for (run in runs) {
@@ -1501,7 +1507,7 @@ internal fun ocrLineBands(
             merged += run
         }
     }
-    if (merged.size < 2) return emptyList()
     // Слишком низкие полосы — это ореолы рамки и остатки букв, а не строки.
-    return merged.filter { it.count() >= minBandHeight }
+    val bands = merged.filter { it.count() >= minBandHeight }
+    return bands.takeIf { it.size >= minBands } ?: emptyList()
 }
