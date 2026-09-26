@@ -97,6 +97,47 @@ object VoiceHelper {
     }
 
     /**
+     * Все голоса движка БЕЗ языкового фильтра.
+     *
+     * Нужно там, где жёсткий фильтр по языку оставляет пустой список: часть
+     * OEM-движков не отдаёт ru-голоса, пока не докачан языковой пакет, и
+     * `voicesFor(tts, "ru")` возвращает пусто при заведомо рабочем движке —
+     * список в настройках выглядел пустым, а приложение требовало «установите
+     * TTS-движок». [voicesFor] намеренно не меняется: он остаётся точным
+     * выбором языка, а откат делает вызывающий UI.
+     */
+    fun allVoices(tts: TextToSpeech?, enginePackage: String? = null): List<Voice> {
+        val engine = tts ?: return emptyList()
+        val packageName = enginePackage?.takeIf { it.isNotBlank() }
+            ?: runCatching { engine.defaultEngine }.getOrNull()
+        val fromEngine = try {
+            engine.voices.orEmpty()
+        } catch (e: Exception) {
+            logcat(LogPriority.WARN, e) { "voices() failed" }
+            emptySet()
+        }.filterNot { voice ->
+            blacklist.any { blocked -> voice.name.equals(blocked, true) }
+        }
+        val isRhVoice = packageName.orEmpty().contains("rhvoice", ignoreCase = true)
+        if (!isRhVoice) return fromEngine.sortedBy { it.name }
+        // У RHVoice getVoices() часто пуст — доузнаём каталоги вручную.
+        val probed = installedRhVoices(engine, "ru") +
+            installedRhVoices(engine, "en") +
+            installedRhVoices(engine, "uk")
+        return (fromEngine + probed)
+            .distinctBy { it.name.lowercase(Locale.US) }
+            .sortedBy { it.name }
+    }
+
+    /** Языки, реально представленные в списке голосов (для переключателя). */
+    fun languagesIn(voices: List<Voice>): List<String> =
+        voices.asSequence()
+            .mapNotNull { it.locale?.language?.lowercase(Locale.US)?.takeIf(String::isNotBlank) }
+            .distinct()
+            .sorted()
+            .toList()
+
+    /**
      * Голоса для языка [language] (ISO-639-1). Handles ISO-2/ISO-3 locale
      * differences, lazy engines and an RHVoice-specific OEM fallback.
      */
