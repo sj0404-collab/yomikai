@@ -149,9 +149,18 @@ object AiWorkspace {
         }
     }
 
-    fun newImageFile(context: Context, hint: String): File {
+    /**
+     * @param subdir подпапка внутри `images/` — пакетная генерация раскладывает
+     *   кадры по папкам, иначе десяток картинок лежал бы вперемешку.
+     */
+    fun newImageFile(context: Context, hint: String, subdir: String = ""): File {
         val safe = sanitize(hint).take(40).ifBlank { "image" }
-        return File(File(root(context), "images"), "${safe}_${System.currentTimeMillis() % 100000}.jpg")
+        val imagesDir = File(root(context), "images")
+        val dir = if (subdir.isBlank()) imagesDir else File(imagesDir, sanitize(subdir))
+        dir.mkdirs()
+        // Хвост времени нужен: в пакете промпты часто одинаковые, и без него
+        // кадры затирали друг друга.
+        return File(dir, "${safe}_${System.currentTimeMillis() % 1_000_000}.jpg")
     }
 
     /** Копия вложения пользователя в workspace/inbox; `null`, если запись не удалась. */

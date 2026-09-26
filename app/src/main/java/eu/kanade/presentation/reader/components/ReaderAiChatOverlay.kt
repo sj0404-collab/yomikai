@@ -725,9 +725,14 @@ private fun sendMessage(
         } else {
             reply.text
         }
-        val files = (reply.toolResults.mapNotNull { it.fileProduced } + reply.images)
-            .distinct()
+        // Пакетная генерация отдаёт несколько файлов одним вызовом: показываем
+        // их все отдельными карточками, иначе читатель увидит одну картинку из
+        // десяти и решит, что остальные не сделаны.
+        val produced = reply.toolResults.flatMap { listOfNotNull(it.fileProduced) + it.extraFiles }
+        val files = (produced + reply.images)
+            .distinctBy { it.absolutePath }
             .mapNotNull { eu.kanade.tachiyomi.data.ai.AiWorkspace.relPathOrNull(context, it) }
+            .distinct()
         AiHistoryManager.append(
             context = context,
             history = history,
@@ -748,6 +753,9 @@ private fun sendMessage(
                         if (produced != null) {
                             append(" · ").append(produced.name).append(' ')
                             append(produced.length() / 1024).append(" КБ")
+                        }
+                        if (tr.extraFiles.isNotEmpty()) {
+                            append(" · ещё ").append(tr.extraFiles.size)
                         }
                     }
                 },
