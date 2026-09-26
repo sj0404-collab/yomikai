@@ -323,10 +323,14 @@ object VoicePlugins {
      */
     internal fun resolveSpeakEngine(engineId: String?, phoneOnly: Boolean, online: Boolean): String {
         val explicitOnline = isOnlineEngineId(engineId)
-        val resolved = when (engineId) {
-            TtsSpeaker.ENGINE_AUTO -> if (online) TtsSpeaker.ENGINE_GOOGLE_WEB else TtsSpeaker.ENGINE_SYSTEM
-            in ONLINE_ENGINE_IDS -> if (online) engineId!! else TtsSpeaker.ENGINE_SYSTEM
-            else -> engineId
+        val resolved = when {
+            // Неизвестный или пустой id — читаем системным голосом. Раньше
+            // мусорный id уходил в TtsSpeaker как есть, и тот искал голос
+            // несуществующего движка вместо того, чтобы просто заговорить.
+            engineId == null -> TtsSpeaker.ENGINE_SYSTEM
+            engineId == TtsSpeaker.ENGINE_AUTO -> if (online) TtsSpeaker.ENGINE_GOOGLE_WEB else TtsSpeaker.ENGINE_SYSTEM
+            explicitOnline -> if (online) engineId else TtsSpeaker.ENGINE_SYSTEM
+            else -> byId(engineId)?.id ?: TtsSpeaker.ENGINE_SYSTEM
         }
         return if (phoneOnly && !explicitOnline) TtsSpeaker.ENGINE_SYSTEM else resolved
     }
