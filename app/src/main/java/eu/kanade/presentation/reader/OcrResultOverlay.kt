@@ -15,7 +15,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.res.stringResource
+import tachiyomi.presentation.core.i18n.stringResource
 import eu.kanade.domain.dictionary.OcrResultPresentation
 import eu.kanade.tachiyomi.ui.dictionary.DictionarySearchScreenModel
 import mihon.domain.dictionary.model.DictionaryTerm
