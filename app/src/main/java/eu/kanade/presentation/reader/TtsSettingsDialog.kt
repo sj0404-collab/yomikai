@@ -152,7 +152,9 @@ fun TtsSettingsDialog(
             allVoiceChoices.isEmpty() -> emptyList()
             // "" — показать все языки: включается автоматически, если ru не найден.
             voiceLang.isBlank() -> allVoiceChoices
-            else -> allVoiceChoices.filter { it.lang == voiceLang }
+            // Записи движков без языка (голос по умолчанию) показываем всегда:
+            // иначе при фильтре «ru» список снова становился пустым.
+            else -> allVoiceChoices.filter { it.lang.isBlank() || it.lang == voiceLang }
         }
     }
     var showAddSlot by remember { mutableStateOf(false) }
@@ -222,65 +224,80 @@ fun TtsSettingsDialog(
 
     androidx.compose.runtime.LaunchedEffect(probe, probeInitStatus, systemEnginePkg) {
         val activeProbe = probe
-        if (probeInitStatus != TextToSpeech.SUCCESS || activeProbe == null) {
-            sysReady = probeInitStatus != Int.MIN_VALUE
-            return@LaunchedEffect
-        }
-        sysReady = false
+        val probeOk = probeInitStatus == TextToSpeech.SUCCESS && activeProbe != null
         val helper = eu.kanade.tachiyomi.data.tts.VoiceHelper
-        helper.prepareForLanguage(activeProbe, "ru")
-        // ru-голоса могут не отдаться, пока не докачан языковой пакет. Движок при
-        // этом установлен и работает, поэтому берём ВСЕ его голоса и показываем
-        // те, что реально есть, вместо требования «установите TTS-движок».
-        // Повторяем опрос: часть движков публикует голоса с задержкой.
-        var fromDefault = emptyList<android.speech.tts.Voice>()
-        for (attempt in 0 until 6) {
-            fromDefault = helper.allVoices(activeProbe, systemEnginePkg)
-            if (fromDefault.isNotEmpty()) break
-            kotlinx.coroutines.delay(250L + attempt * 150L)
-        }
         val choices = mutableListOf<VoiceChoice>()
-        choices += fromDefault
-            .sortedWith(
-                compareBy(
-                    {
-                        when (helper.classify(it)) {
-                            eu.kanade.tachiyomi.data.tts.VoiceKind.FEMALE -> 0
-                            eu.kanade.tachiyomi.data.tts.VoiceKind.MALE -> 1
-                            eu.kanade.tachiyomi.data.tts.VoiceKind.TEEN -> 2
-                            else -> 3
-                        }
-                    },
-                    { it.isNetworkConnectionRequired },
-                    { it.name },
-                ),
-            )
-            .map { voice ->
-                val kind = when (helper.classify(voice)) {
-                    eu.kanade.tachiyomi.data.tts.VoiceKind.FEMALE -> "♀ Женский"
-                    eu.kanade.tachiyomi.data.tts.VoiceKind.MALE -> "♂ Мужской"
-                    eu.kanade.tachiyomi.data.tts.VoiceKind.TEEN -> "👦 Подросток"
-                    else -> "Другой"
-                }
-                VoiceChoice(
-                    key = voice.name,
-                    label = "$kind • ${voice.name.substringAfterLast(':')}",
-                    lang = voice.locale?.language?.lowercase(java.util.Locale.US).orEmpty(),
-                    local = !voice.isNetworkConnectionRequired,
-                )
-            }
 
-        // v1.9.39: голоса ВСЕХ установленных движков (RHVoice и др.), а не только
-        // движка по умолчанию: каждый движок инициализируется явно своим пакетом.
-        for ((pkg, label) in eu.kanade.tachiyomi.data.tts.TtsSpeaker.installedEngines(context)) {
+        // Раньше перебор возвращался сразу, если движок по умолчанию не
+        // инициализировался, и НЕ ОПИСЫВАЛ остальные установленные движки
+        // вообще. На части прошивок (в том числе на Itel) дефолтный движок
+        // не отвечает, и читатель видел пустой список — то есть выбрать
+        // локальный движок было нечем, оставался только онлайн. Поэтому
+        // перебираем установленные движки ВСЕГДА, а дефолтный — если он готов.
+        var fromDefault = emptyList<android.speech.tts.Voice>()
+        // Локальная копия без null: составное условие не даёт smart cast.
+        val readyProbe = activeProbe.takeIf { probeOk }
+        if (readyProbe != null) {
+            sysReady = false
+            helper.prepareForLanguage(readyProbe, "ru")
+            // ru-голоса могут не отдаться, пока не докачан языковой пакет. Движок
+            // при этом установлен и работает, поэтому берём ВСЕ его голоса и
+            // показываем те, что реально есть. Повторяем опрос: часть движков
+            // публикует голоса с задержкой.
+            for (attempt in 0 until 6) {
+                fromDefault = helper.allVoices(readyProbe, systemEnginePkg)
+                if (fromDefault.isNotEmpty()) break
+                kotlinx.coroutines.delay(250L + attempt * 150L)
+            }
+            choices += fromDefault
+                .sortedWith(
+                    compareBy(
+                        {
+                            when (helper.classify(it)) {
+                                eu.kanade.tachiyomi.data.tts.VoiceKind.FEMALE -> 0
+                                eu.kanade.tachiyomi.data.tts.VoiceKind.MALE -> 1
+                                eu.kanade.tachiyomi.data.tts.VoiceKind.TEEN -> 2
+                                else -> 3
+                            }
+                        },
+                        { it.isNetworkConnectionRequired },
+                        { it.name },
+                    ),
+                )
+                .map { voice ->
+                    val kind = when (helper.classify(voice)) {
+                        eu.kanade.tachiyomi.data.tts.VoiceKind.FEMALE -> "♀ Женский"
+                        eu.kanade.tachiyomi.data.tts.VoiceKind.MALE -> "♂ Мужской"
+                        eu.kanade.tachiyomi.data.tts.VoiceKind.TEEN -> "👦 Подросток"
+                        else -> "Другой"
+                    }
+                    VoiceChoice(
+                        key = voice.name,
+                        label = "$kind • ${voice.name.substringAfterLast(':')}",
+                        lang = voice.locale?.language?.lowercase(java.util.Locale.US).orEmpty(),
+                        local = !voice.isNetworkConnectionRequired,
+                    )
+                }
+        } else {
+            sysReady = false
+        }
+
+        // Голоса ВСЕХ установленных движков (RHVoice и др.), а не только движка
+        // по умолчанию: каждый движок инициализируется явно своим пакетом.
+        val installed = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            eu.kanade.tachiyomi.data.tts.TtsSpeaker.installedEngines(context)
+        }
+        for ((pkg, label) in installed) {
             val isDefault = pkg == systemEnginePkg ||
-                (systemEnginePkg.isBlank() && pkg == runCatching { activeProbe.defaultEngine }.getOrDefault(""))
+                (systemEnginePkg.isBlank() && pkg == runCatching { readyProbe?.defaultEngine }.getOrDefault(""))
             if (isDefault) continue
             val eng = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 val latch = java.util.concurrent.CountDownLatch(1)
                 var tts: TextToSpeech? = null
                 tts = TextToSpeech(context.applicationContext, { latch.countDown() }, pkg)
-                latch.await(3, java.util.concurrent.TimeUnit.SECONDS)
+                // 3 секунды на инициализацию движка не хватало на части
+                // прошивок: движок успевал отдать пустой getVoices().
+                latch.await(6, java.util.concurrent.TimeUnit.SECONDS)
                 tts
             }
             val vs = helper.allVoices(eng, pkg)
@@ -295,6 +312,24 @@ fun TtsSettingsDialog(
                     ),
                 )
             }
+            if (vs.isEmpty()) {
+                // Голоса движок не перечислил ( OEM-пустой getVoices() ), но сам
+                // он установлен и speak() через него работает. Без такой записи
+                // выбрать локальный движок было невозможно вообще. Спецификация
+                // с пустым именем голоса оставляет движку его голос по умолчанию.
+                choices.add(
+                    VoiceChoice(
+                        key = "$pkg::",
+                        label = "$label • голос по умолчанию",
+                        lang = "",
+                        local = true,
+                    ),
+                )
+            }
+        }
+        if (installed.isEmpty() && choices.isEmpty()) {
+            // Ни одного движка: сообщаем честно, что телефон их не видит.
+            sysReady = false
         }
         val distinct = choices.distinctBy { it.key }
         allVoiceChoices = distinct
@@ -311,7 +346,7 @@ fun TtsSettingsDialog(
         if (selectedVoice.isBlank() || selectedVoice !in names) {
             eu.kanade.tachiyomi.data.tts.VoiceHelper
                 .pick(
-                    activeProbe,
+                    readyProbe,
                     eu.kanade.tachiyomi.data.tts.VoiceKind.FEMALE,
                     null,
                     systemEnginePkg,
@@ -321,7 +356,7 @@ fun TtsSettingsDialog(
         if (voiceFemale.isBlank() || voiceFemale !in names) {
             eu.kanade.tachiyomi.data.tts.VoiceHelper
                 .pick(
-                    activeProbe,
+                    readyProbe,
                     eu.kanade.tachiyomi.data.tts.VoiceKind.FEMALE,
                     null,
                     systemEnginePkg,
@@ -331,7 +366,7 @@ fun TtsSettingsDialog(
         if (voiceMale.isBlank() || voiceMale !in names) {
             eu.kanade.tachiyomi.data.tts.VoiceHelper
                 .pick(
-                    activeProbe,
+                    readyProbe,
                     eu.kanade.tachiyomi.data.tts.VoiceKind.MALE,
                     null,
                     systemEnginePkg,
