@@ -455,7 +455,7 @@ object AiAgent {
         // Кнопки-варианты: [[Вариант]] по одной на строку в конце ответа
         val choices = parseChoices(cleanText)
         if (choices.isNotEmpty()) cleanText = stripChoices(cleanText)
-        cleanText = cleanText.ifBlank { "Готово. Результаты — в карточках инструментов ниже и в workspace." }
+        cleanText = cleanText.ifBlank { silentModelSummary(results) }
         AgentReply(
             cleanText, results, images,
             reasoning = reasoning, model = usedModel,
@@ -577,9 +577,39 @@ object AiAgent {
         return out
     }
 
-    /** Убирает из видимого текста все формы tool-вызовов (строчные и XML). */
     /**
-     * Убирает незакрытые вызовы инструментов целиком.
+     * Что сказать, когда модель вернула только вызовы инструментов, а текста
+     * не осталось (после [stripToolSyntax] он пустой).
+     *
+     * Раньше здесь была постоянная фраза «Готово. Результаты — в карточках
+     * инструментов ниже и в workspace»: она звучала одинаково и когда всё
+     * сделано, и когда не выполнено ни одного инструмента. Пользователь
+     * видел «всё отправлено», хотя в workspace было пусто, а вкладки не
+     * существовало. Теперь текст собирается из фактического состояния:
+     * сколько инструментов выполнено, какие из них с ошибкой, есть ли файлы.
+     */
+    internal fun silentModelSummary(results: List<ToolResult>): String {
+        if (results.isEmpty()) {
+            return "Модель не вернула текст и не вызвала ни одного инструмента — " +
+                "ничего не выполнено и не изменено."
+        }
+        val failed = results.count { it.status == "error" }
+        val files = results.mapNotNull { it.fileProduced?.name }.filter { it.isNotBlank() }
+        return buildString {
+            append("Модель не вернула текст. Выполнено инструментов: ")
+            append(results.size)
+            if (failed > 0) append(", из них с ошибкой: ").append(failed)
+            append('.')
+            if (files.isNotEmpty()) {
+                append("\nФайлы: ").append(files.joinToString(", ")).append('.')
+            } else {
+                append("\nФайлов не создано.")
+            }
+            append("\nПодробности — в карточках инструментов ниже.")
+        }
+    }
+
+    /** Убирает незакрытые вызовы инструментов целиком.
      *
      * Список известных имён не спасал: действия читалки (`see_page`,
      * `page_count`) знакомыми не считаются — они аргументы `reader_do`. А
@@ -599,7 +629,13 @@ object AiAgent {
                 if (depth <= 0) skipping = false
                 continue
             }
-            val isToolStart = t.startsWith("@tool") || (t.startsWith("@") && t.contains(Regex("\\w+\\s*[\\{\\s]")))
+            // Строка — вызов инструмента только если после @имя идёт форма
+            // аргументов: `{` (JSON) или `=` (arg-синтаксис). Раньше здесь
+            // стояло «@имя + любой пробел», и обычная фраза модели вида
+            // «@workspace всё отправлено» целиком удалялась — ответ
+            // выглядел пустым, а приложение подставляло «Готово».
+            val isToolStart = t.startsWith("@tool") ||
+                (t.startsWith("@") && Regex("^@\\w+\\s*[\\{=]").containsMatchIn(t))
             if (isToolStart) {
                 depth = t.count { it == '{' } - t.count { it == '}' }
                 // Незакрытый вызов: снимаем и его хвост до баланса скобок.

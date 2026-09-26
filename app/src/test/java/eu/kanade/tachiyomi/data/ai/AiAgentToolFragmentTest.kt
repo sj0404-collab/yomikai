@@ -57,4 +57,22 @@ class AiAgentToolFragmentTest {
         val cleaned = AiAgent.stripToolFragments("""{"action":"turn_page","to":"next"}""")
         assertEquals("", cleaned)
     }
+
+    @Test
+    fun `prose that starts with a mention is not a tool call`() {
+        // Регрессия: считалось вызовом инструмента любое «@слово + пробел».
+        // Модель писала «@workspace всё отправлено» — строка съедалась,
+        // ответ выходил пустым, и приложение показывало «Готово», хотя в
+        // workspace ничего не было.
+        val answer = "@workspace всё отправлено\n@ivan привет"
+        assertEquals(answer, AiAgent.stripToolFragments(answer))
+    }
+
+    @Test
+    fun `mention followed by json arguments is still a tool call`() {
+        val raw = "@read_file {\"path\":\"a.md\"}\nГотово."
+        val cleaned = AiAgent.stripToolFragments(raw)
+        assertFalse(cleaned.contains("read_file"))
+        assertTrue(cleaned.contains("Готово."))
+    }
 }
