@@ -1213,7 +1213,7 @@ class ReaderActivity : BaseActivity() {
                             dimBackground = dimOcrBackground,
                             queryText = dialog.queryText,
                             initialSearchText = dialog.initialSearchText,
-                            engineLabel = dialog.engineLabel,
+                            source = dialog.source,
                             anchorRect = activeOcrOverlaySession?.anchorRectInDialogRoot,
                             onCopyText = {
                                 // Копируем РАСПОЗНАННЫЙ текст, а не строку поиска по
@@ -2041,7 +2041,7 @@ class ReaderActivity : BaseActivity() {
             queryText = selection.queryText,
             origin = ReaderViewModel.OcrResultOrigin.CachedPageTap,
             initialSearchText = searchTextForOffset(selection.queryText, selection.initialSelectionOffset),
-            engineLabel = viewModel.ocrEngineLabel(),
+            source = viewModel.currentOcrSource(),
         )
     }
 

@@ -99,6 +99,39 @@ class OcrRepositoryImpl(
     private var detEngine: DetOcrEngine? = null
 
     private val engineLocks = OcrEngineLocks()
+
+    /**
+     * Движок, который реально вернул последний распознанный текст.
+     *
+     * Читатель жаловался, что «у онлайн ИИ качество такое же, как у
+     * локального». Причина была в тихом фолбэке: без сети онлайн-движок
+     * пропускался, и страницу читал локальный. Теперь подпись в окне
+     * результата показывает фактического исполнителя, а не выбранного.
+     */
+    @Volatile
+    override var lastRecognizedEngine: OcrModel? = null
+        private set
+
+    private fun noteEngineUsed(type: EngineType) {
+        lastRecognizedEngine = type.toOcrModel()
+    }
+
+    /**
+     * Старые значения настройки (LEGACY/FAST) давно ведут в тот же русский
+     * движок. Отчёт показывает, что ОТРАБОТАЛО, а не что стояло в настройке
+     * три года назад.
+     */
+    private fun EngineType.toOcrModel(): OcrModel = when (this) {
+        EngineType.CYRILLIC -> OcrModel.CYRILLIC
+        EngineType.MLKIT -> OcrModel.MLKIT
+        EngineType.GLENS -> OcrModel.GLENS
+        EngineType.OWOCR -> OcrModel.OWOCR
+        EngineType.OPENROUTER -> OcrModel.OPENROUTER
+        EngineType.GOOGLE -> OcrModel.GOOGLE
+        EngineType.ZEN_FREE -> OcrModel.ZEN_FREE
+        EngineType.LEGACY, EngineType.FAST -> OcrModel.CYRILLIC
+    }
+
     private val cleanupMutex = Mutex()
     private val sessionMutex = Mutex()
     private val operationMutex = Mutex()
@@ -332,12 +365,17 @@ class OcrRepositoryImpl(
         )
     }
 
+    /**
+     * Единственное место, где движок реально отработал: отмечаем его здесь,
+     * иначе вызывающий код узнал бы только «первый, кто ответил», а это
+     * ровно то, что он и так не знает.
+     */
     private suspend fun recognizeWithEngine(type: EngineType, image: Bitmap): String {
         return engineLocks.withTextEngineLock(type) {
             // Онлайн-модели отдают текст построчно и не склеивают переносы —
             // соединяем «пере-\nносится» в «переносится» централизованно.
             OcrTextCleaner.joinLineHyphens(engineFor(type).recognizeText(image))
-        }
+        }.also { noteEngineUsed(type) }
     }
 
     private suspend fun recognizeWithFallback(primary: EngineType, image: Bitmap): String {
@@ -378,6 +416,9 @@ class OcrRepositoryImpl(
     }
 
     override suspend fun recognizeText(image: OcrImage): String {
+        // Новый вызов — новый отчёт: без сброса неудача показала бы движок
+        // ПРЕДЫДУщего распознавания.
+        lastRecognizedEngine = null
         return withActiveOperation {
             submitTask(PrioritizedTaskQueue.Priority.HIGH) {
                 image.useBitmap { bitmap ->
@@ -568,6 +609,10 @@ class OcrRepositoryImpl(
         type: EngineType,
         onPartial: ((OcrRegion) -> Unit)? = null,
     ): OcrPageResult {
+        // Страничный скан тоже идёт по резервной цепочке, поэтому и тут
+        // запоминаем фактического исполнителя: тап по готовой странице
+        // показывает подпись того движка, который её прочитал.
+        noteEngineUsed(type)
         return when (type) {
             EngineType.CYRILLIC -> scanLocally(chapterId, pageIndex, image, OcrModel.CYRILLIC, type, onPartial)
             EngineType.MLKIT -> scanWithMlKit(chapterId, pageIndex, image, OcrModel.MLKIT, onPartial)

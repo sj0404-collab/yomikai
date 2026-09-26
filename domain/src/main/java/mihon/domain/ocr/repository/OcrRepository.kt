@@ -1,11 +1,23 @@
 package mihon.domain.ocr.repository
 
 import mihon.domain.ocr.model.OcrImage
+import mihon.domain.ocr.model.OcrModel
 import mihon.domain.ocr.model.OcrPageResult
 import mihon.domain.ocr.model.OcrRegion
 
 interface OcrRepository {
     suspend fun recognizeText(image: OcrImage): String
+
+    /**
+     * Движок, который ФАКТИЧЕСКИ вернул последний распознанный текст.
+     *
+     * Нужен читателю, а не разработчику: без сети онлайн-движок молча
+     * пропускается, и страницу читает локальный. Отсюда жалоба «у онлайн
+     * качество такое же, как у локального» — на самом деле это был один и
+     * тот же движок. null означает, что до вызова ни один движок не
+     * отработал.
+     */
+    val lastRecognizedEngine: OcrModel?
 
     /**
      * Спросить у ВЫБРАННОЙ vision-модели произвольный вопрос о картинке.

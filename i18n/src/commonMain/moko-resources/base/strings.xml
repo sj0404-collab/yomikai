@@ -1242,6 +1242,8 @@
     <string name="ocr_model_tesseract">Tesseract (устаревший)</string>
     <string name="ocr_model_cyrillic">Русский Cyrillic OCR (офлайн, PP-OCR)</string>
     <string name="ocr_model_mlkit">Google ML Kit (латиница, офлайн)</string>
+    <string name="ocr_recognized_by">Распознано: %1$s</string>
+    <string name="ocr_recognized_by_fallback">Распознано: %1$s (выбранный %2$s не ответил)</string>
 
     <!-- Voice / Text-to-Speech Settings -->
     <string name="pref_category_voice">Voices &amp; Text-to-Speech</string>

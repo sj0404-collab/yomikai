@@ -62,6 +62,7 @@ import logcat.LogPriority
 import mihon.domain.ocr.exception.OcrException
 import mihon.domain.ocr.interactor.OcrProcessor
 import mihon.domain.ocr.model.OcrModel
+import mihon.domain.ocr.model.OcrTextSource
 import mihon.domain.ocr.model.flattenOcrTextForQuery
 import mihon.domain.ocr.repository.OcrRepository
 import mihon.domain.ocr.service.OcrPreferences
@@ -994,13 +995,17 @@ class ReaderViewModel @JvmOverloads constructor(
                 } finally {
                     if (work !== bitmap) work.recycle()
                 }
+                // Читаем ПОСЛЕ распознавания: без сети онлайн-движок
+                // пропускается, и текст читает локальный. Показываем
+                // фактического исполнителя, иначе «онлайн» — враньё.
+                val usedEngine = ocrProcessor.lastUsedEngine()
                 withUIContext {
                     val queryText = flattenOcrTextForQuery(text)
                     if (queryText.isNotBlank()) {
                         showOcrResult(
                             queryText = queryText,
                             origin = OcrResultOrigin.ManualSelection,
-                            engineLabel = ocrEngineLabel(),
+                            source = ocrSource(usedEngine),
                         )
                         mutableState.update { it.copy(isProcessingOcr = false) }
                     } else {
@@ -1119,36 +1124,32 @@ class ReaderViewModel @JvmOverloads constructor(
         queryText: String,
         origin: OcrResultOrigin,
         initialSearchText: String = queryText,
-        engineLabel: String = "",
+        source: OcrTextSource? = null,
     ) {
         mutableState.update {
-            it.copy(dialog = Dialog.OcrResult(queryText, origin, initialSearchText, engineLabel))
+            it.copy(dialog = Dialog.OcrResult(queryText, origin, initialSearchText, source))
         }
     }
 
     /**
-     * Человеческое имя выбранного движка OCR — для подписи в окне результата.
+     * Кто распознал текст на самом деле.
      *
-     * Показываем именно ВЫБРАННЫЙ движок, а не последний сработавший: при
-     * недоступной сети репозиторий молча уходит в резервную цепочку, и
-     * подпись «локальный» была бы враньём. Поэтому здесь только то, что
-     * читатель выбрал сам.
+     * Разница важна читателю: без сети онлайн-движок не отвечает, и страницу
+     * читает локальный. Именно это породило жалобу «у онлайн качество то же,
+     * что у локального» — движок был один и тот же. Поэтому в подписи стоит
+     * исполнитель, а когда он не совпадает с выбранным, это сказано прямо.
      */
-    fun ocrEngineLabel(): String {
-        val model = Injekt.get<OcrPreferences>().ocrModel().get()
-        return when (model) {
-            OcrModel.CYRILLIC -> "PP-OCR локально"
-            OcrModel.LEGACY -> "OCR локально (медленно)"
-            OcrModel.FAST -> "OCR локально (быстро)"
-            OcrModel.MLKIT -> "ML Kit"
-            OcrModel.GLENS -> "Glens OCR"
-            OcrModel.OWOCR -> "OwOcr"
-            OcrModel.OPENROUTER -> "OpenRouter (онлайн)"
-            OcrModel.GOOGLE -> "Google OCR (онлайн)"
-            OcrModel.ZEN_FREE -> "Zen Free (онлайн)"
-            OcrModel.TESSERACT -> "Tesseract"
-        }
+    fun ocrSource(used: OcrModel?): OcrTextSource? {
+        if (used == null) return null
+        val selected = Injekt.get<OcrPreferences>().ocrModel().get()
+        return OcrTextSource(engine = used, usedInsteadOfSelected = used != selected)
     }
+
+    /**
+     * Источник для тапа по уже распознанной странице: там движок тот, что
+     * отработал при сканировании, — читаем его из репозитория.
+     */
+    fun currentOcrSource(): OcrTextSource? = ocrSource(ocrProcessor.lastUsedEngine())
 
     fun setBrightnessOverlayValue(value: Int) {
         mutableState.update { it.copy(brightnessOverlayValue = value) }
@@ -1324,12 +1325,13 @@ class ReaderViewModel @JvmOverloads constructor(
             /**
              * Кто именно распознал текст. Читатель вручную выбирает области и
              * видит, что качество зависит от размера выделения, но не понимает,
-             * какой движок это сделал — при локальном и онлайновом OCR разница
-             * в потере слов была неочевидной. Пустая строка — источник неизвестен.
+             * какой движок это сделал. null — источник неизвестен.
              */
-            val engineLabel: String = "",
+            val source: OcrTextSource? = null,
         ) : Dialog
     }
+
+
 
     enum class OcrResultOrigin {
         CachedPageTap,

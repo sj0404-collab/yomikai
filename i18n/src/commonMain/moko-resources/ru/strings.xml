@@ -937,6 +937,8 @@
     <string name="ocr_model_google">Google AI / Gemini Vision</string>
     <string name="ocr_model_zen_free">Space Bunny Free (OpenCode Zen)</string>
     <string name="ocr_model_mlkit">Google ML Kit (латиница, офлайн)</string>
+    <string name="ocr_recognized_by">Распознано: %1$s</string>
+    <string name="ocr_recognized_by_fallback">Распознано: %1$s (выбранный %2$s не ответил)</string>
 
     <!-- Voice / Text-to-Speech Settings -->
     <string name="pref_category_voice">Голоса и Озвучка (TTS)</string>

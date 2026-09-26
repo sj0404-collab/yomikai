@@ -15,9 +15,14 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
 import eu.kanade.domain.dictionary.OcrResultPresentation
 import eu.kanade.tachiyomi.ui.dictionary.DictionarySearchScreenModel
 import mihon.domain.dictionary.model.DictionaryTerm
+import mihon.domain.ocr.model.OcrTextSource
+import mihon.feature.ocr.selectedOcrModel
+import mihon.feature.ocr.titleRes
+import tachiyomi.i18n.MR
 
 data class OcrResultPopupSettings(
     val widthDp: Int,
@@ -34,11 +39,11 @@ fun OcrResultOverlay(
     queryText: String,
     initialSearchText: String = queryText,
     /**
-     * Подпись «кто распознал»: при ручном выборе областей качество сильно
-     * зависит от движка, и без подписи непонятно, почему один и тот же
-     * фрагмент читается то лучше, то хуже. Пустая строка — не показываем.
+     * Кто распознал: при ручном выборе областей качество сильно зависит от
+     * движка, и без подписи непонятно, почему один и тот же фрагмент читается
+     * то лучше, то хуже. null — источник неизвестен, подписи нет.
      */
-    engineLabel: String = "",
+    source: OcrTextSource? = null,
     anchorRect: RectF?,
     onCopyText: () -> Unit,
     searchState: DictionarySearchScreenModel.State,
@@ -75,7 +80,7 @@ fun OcrResultOverlay(
             noDictionaries -> {
                 OcrPlainTextCard(
                     text = queryText,
-                    engineLabel = engineLabel,
+                    source = source,
                     onDismissRequest = onDismissRequest,
                     onCopyText = onCopyText,
                     onSpeak = onSpeak,
@@ -119,7 +124,7 @@ fun OcrResultOverlay(
 @Composable
 private fun OcrPlainTextCard(
     text: String,
-    engineLabel: String,
+    source: OcrTextSource?,
     onCopyText: () -> Unit,
     onDismissRequest: () -> Unit,
     onSpeak: () -> Unit = {},
@@ -143,16 +148,7 @@ private fun OcrPlainTextCard(
             androidx.compose.foundation.layout.Column(
                 modifier = Modifier.padding(16.dp),
             ) {
-                if (engineLabel.isNotBlank()) {
-                    androidx.compose.material3.Text(
-                        text = "Распознано: $engineLabel",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    androidx.compose.foundation.layout.Spacer(
-                        modifier = Modifier.height(6.dp),
-                    )
-                }
+                OcrEngineCaption(source)
                 androidx.compose.material3.Text(
                     text = text,
                     style = MaterialTheme.typography.bodyLarge,
@@ -203,4 +199,32 @@ private fun OcrPlainTextCard(
             }
         }
     }
+}
+
+/**
+ * Подпись «кто распознал» над распознанным текстом.
+ *
+ * Если текст прочитал не тот движок, который выбран в настройках (без сети
+ * онлайн пропускается и читает локальный), это сказано прямо: иначе
+ * читатель сравнивает качество двух разных движков и делает вывод, что они
+ * одинаковые.
+ */
+@Composable
+private fun OcrEngineCaption(source: OcrTextSource?) {
+    if (source == null) return
+    val engineName = stringResource(source.engine.titleRes)
+    val text = if (source.usedInsteadOfSelected) {
+        val selectedName = stringResource(selectedOcrModel().titleRes)
+        stringResource(MR.strings.ocr_recognized_by_fallback, engineName, selectedName)
+    } else {
+        stringResource(MR.strings.ocr_recognized_by, engineName)
+    }
+    androidx.compose.material3.Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    androidx.compose.foundation.layout.Spacer(
+        modifier = Modifier.height(6.dp),
+    )
 }
