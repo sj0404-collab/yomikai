@@ -613,7 +613,20 @@ internal class CyrillicOcrEngine(
             // глифы не стоит лишнего прохода. Режем колонки от трёх строк.
             minBands = 3,
         ).filter { it.count() * 3 >= h / 2 }
-        return bands.takeIf { it.isNotEmpty() }
+        if (bands.isEmpty()) return null
+        // Покрытие: читать ТОЛЬКО полосы можно лишь если они накрывают все
+        // строки с чернилами. Иначе короткий блок (два слова, мало чернил)
+        // остался бы вне полос и его текст пропал бы молча — это и было
+        // «потерялось слово» на кропе из трёх мелких или двух крупных блоков.
+        // Лучше прочитать кроп целиком: он сожмётся, но не потеряет текст.
+        val covered = BooleanArray(h)
+        bands.forEach { band ->
+            for (y in band) covered[y] = true
+        }
+        for (y in 0 until h) {
+            if (rowInk[y] > 0f && !covered[y]) return null
+        }
+        return bands
     }
 
     /** Вырезает полосу строки с вертикальным запасом, чтобы не срезать край глифа. */
@@ -1508,6 +1521,30 @@ internal fun ocrLineBands(
         }
     }
     // Слишком низкие полосы — это ореолы рамки и остатки букв, а не строки.
-    val bands = merged.filter { it.count() >= minBandHeight }
+    val strong = merged.filter { it.count() >= minBandHeight }
+    if (strong.size < minBands) return emptyList()
+
+    // Строки с малым количеством чернил (короткая реплика в два слова) не
+    // дотягивают до minInkRatio и выпадали из разбора целиком — блок текста
+    // просто исчезал из результата. Расширяем полосы до границ «любых» чернил:
+    // первую вверх, последнюю вниз, а промежуток между полосами — только если
+    // в нём реально что-то написано (пустые зазоры остаются зазорами).
+    val firstInked = rowInk.indexOfFirst { it > 0f }
+    val lastInked = rowInk.indexOfLast { it > 0f }
+    if (firstInked < 0 || lastInked <= firstInked) return emptyList()
+    val bands = strong.mapIndexed { index, band ->
+        val from = if (index == 0) firstInked else band.first
+        val to = if (index == strong.lastIndex) {
+            lastInked
+        } else {
+            val nextFirst = strong[index + 1].first
+            var edge = band.last
+            for (y in band.last + 1 until nextFirst) {
+                if (rowInk[y] > 0f) edge = y
+            }
+            edge
+        }
+        from..to
+    }
     return bands.takeIf { it.size >= minBands } ?: emptyList()
 }

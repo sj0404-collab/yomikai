@@ -1215,11 +1215,23 @@ class ReaderActivity : BaseActivity() {
                             initialSearchText = dialog.initialSearchText,
                             anchorRect = activeOcrOverlaySession?.anchorRectInDialogRoot,
                             onCopyText = {
-                                val clipboard = getSystemService<ClipboardManager>()
-                                clipboard?.setPrimaryClip(
-                                    ClipData.newPlainText(null, searchState.query),
-                                )
-                                toast(MR.strings.action_copy_to_clipboard)
+                                // Копируем РАСПОЗНАННЫЙ текст, а не строку поиска по
+                                // словарям: searchState.query пуст, пока читатель ничего
+                                // не искал, и в буфер уходила пустая строка.
+                                val text = dialog.queryText.ifBlank {
+                                    searchState.query.ifBlank {
+                                        activeOcrOverlaySession?.selection?.displayText.orEmpty()
+                                    }
+                                }
+                                if (text.isBlank()) {
+                                    toast("Нечего копировать")
+                                } else {
+                                    val clipboard = getSystemService<ClipboardManager>()
+                                    clipboard?.setPrimaryClip(
+                                        ClipData.newPlainText(null, text),
+                                    )
+                                    toast(MR.strings.action_copy_to_clipboard)
+                                }
                             },
                             searchState = searchState,
                             onQueryChange = dictionarySearchScreenModel::updateQuery,

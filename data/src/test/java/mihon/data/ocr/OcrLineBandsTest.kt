@@ -96,4 +96,43 @@ class OcrLineBandsTest {
         // Три полосы, но средняя — ореол рамки: остаётся две, и разбор отменяется.
         bands(profile(60, 4..24, 28..29, 36..56)) shouldBe emptyList()
     }
+
+    @Test
+    fun `a faint line does not disappear between strong lines`() {
+        // Реплика читателя: на кропе из трёх мелких блоков средний блок из двух
+        // слов даёт меньше чернил в строке, чем minInkRatio, и раньше выпадал
+        // из разбора целиком — текст блока терялся. Теперь промежуток с
+        // чернилами втягивается в полосу, и ни одна строка не пропадает.
+        val ink = profile(120, 4..20, 52..68, 100..116)
+        // Средняя «строка» — 40..48, чернил ниже порога, но строка не пустая.
+        for (row in 40..48) ink[row] = 0.005f
+        val found = bands(ink, minBands = 3)
+        found.size shouldBe 3
+        // Полоса доходит до последней строки с чернилами перед второй полосой.
+        found[0].first shouldBe 4
+        found[0].last shouldBe 48
+        // Сильные полосы не изменились.
+        found[1] shouldBe 52..68
+        found[2] shouldBe 100..116
+    }
+
+    @Test
+    fun `band edges reach the outermost faint ink`() {
+        // Слабые чернила сверху и снизу относятся к первой и последней полосам.
+        val ink = profile(100, 10..26, 40..56, 70..86)
+        for (row in 0..3) ink[row] = 0.004f
+        for (row in 92..95) ink[row] = 0.004f
+        val found = bands(ink, minBands = 3)
+        found.first().first shouldBe 0
+        found.last().last shouldBe 95
+    }
+
+    @Test
+    fun `blank gaps between strong lines stay gaps`() {
+        // Пустой промежуток не должен раздуваться: полосы остаются узкими,
+        // иначе соседние строки склеились бы в один кроп.
+        val found = bands(profile(140, 2..18, 31..47, 60..76, 89..105, 118..134), minBands = 3)
+        found.size shouldBe 5
+        found shouldBe listOf(2..18, 31..47, 60..76, 89..105, 118..134)
+    }
 }
