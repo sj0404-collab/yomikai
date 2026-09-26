@@ -57,6 +57,12 @@ object AiAgent {
      */
     private val ALLOWED_GITHUB_METHODS = setOf("GET", "POST", "PATCH", "PUT", "DELETE")
 
+    /**
+     * Расширения, которые мы умеем отправить vision-модели. Всё остальное
+     * (pdf, doc, архивы) — не картинка, и «посмотреть» его нечем.
+     */
+    val IMAGE_EXTENSIONS = setOf("png", "jpg", "jpeg", "webp", "gif", "bmp")
+
     data class ToolCall(val name: String, val args: JSONObject)
     data class ToolResult(
         val name: String,
@@ -145,6 +151,9 @@ object AiAgent {
             "ПАПКА WORKSPACE (сначала осмотри её, потом действуй — не выдумывай имена файлов):\n" +
             "@tool workspace_list {\"path\":\"book\",\"limit\":200} — что лежит в папке (пустое path — весь корень)\n" +
             "@tool read_many {\"names\":[\"book/1.md\",\"book/2.md\"]} — прочитать несколько файлов по очереди в пределах бюджета; можно строкой через запятую\n" +
+            "КАРТИНКИ: спросить про изображение слов \"see_image {\\\"name\\\":\\\"images/x.png\\\",\\\"question\\\":\\\"что на ней и что исправить\\\"}\" — ответит vision-модель (нужен движок ZenFree, Google AI или OpenRouter). " +
+            "read_file на картинке тоже спросит vision, но see_image даёт задать конкретный вопрос. " +
+            "Правки самой картинки (убрать объект, шум, изменить) инструментов не имеют — умею только смотреть и объяснять словами.\n" +
             "Порядок работы с папкой: сначала workspace_list, потом read_many на нужное, и только потом правки. " +
             "Не вываливай в ответ содержимое всего подряд. Если задача неоднозначна (какая глава, какой файл, " +
             "что именно исправлять) — спроси читателя ДО того, как что-то менять, и перечисли варианты.\n" +
@@ -531,7 +540,7 @@ object AiAgent {
             "list_ext", "filter_ext", "find_manga", "zip_workspace",
             "plugin_create", "plugin_edit", "plugin_delete", "plugin_list",
             "skill_create", "skill_list", "skill_run",
-            "workspace_list", "read_many",
+            "workspace_list", "read_many", "see_image",
             "runner_chat", "runner_start", "github_api",
             "provider_create", "provider_edit", "provider_delete", "provider_list",
             "ui_action_create", "ui_action_edit", "ui_action_delete", "ui_action_list",
@@ -1356,16 +1365,25 @@ object AiAgent {
         "read_file" -> {
             val name = call.args.optString("name")
             val f = AiWorkspace.resolve(context, name)
-            if (f?.isFile == true && f.extension.lowercase() in setOf("png", "jpg", "jpeg", "webp", "gif", "bmp")) {
-                // Картинку модель не увидит: readText() по JPEG/PNG давал
-                // бинарный мусор в контекст (скриншот: агент «читает» скриншот
-                // и отвечает, что не может его интерпретировать). Честнее
-                // сразу сказать, что нужно описание словами.
+            if (f?.isFile == true && f.extension.lowercase() in IMAGE_EXTENSIONS) {
+                // Раньше здесь был отказ: «я не вижу картинки, опиши словами».
+                // Но движок умеет отвечать на вопросы об изображении — тем же
+                // путём страница уходит в see_page. Отказывать, когда глаза
+                // есть, значило отнимать у агента ровно то, за чем он и шёл.
+                val question = call.args.optString("question")
+                    .ifBlank { "Что изображено на картинке? Есть ли на ней текст, и какой?" }
+                val answer = askAboutImageFile(f, question)
                 ToolResult(
                     "read_file",
-                    "«$name» — изображение (${f.length()} байт). Я не вижу картинки: " +
-                        "попроси пользователя описать скриншот словами (текст ошибки, " +
-                        "название экрана, что нажимали) или дать текстовый файл.",
+                    if (answer != null) {
+                        "«$name» — изображение (${f.length() / 1024} КБ). Ответ vision-модели на вопрос " +
+                            "«$question»:\n$answer"
+                    } else {
+                        "«$name» — изображение (${f.length() / 1024} КБ), но выбранный OCR-движок не умеет " +
+                            "отвечать на вопросы о картинке (нужен vision: ZenFree, Google AI или OpenRouter). " +
+                            "Переключи движок и спроси again, или попроси пользователя описать словами."
+                    },
+                    status = if (answer != null) "ok" else "error",
                 )
             } else if (f?.isFile == true) {
                 val text = f.readText()
@@ -1374,6 +1392,43 @@ object AiAgent {
                 ToolResult("read_file", "Содержимое $name (${f.length()} байт):\n$slice")
             } else {
                 ToolResult("read_file", "Файл не найден: $name")
+            }
+        }
+
+        // Вопрос к картинке из workspace. see_page работает только с открытой
+        // страницей, а читатель просил, чтобы агент видел и свои файлы.
+        "see_image" -> {
+            val name = call.args.optString("name")
+            val f = AiWorkspace.resolve(context, name)
+            val question = call.args.optString("question")
+            when {
+                f == null || !f.isFile -> ToolResult("see_image", "ОШИБКА: файл не найден: $name", status = "error")
+                question.isBlank() -> ToolResult(
+                    "see_image",
+                    "ОШИБКА: нужен question — спроси у картинки конкретное (что на ней, какой текст, что исправить)",
+                    status = "error",
+                )
+
+                f.extension.lowercase() !in IMAGE_EXTENSIONS -> ToolResult(
+                    "see_image",
+                    "«$name» — не картинка (${f.extension.ifBlank { "без расширения" }}). " +
+                        "Посмотреть можно только изображение: ${IMAGE_EXTENSIONS.joinToString(", ")}",
+                    status = "error",
+                )
+
+                else -> {
+                    val answer = askAboutImageFile(f, question)
+                    if (answer == null) {
+                        ToolResult(
+                            "see_image",
+                            "Выбранный OCR-движок не умеет отвечать на вопросы о картинке " +
+                                "(нужен vision: ZenFree, Google AI или OpenRouter). Картинка не тронута.",
+                            status = "error",
+                        )
+                    } else {
+                        ToolResult("see_image", "«$name»: $answer")
+                    }
+                }
             }
         }
 
@@ -1910,6 +1965,85 @@ object AiAgent {
     }
 
     private const val VISION_MAX_SIDE = 1600
+
+    /**
+     * Спросить vision-модель про файл-картинку из workspace.
+     *
+     * Отдельная функция, а не переиспользование askAboutPage, потому что там
+     * уже есть готовая [android.graphics.Bitmap], а тут файл: его надо
+     * декодировать, уменьшить (иначе в контекст уйдёт гигабайт пикселей) и
+     * обязательно отдать переработанный bitmap — иначе течёт память на каждом
+     * вызове. null — движок не vision, или ответ пустой.
+     */
+    private suspend fun askAboutImageFile(file: File, question: String): String? = withContext(Dispatchers.IO) {
+        runCatching {
+            if (!file.isFile) return@runCatching null
+            if (file.length() > MAX_IMAGE_FILE_BYTES) {
+                logcat(LogPriority.WARN) { "see_image: file too large (${file.length()} bytes)" }
+                return@runCatching null
+            }
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(file.absolutePath, bounds)
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
+            val opts = BitmapFactory.Options().apply {
+                // Выборка сразу по размеру, а не «декодировать в пол и потом
+                // уменьшать»: фото с камеры весит 8 МБ, и полная декодировка
+                // на телефоне означает OutOfMemory.
+                inSampleSize = sampleSizeFor(bounds.outWidth, bounds.outHeight, VISION_MAX_SIDE)
+            }
+            val decoded = BitmapFactory.decodeFile(file.absolutePath, opts) ?: return@runCatching null
+            val scaled = scaleDown(decoded, VISION_MAX_SIDE)
+            try {
+                val pixels = IntArray(scaled.width * scaled.height)
+                scaled.getPixels(pixels, 0, scaled.width, 0, 0, scaled.width, scaled.height)
+                Injekt.get<OcrRepository>()
+                    .askAboutImage(OcrImage(scaled.width, scaled.height, pixels), question)
+                    ?.trim()
+                    ?.takeIf { it.isNotEmpty() }
+            } finally {
+                // Ссылка на переработанный bitmap не переживает вызов, чистим
+                // явно: иначе память утекает на каждом вопросе о картинке.
+                if (scaled !== decoded && !scaled.isRecycled) scaled.recycle()
+                if (!decoded.isRecycled) decoded.recycle()
+            }
+        }.getOrElse { e ->
+            logcat(LogPriority.WARN, e) { "see_image failed for ${file.name}" }
+            null
+        }
+    }
+
+    /** Файл крупнее этого не отправляем: экономия трафика и времени модели. */
+    private const val MAX_IMAGE_FILE_BYTES = 12L * 1024L * 1024L
+
+    /**
+     * Степень уменьшения при декодировании. Считается из реального размера:
+     * для 12000×9000 это 8, и декодирование сразу даёт 1500×1125 — в
+     * пределах того, что нужно модели, вместо 108 мегапикселей в памяти.
+     */
+    internal fun sampleSizeFor(width: Int, height: Int, maxSide: Int): Int {
+        var sample = 1
+        var w = width
+        var h = height
+        while (maxOf(w, h) / 2 >= maxSide && sample < 16) {
+            w /= 2
+            h /= 2
+            sample *= 2
+        }
+        return sample
+    }
+
+    /** Масштабирование до Vision_MAX_SIDE, если ещё не вписано. */
+    private fun scaleDown(src: Bitmap, maxSide: Int): Bitmap {
+        val max = maxOf(src.width, src.height)
+        if (max <= maxSide) return src
+        val k = maxSide.toFloat() / max
+        return Bitmap.createScaledBitmap(
+            src,
+            (src.width * k).toInt().coerceAtLeast(1),
+            (src.height * k).toInt().coerceAtLeast(1),
+            true,
+        )
+    }
 
     // JSONArray импортирован для будущих инструментов; подавляем предупреждение
     @Suppress("unused")
