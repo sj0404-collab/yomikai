@@ -281,9 +281,24 @@ object VoicePlugins {
     /**
      * Текущий движок из настроек. Неизвестное или пустое значение читается как
      * системный TTS — так же, как это уже делает `pref_voice_engine`.
+     *
+     * При включённом «только голос телефона» ([OcrPreferences.voicePhoneOnly])
+     * ответ всегда системный, даже если в настройках выбран сетевой плагин.
+     * Иначе список голосов в настройках строился бы от сетевого плагина, а
+     * озвучка шла бы системным голосом: настройка показывала бы не то, чем
+     * реально читают, и список выглядел пустым.
      */
-    fun current(prefs: OcrPreferences): VoicePluginDescriptor =
-        byId(prefs.voiceEngine().get()) ?: SYSTEM_TTS
+    fun current(prefs: OcrPreferences): VoicePluginDescriptor = resolvePlugin(
+        engineId = prefs.voiceEngine().get(),
+        phoneOnly = runCatching { prefs.voicePhoneOnly().get() }.getOrDefault(true),
+    )
+
+    /**
+     * Выбор движка без чтения настроек — чтобы правило «только голос телефона»
+     * проверялось тестом, а не только глазами.
+     */
+    internal fun resolvePlugin(engineId: String?, phoneOnly: Boolean): VoicePluginDescriptor =
+        if (phoneOnly) SYSTEM_TTS else byId(engineId) ?: SYSTEM_TTS
 
     /**
      * Сохранённые пресеты голосов. Список намеренно короткий: полный перечень

@@ -37,9 +37,13 @@ object SettingsVoicePluginsScreen : SearchableSettings {
         val context = LocalContext.current
         val prefs = remember { Injekt.get<OcrPreferences>() }
         val voiceEngine by prefs.voiceEngine().collectPreferenceAsState()
+        val phoneOnly by prefs.voicePhoneOnly().collectPreferenceAsState()
+        // Галочка «выбрано» должна совпадать с тем, чем реально читают, иначе
+        // при «только голос телефона» экран врал бы про выбранный плагин.
+        val effectivePlugin = remember(voiceEngine, phoneOnly, prefs) { VoicePlugins.current(prefs) }
 
         val online = rememberNetworkState(context)
-        val available = remember(online, prefs, voiceEngine) {
+        val available = remember(online, prefs, effectivePlugin) {
             VoicePlugins.available(
                 networkAvailable = online,
                 systemEnginePresent = true,
@@ -58,7 +62,7 @@ object SettingsVoicePluginsScreen : SearchableSettings {
                 title = stringResource(MR.strings.pref_voice_plugins_group),
                 preferenceItems = VoicePlugins.ALL.map { plugin ->
                     Preference.PreferenceItem.TextPreference(
-                        title = pluginTitle(plugin, isSelected = plugin.id == voiceEngine),
+                        title = pluginTitle(plugin, isSelected = plugin.id == effectivePlugin.id),
                         subtitle = pluginSubtitle(plugin, available),
                     )
                 },
@@ -66,6 +70,13 @@ object SettingsVoicePluginsScreen : SearchableSettings {
             Preference.PreferenceGroup(
                 title = stringResource(MR.strings.pref_voice_engine),
                 preferenceItems = listOf(
+                    Preference.PreferenceItem.SwitchPreference(
+                        preference = prefs.voicePhoneOnly(),
+                        title = "Только голос телефона",
+                        subtitle = "Авточтение и чтение произносятся системным движком. " +
+                            "Выключите, если нужен сетевой голос: список голосов и " +
+                            "озвучка будут от выбранного ниже плагина.",
+                    ),
                     Preference.PreferenceItem.ListPreference(
                         preference = prefs.voiceEngine(),
                         entries = VoicePlugins.ALL.associate { it.id to it.title },
@@ -73,7 +84,7 @@ object SettingsVoicePluginsScreen : SearchableSettings {
                     ),
                     Preference.PreferenceItem.ListPreference(
                         preference = prefs.voiceName(),
-                        entries = remember(prefs, voiceEngine) {
+                        entries = remember(prefs, effectivePlugin) {
                             VoicePlugins.voices(
                                 context = context,
                                 plugin = VoicePlugins.current(prefs),

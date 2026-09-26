@@ -136,4 +136,28 @@ class VoicePluginsTest {
         VoiceBackend.fromId("ONNX_TTS") shouldBe VoiceBackend.SYSTEM_TTS
         VoiceBackend.fromId("plugin:my-voice") shouldBe VoiceBackend.SYSTEM_TTS
     }
+
+    @Test
+    fun `phone only reading ignores a network plugin in settings`() {
+        // Читатель попросил: и авточтение, и одиночная реплика произносятся
+        // голосом телефона, даже если в настройках выбран сетевой плагин.
+        // Иначе список голосов в настройках строился бы от сетевого плагина
+        // (обычно одна строка или пусто), а озвучка шла бы системным голосом.
+        resolvePlugin(engine = "google_web", phoneOnly = true) shouldBe VoicePlugins.SYSTEM_TTS
+        resolvePlugin(engine = "eleven_api", phoneOnly = true) shouldBe VoicePlugins.SYSTEM_TTS
+        resolvePlugin(engine = "onnx", phoneOnly = true) shouldBe VoicePlugins.SYSTEM_TTS
+        resolvePlugin(engine = "auto", phoneOnly = true) shouldBe VoicePlugins.SYSTEM_TTS
+    }
+
+    @Test
+    fun `a network plugin is used when phone only reading is off`() {
+        resolvePlugin(engine = "google_web", phoneOnly = false) shouldBe VoicePlugins.GOOGLE_WEB
+        resolvePlugin(engine = "eleven_api", phoneOnly = false) shouldBe VoicePlugins.ELEVEN_API
+        resolvePlugin(engine = "onnx", phoneOnly = false) shouldBe VoicePlugins.REMOTE_TTS
+        // Мусор в настройках всё равно читается как системный голос.
+        resolvePlugin(engine = "несуществующий", phoneOnly = false) shouldBe VoicePlugins.SYSTEM_TTS
+    }
+
+    private fun resolvePlugin(engine: String, phoneOnly: Boolean): VoicePluginDescriptor =
+        VoicePlugins.resolvePlugin(engineId = engine, phoneOnly = phoneOnly)
 }

@@ -122,6 +122,17 @@ class OcrPreferences(
     fun voiceName() = preferenceStore.getString("pref_voice_name", "ru-ru-x-dfa-network")
     fun voiceSlots() = preferenceStore.getString("voice_slots", "[]")
 
+    /**
+     * Читать только голосом телефона.
+     *
+     * Включено по требованию читателя: и авточтение, и одиночная реплика
+     * произносятся системным движком, иначе — веб-голосом сети. Сетевой голос
+     * не связан с голосами устройства: список голосов, который показывает
+     * читалка, к нему отношения не имеет, и на выбранных страницах он молчит
+     * или читает латиницей. С системным голосом список и озвучка согласованы.
+     */
+    fun voicePhoneOnly() = preferenceStore.getBoolean("pref_voice_phone_only", true)
+
     // Словари голосовых ролей и интонаций: персонаж → голос/питч/темп и
     // узор текста → пауза/питч/темп. Хранятся JSON-массивами, читаются в
     // [eu.kanade.tachiyomi.data.tts.VoiceRoleDictionary]

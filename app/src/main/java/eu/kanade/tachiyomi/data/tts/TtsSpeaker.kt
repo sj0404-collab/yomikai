@@ -350,10 +350,15 @@ object TtsSpeaker {
         val forcedPkg = voiceSpec.substringBefore("::").trim()
         val voiceName = voiceSpec.substringAfterLast("::").trim()
         val enginePref = prefs().voiceEngine().get()
+        val phoneOnly = runCatching { prefs().voicePhoneOnly().get() }.getOrDefault(true)
         val edgeName = voiceName.endsWith("Neural", ignoreCase = true) ||
             voiceName.startsWith("ru-", ignoreCase = true) ||
             voiceName.startsWith("en-", ignoreCase = true)
-        val wantEdge = if (forcedPkg.isNotBlank()) {
+        val wantEdge = if (phoneOnly) {
+            // Только голос телефона: конкретный голос не должен уводить озвучку
+            // в сеть, иначе «проба» голоса звучала бы иначе, чем чтение.
+            false
+        } else if (forcedPkg.isNotBlank()) {
             forcedPkg.startsWith("edge", ignoreCase = true)
         } else {
             enginePref == ENGINE_EDGE_TTS || (edgeName && !voiceSpec.contains("::"))
@@ -482,16 +487,20 @@ object TtsSpeaker {
 // Имя говорящего ({имя:Аки}) нужно словарю голосовых ролей, чтобы
         // подобрать голос/питч/темп конкретного персонажа.
         val speakerName = SpeechMarkup.speakerName(text)
-        // v1.9.51: «веб-голоса онлайн, локальные оффлайн». Авто-режим и
-        // онлайн-движки при отсутствии сети честно падают на системный голос,
-        // чтобы озвучка не молчала на оффлайн-странице (жалоба пользователя).
+        // v1.9.51: «веб-голоса онлайн, локальные оффлайн». С 2026-09-26
+        // по требованию читателя и авточтение, и одиночная реплика произносятся
+        // ГОЛОСОМ ТЕЛЕФОНА (pref_voice_phone_only, по умолчанию включено).
+        // Сетевой голос не связан с голосами устройства: список голосов в
+        // читалке к нему отношения не имеет, и на части страниц он молчит.
+        val phoneOnly = runCatching { prefs().voicePhoneOnly().get() }.getOrDefault(true)
         val online = isNetworkAvailable(context)
         val engine = when (val want = prefs().voiceEngine().get()) {
             ENGINE_AUTO -> if (online) ENGINE_GOOGLE_WEB else ENGINE_SYSTEM
             ENGINE_GOOGLE_WEB, ENGINE_EDGE_TTS, ENGINE_ELEVENLABS -> if (online) want else ENGINE_SYSTEM
             else -> want
         }
-        when (engine) {
+        val effective = if (phoneOnly) ENGINE_SYSTEM else engine
+        when (effective) {
             ENGINE_GOOGLE_WEB -> speakGoogleWeb(context, spoken)
             ENGINE_EDGE_TTS -> speakEdgeTts(context, spoken)
             ENGINE_ELEVENLABS -> speakElevenLabs(context, spoken)

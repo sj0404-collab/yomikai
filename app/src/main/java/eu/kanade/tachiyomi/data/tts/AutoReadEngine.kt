@@ -885,14 +885,17 @@ class AutoReadEngine(
     /**
      * Есть ли смысл начинать чтение: выбранный движок должен уметь озвучить.
      *
+     * По умолчанию читаем голосом телефона, поэтому проверяется именно он.
      * Сетевые голоса проверяются сетью, системный — наличием установленного
-     * TTS-движка (`PackageManager`, без блокировки). Проверка до распознавания:
-     * без неё кадр сначала уходит в OCR, и только потом выясняется, что
-     * произносить нечем.
+     * TTS-движка (`PackageManager`, без блокировки). Проверка до
+     * распознавания: без неё кадр сначала уходит в OCR, и только потом
+     * выясняется, что произносить нечем.
      */
     private fun voicePathUsable(): Boolean {
         val enginePref = runCatching { prefs.voiceEngine().get() }.getOrDefault("")
+        val phoneOnly = runCatching { prefs.voicePhoneOnly().get() }.getOrDefault(true)
         val online = isNetworkAvailable(context)
+        if (phoneOnly) return TtsSpeaker.systemEngineInstalled(context)
         return when (enginePref) {
             TtsSpeaker.ENGINE_GOOGLE_WEB,
             TtsSpeaker.ENGINE_EDGE_TTS,
