@@ -12,6 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -134,6 +135,12 @@ fun ReaderAiChatOverlay(
     val historyChannel = AiHistoryManager.channelOf(bookSettings.mode)
     // Растёт после каждого ответа: эффект ниже перечитывает сводку сессии.
     var sessionRefresh by remember { mutableStateOf(0) }
+
+    // Вкладка чата: 0 — переписка, 1 — файлы workspace. Читатель искал файлы
+    // в чате и в папке телефона: папки на Android 11+ приложение создать не
+    // может, поэтому список файлов показываем прямо в чате.
+    var tab by remember { mutableStateOf(0) }
+    var filesRefresh by remember { mutableStateOf(0) }
 
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -370,6 +377,48 @@ fun ReaderAiChatOverlay(
                         Icon(Icons.Outlined.Close, contentDescription = "Скрыть AI-чат")
                     }
                 }
+                // Переписка или файлы. Файлы — отдельная вкладка, а не
+                // сообщение в чате: агент создаёт их и раньше, и читателю надо
+                // увидеть весь список, а не то, что попало в последний ответ.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    FilterChip(
+                        selected = tab == 0,
+                        onClick = { tab = 0 },
+                        label = { Text("Чат") },
+                        modifier = Modifier.height(30.dp),
+                    )
+                    FilterChip(
+                        selected = tab == 1,
+                        onClick = {
+                            tab = 1
+                            filesRefresh++
+                        },
+                        label = { Text("Файлы") },
+                        modifier = Modifier.height(30.dp),
+                    )
+                }
+                if (tab == 1) {
+                    WorkspaceFilesPanel(
+                        context = context,
+                        refresh = filesRefresh,
+                        onOpen = { file ->
+                            runCatching {
+                                context.startActivity(
+                                    file.getUriCompat(context).toShareIntent(
+                                        context = context,
+                                        type = "application/octet-stream",
+                                        message = file.name,
+                                    ),
+                                )
+                            }.onFailure { showToast("Не удалось открыть файл") }
+                        },
+                    )
+                } else {
                 // Настройки работы с этой книгой: режим, 18+, цензура. Отдельный
                 // рядом, а не в меню: переключать их надо прямо по ходу чтения.
                 if (mangaId != null) {
@@ -597,8 +646,10 @@ fun ReaderAiChatOverlay(
                     }
                 }
             }
+                }
         }
     }
+
 
     if (showClearConfirm) {
         androidx.compose.material3.AlertDialog(
@@ -1086,5 +1137,100 @@ private fun QuickActionButton(
         icon()
         Spacer(Modifier.width(4.dp))
         Text(label, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+/**
+ * Вкладка «Файлы»: всё, что агент создал, списком с открытием и копией в
+ * «Загрузки».
+ *
+ * Отдельный список, а не сообщения чата: файлы могли быть созданы давно, в
+ * другом ходе, и читатель ищет их одним взглядом. Плюс показываем реальный
+ * путь — раньше обещалась папка `/sdcard/Yomikai/AI`, которой на Android 11+
+ * не существует, и читатель искал её в проводнике по несуществующему адресу.
+ */
+@Composable
+private fun WorkspaceFilesPanel(
+    context: Context,
+    refresh: Int,
+    onOpen: (java.io.File) -> Unit,
+) {
+    var files by remember(refresh) { mutableStateOf<List<java.io.File>>(emptyList()) }
+    var path by remember(refresh) { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(refresh) {
+        val loaded = withContext(Dispatchers.IO) {
+            val root = eu.kanade.tachiyomi.data.ai.AiWorkspace.root(context)
+            root.absolutePath to eu.kanade.tachiyomi.data.ai.AiWorkspace.listAll(context)
+        }
+        path = loaded.first
+        files = loaded.second
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp),
+    ) {
+        Text(
+            "Папка: $path",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            if (files.isEmpty()) {
+                "Файлов пока нет. Попроси агента сохранить файл: «сохрани текст в book/заметка.md»."
+            } else {
+                "Файлов: ${files.size}"
+            },
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(vertical = 6.dp),
+        )
+        files.forEach { f ->
+            val rel = eu.kanade.tachiyomi.data.ai.AiWorkspace.relPath(context, f)
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Outlined.AttachFile,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(f.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                    Text(
+                        if (f.isDirectory) {
+                            "папка · $rel"
+                        } else {
+                            "$rel · ${f.length() / 1024} КБ"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
+                if (f.isFile) {
+                    TextButton(onClick = { onOpen(f) }) { Text("Открыть") }
+                    TextButton(
+                        onClick = {
+                            scope.launch {
+                                // Копирование файла — дисковый ввод, из клика
+                                // он шёл в главный поток и подвисал чат.
+                                val ok = withContext(Dispatchers.IO) {
+                                    eu.kanade.tachiyomi.data.ai.AiWorkspace.exportToDownloads(context, f) != null
+                                }
+                                context.toast(
+                                    if (ok) "Скопировано в Загрузки: ${f.name}" else "Не удалось скопировать в Загрузки",
+                                )
+                            }
+                        },
+                    ) { Text("В Загрузки") }
+                }
+            }
+        }
     }
 }

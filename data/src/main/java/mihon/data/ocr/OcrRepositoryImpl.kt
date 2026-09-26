@@ -106,13 +106,13 @@ class OcrRepositoryImpl(
      * равно не читают: читатель выделял одну-две строки и ждал минуту вместо
      * результата. 160 px — примерно две строки крупного манга-шрифта.
      */
-    private val ONLINE_MIN_SIDE_PX = 160
+    private val onlineMinSidePx = 160
 
     /** Суммарный бюджет резервной цепочки для интерактивного распознавания. */
-    private const val FALLBACK_BUDGET_MS = 20_000L
+    private val defaultFallbackBudgetMs = 20_000L
 
     /** Для мелкого кропа: только локальные движки и почти без ожидания. */
-    private const val TINY_FALLBACK_BUDGET_MS = 4_000L
+    private val tinyFallbackBudgetMs = 4_000L
 
     private val engineLocks = OcrEngineLocks()
 
@@ -404,7 +404,7 @@ class OcrRepositoryImpl(
     private suspend fun recognizeWithFallback(
         primary: EngineType,
         image: Bitmap,
-        fallbackBudgetMs: Long = FALLBACK_BUDGET_MS,
+        fallbackBudgetMs: Long = defaultFallbackBudgetMs,
         allowOnlineFallback: Boolean = true,
     ): String {
         val skipPrimary = primary in onlineEngines && !isNetworkAvailable()
@@ -465,11 +465,11 @@ class OcrRepositoryImpl(
                     // пару строк) облаку не нужен — 30 пикселей высоты он не
                     // прочитает, а минуту потратит, поэтому для него сеть не
                     // пробуем вовсе. Крупный кроп оставляем как был.
-                    val tiny = minOf(bitmap.width, bitmap.height) < ONLINE_MIN_SIDE_PX
+                    val tiny = minOf(bitmap.width, bitmap.height) < onlineMinSidePx
                     recognizeWithFallback(
                         primary = selectedEngineType(),
                         image = bitmap,
-                        fallbackBudgetMs = if (tiny) TINY_FALLBACK_BUDGET_MS else FALLBACK_BUDGET_MS,
+                        fallbackBudgetMs = if (tiny) tinyFallbackBudgetMs else defaultFallbackBudgetMs,
                         allowOnlineFallback = !tiny,
                     )
                 }

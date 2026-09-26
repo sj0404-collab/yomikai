@@ -33,7 +33,7 @@ import java.net.URLEncoder
  * возвращается модели, и она отвечает пользователю.
  *
  * Реальные инструменты:
- *  • write_file    — сохранить файл в workspace (/sdcard/Yomikai/AI)
+ *  • write_file    — сохранить файл в workspace (реальный путь подставляется в промпт)
  *  • gen_image     — сгенерировать картинку через Pollinations (без ключа)
  *  • check_site    — проверить, работает ли сайт (реальный HTTP-запрос)
  *  • list_ext      — перечислить установленные расширения-источники
@@ -317,7 +317,17 @@ object AiAgent {
             append(userText)
             append("\n\n[Инструкция: отвечай кратко на русском, одним языком, reasoning ≤250 токенов, укажи что доступно/недоступно из блока выше, не повторяй запрос; токен-бюджет хода ${tokenBudget}.]")
         }
-        val systemPromptEffective = SYSTEM_PROMPT + "\n\n" + capabilityBlock
+        // Настоящий путь workspace вместо обещанного в тексте промпта
+        // /sdcard/Yomikai/AI: на Android 11+ приложение не может создать
+        // папку в корне хранилища, и агент писал «в /sdcard/Yomikai/AI»,
+        // а файлы оказывались в приватном хранилище, где их не видит ни
+        // проводник, ни сам читатель. Модели говорим ровно то, что есть.
+        val workspaceBlock = "WORKSPACE (реальный путь, всё в нём и лежит): " +
+            "${AiWorkspace.storageHint(context)}. Инструменты write_file/edit_file/append_file/read_file " +
+            "принимают путь ОТНОСИТЕЛЬНО этого каталога (например book/заметка.md). " +
+            "Не выдумывай другие пути (/sdcard/Yomikai и т.п.) — их на устройстве нет. " +
+            "После записи назови путь результата из ответа инструмента, чтобы пользователь нашёл файл."
+        val systemPromptEffective = SYSTEM_PROMPT + "\n\n" + workspaceBlock + "\n\n" + capabilityBlock
 
         val turnStarted = System.currentTimeMillis()
         onProgress?.invoke("Запрос к модели…")

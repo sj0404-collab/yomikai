@@ -1,7 +1,11 @@
 package eu.kanade.tachiyomi.data.ai
 
+import android.content.ContentValues
 import android.content.Context
+import android.net.Uri
+import android.os.Build
 import android.os.Environment
+import android.provider.MediaStore
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import java.io.File
@@ -15,7 +19,11 @@ import java.util.zip.ZipOutputStream
  * ассистент складывает результаты (файлы, картинки, архивы), а пользователь
  * может забрать их в любой момент — файловым менеджером или из UI чата.
  *
- * Расположение: /sdcard/Yomikai/AI (создаётся автоматически). Если внешнее
+ * Расположение выбирается в [root] при первом обращении: общая папка
+ * `/sdcard/Yomikai/AI`, если её разрешено создать, иначе внешнее хранилище
+ * приложения, и только в последнюю очередь приватное. Точный путь показывается
+ * в интерфейсе и подставляется в промпт агента — раньше он обещал `/sdcard`, а
+ * файлы оказывались в приватном хранилище. Если внешнее
  * хранилище недоступно — приватная папка приложения (files/ai_workspace).
  *
  * ## Контракт надёжности
@@ -43,27 +51,49 @@ object AiWorkspace {
     @Volatile
     private var cachedRoot: File? = null
 
+    /**
+     * Папка годится только если её удалось создать И в неё можно писать.
+     * Существования родителя мало: на Android 11+ `/sdcard` существует, но
+     * создать в нём свою папку приложение не может.
+     */
+    private fun usable(dir: File): Boolean =
+        runCatching { (dir.isDirectory || dir.mkdirs()) && dir.canWrite() }.getOrDefault(false)
+
     fun root(context: Context): File {
         cachedRoot?.let { return it }
         val resolved = runCatching {
-            val external = File(Environment.getExternalStorageDirectory(), "Yomikai/$DIR_NAME")
-            val dir = if (external.parentFile?.exists() == true || external.mkdirs() || external.exists()) {
-                external
-            } else {
-                File(context.filesDir, "ai_workspace")
-            }
-            dir.mkdirs()
+            // Порядок важен: сначала по-настоящему общая папка (её видно в
+            // проводнике), потом внешнее хранилище приложения (видно в
+            // «Android/data/<пакет>/files», не требует разрешений), и лишь
+            // затем приватное хранилище — в нём файлы не видны пользователю
+            // вообще, поэтому это последний вариант, а не молчаливый.
+            val candidates = listOfNotNull(
+                File(Environment.getExternalStorageDirectory(), "Yomikai/$DIR_NAME"),
+                context.getExternalFilesDir(null)?.let { File(it, "Yomikai/$DIR_NAME") },
+                File(context.filesDir, "ai_workspace"),
+                File(context.cacheDir, "ai_workspace"),
+            )
+            val dir = candidates.firstOrNull { usable(it) }
+                ?: File(context.filesDir, "ai_workspace").apply { mkdirs() }
             File(dir, "images").mkdirs()
             File(dir, "inbox").mkdirs()
-            dir.takeIf { it.isDirectory } ?: File(context.filesDir, "ai_workspace").apply { mkdirs() }
+            dir
         }.getOrElse { e ->
             logcat(LogPriority.WARN, e) { "AiWorkspace root failed, falling back to internal storage" }
             runCatching { File(context.filesDir, "ai_workspace").apply { mkdirs() } }
                 .getOrElse { File(context.cacheDir, "ai_workspace").apply { mkdirs() } }
         }
+        logcat(LogPriority.INFO) { "AiWorkspace root = ${resolved.absolutePath}" }
         cachedRoot = resolved
         return resolved
     }
+
+    /**
+     * Где на самом деле лежат файлы — строкой для интерфейса. Раньше путь
+     * `/sdcard/Yomikai/AI` был обещан и в подсказке агента, и в настройках, но
+     * на Android 11+ он не создавался, и читатель искал папку, которой нет.
+     */
+    fun storageHint(context: Context): String = root(context).absolutePath
 
     /**
      * Все файлы workspace (рекурсивно), отсортированы: папки → новые файлы.
@@ -182,6 +212,54 @@ object AiWorkspace {
             return null
         }
         return out
+    }
+
+    /**
+     * Скопировать файл в «Загрузки» — единственную папку, которую читатель
+     * действительно открывает на телефоне. На Android 10+ общие папки закрыты для
+     * прямой записи, поэтому копируем через MediaStore: разрешение не нужно,
+     * файл появляется в «Загрузки» и в проводнике, и его можно переслать.
+     * На Android 8-9 (minSdk 26) пишем напрямую — там ещё старая модель прав.
+     *
+     * @return Uri скопированного файла или null, если не вышло.
+     */
+    fun exportToDownloads(context: Context, f: File): Uri? = runCatching {
+        if (!f.isFile) return null
+        val name = sanitize(f.name).ifBlank { "file" }
+        val mime = when (f.extension.lowercase()) {
+            "txt", "md", "json", "log" -> "text/plain"
+            "png" -> "image/png"
+            "jpg", "jpeg" -> "image/jpeg"
+            "mp3" -> "audio/mpeg"
+            "wav" -> "audio/wav"
+            "zip" -> "application/zip"
+            else -> "application/octet-stream"
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, name)
+                put(MediaStore.Downloads.MIME_TYPE, mime)
+                put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            }
+            val resolver = context.contentResolver
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: return null
+            resolver.openOutputStream(uri)?.use { out -> f.inputStream().use { it.copyTo(out) } }
+                ?: return null
+            uri
+        } else {
+            @Suppress("DEPRECATION")
+            val dir = File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                "Yomikai",
+            ).apply { mkdirs() }
+            val dst = File(dir, name)
+            f.copyTo(dst, overwrite = true)
+            Uri.fromFile(dst)
+        }
+    }.getOrElse { e ->
+        logcat(LogPriority.WARN, e) { "AiWorkspace exportToDownloads failed for ${f.name}" }
+        null
     }
 
     /**
