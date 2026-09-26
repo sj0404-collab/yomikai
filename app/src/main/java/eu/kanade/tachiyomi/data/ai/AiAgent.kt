@@ -50,6 +50,13 @@ import java.net.URLEncoder
  */
 object AiAgent {
 
+    /**
+     * Методы, которые агент может слать в [AiGithub]. Список явный, потому что
+     * произвольный метод в HttpURLConnection — это и DELETE, и нештатные
+     * вещи вроде TRACE, и оставлять такое строкой из ответа модели нельзя.
+     */
+    private val ALLOWED_GITHUB_METHODS = setOf("GET", "POST", "PATCH", "PUT", "DELETE")
+
     data class ToolCall(val name: String, val args: JSONObject)
     data class ToolResult(
         val name: String,
@@ -179,7 +186,10 @@ object AiAgent {
             "ЛОГИ: пользователь жалуется на озвучку/скачивание голосов — читай logs/tts.log через read_file.\n" +
             "@tool runner_chat {\"text\":\"вопрос\"} — спросить LLM на GitHub-ранере (если сессия жива и разрешено в настройках)\n" +
             "@tool runner_start {\"model\":\"qwen2.5-1.5b\",\"os\":\"linux|windows\"} — запустить новую ранер-сессию (если разрешено)\n" +
-            "@tool github_api {\"path\":\"/repos/OWNER/REPO/actions/runs?per_page=3\"} — GET-запрос к GitHub API привязанным токеном (если разрешено)\n" +
+            "@tool github_api {\"path\":\"/repos/OWNER/REPO/issues\",\"method\":\"POST\",\"body\":\"{\\\"title\\\":\\\"...\\\"}\"} — запрос к GitHub API привязанным токеном (если разрешено). method по умолчанию GET; POST/PATCH/PUT/DELETE — для issue, комментариев и PR. Хост всегда api.github.com\n" +
+            "@tool runner_runs {} — последние прогоны сценариев (что ранер запускал)\n" +
+            "@tool runner_events {\"run_id\":123} — пошаговая лента задач прогона: что он делал и где упал\n" +
+            "@tool repo_pulls {} — открытые PR репозитория\n" +
             "ЧИТАЛКА, РАСПОЗНАВАНИЕ И ОЗВУЧКА (реестры плагинов приложения):\n" +
             AiReaderTools.SYSTEM_PROMPT_LINES.joinToString("\n") { it } + "\n" +
             "ГЕНЕРАЦИЯ И ГОЛОСА AI-ЧАТА (файлы создаются в workspace и появляются в чате готовыми):\n" +
@@ -515,7 +525,8 @@ object AiAgent {
     private fun knownToolNames(context: Context): Set<String> =
         setOf(
             "write_file", "edit_file", "append_file", "read_file", "gen_image",
-            "check_site", "web_search", "web_fetch", "gen_images", "book_recall", "book_remember", "book_learn",
+            "check_site", "web_search", "web_fetch", "gen_images",
+            "runner_runs", "runner_events", "repo_pulls", "book_recall", "book_remember", "book_learn",
             "reader_actions", "reader_do",
             "list_ext", "filter_ext", "find_manga", "zip_workspace",
             "plugin_create", "plugin_edit", "plugin_delete", "plugin_list",
@@ -837,22 +848,81 @@ object AiAgent {
             } else {
                 val token = prefsR.githubPat().get()
                 val path = call.args.optString("path")
+                // Раньше был только GET, поэтому агент не мог завести issue,
+                // оставить комментарий или открыть PR — «работать с моими
+                // репозиториями» означало только смотреть.
+                val method = call.args.optString("method", "GET").uppercase()
+                val body = call.args.optString("body").ifBlank { null }
                 when {
                     token.isBlank() -> ToolResult("github_api", "PAT не привязан: задайте его в ⚙ вкладки AI")
                     !path.startsWith("/") -> ToolResult("github_api", "ОШИБКА: path должен начинаться с /")
-                    else -> runCatching {
-                        val conn = AiAssistant.openConnection("https://api.github.com$path")
-                        conn.connectTimeout = 15_000
-                        conn.readTimeout = 30_000
-                        conn.setRequestProperty("Authorization", "token $token")
-                        conn.setRequestProperty("Accept", "application/vnd.github+json")
-                        val code = conn.responseCode
-                        val body = (if (code in 200..299) conn.inputStream else conn.errorStream)
-                            ?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
-                        conn.disconnect()
-                        ToolResult("github_api", "HTTP $code:\n" + body.take(1200))
-                    }.getOrElse { ToolResult("github_api", "ОШИБКА: ${it.message?.take(120)}") }
+                    method !in ALLOWED_GITHUB_METHODS -> ToolResult(
+                        "github_api",
+                        "ОШИБКА: метод $method не поддерживается (${ALLOWED_GITHUB_METHODS.joinToString(", ")})",
+                        status = "error",
+                    )
+
+                    body != null && runCatching { org.json.JSONObject(body) }.isFailure -> ToolResult(
+                        "github_api",
+                        "ОШИБКА: body должен быть корректным JSON",
+                        status = "error",
+                    )
+
+                    else -> {
+                        val resp = AiGithub.api(token, path, method, body)
+                        // Метод и путь в ответе: запись в репозиторий должна быть
+                        // видна читателю в логе хода, а не только в аргументах.
+                        val head = if (method == "GET") "HTTP ${resp.code}" else "$method $path → HTTP ${resp.code}"
+                        ToolResult(
+                            "github_api",
+                            "$head\n" + resp.body.take(1200),
+                            status = if (resp.ok) "ok" else "error",
+                        )
+                    }
                 }
+            }
+        }
+
+        // Что ранер делал: прогоны сценариев и пошаговые ленты задач.
+        "runner_runs" -> {
+            val prefsR = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+            val token = prefsR.githubPat().get()
+            if (token.isBlank()) {
+                ToolResult("runner_runs", "PAT не привязан: задайте его в ⚙ вкладки AI")
+            } else {
+                val repo = call.args.optString("repo").ifBlank { AiGithub.DEFAULT_REPO }
+                val list = AiGithub.runs(token, repo)
+                ToolResult("runner_runs", AiGithub.renderRuns(list))
+            }
+        }
+
+        "runner_events" -> {
+            val prefsR = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+            val token = prefsR.githubPat().get()
+            val runId = call.args.optString("run_id").trim().toLongOrNull()
+            when {
+                token.isBlank() -> ToolResult("runner_events", "PAT не привязан: задайте его в ⚙ вкладки AI")
+                runId == null || runId <= 0 -> ToolResult(
+                    "runner_events",
+                    "ОШИБКА: нужен run_id — число из runner_runs",
+                    status = "error",
+                )
+
+                else -> {
+                    val repo = call.args.optString("repo").ifBlank { AiGithub.DEFAULT_REPO }
+                    ToolResult("runner_events", AiGithub.renderJobs(AiGithub.jobs(token, runId, repo)))
+                }
+            }
+        }
+
+        "repo_pulls" -> {
+            val prefsR = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+            val token = prefsR.githubPat().get()
+            if (token.isBlank()) {
+                ToolResult("repo_pulls", "PAT не привязан: задайте его в ⚙ вкладки AI")
+            } else {
+                val repo = call.args.optString("repo").ifBlank { AiGithub.DEFAULT_REPO }
+                ToolResult("repo_pulls", AiGithub.renderPulls(AiGithub.openPulls(token, repo)))
             }
         }
 

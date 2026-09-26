@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.ui.aichat
 import android.webkit.HttpAuthHandler
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -40,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import cafe.adriel.voyager.navigator.tab.TabOptions
 import eu.kanade.presentation.util.Tab
+import eu.kanade.tachiyomi.data.ai.AiGithub
 import eu.kanade.tachiyomi.data.ai.RunnerLlm
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -90,6 +92,32 @@ data object AiChatTab : Tab {
         val session by hubSessionFlow.collectAsState()
         var sessions by remember {
             mutableStateOf(runCatching { RunnerLlm.listSessions(context) }.getOrDefault(emptyList()))
+        }
+        // Лента событий ранера: последние прогоны и пошаговая лента задач.
+        // Читатель просил видеть, что ранер делал, не выспрашивая агента.
+        var events by remember { mutableStateOf<List<AiGithub.Run>>(emptyList()) }
+        var eventsLoading by remember { mutableStateOf(false) }
+        var eventsError by remember { mutableStateOf("") }
+
+        val loadEvents: () -> Unit = {
+            if (pat.isBlank()) {
+                eventsError = "Сначала вставьте GitHub PAT"
+            } else {
+                eventsLoading = true
+                eventsError = ""
+                val appCtx = context.applicationContext
+                chatScope.launch {
+                    val got = runCatching { AiGithub.runs(appCtx, AiGithub.DEFAULT_REPO, perPage = 8) }
+                        .getOrElse { emptyList() }
+                    withContext(Dispatchers.Main) {
+                        events = got
+                        eventsLoading = false
+                        if (got.isEmpty() && eventsError.isBlank()) {
+                            eventsError = "Прогонов не найдено или сеть недоступна"
+                        }
+                    }
+                }
+            }
         }
 
         val openSession = session
@@ -185,6 +213,69 @@ data object AiChatTab : Tab {
                         else status,
                         style = MaterialTheme.typography.bodySmall,
                     )
+                }
+                // Лента событий ранера. Раньше читатель видел только «сессии»
+                // и кнопку «Открыть»: что ранер делал внутри прогона, не было
+                // видно нигде, хотя GitHub Actions это знает.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    FilterChip(
+                        selected = events.isNotEmpty(),
+                        onClick = { loadEvents() },
+                        label = { Text("События ранера") },
+                    )
+                    if (eventsLoading) {
+                        Text("Загрузка…", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+                if (eventsError.isNotBlank()) {
+                    Text(
+                        eventsError,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                events.forEach { r ->
+                    var steps by remember(r.id) { mutableStateOf<String?>(null) }
+                    var stepsLoading by remember(r.id) { mutableStateOf(false) }
+                    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                        Text(
+                            "#${r.id} ${r.name} — ${r.stateRu}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
+                            "Показать шаги",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.clickable {
+                                if (steps != null || stepsLoading) return@clickable
+                                stepsLoading = true
+                                val appCtx = context.applicationContext
+                                val runId = r.id
+                                chatScope.launch {
+                                    val text = runCatching {
+                                        AiGithub.renderJobs(AiGithub.jobs(appCtx, runId))
+                                    }.getOrElse { "Не удалось прочитать шаги: ${it.message}" }
+                                    withContext(Dispatchers.Main) {
+                                        steps = text
+                                        stepsLoading = false
+                                    }
+                                }
+                            },
+                        )
+                        if (stepsLoading) {
+                            Text("…", style = MaterialTheme.typography.labelSmall)
+                        }
+                        steps?.let { txt ->
+                            Text(
+                                txt,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                 }
                 if (sessions.isNotEmpty()) {
                     Text("Сессии:", style = MaterialTheme.typography.bodySmall)
