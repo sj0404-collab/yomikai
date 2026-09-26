@@ -3,6 +3,7 @@ package mihon.data.ocr
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Rect
+import android.os.SystemClock
 import com.google.ai.edge.litert.Environment
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -97,6 +98,21 @@ class OcrRepositoryImpl(
     private var googleAiEngine: GoogleAiOcrEngine? = null
     private var zenFreeEngine: ZenFreeOcrEngine? = null
     private var detEngine: DetOcrEngine? = null
+
+    /**
+     * Сторона кропа, ниже которой облачный OCR не пробуем.
+     *
+     * У облачных движков таймаут чтения 60-90 секунд, а мелкий кроп они всё
+     * равно не читают: читатель выделял одну-две строки и ждал минуту вместо
+     * результата. 160 px — примерно две строки крупного манга-шрифта.
+     */
+    private val ONLINE_MIN_SIDE_PX = 160
+
+    /** Суммарный бюджет резервной цепочки для интерактивного распознавания. */
+    private const val FALLBACK_BUDGET_MS = 20_000L
+
+    /** Для мелкого кропа: только локальные движки и почти без ожидания. */
+    private const val TINY_FALLBACK_BUDGET_MS = 4_000L
 
     private val engineLocks = OcrEngineLocks()
 
@@ -378,7 +394,19 @@ class OcrRepositoryImpl(
         }.also { noteEngineUsed(type) }
     }
 
-    private suspend fun recognizeWithFallback(primary: EngineType, image: Bitmap): String {
+    /**
+     * @param fallbackBudgetMs сколько ждать резервных движков суммарно. Основной
+     *   движок бюджетом не режется: его читатель выбрал сам, и обрывать его
+     *   на полуслове нельзя. Режется только цепочка «просто попробуем ещё».
+     * @param allowOnlineFallback сеть в резервной цепочке. Для мелкого кропа
+     *   облако бесполезно и очень медленно, поэтому не пробуем.
+     */
+    private suspend fun recognizeWithFallback(
+        primary: EngineType,
+        image: Bitmap,
+        fallbackBudgetMs: Long = FALLBACK_BUDGET_MS,
+        allowOnlineFallback: Boolean = true,
+    ): String {
         val skipPrimary = primary in onlineEngines && !isNetworkAvailable()
         val fallbackEnabled = useFallbackModelsPref.get()
         var primaryText: String? = null
@@ -399,8 +427,16 @@ class OcrRepositoryImpl(
             return primaryText ?: throw lastError ?: OcrException.ConnectionError(null)
         }
 
+        val deadline = SystemClock.elapsedRealtime() + fallbackBudgetMs
         for (engine in fallbackChain(primary)) {
-            if (engine in onlineEngines && !isNetworkAvailable()) continue
+            if (engine in onlineEngines && (!allowOnlineFallback || !isNetworkAvailable())) continue
+            if (SystemClock.elapsedRealtime() > deadline) {
+                logcat(LogPriority.WARN) {
+                    "OCR fallback budget ${fallbackBudgetMs}ms exhausted, " +
+                        "stopping at ${engine.name.lowercase()}"
+                }
+                break
+            }
             try {
                 logcat(LogPriority.WARN) {
                     "OCR (${primary.name.lowercase()}) returned no usable text, trying ${engine.name.lowercase()}"
@@ -422,7 +458,20 @@ class OcrRepositoryImpl(
         return withActiveOperation {
             submitTask(PrioritizedTaskQueue.Priority.HIGH) {
                 image.useBitmap { bitmap ->
-                    recognizeWithFallback(selectedEngineType(), bitmap)
+                    // Читатель ждал «вечность» на одиночных выделенных
+                    // областях. Причина в резервной цепочке: у облачных
+                    // движков таймаут чтения 60-90 секунд, и цепочка
+                    // проходила их подряд. Мелкий кроп (выделил область в
+                    // пару строк) облаку не нужен — 30 пикселей высоты он не
+                    // прочитает, а минуту потратит, поэтому для него сеть не
+                    // пробуем вовсе. Крупный кроп оставляем как был.
+                    val tiny = minOf(bitmap.width, bitmap.height) < ONLINE_MIN_SIDE_PX
+                    recognizeWithFallback(
+                        primary = selectedEngineType(),
+                        image = bitmap,
+                        fallbackBudgetMs = if (tiny) TINY_FALLBACK_BUDGET_MS else FALLBACK_BUDGET_MS,
+                        allowOnlineFallback = !tiny,
+                    )
                 }
             }
         }
