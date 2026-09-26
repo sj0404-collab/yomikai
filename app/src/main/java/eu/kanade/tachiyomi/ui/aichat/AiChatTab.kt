@@ -105,9 +105,9 @@ data object AiChatTab : Tab {
             } else {
                 eventsLoading = true
                 eventsError = ""
-                val appCtx = context.applicationContext
+                val token = pat.trim()
                 chatScope.launch {
-                    val got = runCatching { AiGithub.runs(appCtx, AiGithub.DEFAULT_REPO, perPage = 8) }
+                    val got = runCatching { AiGithub.runs(token, AiGithub.DEFAULT_REPO, perPage = 8) }
                         .getOrElse { emptyList() }
                     withContext(Dispatchers.Main) {
                         events = got
@@ -252,11 +252,11 @@ data object AiChatTab : Tab {
                             modifier = Modifier.clickable {
                                 if (steps != null || stepsLoading) return@clickable
                                 stepsLoading = true
-                                val appCtx = context.applicationContext
+                                val token = pat.trim()
                                 val runId = r.id
                                 chatScope.launch {
                                     val text = runCatching {
-                                        AiGithub.renderJobs(AiGithub.jobs(appCtx, runId))
+                                        AiGithub.renderJobs(AiGithub.jobs(token, runId))
                                     }.getOrElse { "Не удалось прочитать шаги: ${it.message}" }
                                     withContext(Dispatchers.Main) {
                                         steps = text

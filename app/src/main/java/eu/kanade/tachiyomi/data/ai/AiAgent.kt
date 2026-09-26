@@ -1124,9 +1124,7 @@ object AiAgent {
                 if (made.isEmpty()) {
                     ToolResult(
                         "gen_images",
-                        "ОШИБКА: Pollinations не ответил ни разу (нет сети?)
-" + failedLines.joinToString("
-"),
+                        "ОШИБКА: Pollinations не ответил ни разу (нет сети?)\n" + failedLines.joinToString("\n"),
                         status = "error",
                     )
                 } else {
