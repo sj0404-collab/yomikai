@@ -64,6 +64,13 @@ object SettingsOcrScreen : SearchableSettings {
             OcrVocabularyDialog(onDismiss = { showVocabulary = false })
         }
 
+        // Проверка локального OCR на нарисованных эталонах: сколько стоит
+        // чтение в мс и что движок реально прочитал.
+        var showEval by remember { mutableStateOf(false) }
+        if (showEval) {
+            OcrEvalDialog(onDismiss = { showEval = false })
+        }
+
         // Доступность плагинов пересчитывается при смене состояния сети:
         // список должен честно показывать, что можно выбрать прямо сейчас.
         val online = rememberNetworkState(context)
@@ -88,6 +95,7 @@ object SettingsOcrScreen : SearchableSettings {
             getRegionGroup(prefs = prefs, presetRegion = presetRegion),
             getTuningGroup(prefs = prefs),
             getVocabularyGroup(onOpenVocabulary = { showVocabulary = true }),
+            getDiagnosticsGroup(onOpenEval = { showEval = true }),
             getEnginesGroup(prefs = prefs, navigator = navigator, availableIds = availableIds),
             getGlensLanguageGroup(prefs = prefs),
             getHistoryGroup(onOpenHistory = { showHistory = true }),
@@ -113,9 +121,28 @@ object SettingsOcrScreen : SearchableSettings {
         )
     }
 
+    /**
+     * Проверка качества и скорости локального OCR. Нужна потому, что CI не
+     * может запустить TFLite: единственное место, где видно реальные миллисекунды
+     * и реальный прочитанный текст, — сам телефон.
+     */
     @Composable
-    private fun getHistoryGroup(onOpenHistory: () -> Unit): Preference.PreferenceGroup {
+    private fun getDiagnosticsGroup(onOpenEval: () -> Unit): Preference.PreferenceGroup {
         return Preference.PreferenceGroup(
+            title = "Диагностика",
+            preferenceItems = listOf(
+                Preference.PreferenceItem.TextPreference(
+                    title = "Проверить локальный OCR",
+                    subtitle = "6 страниц с русским текстом: время детекта и чтения в мс,\n" +
+                        "что ожидалось и что прочитано, CER в процентах",
+                    onClick = onOpenEval,
+                ),
+            ),
+        )
+    }
+
+    @Composable
+    private fun getHistoryGroup(onOpenHistory: () -> Unit): Preference.PreferenceGroup {        return Preference.PreferenceGroup(
             title = "История",
             preferenceItems = listOf(
                 Preference.PreferenceItem.TextPreference(
