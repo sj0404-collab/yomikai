@@ -30,7 +30,7 @@ android {
     namespace = "eu.kanade.tachiyomi"
 
     defaultConfig {
-        applicationId = "app.yomihon"
+        applicationId = "app.yomikai"
 
         // Версия подтягивается из релизного тега автоматически (CI передаёт
         // RELEASE_TAG, напр. "v1.9.7" -> versionName 1.9.7, versionCode 10907).

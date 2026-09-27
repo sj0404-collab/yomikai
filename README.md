@@ -33,7 +33,7 @@ New to Yomikai? Check out our [**Getting Started Guide**](https://github.com/sj0
 
 ## Features
 
-Yomihon takes the features of Mihon and enhances them with advanced tools for language learners.
+Yomikai takes the features of Mihon and enhances them with advanced tools for language learners.
 
 | Feature | Description |
 | :--- | :--- |
@@ -77,7 +77,7 @@ The developer(s) of this application have no affiliation with the content provid
 ### License
 Copyright © 2015 Javier Tomás  
 Copyright © 2024 Mihon Open Source Project  
-Copyright © 2025 Yomihon  
+Copyright © 2025 Yomikai  
 
 Licensed under the Apache License, Version 2.0. See the [LICENSE](/LICENSE) file for more details.
 
