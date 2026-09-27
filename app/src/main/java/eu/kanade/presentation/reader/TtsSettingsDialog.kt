@@ -271,8 +271,18 @@ fun TtsSettingsDialog(
                         eu.kanade.tachiyomi.data.tts.VoiceKind.TEEN -> "👦 Подросток"
                         else -> "Другой"
                     }
+                    // Пакет движка — часть выбора. Без него «локальный голос»
+                    // превращался в имя пакета, TextToSpeech не поднимался,
+                    // и голос из списка не звучал.
+                    val pkg = systemEnginePkg.ifBlank {
+                        runCatching { readyProbe?.defaultEngine }.getOrNull().orEmpty()
+                    }
                     VoiceChoice(
-                        key = voice.name,
+                        key = if (pkg.isBlank()) {
+                            voice.name
+                        } else {
+                            "$pkg::${voice.name}"
+                        },
                         label = "$kind • ${voice.name.substringAfterLast(':')}",
                         lang = voice.locale?.language?.lowercase(java.util.Locale.US).orEmpty(),
                         local = !voice.isNetworkConnectionRequired,

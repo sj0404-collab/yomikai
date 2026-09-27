@@ -269,28 +269,40 @@ object TtsSpeaker {
     }
 
     /**
-     * Голоса СИСТЕМНОГО движка по умолчанию (оффлайн): пары «подпись →
-     * спецификация пакет::голос». Спецификация передаётся в [speakWithVoice],
-     * чтобы озвучить текст именно этим голосом (смешивание оффлайн-голосов
+     * Голоса СИСТЕМНОГО движка (оффлайн): пары «подпись → спецификация
+     * пакет::голос». Спецификация передаётся в [speakWithVoice], чтобы
+     * озвучить текст именно этим голосом (смешивание оффлайн-голосов
      * с онлайн-голосами Edge TTS).
+     *
+     * Движок — ВЫБРАННЫЙ пользователем (`pref_system_tts_engine`), а не
+     * системный по умолчанию: список показывал голоса Google TTS, а озвучка
+     * уходила в RHVoice, и голос из списка не звучал вообще.
      */
     fun systemVoiceSpecs(context: Context): List<Pair<String, String>> {
         val app = context.applicationContext
         val specs = mutableListOf<Pair<String, String>>()
+        val wanted = runCatching { prefs().systemTtsEngine().get() }.getOrDefault("").trim()
         runCatching {
             val ready = CountDownLatch(1)
             var tts: TextToSpeech? = null
-            tts = TextToSpeech(app) {
-                ready.countDown()
+            tts = if (wanted.isNotBlank()) {
+                TextToSpeech(app, { ready.countDown() }, wanted)
+            } else {
+                TextToSpeech(app) { ready.countDown() }
             }
             ready.await(ENGINE_QUERY_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-            val pkg = runCatching { tts?.defaultEngine }.getOrNull().orEmpty()
+            val pkg = wanted.ifBlank {
+                runCatching { tts?.defaultEngine }.getOrNull().orEmpty()
+            }
             tts?.voices
                 ?.filter { it.name.isNotBlank() }
                 ?.forEach { v ->
                     val locale = runCatching { v.locale?.toString().orEmpty() }.getOrDefault("")
                     val label = if (locale.isBlank()) v.name else "${v.name} • $locale"
-                    specs += label to "${pkg}::${v.name}"
+                    // Без пакета спецификация остаётся «голос без движка»:
+                    // [speakWithVoice] теперь такой разбирает и берёт движок
+                    // по умолчанию, а не ищет пакет с именем голоса.
+                    specs += label to if (pkg.isBlank()) v.name else "$pkg${SPEC_SEPARATOR}${v.name}"
                 }
             runCatching { tts?.shutdown() }
         }.onFailure { error ->
@@ -324,6 +336,32 @@ object TtsSpeaker {
     }.getOrNull()
 
     /**
+     * Разбор спецификации голоса «пакет::имя».
+     *
+     * Раньше [speakWithVoice] брал `substringBefore("::")`, а он для строки
+     * БЕЗ разделителя возвращает строку целиком. Локальный голос (`ru-ru-x-dfc-local`)
+     * в итоге уезжал в `TextToSpeech(app, …, "ru-ru-x-dfc-local")` — пакета с
+     * таким именем нет, движок не поднимался, и голос молча не звучал.
+     * Теперь пустой пакет означает «движок по умолчанию», и это единственный
+     * способ отличить локальный голос от сетевого.
+     */
+    fun parseVoiceSpec(voiceSpec: String?): Pair<String, String> {
+        val raw = voiceSpec?.trim().orEmpty()
+        if (raw.isEmpty()) return "" to ""
+        val sep = raw.indexOf(SPEC_SEPARATOR)
+        if (sep <= 0) return "" to raw
+        return raw.substring(0, sep).trim() to raw.substring(sep + SPEC_SEPARATOR.length).trim()
+    }
+
+    private const val SPEC_SEPARATOR = "::"
+
+    /** Голос Edge TTS по имени, если это точно сетевой голос. */
+    private fun isEdgeVoiceName(name: String): Boolean =
+        name.endsWith("Neural", ignoreCase = true) ||
+            name.startsWith("ru-", ignoreCase = true) ||
+            name.startsWith("en-", ignoreCase = true)
+
+    /**
      * v1.9.40: озвучка КОНКРЕТНЫМ голосом («пакет::имя») в обход ролей и ручного
      * режима: кнопки «Проба» у слотов и ♀/♂/🎙 на карточке распознанного текста.
      * spec пуст = обычный основной голос.
@@ -342,30 +380,38 @@ object TtsSpeaker {
         onStateChange = onState
         val spoken = SpeechMarkup.forSpeech(SpeechMarkup.strip(text))
         if (spoken.isBlank()) {
+            markFailure(SpeakFailure.NONE)
             setSpeaking(false)
             return
         }
+        markFailure(SpeakFailure.NONE)
         // Голос роли может быть онлайн-голосом Edge TTS (в т.ч. в смешанном
         // словаре «онлайн+оффлайн»): маршрутизируем в Edge, а не в системный.
-        val forcedPkg = voiceSpec.substringBefore("::").trim()
-        val voiceName = voiceSpec.substringAfterLast("::").trim()
+        val (forcedPkg, voiceName) = parseVoiceSpec(voiceSpec)
+        if (voiceName.isEmpty()) {
+            markFailure(SpeakFailure.REJECTED, "Голос не указан: $voiceSpec")
+            setSpeaking(false)
+            return
+        }
         val enginePref = prefs().voiceEngine().get()
         val phoneOnly = runCatching { prefs().voicePhoneOnly().get() }.getOrDefault(true)
-        val edgeName = voiceName.endsWith("Neural", ignoreCase = true) ||
-            voiceName.startsWith("ru-", ignoreCase = true) ||
-            voiceName.startsWith("en-", ignoreCase = true)
+        val edgePkg = forcedPkg.startsWith("edge", ignoreCase = true)
         val wantEdge = when {
             // Пакет в спецификации голоса — это осознанный выбор конкретного
             // движка («edge::…», «com.github…::…»): телефонный режим его не
             // отменяет, иначе проба звучала бы не тем голосом, что и чтение.
-            forcedPkg.isNotBlank() -> forcedPkg.startsWith("edge", ignoreCase = true)
-            // Явно выбранный сетевой движок — тоже осознанный выбор.
+            forcedPkg.isNotBlank() -> edgePkg
+            // Явно выбранный сетевой движок — тоже осознанный выбор. Имя вида
+            // «ru-ru-…» без пакета — это ЛОКАЛЬНЫЙ голос Google TTS, уводить
+            // его в сеть нельзя.
             eu.kanade.tachiyomi.data.voice.VoicePlugins.isOnlineEngineId(enginePref) ->
-                enginePref == ENGINE_EDGE_TTS || edgeName
-            // Телефонный режим гасит только автоподстановку сетевого голоса
-            // по имени: конкретный голос не должен уводить озвучку в сеть.
+                enginePref == ENGINE_EDGE_TTS
+            // Телефонный режим гасит автоподстановку сетевого голоса.
             phoneOnly -> false
-            else -> edgeName
+            // Голос без пакета и с явно сетевым режимом: решает движок, а не
+            // догадка по имени.
+            else -> isEdgeVoiceName(voiceName) &&
+                !prefs().systemTtsEngine().get().isNullOrBlank()
         }
         if (wantEdge) {
             speakWithEdgeVoice(context, text, voiceName, onState)
@@ -373,6 +419,10 @@ object TtsSpeaker {
         }
         ensureSystem(context, forcedPkg.ifBlank { null }) { engine ->
             if (engine == null) {
+                markFailure(
+                    SpeakFailure.NO_ENGINE,
+                    "TTS-движок не инициализирован: ${forcedPkg.ifBlank { systemEnginePkg ?: "по умолчанию" }}",
+                )
                 setSpeaking(false)
                 return@ensureSystem
             }
@@ -380,9 +430,21 @@ object TtsSpeaker {
                 val p = prefs()
                 engine.setSpeechRate(p.speechRate().get().coerceIn(0.5f, 2f))
                 engine.setPitch(p.speechPitch().get().coerceIn(0.5f, 2f))
-                val name = voiceSpec.substringAfterLast("::")
-                engine.voices?.firstOrNull { it.name == name }?.let { engine.setVoice(it) }
-                val maxLen = 3500
+                val picked = engine.voices?.firstOrNull { it.name == voiceName }
+                if (picked != null) {
+                    engine.voice = picked
+                    // Язык — из самого голоса, а не из жёсткого «ru»: локальный
+                    // голос en-us с русским текстом speak() отклоняет.
+                    runCatching {
+                        engine.language = picked.locale ?: engine.defaultVoice?.locale
+                    }
+                } else {
+                    markFailure(
+                        SpeakFailure.REJECTED,
+                        "Голоса «$voiceName» нет в движке ${systemEnginePkg ?: "по умолчанию"}",
+                    )
+                }
+                val maxLen = HARD_UTTERANCE_LIMIT
                 val parts = spoken.chunked(maxLen)
                 val lastId = "ywv_" + (parts.size - 1)
                 engine.setOnUtteranceProgressListener(
@@ -390,17 +452,32 @@ object TtsSpeaker {
                         override fun onStart(utteranceId: String?) {
                             if (utteranceId == "ywv_0") setSpeaking(true)
                         }
+
                         override fun onDone(utteranceId: String?) {
                             if (utteranceId == lastId) setSpeaking(false)
                         }
-                        override fun onError(utteranceId: String?) = setSpeaking(false)
-                        override fun onError(utteranceId: String?, errorCode: Int) = setSpeaking(false)
+
+                        override fun onError(utteranceId: String?) = utteranceFailed("ошибка движка")
+                        override fun onError(utteranceId: String?, errorCode: Int) =
+                            utteranceFailed("движок отклонил текст ($errorCode)")
                     },
                 )
+                var spokenAny = false
                 parts.forEachIndexed { i, part ->
-                    engine.speak(part, TextToSpeech.QUEUE_ADD, null, "ywv_$i")
+                    val ok = engine.speak(part, TextToSpeech.QUEUE_ADD, null, "ywv_$i")
+                    // speak() возвращает ERROR, а не бросает: без проверки
+                    // голос «озвучивался» в молчание.
+                    if (ok == TextToSpeech.SUCCESS) spokenAny = true
                 }
-            }.onFailure { setSpeaking(false) }
+                if (!spokenAny) {
+                    markFailure(SpeakFailure.REJECTED, "Движок не принял текст голосом «$voiceName»")
+                    setSpeaking(false)
+                }
+            }.onFailure { error ->
+                logcat(LogPriority.WARN, error) { "speakWithVoice failed for $voiceName" }
+                markFailure(SpeakFailure.REJECTED, error.message ?: error.javaClass.simpleName)
+                setSpeaking(false)
+            }
         }
     }
 
@@ -694,10 +771,12 @@ object TtsSpeaker {
                     // before the engine sees it. speak() below also sends the
                     // exact name in KEY_PARAM_VOICE_NAME, bypassing that bug.
                     logcat(LogPriority.WARN) { "Voice ${v.name} rejected by TextToSpeech client" }
-                    engine.language = Locale("ru", "RU")
+                    engine.language = v.locale ?: Locale("ru", "RU")
                 }
             } else {
-                engine.language = Locale("ru", "RU")
+                // Язык движка по умолчанию, а не жёсткий ru: иначе локальный
+                // en-us голос получает русский текст и speak() отклоняет его.
+                engine.language = engine.defaultVoice?.locale ?: Locale("ru", "RU")
             }
             // v1.9.44: hidden-параметр «voiceName» убран: движки (RHVoice на
             // устройстве) ОТКЛОНЯЮТ speak() с таким Bundle — пресеты Ж/М/нарратор

@@ -297,9 +297,14 @@ object VoiceHelper {
         language: String,
         enginePackage: String? = null,
     ): Voice? {
+        // Явно выбранный голос ищем по ВСЕМ голосам движка, а не только по
+        // языковому фильтру: сетка показывает все языки, и локальный en-us
+        // голос, выбранный пользователем, иначе всегда отбрасывался.
+        if (!exactName.isNullOrBlank()) {
+            tts?.voices.orEmpty().find { it.name == exactName }?.let { return it }
+        }
         val all = voicesFor(tts, language, enginePackage)
         if (all.isEmpty()) return null
-        if (!exactName.isNullOrBlank()) all.find { it.name == exactName }?.let { return it }
 
         // Локальные голоса предпочтительнее сетевых: работают без интернета.
         val ranked = all.sortedWith(compareBy({ it.isNetworkConnectionRequired }, { it.name }))

@@ -577,6 +577,8 @@ object OcrQueueScreen : Screen() {
         val name: String,
         val kindLabel: String,
         val isOffline: Boolean,
+        /** Спецификация «пакет::голос» — в настройки пишем её, а не имя. */
+        val spec: String = name,
     )
 
     @Composable
@@ -684,10 +686,17 @@ object OcrQueueScreen : Screen() {
                             VoiceKind.TEEN -> "👦 Подросток"
                             else -> "Другой"
                         }
+                        // Пакет движка входит в спецификацию: без него
+                        // «локальный голос» превращался в имя пакета, и
+                        // TextToSpeech не поднимался (голос молча не звучал).
+                        val pkg = systemEnginePkg.ifBlank {
+                            runCatching { probe?.defaultEngine }.getOrNull().orEmpty()
+                        }
                         VoiceRow(
                             name = v.name,
                             kindLabel = kind,
                             isOffline = !v.isNetworkConnectionRequired,
+                            spec = if (pkg.isBlank()) v.name else "$pkg::${v.name}",
                         )
                     }
             }.getOrDefault(emptyList())
@@ -696,13 +705,13 @@ object OcrQueueScreen : Screen() {
         val onlineVoices = allVoices.filter { !it.isOffline }
         LaunchedEffect(allVoices, systemEnginePkg) {
             if (allVoices.isEmpty()) return@LaunchedEffect
-            val names = allVoices.map { it.name }.toSet()
+            val names = allVoices.map { it.spec }.toSet()
             val female = allVoices.firstOrNull { it.kindLabel.contains("Женский") } ?: allVoices.first()
             val male = allVoices.firstOrNull { it.kindLabel.contains("Мужской") }
                 ?: allVoices.getOrElse(1) { allVoices.first() }
-            if (voiceName !in names) voiceNamePref.set(female.name)
-            if (voiceFemale !in names) voiceFemalePref.set(female.name)
-            if (voiceMale !in names) voiceMalePref.set(male.name)
+            if (voiceName !in names) voiceNamePref.set(female.spec)
+            if (voiceFemale !in names) voiceFemalePref.set(female.spec)
+            if (voiceMale !in names) voiceMalePref.set(male.spec)
         }
 
         // Живой список голосов ElevenLabs по ключу (реальный API, без фейков)
@@ -886,15 +895,15 @@ object OcrQueueScreen : Screen() {
                                 SystemVoiceRow(
                                     row = row,
                                     selected = when (assignMode) {
-                                        1 -> voiceFemale == row.name
-                                        2 -> voiceMale == row.name
-                                        else -> voiceName == row.name
+                                        1 -> voiceFemale == row.spec
+                                        2 -> voiceMale == row.spec
+                                        else -> voiceName == row.spec
                                     },
                                     onSelect = {
                                         when (assignMode) {
-                                            1 -> voiceFemalePref.set(row.name)
-                                            2 -> voiceMalePref.set(row.name)
-                                            else -> voiceNamePref.set(row.name)
+                                            1 -> voiceFemalePref.set(row.spec)
+                                            2 -> voiceMalePref.set(row.spec)
+                                            else -> voiceNamePref.set(row.spec)
                                         }
                                     },
                                 )
@@ -906,15 +915,15 @@ object OcrQueueScreen : Screen() {
                                 SystemVoiceRow(
                                     row = row,
                                     selected = when (assignMode) {
-                                        1 -> voiceFemale == row.name
-                                        2 -> voiceMale == row.name
-                                        else -> voiceName == row.name
+                                        1 -> voiceFemale == row.spec
+                                        2 -> voiceMale == row.spec
+                                        else -> voiceName == row.spec
                                     },
                                     onSelect = {
                                         when (assignMode) {
-                                            1 -> voiceFemalePref.set(row.name)
-                                            2 -> voiceMalePref.set(row.name)
-                                            else -> voiceNamePref.set(row.name)
+                                            1 -> voiceFemalePref.set(row.spec)
+                                            2 -> voiceMalePref.set(row.spec)
+                                            else -> voiceNamePref.set(row.spec)
                                         }
                                     },
                                 )
