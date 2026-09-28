@@ -12,6 +12,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.app.usage.UsageStatsManager
 import android.graphics.PixelFormat
 import android.graphics.RectF
 import android.graphics.drawable.GradientDrawable
@@ -68,6 +69,9 @@ class OcrOverlayService : Service() {
         private const val BASE_W_DP = 320f
         private const val BASE_H_DP = 340f
         private const val BTN_DP = 60f
+
+        /** Как часто проверять, не открыто ли наше собственное приложение. */
+        private const val FOREGROUND_POLL_MS = 700L
 
         fun canDrawOverlays(context: Context): Boolean =
             Settings.canDrawOverlays(context)
@@ -204,7 +208,54 @@ class OcrOverlayService : Service() {
         }
         applyClipboardWatch()
         applyFrame()
+        // Панель не должна висеть поверх наших собственных настроек и
+        // читалки: раньше оверлей рисовался поверх приложения, открывшего
+        // его, и полупрозрачная панель лежала на экране поверх текста.
+        startForegroundWatcher()
         return START_STICKY
+    }
+
+    private val foregroundHandler = Handler(Looper.getMainLooper())
+    private val foregroundCheck = object : Runnable {
+        override fun run() {
+            applyForegroundVisibility()
+            foregroundHandler.postDelayed(this, FOREGROUND_POLL_MS)
+        }
+    }
+
+    private fun startForegroundWatcher() {
+        foregroundHandler.removeCallbacks(foregroundCheck)
+        foregroundHandler.post(foregroundCheck)
+    }
+
+    /**
+     * Прячет панель, пока на экране само приложение.
+     *
+     * Сверху окна с разрешением SYSTEM_ALERT_WINDOW не спрятать наше
+     * собственное окно нельзя, но можно не рисовать панель поверх него:
+     * иначе настройки оверлея открывались поверх самих себя.
+     */
+    private fun applyForegroundVisibility() {
+        val rootView = root ?: return
+        val foreground = runCatching {
+            val usage = getSystemService("usage") as? UsageStatsManager
+            val now = System.currentTimeMillis()
+            val app = usage?.queryUsageStats(UsageStatsManager.INTERVAL_BEST, now - 3_600_000, now)
+                ?.maxByOrNull { it.lastTimeUsed }
+            val inForeground = app != null &&
+                app.lastTimeUsed > now - 2_000 &&
+                packageManager.getLaunchIntentForPackage(app.packageName)
+                    ?.component?.packageName == packageName
+            inForeground
+        }.getOrDefault(false)
+
+        if (foreground) {
+            if (rootView.visibility != View.GONE) {
+                rootView.visibility = View.GONE
+            }
+        } else if (rootView.visibility != View.VISIBLE) {
+            rootView.visibility = View.VISIBLE
+        }
     }
 
     private fun ensureForeground() {
@@ -867,6 +918,7 @@ class OcrOverlayService : Service() {
     }
 
     override fun onDestroy() {
+        foregroundHandler.removeCallbacks(foregroundCheck)
         runCatching { stt?.destroy() }
         stt = null
         runCatching { readEngine.stop() }
