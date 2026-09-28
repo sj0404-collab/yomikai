@@ -34,6 +34,7 @@ fun OcrResultBottomSheet(
     onSearch: (String) -> Unit,
     onTermGroupClick: (List<DictionaryTerm>) -> Unit,
     onPlayAudioClick: (List<DictionaryTerm>) -> Unit,
+    actions: (@Composable () -> Unit)? = null,
 ) {
     // Use BoxWithConstraints to measure the actual available space for the sheet content
     BoxWithConstraints(
@@ -91,6 +92,11 @@ fun OcrResultBottomSheet(
                     onCopyText = onCopyText,
                     contentPadding = PaddingValues(bottom = 8.dp),
                 )
+
+                if (actions != null) {
+                    HorizontalDivider()
+                    actions()
+                }
             }
         }
     }

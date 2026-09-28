@@ -143,7 +143,15 @@ object AiWorkspaceSurvey {
         val clean = subdir.trim().trimStart('/')
         if (clean.isEmpty() || clean == ".") return root
         val f = File(root, clean)
-        return f.takeIf { it.isDirectory }
+        // Тот же запрет выхода за workspace, что и в resolveFile: иначе
+        // `{"path": "../../.."}` перечислял содержимое /sdcard и приватных
+        // папок приложения.
+        val contained = runCatching {
+            val base = root.canonicalFile
+            val target = f.canonicalFile
+            target == base || target.path.startsWith(base.path + File.separator)
+        }.getOrDefault(false)
+        return f.takeIf { contained && it.isDirectory }
     }
 
     private fun resolveFile(root: File, name: String): File? {
@@ -153,7 +161,9 @@ object AiWorkspaceSurvey {
         // Выход за пределы workspace запрещён: путь из модели не должен
         // приводить к файлам приложения.
         return runCatching {
-            if (f.canonicalPath.startsWith(root.canonicalPath)) f else null
+            val base = root.canonicalFile
+            val target = f.canonicalFile
+            if (target == base || target.path.startsWith(base.path + File.separator)) f else null
         }.getOrNull()
     }
 

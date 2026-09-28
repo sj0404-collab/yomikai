@@ -3,20 +3,27 @@ package eu.kanade.presentation.more.settings.screen
 import android.content.Context
 import android.content.Intent
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.Navigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.more.settings.Preference
+import eu.kanade.tachiyomi.data.ai.AiBackendState
 import eu.kanade.tachiyomi.data.ai.AiBackendStatus
 import eu.kanade.tachiyomi.data.ai.AiBackends
 import eu.kanade.tachiyomi.data.ai.AiPlugins
+import eu.kanade.tachiyomi.data.ai.AiProviders
 import eu.kanade.tachiyomi.data.ai.AiRequirement
 import eu.kanade.tachiyomi.data.ai.AiWorkspace
 import eu.kanade.tachiyomi.ui.main.MainActivity
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import mihon.domain.ocr.service.OcrPreferences
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
@@ -50,34 +57,48 @@ object SettingsAiScreen : SearchableSettings {
         val backend by prefs.aiBackend().collectPreferenceAsState()
         val provider by prefs.aiProvider().collectPreferenceAsState()
 
-        // Снимок состояния: настройки, установленные .task-модели, сессия ранера.
-        // Сеть берём из общего наблюдателя, чтобы статус пересчитывался при её
-        // пропаже без перечитывания всех настроек.
-        val state = remember(online, prefs, context) {
-            AiBackends.state(context, prefs).copy(networkAvailable = online)
-        }
-        val statuses = remember(state, provider) {
-            AiBackends.ALL.associate { it.id to AiBackends.statusOf(it, state, provider) }
+        // Снимок состояния бэкендов читает сеть и файлы (сессии ранера,
+        // установленные .task-модели), а список плагинов и workspace — это
+        // обход дерева каталогов. Раньше всё это выполнялось прямо в
+        // recomposition, то есть на главном потоке, и на большом workspace
+        // экран подвисал. Теперь считаем в фоне, а до готовности показываем
+        // заглушку.
+        var snapshot by remember { mutableStateOf<AiBackendState?>(null) }
+        var disk by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+        var userProviders by remember { mutableStateOf<List<AiProviders.Spec>>(emptyList()) }
+        LaunchedEffect(context) {
+            val loaded = withContext(Dispatchers.IO) {
+                Triple(
+                    AiBackends.state(context, prefs),
+                    runCatching { AiPlugins.list(context).size to AiWorkspace.listAll(context).size }
+                        .getOrDefault(0 to 0),
+                    AiProviders.list(context),
+                )
+            }
+            snapshot = loaded.first
+            disk = loaded.second
+            userProviders = loaded.third
         }
 
-        // Рабочая область и плагины разработчика — это файлы на диске, поэтому
-        // считаем их один раз на вход в экран, а не на каждую рекомпозицию.
-        val workspace = remember(context) {
-            runCatching {
-                AiPlugins.list(context).size to AiWorkspace.listAll(context).size
-            }.getOrDefault(0 to 0)
-        }
-
-        // Свои провайдеры из реестра AiProviders (файлы в workspace/providers):
-        // добавляются в список выбора провайдера в группе «Модели и ключи».
-        val userProviders = remember(context) {
-            eu.kanade.tachiyomi.data.ai.AiProviders.list(context)
+        val statuses = remember(snapshot, provider, online) {
+            // Сеть меняется отдельно от файлового снимка, поэтому статус
+            // пересчитываем с её актуальным значением.
+            snapshot?.let { state ->
+                val effective = state.copy(networkAvailable = online)
+                AiBackends.ALL.associate { it.id to AiBackends.statusOf(it, effective, provider) }
+            }.orEmpty()
         }
 
         return listOf(
-            getBackendsGroup(statuses = statuses, selected = backend),
+            getBackendsGroup(
+                prefs = prefs,
+                statuses = statuses,
+                selected = backend,
+                loading = snapshot == null,
+                online = online,
+            ),
             getModelKeyGroup(prefs = prefs, userProviders = userProviders),
-            getWorkspaceGroup(plugins = workspace.first, files = workspace.second),
+            getWorkspaceGroup(plugins = disk?.first, files = disk?.second),
             getAccessGroup(prefs = prefs, context = context, navigator = navigator),
         )
     }
@@ -136,42 +157,73 @@ object SettingsAiScreen : SearchableSettings {
 
     @Composable
     private fun getBackendsGroup(
+        prefs: OcrPreferences,
         statuses: Map<String, AiBackendStatus>,
         selected: String,
+        loading: Boolean,
+        online: Boolean,
     ): Preference.PreferenceGroup {
-        val current = AiBackends.byId(selected)
+        if (loading) {
+            return Preference.PreferenceGroup(
+                title = stringResource(MR.strings.pref_ai_backends_group),
+                preferenceItems = listOf(
+                    Preference.PreferenceItem.InfoPreference(title = "Проверяю бэкенды…"),
+                ),
+            )
+        }
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.pref_ai_backends_group),
-            preferenceItems = AiBackends.ALL.map { plugin ->
+            preferenceItems = listOf(
+                // Сам выбор бэкенда. Раньше строки ниже были чисто
+                // информационными, а подсказка отправляла читателя в «⚙
+                // вкладки AI», которой не существует — переключить бэкенд
+                // было негде.
+                Preference.PreferenceItem.ListPreference(
+                    preference = prefs.aiBackend(),
+                    entries = AiBackends.SELECTABLE.associate { it.id to it.title },
+                    title = "Бэкенд чата",
+                    subtitle = "Бэкенд: %s",
+                ),
+            ) + AiBackends.ALL.map { plugin ->
                 Preference.PreferenceItem.TextPreference(
                     title = backendTitle(
                         plugin = plugin,
                         isSelected = plugin.id == selected,
                         status = statuses[plugin.id],
                     ),
-                    subtitle = backendSubtitle(plugin = plugin, status = statuses[plugin.id]),
+                    subtitle = backendSubtitle(
+                        plugin = plugin,
+                        status = statuses[plugin.id],
+                        online = online,
+                    ),
                 )
             } + listOf(
                 Preference.PreferenceItem.InfoPreference(
-                    title = stringResource(MR.strings.pref_ai_backend_current).format(current.title),
-                ),
-                Preference.PreferenceItem.InfoPreference(
-                    title = stringResource(MR.strings.pref_ai_backend_switch_hint),
+                    title = stringResource(MR.strings.pref_ai_backend_current)
+                        .format(AiBackends.byId(selected).title),
                 ),
             ),
         )
     }
 
     @Composable
-    private fun getWorkspaceGroup(plugins: Int, files: Int): Preference.PreferenceGroup =
+    private fun getWorkspaceGroup(plugins: Int?, files: Int?): Preference.PreferenceGroup =
         Preference.PreferenceGroup(
             title = stringResource(MR.strings.pref_ai_workspace_group),
             preferenceItems = listOf(
                 Preference.PreferenceItem.InfoPreference(
-                    title = stringResource(MR.strings.pref_ai_workspace_files).format(files),
+                    title = if (files == null) {
+                        "Считаю файлы рабочей области…"
+                    } else {
+                        stringResource(MR.strings.pref_ai_workspace_files).format(files)
+                    },
                 ),
                 Preference.PreferenceItem.InfoPreference(
-                    title = stringResource(MR.strings.pref_ai_workspace_plugins).format(plugins),
+                    title = if (plugins == null) {
+                        "Считаю плагины…"
+                    } else {
+                        stringResource(MR.strings.pref_ai_workspace_plugins).format(plugins)
+                    },
                 ),
                 Preference.PreferenceItem.InfoPreference(
                     title = stringResource(MR.strings.pref_ai_workspace_hint),
@@ -207,6 +259,21 @@ object SettingsAiScreen : SearchableSettings {
                     title = stringResource(MR.strings.pref_ai_tab_visible),
                     subtitle = stringResource(MR.strings.pref_ai_tab_visible_summary),
                 ),
+                // Разрешения, которые проверяет агент. Раньше переключателей не
+                // было нигде, поэтому `runner_*` и `github_api` были мёртвыми
+                // инструментами: агент видел их в промпте и получал отказ на
+                // каждом вызове, а требование «ранер разрешён» нечем было
+                // выполнить.
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = prefs.aiAllowRunner(),
+                    title = "Разрешить ранер",
+                    subtitle = "Агент сможет запускать OpenCode-сессии (широкий доступ к репозиториям)",
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = prefs.aiAllowGithub(),
+                    title = "Разрешить GitHub",
+                    subtitle = "Агент сможет читать воркфлоу и запускать их через привязанный токен",
+                ),
                 Preference.PreferenceItem.SwitchPreference(
                     preference = prefs.aiHttpServer(),
                     title = stringResource(MR.strings.pref_ai_http_server),
@@ -240,6 +307,7 @@ object SettingsAiScreen : SearchableSettings {
     private fun backendSubtitle(
         plugin: AiBackends.Plugin,
         status: AiBackendStatus?,
+        online: Boolean,
     ): String = buildString {
         append(plugin.summary)
         if (status == null) return@buildString
@@ -253,6 +321,9 @@ object SettingsAiScreen : SearchableSettings {
             append(stringResource(MR.strings.pref_ai_requires))
             append(": ")
             append(status.missing.joinToString(", ") { labels.getValue(it) })
+        } else if (!online && plugin.requirements.contains(AiRequirement.NETWORK)) {
+            append('\n')
+            append("Сети нет — бэкенд сейчас не ответит")
         }
     }
 

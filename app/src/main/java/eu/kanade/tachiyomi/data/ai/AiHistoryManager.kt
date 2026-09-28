@@ -68,20 +68,56 @@ object AiHistoryManager {
     fun historyFile(context: Context, mangaId: Long? = null, channel: String = CHANNEL_CHAT): File {
         val ws = aiWorkspaceDir(context)
         ws.mkdirs()
-        return when {
+        val target = when {
             mangaId == null -> File(ws, FILE)
             channel == CHANNEL_CHAT -> File(ws, "ai_history_${mangaId}.json")
             else -> File(ws, "ai_history_${mangaId}_$channel.json")
         }
+        if (!target.exists()) migrateLegacyFile(context, target)
+        return target
     }
 
-    private fun aiWorkspaceDir(context: Context): File {
-        // Yomikai workspace — /sdcard/Yomikai/AI или внутренние файлы как fallback
-        val ext = context.getExternalFilesDir(null)
-        val candidate = if (ext != null) File(ext, "../../Yomikai/AI").canonicalFile else File(context.filesDir, "ai_workspace")
-        // Fallback если нет разрешения на ext
-        return if (candidate.exists() || candidate.mkdirs()) candidate else File(context.filesDir, "ai_workspace")
+    /**
+     * Старый каталог истории: `/sdcard/Android/Yomikai/AI`.
+     *
+     * Именно его вычисляла прежняя версия [aiWorkspaceDir]. Файлы назывались
+     * так же, поэтому достаточно перенести совпадение по имени — иначе после
+     * обновления переписка просто исчезла бы, хотя нигде не удалялась.
+     */
+    private fun legacyDir(context: Context): File? {
+        val external = context.getExternalFilesDir(null) ?: return null
+        val android = external.parentFile?.parentFile ?: return null
+        return File(android, "Yomikai/AI")
     }
+
+    private fun migrateLegacyFile(context: Context, target: File) {
+        val legacy = legacyDir(context) ?: return
+        val old = File(legacy, target.name)
+        if (!old.exists() || old.length() == 0L) return
+        synchronized(saveLock) {
+            try {
+                // Файлы одного тома, rename атомарен; если система отказала
+                // (например, каталог назначения на другом mount), копируем.
+                if (!old.renameTo(target)) {
+                    target.writeText(old.readText())
+                    old.delete()
+                }
+            } catch (e: Exception) {
+                logcat(LogPriority.WARN, e) { "AiHistoryManager legacy move failed: ${target.name}" }
+            }
+        }
+    }
+
+    /**
+     * История лежит в корне workspace.
+     *
+     * Раньше папка вычислялась здесь отдельно (`getExternalFilesDir/../../Yomikai/AI`,
+     * то есть `/sdcard/Android/Yomikai/AI`) и не совпадала ни с одним
+     * кандидатом [AiWorkspace.root]. Из-за этого история была не видна
+     * `workspace_list`/`read_file` — хотя промпт агента прямо велит читать её
+     * оттуда, — и не попадала в `zip_workspace`.
+     */
+    private fun aiWorkspaceDir(context: Context): File = AiWorkspace.root(context)
 
     fun load(context: Context, mangaId: Long? = null, channel: String = CHANNEL_CHAT): MutableList<Msg> {
         val f = historyFile(context, mangaId, channel)

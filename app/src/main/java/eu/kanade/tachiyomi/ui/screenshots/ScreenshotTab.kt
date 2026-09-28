@@ -223,10 +223,26 @@ private fun ScreenshotCard(
                 color = MaterialTheme.colorScheme.onSurface,
             )
         }
-        Text(
-            text = "${entry.regions.size}",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.primary,
-        )
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                text = "${entry.regions.size}",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            // Откуда запись: авточтение сняло кадр сам или читатель выбрал
+            // область пальцем. Без подписи два вида записей неотличимы.
+            Text(
+                text = entry.scanRegion.sourceLabel(),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
+}
+
+/** Короткая подпись источника записи скриншота. */
+private fun String?.sourceLabel(): String = when (this) {
+    "selection" -> "Область"
+    "viewport", "" , null -> "Кадр"
+    else -> "Кадр"
 }

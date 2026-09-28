@@ -10,6 +10,7 @@ import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.GetApp
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.QueryStats
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Storage
@@ -41,6 +42,7 @@ fun MoreScreen(
     onIncognitoModeChange: (Boolean) -> Unit,
     onClickDownloadQueue: () -> Unit,
     onClickOcrQueue: () -> Unit,
+    onClickOcrOverlay: () -> Unit,
     onClickCategories: () -> Unit,
     onClickStats: () -> Unit,
     onClickDataAndStorage: () -> Unit,
@@ -135,6 +137,16 @@ fun MoreScreen(
                     },
                     icon = Icons.Outlined.DocumentScanner,
                     onPreferenceClick = onClickOcrQueue,
+                )
+            }
+            // Оверлей поверх экрана — отдельная сущность и отдельный пункт:
+            // он ничего не знает про очередь распознавания страниц.
+            item {
+                TextPreferenceWidget(
+                    title = "Оверлей поверх экрана",
+                    subtitle = "Плавающая кнопка поверх других приложений",
+                    icon = Icons.Outlined.Layers,
+                    onPreferenceClick = onClickOcrOverlay,
                 )
             }
             item {

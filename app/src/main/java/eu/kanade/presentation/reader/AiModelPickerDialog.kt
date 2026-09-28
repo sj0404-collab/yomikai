@@ -261,7 +261,7 @@ fun AiModelPickerDialog(
                         label = { Text("Как у чата") },
                         modifier = Modifier.padding(end = 6.dp),
                     )
-                    eu.kanade.tachiyomi.data.ai.AiBackends.ALL.forEach { backend ->
+                    eu.kanade.tachiyomi.data.ai.AiBackends.SELECTABLE.forEach { backend ->
                         FilterChip(
                             selected = orchBackend == backend.id,
                             onClick = { orchBackend = backend.id },

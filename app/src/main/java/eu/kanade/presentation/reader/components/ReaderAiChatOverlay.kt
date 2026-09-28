@@ -79,6 +79,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -166,7 +167,12 @@ fun ReaderAiChatOverlay(
 
     LaunchedEffect(Unit) {
         val prefs = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
-        val state = eu.kanade.tachiyomi.data.ai.AiBackends.state(context, prefs)
+        // Снимок бэкенда читает сеть, каталоги моделей и сессии ранера — это
+        // диск и binder, и на главном потоке (здесь это Main.immediate)
+        // он подвешивал чат на открытии.
+        val state = withContext(Dispatchers.IO) {
+            eu.kanade.tachiyomi.data.ai.AiBackends.state(context, prefs)
+        }
         val backend = eu.kanade.tachiyomi.data.ai.AiBackends.byId(prefs.aiBackend().get())
         val status = eu.kanade.tachiyomi.data.ai.AiBackends.statusOf(
             backend,
@@ -226,7 +232,7 @@ fun ReaderAiChatOverlay(
             // Поле очищаем сразу при отправке: оставлять отправленный текст в
             // поле нельзя — читатель видит «не отправлено» и ждёт второй раз.
             input = ""
-            sendMessage(
+            runningJob = sendMessage(
                 context = context,
                 scope = scope,
                 mangaId = mangaId,
@@ -242,7 +248,14 @@ fun ReaderAiChatOverlay(
                 historyChannel = historyChannel,
                 onActivity = setActivity,
                 onDone = { sessionRefresh += 1 },
-            )
+            ).also {
+                // Ход завершился — ссылка больше не нужна, иначе «Стоп» отменил
+                // бы уже завершённую работу и обнулил индикатор.
+                scope.launch {
+                    it.join()
+                    runningJob = null
+                }
+            }
             attachedName = null
             attachedBytes = null
         }
@@ -705,12 +718,14 @@ private fun sendMessage(
     onActivity: (String) -> Unit = {},
     /** Вызывается после сохранения ответа: пора перечитать сводку сессии. */
     onDone: () -> Unit = {},
-) {
+): kotlinx.coroutines.Job {
     AiHistoryManager.append(context, history, Msg(role = "user", text = input), mangaId, historyChannel)
     loading(true)
     onActivity("Запрос к модели…")
-    scope.launch {
-        val reply = runCatching {
+    // Job возвращаем наружу, чтобы кнопка «Стоп» действительно прерывала ход:
+    // раньше ссылка на него не хранилась, и `cancel()` был вызовом в пустоту.
+    return scope.launch {
+        val reply = try {
             chatOnce(
                 context = context,
                 mangaId = mangaId,
@@ -722,10 +737,17 @@ private fun sendMessage(
                 history = history,
                 onProgress = onActivity,
             )
-        }.getOrElse { error ->
+        } catch (e: CancellationException) {
+            // Кнопка «Стоп»: отмена хода — не ошибка запроса. Раньше
+            // runCatching глотал отмену и в историю попадал ответ
+            // «Сбой запроса к AI: …», хотя читатель просто остановил агента.
+            loading(false)
+            onActivity("Остановлено")
+            throw e
+        } catch (e: Exception) {
             onActivity("Ошибка запроса")
             AiAgent.AgentReply(
-                text = "Сбой запроса к AI: ${error.message ?: error::class.java.simpleName}",
+                text = "Сбой запроса к AI: ${e.message ?: e::class.java.simpleName}",
                 toolResults = emptyList(),
                 images = emptyList(),
             )

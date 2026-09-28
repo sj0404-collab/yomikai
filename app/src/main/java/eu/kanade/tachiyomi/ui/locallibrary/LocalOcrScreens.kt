@@ -150,7 +150,7 @@ private fun OptionsBlock(
     }
 }
 
-private val ENGINE_TITLES = mapOf(
+internal val ENGINE_TITLES = mapOf(
     OcrModel.CYRILLIC to "Кириллица (офлайн, точно)",
     OcrModel.MLKIT to "Google ML Kit (офлайн, встроена в APK)",
     OcrModel.FAST to "Быстрый (офлайн, для ARM)",
@@ -546,100 +546,6 @@ object LocalGameSttScreen : Screen {
             EngineOptions(
                 selected = gameEngine,
                 onSelect = { prefs.gameOcrEngine().set(it) },
-            )
-        }
-    }
-}
-
-// ---------- 6. Оверлей приложений ----------
-
-object LocalAppOverlayScreen : Screen {
-
-    @Composable
-    override fun Content() {
-        val context = LocalContext.current
-        val prefs = rememberPrefs()
-        val regionMode by prefs.overlayRegionMode().changes()
-            .collectAsState(initial = prefs.overlayRegionMode().get())
-        val fixedRegion by prefs.overlayFixedRegion().changes()
-            .collectAsState(initial = prefs.overlayFixedRegion().get())
-        val showFrame by prefs.overlayShowFrame().changes()
-            .collectAsState(initial = prefs.overlayShowFrame().get())
-        val watchClip by prefs.overlayWatchClipboard().changes()
-            .collectAsState(initial = prefs.overlayWatchClipboard().get())
-        val appEngine by prefs.appOcrEngine().changes()
-            .collectAsState(initial = prefs.appOcrEngine().get())
-
-        SubSettingsScaffold(
-            title = "Оверлей приложений",
-            subtitle = "Плавающая кнопка поверх других APK: свои область и технология.",
-        ) {
-            SectionTitle("Питание")
-            Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-                TextButton(onClick = {
-                    if (!OcrOverlayService.canDrawOverlays(context)) {
-                        OcrOverlayService.requestPermission(context)
-                    } else {
-                        OcrOverlayService.start(context)
-                    }
-                }) { Text("Запустить") }
-                TextButton(onClick = { OcrOverlayService.stop(context) }) { Text("Остановить") }
-            }
-            OptionsBlock(
-                title = "Область",
-                options = mapOf(
-                    "auto" to "Авто — весь экран",
-                    "manual" to "Вручную — выделить пальцем",
-                    "fixed" to "Фикс — реплики игр, область не двигается",
-                ),
-                selected = regionMode,
-                onSelect = {
-                    prefs.overlayRegionMode().set(it)
-                    OcrOverlayService.refresh(context)
-                },
-            )
-            Text(
-                text = if (fixedRegion.isBlank()) {
-                    "Фиксированная область не задана — кнопка ✏ на панели оверлея."
-                } else {
-                    "Фикс: $fixedRegion"
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-            )
-            TextButton(
-                onClick = {
-                    if (!OcrOverlayService.canDrawOverlays(context)) {
-                        OcrOverlayService.requestPermission(context)
-                    } else {
-                        OcrOverlayService.start(context)
-                        OcrOverlayService.selectRegion(context)
-                    }
-                },
-                modifier = Modifier.padding(horizontal = 16.dp),
-            ) { Text("Задать область пальцем") }
-            SwitchRow(
-                title = "Показывать рамку области",
-                subtitle = "Тонкая рамка зафиксированной области поверх приложений",
-                checked = showFrame,
-                onChange = {
-                    prefs.overlayShowFrame().set(it)
-                    OcrOverlayService.refresh(context)
-                },
-            )
-            SwitchRow(
-                title = "Следить за буфером обмена",
-                subtitle = "Новое скопированное озвучивается само",
-                checked = watchClip,
-                onChange = {
-                    prefs.overlayWatchClipboard().set(it)
-                    OcrOverlayService.refresh(context)
-                },
-            )
-            EngineOptions(
-                selected = appEngine,
-                onSelect = { prefs.appOcrEngine().set(it) },
             )
         }
     }

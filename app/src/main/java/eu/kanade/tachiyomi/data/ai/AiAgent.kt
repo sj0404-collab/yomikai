@@ -941,7 +941,7 @@ object AiAgent {
                 val session = RunnerLlm.listSessions(context).firstOrNull { it.url != null }
                 when {
                     text.isBlank() -> ToolResult("runner_chat", "ОШИБКА: пустой text")
-                    session == null -> ToolResult("runner_chat", "Нет живой ранер-сессии — запусти runner_start или вручную в ⚙")
+                    session == null -> ToolResult("runner_chat", "Нет живой ранер-сессии — запусти runner_start или вручную на вкладке «AI»")
                     else -> {
                         val answer = RunnerLlm.chat(context, session, text)
                         ToolResult("runner_chat", answer ?: "Ранер не ответил (сессия могла умереть)")

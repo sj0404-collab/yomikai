@@ -26,6 +26,7 @@ import eu.kanade.tachiyomi.data.ocr.OcrScanManager
 import eu.kanade.tachiyomi.ui.category.CategoryScreen
 import eu.kanade.tachiyomi.ui.download.DownloadQueueScreen
 import eu.kanade.tachiyomi.ui.download.OcrQueueScreen
+import eu.kanade.tachiyomi.ui.overlay.OcrOverlaySettingsScreen
 import eu.kanade.tachiyomi.ui.setting.SettingsScreen
 import eu.kanade.tachiyomi.ui.stats.StatsScreen
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -73,6 +74,7 @@ data object MoreTab : Tab {
             onIncognitoModeChange = { screenModel.incognitoMode = it },
             onClickDownloadQueue = { navigator.push(DownloadQueueScreen) },
             onClickOcrQueue = { navigator.push(OcrQueueScreen) },
+            onClickOcrOverlay = { navigator.push(OcrOverlaySettingsScreen) },
             onClickCategories = { navigator.push(CategoryScreen()) },
             onClickStats = { navigator.push(StatsScreen()) },
             onClickDataAndStorage = { navigator.push(SettingsScreen(SettingsScreen.Destination.DataAndStorage)) },

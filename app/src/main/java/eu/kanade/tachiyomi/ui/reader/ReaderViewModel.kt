@@ -61,11 +61,15 @@ import kotlinx.coroutines.withTimeout
 import logcat.LogPriority
 import mihon.domain.ocr.exception.OcrException
 import mihon.domain.ocr.interactor.OcrProcessor
+import mihon.domain.ocr.model.OcrBoundingBox
 import mihon.domain.ocr.model.OcrModel
+import mihon.domain.ocr.model.OcrRegion
+import mihon.domain.ocr.model.OcrTextOrientation
 import mihon.domain.ocr.model.OcrTextSource
 import mihon.domain.ocr.model.flattenOcrTextForQuery
 import mihon.domain.ocr.repository.OcrRepository
 import mihon.domain.ocr.service.OcrPreferences
+import mihon.data.ocr.OcrScreenshotBuffer
 import mihon.domain.panel.repository.PanelDetectionRepository
 import tachiyomi.core.common.preference.toggle
 import tachiyomi.core.common.util.lang.launchIO
@@ -117,6 +121,12 @@ class ReaderViewModel @JvmOverloads constructor(
     private val libraryPreferences: LibraryPreferences = Injekt.get(),
     private val application: Application = Injekt.get(),
 ) : ViewModel() {
+
+    private companion object {
+        /** Сторона кадра, попадающего в буфер «Скриншоты» как пометка распознавания. */
+        const val MARKED_MAX_SIDE = 1080
+        const val MARKED_JPEG_QUALITY = 70
+    }
 
     private val mutableState = MutableStateFlow(State())
     val state = mutableState.asStateFlow()
@@ -985,6 +995,72 @@ class ReaderViewModel @JvmOverloads constructor(
         return out
     }
 
+    /**
+     * Пометить распознанную область так же, как это делает авточтение: запись
+     * в буфер «Скриншоты» с JPEG-кадром выделенной области, чтобы результат
+     * ручного распознавания не пропадал и был виден на вкладке скриншотов.
+     *
+     * Кадр уменьшается до [MARKED_MAX_SIDE] — в буфер попадают десятки
+     * записей, и полноразмерные JPEG быстро съедают место.
+     *
+     * @return true, если запись создана.
+     */
+    private fun markRecognizedRegion(bitmap: Bitmap, text: String, usedEngine: OcrModel?): Boolean {
+        val prefs = Injekt.get<OcrPreferences>()
+        if (!prefs.autoScreenshotEnabled().get()) return false
+        if (bitmap.isRecycled) return false
+        return runCatching {
+            val scaled = if (maxOf(bitmap.width, bitmap.height) <= MARKED_MAX_SIDE) {
+                bitmap
+            } else {
+                val scale = MARKED_MAX_SIDE.toFloat() / maxOf(bitmap.width, bitmap.height)
+                Bitmap.createScaledBitmap(
+                    bitmap,
+                    (bitmap.width * scale).toInt().coerceAtLeast(1),
+                    (bitmap.height * scale).toInt().coerceAtLeast(1),
+                    true,
+                )
+            }
+            try {
+                val jpeg = java.io.ByteArrayOutputStream().use { out ->
+                    if (scaled.compress(Bitmap.CompressFormat.JPEG, MARKED_JPEG_QUALITY, out)) {
+                        out.toByteArray()
+                    } else {
+                        null
+                    }
+                }
+                val chapterId = state.value.currentChapter?.chapter?.id ?: -1L
+                val pageIndex = (state.value.currentPage - 1).coerceAtLeast(0)
+                OcrScreenshotBuffer.add(
+                    chapterId = chapterId,
+                    pageIndex = pageIndex,
+                    scrollFraction = 0f,
+                    // Выделенная область — это и есть весь кадр записи, поэтому
+                    // единственный регион занимает его целиком.
+                    regions = listOf(
+                        OcrRegion(
+                            order = 0,
+                            text = text.trim(),
+                            boundingBox = OcrBoundingBox(0f, 0f, 1f, 1f),
+                            textOrientation = OcrTextOrientation.Horizontal,
+                        ),
+                    ),
+                    engineUsed = usedEngine?.name?.lowercase() ?: "unknown",
+                    imageWidth = scaled.width,
+                    imageHeight = scaled.height,
+                    imageJpeg = jpeg,
+                    scanRegion = "selection",
+                )
+                true
+            } finally {
+                if (scaled !== bitmap && !scaled.isRecycled) scaled.recycle()
+            }
+        }.getOrElse { e ->
+            logcat(LogPriority.WARN, e) { "Failed to mark recognized OCR region" }
+            false
+        }
+    }
+
     fun processOcrRegion(bitmap: Bitmap) {
         viewModelScope.launchIO {
             mutableState.update { it.copy(isProcessingOcr = true, ocrSelectionMode = false) }
@@ -999,8 +1075,18 @@ class ReaderViewModel @JvmOverloads constructor(
                 // пропускается, и текст читает локальный. Показываем
                 // фактического исполнителя, иначе «онлайн» — враньё.
                 val usedEngine = ocrProcessor.lastUsedEngine()
+                val queryText = flattenOcrTextForQuery(text)
+                // Помечаем результат так же, как это делает авточтение: запись
+                // в буфер «Скриншоты» с кадром области. Раньше ручной выбор
+                // regions нигде не оставался — распознал, посмотрел, закрыл, и
+                // результат потерян, а вкладка «Скриншоты» показывала только
+                // кадры авточтения.
+                val marked = if (queryText.isNotBlank()) {
+                    markRecognizedRegion(bitmap, queryText, usedEngine)
+                } else {
+                    false
+                }
                 withUIContext {
-                    val queryText = flattenOcrTextForQuery(text)
                     if (queryText.isNotBlank()) {
                         showOcrResult(
                             queryText = queryText,
@@ -1008,6 +1094,9 @@ class ReaderViewModel @JvmOverloads constructor(
                             source = ocrSource(usedEngine),
                         )
                         mutableState.update { it.copy(isProcessingOcr = false) }
+                        if (marked) {
+                            eventChannel.send(Event.OcrResultMarked)
+                        }
                     } else {
                         mutableState.update { it.copy(isProcessingOcr = false) }
                         eventChannel.send(Event.OcrNoTextFound)
@@ -1348,6 +1437,8 @@ class ReaderViewModel @JvmOverloads constructor(
         data class ShareImage(val uri: Uri, val page: ReaderPage) : Event
         data class CopyImage(val uri: Uri) : Event
         data object OcrNoTextFound : Event
+        /** Результат ручного распознавания помечен в буфере «Скриншоты». */
+        data object OcrResultMarked : Event
 
         data class OfflineExportResult(val message: String) : Event
         data object OcrMemoryError : Event

@@ -72,7 +72,6 @@ import eu.kanade.domain.dictionary.OcrResultPresentation
 import eu.kanade.presentation.reader.DisplayRefreshHost
 import eu.kanade.presentation.reader.OcrLoadingIndicator
 import eu.kanade.presentation.reader.OcrResultOverlay
-import eu.kanade.presentation.reader.OcrVoiceFloatingControls
 import eu.kanade.presentation.reader.OcrResultPopupSettings
 import eu.kanade.presentation.reader.OcrSelectionOverlay
 import eu.kanade.presentation.reader.OrientationSelectDialog
@@ -464,6 +463,11 @@ class ReaderActivity : BaseActivity() {
                     ReaderViewModel.Event.OcrNoTextFound -> {
                         clearActiveOcrOverlaySession()
                         toast(MR.strings.no_results_found)
+                    }
+                    ReaderViewModel.Event.OcrResultMarked -> {
+                        // Пометка видна и во вкладке «Скриншоты», и во всплывающем
+                        // индикаторе угла — сообщаем, что результат не пропал.
+                        toast("Распознанное сохранено в «Скриншоты»")
                     }
                     ReaderViewModel.Event.OcrMemoryError -> {
                         clearActiveOcrOverlaySession()
@@ -1199,6 +1203,16 @@ class ReaderActivity : BaseActivity() {
                             )
                         }
                         Box(modifier = Modifier.fillMaxSize()) {
+                            // Текст, над которым работают панельные действия
+                            // (озвучка, словарь, копирование). `queryText` у
+                            // результата долгого нажатия пустой — сам текст
+                            // лежит в selection, поэтому раньше кнопка Speak
+                            // в новой компактной панели молчала вслух.
+                            val ocrActionText = dialog.queryText.ifBlank {
+                                searchState.query.ifBlank {
+                                    activeOcrOverlaySession?.selection?.displayText.orEmpty()
+                                }
+                            }
                             OcrResultOverlay(
                             onDismissRequest = onDismissOcrResult,
                             presentation = when (dialog.origin) {
@@ -1219,17 +1233,12 @@ class ReaderActivity : BaseActivity() {
                                 // Копируем РАСПОЗНАННЫЙ текст, а не строку поиска по
                                 // словарям: searchState.query пуст, пока читатель ничего
                                 // не искал, и в буфер уходила пустая строка.
-                                val text = dialog.queryText.ifBlank {
-                                    searchState.query.ifBlank {
-                                        activeOcrOverlaySession?.selection?.displayText.orEmpty()
-                                    }
-                                }
-                                if (text.isBlank()) {
+                                if (ocrActionText.isBlank()) {
                                     toast("Нечего копировать")
                                 } else {
                                     val clipboard = getSystemService<ClipboardManager>()
                                     clipboard?.setPrimaryClip(
-                                        ClipData.newPlainText(null, text),
+                                        ClipData.newPlainText(null, ocrActionText),
                                     )
                                     toast(MR.strings.action_copy_to_clipboard)
                                 }
@@ -1255,43 +1264,41 @@ class ReaderActivity : BaseActivity() {
                             },
                             onPlayAudioClick = dictionarySearchScreenModel::fetchAndPlayAudio,
                             onSpeak = {
-                                eu.kanade.tachiyomi.data.tts.TtsSpeaker.speak(
-                                    this@ReaderActivity,
-                                    dialog.queryText,
-                                )
+                                if (ocrActionText.isBlank()) {
+                                    toast("Нечего озвучивать")
+                                } else {
+                                    eu.kanade.tachiyomi.data.tts.TtsSpeaker.speak(
+                                        this@ReaderActivity,
+                                        ocrActionText,
+                                    )
+                                }
                             },
                             onSpeakRole = { role ->
-                                eu.kanade.tachiyomi.data.tts.TtsSpeaker.speakRole(
-                                    this@ReaderActivity,
-                                    dialog.queryText,
-                                    role,
-                                )
+                                if (ocrActionText.isBlank()) {
+                                    toast("Нечего озвучивать")
+                                } else {
+                                    eu.kanade.tachiyomi.data.tts.TtsSpeaker.speakRole(
+                                        this@ReaderActivity,
+                                        ocrActionText,
+                                        role,
+                                    )
+                                }
                             },
                             onChooseVoice = { showVoicePicker = true },
                             onHidePageOverlay = ::hideActiveOcrOverlayText,
                             onAddToDictionary = {
-                                val added = mihon.data.ocr.OcrVocabulary.addFromText(
-                                    dialog.queryText,
-                                )
-                                toast(
-                                    if (added > 0) "Словарь OCR: добавлено $added"
-                                    else "Словарь OCR: ничего нового",
-                                )
-                            },
-                            )
-                            if (searchState.dictionaries.isNotEmpty()) OcrVoiceFloatingControls(
-                                enabled = dialog.queryText.isNotBlank(),
-                                onSpeak = {
-                                    eu.kanade.tachiyomi.data.tts.TtsSpeaker.speak(
-                                        this@ReaderActivity,
-                                        dialog.queryText,
+                                if (ocrActionText.isBlank()) {
+                                    toast("Нечего добавлять")
+                                } else {
+                                    val added = mihon.data.ocr.OcrVocabulary.addFromText(
+                                        ocrActionText,
                                     )
-                                },
-                                onChooseVoice = { showVoicePicker = true },
-                                onHidePageOverlay = ::hideActiveOcrOverlayText,
-                                modifier = Modifier
-                                    .align(Alignment.BottomCenter)
-                                    .navigationBarsPadding(),
+                                    toast(
+                                        if (added > 0) "Словарь OCR: добавлено $added"
+                                        else "Словарь OCR: ничего нового",
+                                    )
+                                }
+                            },
                             )
                             if (showVoicePicker) {
                                 eu.kanade.presentation.reader.TtsVoicePickerDialog(
@@ -1300,7 +1307,7 @@ class ReaderActivity : BaseActivity() {
                                         showVoicePicker = false
                                         eu.kanade.tachiyomi.data.tts.TtsSpeaker.speakWithVoice(
                                             this@ReaderActivity,
-                                            dialog.queryText,
+                                            ocrActionText,
                                             spec,
                                         )
                                     },
@@ -1308,7 +1315,7 @@ class ReaderActivity : BaseActivity() {
                                         showVoicePicker = false
                                         eu.kanade.tachiyomi.data.tts.TtsSpeaker.speakWithEdgeVoice(
                                             this@ReaderActivity,
-                                            dialog.queryText,
+                                            ocrActionText,
                                             voice,
                                         )
                                     },

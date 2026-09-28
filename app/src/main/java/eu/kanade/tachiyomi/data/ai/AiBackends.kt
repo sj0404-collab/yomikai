@@ -110,6 +110,14 @@ object AiBackends {
          * ранер модель выбирают сами: там роль может выбрать только бэкенд.
          */
         val supportsModelChoice: Boolean = true,
+        /**
+         * Можно ли выбрать этот бэкенд в списках выбора.
+         *
+         * Локальная LLM — вечный стаб: движок не в сборке, `chat()` всегда
+         * бросает. Показывать его в выпадающих списках значило предлагать
+         * заведомо нерабочий вариант, который ломался на каждом ходу.
+         */
+        val selectable: Boolean = true,
     )
 
     val ONLINE = Plugin(
@@ -130,6 +138,7 @@ object AiBackends {
         offline = true,
         requirements = listOf(AiRequirement.MODEL_DOWNLOAD),
         supportsModelChoice = false,
+        selectable = false,
     )
 
     val RUNNER = Plugin(
@@ -148,6 +157,12 @@ object AiBackends {
     )
 
     val ALL = listOf(ONLINE, LOCAL, RUNNER)
+
+    /**
+     * Бэкенды, которые имеет смысл предлагать выбрать. Всё, что не может
+     * ответить никогда (сейчас это локальная LLM), сюда не попадает.
+     */
+    val SELECTABLE = ALL.filter { it.selectable }
 
     fun byId(id: String?): Plugin = ALL.firstOrNull { it.id == id } ?: ONLINE
 
@@ -263,7 +278,7 @@ object AiBackends {
                     Route(
                         plugin.id,
                         ready = false,
-                        message = "Нет живой ранер-сессии: запустите её в ⚙ → Полу-онлайн LLM",
+                        message = "Нет живой ранер-сессии: запустите её на вкладке «AI»",
                     )
                 }
 

@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.GTranslate
+import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.RecordVoiceOver
 import androidx.compose.material.icons.outlined.SportsEsports
 import androidx.compose.material.icons.outlined.Translate
@@ -37,6 +38,7 @@ import eu.kanade.presentation.more.settings.screen.SettingsDictionaryScreen
 import eu.kanade.presentation.more.settings.screen.SettingsOcrPluginsScreen
 import eu.kanade.presentation.more.settings.screen.SettingsOcrScreen
 import eu.kanade.presentation.reader.OcrBubbleSettingsDialog
+import eu.kanade.tachiyomi.ui.overlay.OcrOverlaySettingsScreen
 
 /**
  * Раздел «Настройки» внутри локальной библиотеки: у каждого пункта свой
@@ -153,10 +155,10 @@ object LocalSettingsScreen : Screen {
                 item { SettingsHeader("Приложения") }
                 item {
                     SettingsItem(
-                        icon = Icons.Outlined.RecordVoiceOver,
-                        title = "Оверлей приложений",
+                        icon = Icons.Outlined.Layers,
+                        title = "Оверлей поверх экрана",
                         subtitle = "Плавающая кнопка, область, своя технология",
-                    ) { navigator.push(LocalAppOverlayScreen) }
+                    ) { navigator.push(OcrOverlaySettingsScreen) }
                 }
             }
         }

@@ -103,11 +103,23 @@ class AiBackendsTest {
 
     @Test
     fun `local reports a missing or unselected model`() {
+        // Движка в сборке нет, поэтому «скачать модель» больше не требование:
+        // показывать его значило обещать загрузку, которой не бывает.
         AiBackends.statusOf(AiBackends.LOCAL, readyState.copy(localModelInstalled = false))
-            .missing shouldContainExactly listOf(AiRequirement.MODEL_DOWNLOAD)
+            .missing shouldBe emptyList()
         AiBackends.statusOf(AiBackends.LOCAL, readyState.copy(localModelId = "")).detail shouldBe
-            "Модель не выбрана"
-        AiBackends.statusOf(AiBackends.LOCAL, readyState).detail shouldBe "qwen25_05b • 521 МБ • установлена"
+            "Движок не в сборке — используйте Онлайн или Полу-онлайн"
+        AiBackends.statusOf(AiBackends.LOCAL, readyState).detail shouldBe
+            "Движок не в сборке — используйте Онлайн или Полу-онлайн. " +
+            "Файл .task: qwen25_05b (521 МБ) — лежит на устройстве, пригоден для выгрузки на ранер"
+    }
+
+    @Test
+    fun `local backend is not offered for selection`() {
+        // Локальная LLM — стаб, её нельзя предлагать выбрать: она не ответит
+        // ни на один ход.
+        AiBackends.SELECTABLE.map { it.id } shouldContainExactly listOf("online", "runner")
+        AiBackends.LOCAL.selectable shouldBe false
     }
 
     @Test
@@ -154,7 +166,9 @@ class AiBackendsTest {
         val local = AiBackends.route("local", readyState.copy(localModelInstalled = false))
         local.ready shouldBe false
         local.message shouldBe
-            "Локальная модель не готова: скачайте её в ⚙ → Локальные LLM и прогоните «Тест»"
+            "Локальный LLM отключён в этой сборке: движок не включён " +
+            "(это было сделано ради размера APK). Берите Онлайн или Полу-онлайн; " +
+            "файлы .task остаются для экспорта на ранер."
 
         val noModel = AiBackends.route("local", readyState.copy(localModelId = ""))
         noModel.ready shouldBe false
@@ -162,10 +176,14 @@ class AiBackendsTest {
 
         val runner = AiBackends.route("runner", readyState.copy(runnerSessionAlive = false))
         runner.ready shouldBe false
-        runner.message shouldBe "Нет живой ранер-сессии: запустите её в ⚙ → Полу-онлайн LLM"
+        runner.message shouldBe "Нет живой ранер-сессии: запустите её на вкладке «AI»"
+
+        // Локальный бэкенд не готов никогда: движка нет в сборке, и даже
+        // установленный .task его не запускает.
+        AiBackends.route("local", readyState).ready shouldBe false
+        AiBackends.route("local", readyState).message shouldBe local.message
 
         // Готовый бэкенд сообщений не выдаёт.
-        AiBackends.route("local", readyState).message shouldBe null
         AiBackends.route("runner", readyState).message shouldBe null
     }
 }

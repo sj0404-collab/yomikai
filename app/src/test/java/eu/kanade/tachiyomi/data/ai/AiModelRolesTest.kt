@@ -99,12 +99,15 @@ class AiModelRolesTest {
             backendState = localState,
         )
         target.backendId shouldBe AiBackends.LOCAL.id
-        target.model shouldBe "qwen25_05b • 1200 МБ • установлена"
+        // Локальный движок в сборку не входит, поэтому статус роли обязан
+        // говорить именно об этом, а не обещать готовую модель.
+        val localDetail = AiBackends.statusOf(AiBackends.LOCAL, localState).detail
+        target.model shouldBe localDetail
         target.modelOverride.shouldBeNull()
         target.modelHonoured shouldBe false
         target.own shouldBe true
         AiModelRoles.statusLines(target) shouldContainExactly listOf(
-            "Оркестратор: Локальная LLM · zen · qwen25_05b • 1200 МБ • установлена · модель выбирает сам бэкенд",
+            "Оркестратор: Локальная LLM · zen · $localDetail · модель выбирает сам бэкенд",
         )
     }
 

@@ -3,19 +3,35 @@ package eu.kanade.presentation.reader
 import android.graphics.RectF
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.unit.dp
-import tachiyomi.presentation.core.i18n.stringResource
 import eu.kanade.domain.dictionary.OcrResultPresentation
 import eu.kanade.tachiyomi.ui.dictionary.DictionarySearchScreenModel
 import mihon.domain.dictionary.model.DictionaryTerm
@@ -23,6 +39,7 @@ import mihon.domain.ocr.model.OcrTextSource
 import mihon.feature.ocr.selectedOcrModel
 import mihon.feature.ocr.titleRes
 import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.i18n.stringResource
 
 data class OcrResultPopupSettings(
     val widthDp: Int,
@@ -73,65 +90,109 @@ fun OcrResultOverlay(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        if (false) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.32f)),
+    when {
+        noDictionaries -> {
+            OcrPlainTextCard(
+                text = queryText,
+                source = source,
+                dimBackground = dimBackground,
+                onDismissRequest = onDismissRequest,
+                onCopyText = onCopyText,
+                onSpeak = onSpeak,
+                onChooseVoice = onChooseVoice,
+                onSpeakRole = onSpeakRole,
+                onAddToDictionary = onAddToDictionary,
+                onHidePageOverlay = onHidePageOverlay,
             )
         }
-
-        when {
-            noDictionaries -> {
-                OcrPlainTextCard(
-                    text = queryText,
-                    source = source,
-                    onDismissRequest = onDismissRequest,
-                    onCopyText = onCopyText,
-                    onSpeak = onSpeak,
-                    onChooseVoice = onChooseVoice,
-                    onSpeakRole = onSpeakRole,
-                    onAddToDictionary = onAddToDictionary,
-                    onHidePageOverlay = onHidePageOverlay,
-                )
-            }
-            presentation == OcrResultPresentation.POPUP && anchorRect != null -> {
-                OcrResultPopup(
-                    onDismissRequest = onDismissRequest,
-                    anchorRect = anchorRect,
-                    settings = popupSettings,
-                    onCopyText = onCopyText,
-                    searchState = searchState,
-                    onQueryChange = onQueryChange,
-                    onSearch = onSearch,
-                    onTermGroupClick = onTermGroupClick,
-                    onPlayAudioClick = onPlayAudioClick,
-                )
-            }
-            else -> {
-                OcrResultBottomSheet(
-                    onDismissRequest = onDismissRequest,
-                    onCopyText = onCopyText,
-                    searchState = searchState,
-                    onQueryChange = onQueryChange,
-                    onSearch = onSearch,
-                    onTermGroupClick = onTermGroupClick,
-                    onPlayAudioClick = onPlayAudioClick,
-                )
-            }
+        presentation == OcrResultPresentation.POPUP && anchorRect != null -> {
+            OcrResultPopup(
+                onDismissRequest = onDismissRequest,
+                anchorRect = anchorRect,
+                settings = popupSettings,
+                onCopyText = onCopyText,
+                searchState = searchState,
+                onQueryChange = onQueryChange,
+                onSearch = onSearch,
+                onTermGroupClick = onTermGroupClick,
+                onPlayAudioClick = onPlayAudioClick,
+                onSpeak = onSpeak,
+                onChooseVoice = onChooseVoice,
+                onSpeakRole = onSpeakRole,
+                onAddToDictionary = onAddToDictionary,
+                onHidePageOverlay = onHidePageOverlay,
+            )
+        }
+        else -> {
+            OcrResultBottomSheet(
+                onDismissRequest = onDismissRequest,
+                onCopyText = onCopyText,
+                searchState = searchState,
+                onQueryChange = onQueryChange,
+                onSearch = onSearch,
+                onTermGroupClick = onTermGroupClick,
+                onPlayAudioClick = onPlayAudioClick,
+                actions = {
+                    OcrResultActionBar(
+                        onSpeak = onSpeak,
+                        onCopyText = onCopyText,
+                        onChooseVoice = onChooseVoice,
+                        onSpeakRole = onSpeakRole,
+                        onAddToDictionary = onAddToDictionary,
+                        onHidePageOverlay = onHidePageOverlay,
+                    )
+                },
+            )
         }
     }
 }
 
 /**
- * Карточка распознанного текста без словарной части: текст можно выделить
- * и скопировать, лишних сообщений «словари не найдены» нет.
+ * Затемнение, тап по которому закрывает результат.
+ *
+ * Раньше блок был написан, но завёрнут в `if (false)`: карточка висела
+ * поверх страницы, и закрыть её можно было только кнопкой в самой карточке
+ * или аппаратной «назад». Теперь тап мимо карточки и по затемнению гасит
+ * результат — то самое, чего не хватало.
+ */
+@Composable
+private fun OcrDismissScrim(
+    dim: Boolean,
+    onDismissRequest: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .then(
+                if (dim) {
+                    Modifier.background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.32f))
+                } else {
+                    Modifier
+                },
+            )
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() },
+                onClick = onDismissRequest,
+            ),
+    )
+}
+
+/**
+ * Карточка распознанного текста без словарной части: текст можно скопировать
+ * и озвучить, лишних сообщений «словари не найдены» нет.
+ *
+ * Карточка намеренно небольшая: текст ограничен по высоте и прокручивается
+ * внутри, а действия собраны в одну строку иконок под ним. Раньше здесь были
+ * два ряда подписей и отдельные плавающие кнопки — вместе они закрывали
+ * половину экрана.
  */
 @Composable
 private fun OcrPlainTextCard(
     text: String,
     source: OcrTextSource?,
+    dimBackground: Boolean,
     onDismissRequest: () -> Unit,
     onCopyText: () -> Unit,
     onSpeak: () -> Unit = {},
@@ -140,75 +201,62 @@ private fun OcrPlainTextCard(
     onAddToDictionary: () -> Unit = {},
     onHidePageOverlay: (() -> Unit)? = null,
 ) {
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = androidx.compose.ui.Alignment.BottomCenter,
-    ) {
-        androidx.compose.material3.Surface(
-            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        // Не больше трети экрана: карточка не должна закрывать рисунок.
+        val maxTextHeight = (maxHeight * 0.3f).coerceAtLeast(96.dp)
+
+        OcrDismissScrim(dim = dimBackground, onDismissRequest = onDismissRequest)
+
+        Surface(
+            shape = RoundedCornerShape(16.dp),
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             tonalElevation = 6.dp,
             modifier = Modifier
+                .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .heightIn(max = 520.dp)
-                .padding(24.dp),
+                .padding(horizontal = 12.dp, vertical = 24.dp)
+                // Гасим тап мимо текста, иначе тап по пустому месту карточки
+                // закрывал бы результат вместо выделения текста.
+                .clickable(
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() },
+                    onClick = {},
+                ),
         ) {
-            androidx.compose.foundation.layout.Column(
-                modifier = Modifier.padding(16.dp),
-            ) {
-                OcrEngineCaption(source)
-                androidx.compose.material3.Text(
-                    text = text,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier
-                        .verticalScroll(androidx.compose.foundation.rememberScrollState())
-                        .heightIn(max = 380.dp),
-                )
-                androidx.compose.foundation.layout.Spacer(
-                    modifier = Modifier.height(12.dp),
-                )
-                androidx.compose.foundation.layout.Column {
-                    androidx.compose.foundation.layout.Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End,
-                    ) {
-                        androidx.compose.material3.TextButton(onClick = onSpeak) {
-                            androidx.compose.material3.Text("▶ Голос")
-                        }
-                        androidx.compose.material3.TextButton(onClick = { onSpeakRole("female") }) {
-                            androidx.compose.material3.Text("♀")
-                        }
-                        androidx.compose.material3.TextButton(onClick = { onSpeakRole("male") }) {
-                            androidx.compose.material3.Text("♂")
-                        }
-                        androidx.compose.material3.TextButton(onClick = { onSpeakRole("narrator") }) {
-                            androidx.compose.material3.Text("🎙")
-                        }
-                        androidx.compose.material3.TextButton(onClick = onChooseVoice) {
-                            androidx.compose.material3.Text("Выбрать")
-                        }
+            Column(modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        OcrEngineCaption(source)
                     }
-                    androidx.compose.foundation.layout.Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End,
-                    ) {
-                        if (onHidePageOverlay != null) {
-                            androidx.compose.material3.TextButton(onClick = onHidePageOverlay) {
-                                androidx.compose.material3.Text("👁 Скрыть текст")
-                            }
-                        }
-                        androidx.compose.material3.TextButton(onClick = onCopyText) {
-                            androidx.compose.material3.Text("Копировать")
-                        }
-                        androidx.compose.material3.TextButton(onClick = onAddToDictionary) {
-                            androidx.compose.material3.Text("＋ Словарь")
-                        }
-                        androidx.compose.material3.TextButton(onClick = onDismissRequest) {
-                            androidx.compose.material3.Text("Закрыть")
-                        }
+                    IconButton(onClick = onDismissRequest) {
+                        Icon(Icons.Outlined.Close, contentDescription = "Закрыть")
                     }
                 }
+
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = maxTextHeight)
+                        .verticalScroll(rememberScrollState())
+                        .padding(end = 8.dp),
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(4.dp))
+
+                OcrResultActionBar(
+                    onSpeak = onSpeak,
+                    onCopyText = onCopyText,
+                    onChooseVoice = onChooseVoice,
+                    onSpeakRole = onSpeakRole,
+                    onAddToDictionary = onAddToDictionary,
+                    onHidePageOverlay = onHidePageOverlay,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         }
     }
@@ -232,12 +280,9 @@ private fun OcrEngineCaption(source: OcrTextSource?) {
     } else {
         stringResource(MR.strings.ocr_recognized_by, engineName)
     }
-    androidx.compose.material3.Text(
+    Text(
         text = text,
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    androidx.compose.foundation.layout.Spacer(
-        modifier = Modifier.height(6.dp),
     )
 }
