@@ -139,9 +139,10 @@ object OcrOverlaySettingsScreen : Screen {
                 )
                 Text(
                     text = if (fixedRegion.isBlank()) {
-                        "Фиксированная область не задана — кнопка ✏ на панели оверлея."
+                        "Область не выбрана. Нажми «Задать область» и обведи пальцем " +
+                            "нужный прямоугольник — рамка появится поверх приложения."
                     } else {
-                        "Фикс: $fixedRegion"
+                        "Область: $fixedRegion. Чтобы передвинуть — нажми «Задать область» заново."
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -152,12 +153,18 @@ object OcrOverlaySettingsScreen : Screen {
                         if (!OcrOverlayService.canDrawOverlays(context)) {
                             OcrOverlayService.requestPermission(context)
                         } else {
+                            // Рамка рисуется только в режиме «Фикс» и только
+                            // при заданной области. Раньше оба условия надо
+                            // было выполнить вручную и в нужном порядке,
+                            // иначе включённый переключатель не давал
+                            // никакого видимого результата.
+                            prefs.overlayRegionMode().set("fixed")
                             OcrOverlayService.start(context)
                             OcrOverlayService.selectRegion(context)
                         }
                     },
                     modifier = Modifier.padding(horizontal = 16.dp),
-                ) { Text("Задать область пальцем") }
+                ) { Text("Задать область") }
                 SwitchRow(
                     title = "Показывать рамку области",
                     subtitle = "Тонкая рамка зафиксированной области поверх приложений",

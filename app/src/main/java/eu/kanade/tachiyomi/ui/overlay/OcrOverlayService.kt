@@ -643,7 +643,12 @@ class OcrOverlayService : Service() {
         // ===== Развёрнутая панель =====
         val content = LinearLayout(this)
         content.orientation = LinearLayout.VERTICAL
-        content.setBackgroundColor(0xF214101B.toInt())
+        // Панель лежит поверх чужого приложения, и её фон обязан быть
+        // непрозрачным: раньше он был 0xF2 (95%), и сквозь него отлично
+        // читался текст игры — надписи панели сливались с чужими, и
+        // разобрать, где чьё, было невозможно. Светлый текст даже 5%
+        // просвечивания давали читаемую картинку.
+        content.setBackgroundColor(0xFF14101B.toInt())
         content.setPadding(dp(6f), dp(4f), dp(6f), dp(6f))
 
         val header = LinearLayout(this)
@@ -672,7 +677,7 @@ class OcrOverlayService : Service() {
         bubble.maxLines = 6
         val bubbleBg = GradientDrawable()
         bubbleBg.cornerRadius = dp(10f).toFloat()
-        bubbleBg.setColor(0x33234A6F.toInt())
+        bubbleBg.setColor(0xFF232A3A.toInt())
         bubbleBg.setStroke(dp(1f), 0xFF4A7EAF.toInt())
         bubble.background = bubbleBg
         content.addView(
@@ -798,7 +803,7 @@ class OcrOverlayService : Service() {
         b.textSize = 11f
         b.setAllCaps(false)
         b.setPadding(dp(5f), 0, dp(5f), 0)
-        b.setBackgroundColor(0x334A7EAF.toInt())
+        b.setBackgroundColor(0xFF2E4A6B.toInt())
         b.setOnClickListener { onClick() }
         return b
     }
