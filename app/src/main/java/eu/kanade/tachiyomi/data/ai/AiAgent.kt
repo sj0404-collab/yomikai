@@ -142,6 +142,29 @@ object AiAgent {
         else -> "${ms / 60_000} мин ${(ms % 60_000) / 1_000} с"
     }
 
+    /** Сколько успешных поисков в сети разрешено за один ход агента. */
+    const val SEARCH_BUDGET = 3
+
+    /**
+     * Сколько попыток поиска в сети разрешено за один ход агента.
+     *
+     * Попыток больше, чем успешных результатов: поиск может не сработать
+     * (заблокировали, нет сети), и на каждую неудачу модель меняла
+     * формулировку. Без отдельного потолка она крутила круги и выжигала
+     * токены, так и не получив результата.
+     */
+    const val SEARCH_ATTEMPT_CAP = 6
+
+    /**
+     * Можно ли ещё выполнять поиск в сети.
+     *
+     * Чистая функция — её проверяет тест: баг с вечно молчащим `web_fetch`
+     * как раз и вырос из того, что лимит был подмешан прямо в цикл и
+     * отлаживался только вручную.
+     */
+    fun searchAllowed(searchesUsed: Int, searchAttempts: Int): Boolean =
+        searchesUsed < SEARCH_BUDGET && searchAttempts < SEARCH_ATTEMPT_CAP
+
     /**
      * Каноническая подпись вызова инструмента: имя + аргументы по отсортированным
      * ключам. Ключ из `args.toString()` зависел от порядка, который написала
@@ -486,8 +509,13 @@ object AiAgent {
         // и 33 тысячи токенов на одну фразу «продолжить постранично».
         // Дальше поиск не идёт, а модели прямо говорится, что искать больше
         // нечего: дешевле закончить ход, чем выжигать токены.
-        val searchBudget = 3
+        val searchBudget = SEARCH_BUDGET
+        val searchAttemptCap = SEARCH_ATTEMPT_CAP
         var searchesUsed = 0
+        var searchAttempts = 0
+        // Лимит поиска объясняется модели ровно один раз: иначе она
+        // возвращается к нему на каждом круге.
+        var searchLimitTold = false
         for (round in 1..12) {
             val parsedCalls = parseToolCalls(context, answer)
             if (parsedCalls.isEmpty()) break
@@ -505,7 +533,7 @@ object AiAgent {
                 when {
                     sig in executedCalls || sig in takenThisRound ->
                         skipped += call to "тот же вызов уже выполнялся в этом ходе"
-                    call.name == "web_search" && searchesUsed >= searchBudget ->
+                    call.name == "web_search" && !searchAllowed(searchesUsed, searchAttempts) ->
                         skipped += call to "лимит web_search — $searchBudget поиска за ход"
                     else -> {
                         takenThisRound += sig
@@ -515,16 +543,40 @@ object AiAgent {
             }
             executedCalls += takenThisRound
             if (calls.isEmpty() && parsedCalls.any { it.name == "web_search" } &&
-                searchesUsed >= searchBudget
+                !searchAllowed(searchesUsed, searchAttempts)
             ) {
+                // Раньше здесь стоял `break` с готовым текстом ответа. Модель
+                // при этом НЕ получала шанса сделать ход: цикл умирал, и её
+                // обещание «сделаю один прямой запрос через web_fetch» так и
+                // оставалось обещанием — инструмент больше не вызывался.
+                // Теперь лимит — это сообщение модели, а не конец хода.
+                if (!searchLimitTold) {
+                    searchLimitTold = true
+                    val next = reliableChat(
+                        chat,
+                        prompt + "\n\n(поиск в сети недоступен: лимит $searchBudget " +
+                            "запросов на этот ход)\n" +
+                            "Дальше искать нельзя. Ответь по тому, что уже есть. " +
+                            "Если знаешь точный адрес страницы — сделай ОДИН прямой " +
+                            "вызов web_fetch {\"url\":\"...\"}, он лимитом не ограничен. " +
+                            "Если адреса нет — просто ответь, не предлагай поиск снова.",
+                        systemPromptEffective,
+                    )
+                    if (next != null) {
+                        totalTokens += next.tokens
+                        answer = next.content
+                        reasoning = next.reasoning
+                        usedModel = next.model
+                        continue
+                    }
+                }
                 answer = stripToolSyntax(context, answer).ifBlank {
                     "Поиск в сети уже выполнялся $searchBudget раза за этот ход, и результат использован. " +
-                        "Дальше искать нечего — отвечаю по тому, что уже есть. " +
-                        "Если нужна другая страница, назови её точно, и я сделаю один прямой запрос через web_fetch."
+                        "Дальше искать нечего — отвечаю по тому, что уже есть."
                 }
                 break
             }
-            searchesUsed += calls.count { it.name == "web_search" }
+            searchAttempts += calls.count { it.name == "web_search" }
             if (calls.isEmpty()) {
                 val why = skipped.joinToString(", ") { (c, r) -> "${c.name}: $r" }.take(240)
                 answer = stripToolSyntax(context, answer).ifBlank {
@@ -559,6 +611,11 @@ object AiAgent {
                         tookMs = (System.nanoTime() - t0) / 1_000_000,
                     )
                 val finalR = if (r.output.startsWith("ОШИБКА")) r.copy(status = "error") else r
+                // Успешный поиск — тот, что вернул результат. Раньше счётчик
+                // рос на КАЖДОМ вызове, включая упавший: на скрине один из трёх
+                // поисков был с ошибкой, и лимит всё равно выбирался, хотя
+                // читатель получил два результата, а не три.
+                if (call.name == "web_search" && finalR.status != "error") searchesUsed++
                 if (finalR.fileProduced != null && finalR.name == "gen_image") images += finalR.fileProduced
                 results += finalR
                 val file = finalR.fileProduced
@@ -577,6 +634,15 @@ object AiAgent {
             }
             val followUp = "Твой предыдущий ответ с вызовами:\n${answer.take(6000)}\n\n" +
                 "Результаты инструментов:\n" + outputs.joinToString("\n---\n") +
+                // Отклонённые вызовы тоже показываем: молча их пропустив,
+                // мы оставляли модель в неведении, и она на следующем круге
+                // предлагала ровно то, что было отклонено.
+                (if (skipped.isEmpty()) {
+                    ""
+                } else {
+                    "\n\nНЕ ВЫПОЛНЕНО (не повторяй эти вызовы):\n" +
+                        skipped.joinToString("\n") { (c, r) -> "${c.name}: $r" }
+                }) +
                 "\n\nПродолжи задачу. Если всё сделано — дай полный финальный ответ без @tool."
             onProgress?.invoke("Инструменты выполнены, жду ответ модели…")
             val next = reliableChat(

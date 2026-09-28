@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -358,6 +359,12 @@ fun ReaderAiChatOverlay(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        // Диалог рисуется во весь экран (decorFitsSystemWindows =
+                        // false), поэтому шапку и поле ввода надо прижать к
+                        // системным отступам: иначе часы и заголовок наезжали
+                        // друг на друга, а кнопка отправки — на жестовую
+                        // полосу внизу.
+                        .statusBarsPadding()
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
