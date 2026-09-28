@@ -16,7 +16,6 @@ import mihon.data.ui.UiTab
 import mihon.data.ui.UiTabs
 import mihon.domain.ocr.model.OcrImage
 import mihon.domain.ocr.repository.OcrRepository
-import org.json.JSONArray
 import org.json.JSONObject
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.source.service.SourceManager
@@ -104,6 +103,59 @@ object AiAgent {
     private val sourceManager: SourceManager by lazy { Injekt.get() }
     private val sourcePrefs: SourcePreferences by lazy { Injekt.get() }
 
+    /**
+     * Сколько символов одной реплики переписки уходит в промпт. Раньше стояло
+     * 280 и резалась только голова: конец ответа агента (вывод, путь к файлу)
+     * до модели не доходил.
+     */
+    private const val MAX_HISTORY_CHARS = 900
+
+    /** Таймаут инструмента по умолчанию. */
+    private const val DEFAULT_TOOL_TIMEOUT_MS = 120_000L
+
+    /**
+     * Инструменты с собственным, более длинным таймаутом. Раньше у всех был
+     * общий 120-секундный, и `gen_video` (9 мин) и `runner_start` (12 мин)
+     * физически не могли завершиться.
+     */
+    private val TOOL_TIMEOUT_MS = mapOf(
+        "gen_video" to 10L * 60_000L,
+        "runner_start" to 13L * 60_000L,
+        "runner_runs" to 90_000L,
+        "runner_events" to 90_000L,
+        "gen_image" to 180_000L,
+        "gen_images" to 300_000L,
+        "check_site" to 90_000L,
+        "web_search" to 90_000L,
+        "web_fetch" to 90_000L,
+    )
+
+    /**
+     * Длительность для человека. Раньше везде писали `tookMs / 1000` — целочисленное
+     * деление миллисекунд, поэтому всё, что быстрее секунды (а это большинство
+     * инструментов), показывалось как «0 с».
+     */
+    fun humanMs(ms: Long): String = when {
+        ms < 0 -> "—"
+        ms < 1_000 -> "$ms мс"
+        ms < 60_000 -> "${ms / 1_000} с"
+        else -> "${ms / 60_000} мин ${(ms % 60_000) / 1_000} с"
+    }
+
+    /**
+     * Каноническая подпись вызова инструмента: имя + аргументы по отсортированным
+     * ключам. Ключ из `args.toString()` зависел от порядка, который написала
+     * модель, и `{"query":"x","limit":5}` с `{"limit":5,"query":"x"}` считались
+     * разными вызовами — а одинаковые стыковались «повтором».
+     */
+    internal fun callSignature(call: ToolCall): String = buildString {
+        append(call.name).append('\u0000')
+        val keys = call.args.keys().asSequence().sorted().toList()
+        for (k in keys) {
+            append(k).append('=').append(call.args.opt(k)).append('\u0001')
+        }
+    }
+
     // Не const: в промпт подставляется документация инструментов читалки
     // из AiReaderTools, а это выражение, а не литерал.
     private val SYSTEM_PROMPT =
@@ -119,6 +171,12 @@ object AiAgent {
             "@tool check_site {\"url\":\"https://...\"} — проверить, работает ли сайт\n" +
             "@tool web_search {\"query\":\"поисковый запрос\"} — поиск в интернете, вернёт список результатов со ссылками\n" +
             "@tool web_fetch {\"url\":\"https://...\",\"maxChars\":4000} — скачать страницу и вернуть её текст без разметки\n" +
+            "@tool web_screenshot {\"url\":\"https://...\",\"width\":1280} — ОТРЕНДЕРИТЬ веб-страницу в PNG и положить в workspace, " +
+            "файл придёт карточкой в чат; дальше спрашивай vision через see_image или читай через read_file\n" +
+            "РАЗНИЦА, не путай: web_fetch отдаёт ТОЛЬКО текст — ни вёрстки, ни цветов, ни картинок он не показывает. " +
+            "see_page смотрит на страницу КНИГИ в читалке и НЕ открывает веб-страницы. " +
+            "Когда читатель просит «посмотри страницу и сделай похожее», речь о ВЕБ-странице: " +
+            "это web_screenshot (увидеть) + gen_image (нарисовать похожее), а не see_page.\n" +
             "@tool book_recall {} — что уже известно о текущей книге (где читать, о чём, как читать, заметки, советы)\n" +
             "@tool book_remember {\"kind\":\"site|summary|fact|advice|заметка\",\"text\":\"значение\"} — сохранить знание о книге\n" +
             "@tool book_learn {\"url\":\"https://...\"} — прочитать страницу и сохранить её как источник правил\n" +
@@ -135,9 +193,9 @@ object AiAgent {
             "@tool reader_do {\"action\":\"speak_page\"} — выполнить действие читалки: " +
             "speak_page (озвучить текущую страницу), speak_chapter (озвучивать всю главу), " +
             "stop_speak (прекратить озвучку), page_text (распознать текст текущей страницы), " +
-            "see_page (СПРОСИТЬ ВИЖУЩУЮ МОДЕЛЬ про открытую страницу, обязательно с вопросом: " +
-            "{\"action\":\"see_page\",\"question\":\"что нарисовано на этой странице?\"} — " +
-            "это твои глаза: картинку вижу я, модель описывает её), " +
+            "see_page (СПРОСИТЬ ВИЖУЩУЮ МОДЕЛЬ про открытую в читалке страницу книги, " +
+            "обязательно с вопросом: {\"action\":\"see_page\",\"question\":\"что нарисовано на этой странице?\"} — " +
+            "это твои глаза на КНИГУ, веб-страницу так не посмотреть), " +
             "page_count (сколько страниц в главе), " +
             "turn_page (ЛИСТАТЬ САМ: {\"action\":\"turn_page\",\"to\":\"next|prev|first|last\"}), " +
             "auto_read ({\"action\":\"auto_read\",\"to\":\"on|off\"} — самому включить или " +
@@ -287,7 +345,6 @@ object AiAgent {
         val images = mutableListOf<File>()
 
         // Продвинутый лимит истории и токен-бюджет (запрос: не тратить 50к токенов)
-        // Продвинутый лимит истории и токен-бюджет (запрос: не тратить 50к токенов)
         val prefs = runCatching { uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>() }.getOrNull()
         val historyLimit = prefs?.aiHistoryLimit()?.get()?.coerceIn(4, 100) ?: 12
         val tokenBudget = prefs?.aiTokenBudget()?.get()?.coerceIn(1000, 16000) ?: 4000
@@ -301,8 +358,16 @@ object AiAgent {
             budgetedHistory = budgetedHistory.drop(1)
         }
         val trimmedHistory = budgetedHistory
-        val historyBlock = trimmedHistory.takeLast(historyLimit).joinToString("\n") { (role, c) ->
-            (if (role == "user") "Пользователь: " else "Ассистент: ") + c.take(280)
+        // Реплики режем ГОЛОВОЙ и ХВОСТОМ, а не только головой: в ответе агента
+        // вывод и путь к файлу стоят в конце, и take(280) их отбрасывал —
+        // модель теряла ровно то, ради чего ход затевался.
+        val historyBlock = trimmedHistory.takeLast(historyLimit).joinToString("\n\n") { (role, c) ->
+            val body = if (c.length > MAX_HISTORY_CHARS) {
+                c.take(MAX_HISTORY_CHARS / 2) + " … " + c.takeLast(MAX_HISTORY_CHARS / 2)
+            } else {
+                c
+            }
+            (if (role == "user") "Пользователь: " else "Ассистент: ") + body
         }
         val capabilityBlock = runCatching { AiCapabilityReporter.renderForPrompt(context) }.getOrNull().orEmpty()
         // Сессия книги создаётся при первом обращении к AI. Пока правил нет,
@@ -346,15 +411,22 @@ object AiAgent {
             "ИЗДАНИЕ КНИГИ (читать именно его): $it"
         }.orEmpty()
         val prompt = buildString {
-            if (historyBlock.isNotBlank()) append("Контекст диалога (последние $historyLimit, бюджет ${tokenBudget} токенов):\n").append(historyBlock).append("\n\n")
             if (!bookContext.isNullOrBlank()) append(bookContext).append("\n\n")
             if (editionHint.isNotBlank()) append(editionHint).append("\n\n")
             if (sharedMemory.isNotBlank()) append(sharedMemory).append("\n\n")
             if (onboarding != null) append(onboarding).append("\n\n")
             if (modeBlock.isNotBlank()) append(modeBlock).append("\n\n")
             if (!attachmentsInfo.isNullOrBlank()) append("Вложения пользователя:\n").append(attachmentsInfo).append("\n\n")
-            if (capabilityBlock.isNotBlank()) append(capabilityBlock).append("\n\n")
             append(userText)
+            // История стоит СРАЗУ под вопросом, а не в начале промпта. Перед
+            // ней — книга, память, правила, вложения, блок возможностей:
+            // на локальных моделях это ~11 КБ текста, и реплики, лежавшие в
+            // начале, выпадали из окна внимания — агент «забывал» то, что
+            // было пару секунд назад.
+            if (historyBlock.isNotBlank()) {
+                append("\n\nПереписка (последние ${trimmedHistory.size} реплик, бюджет ${tokenBudget} токенов):\n")
+                append(historyBlock)
+            }
             append("\n\n[Инструкция: отвечай кратко на русском, одним языком, reasoning ≤250 токенов, укажи что доступно/недоступно из блока выше, не повторяй запрос; токен-бюджет хода ${tokenBudget}.]")
         }
         // Настоящий путь workspace вместо обещанного в тексте промпта
@@ -373,7 +445,9 @@ object AiAgent {
         val systemPromptEffective = SYSTEM_PROMPT + "\n\n" + workspaceBlock + "\n\n" +
             skillsBlock + "\n\n" + capabilityBlock
 
-        val turnStarted = System.currentTimeMillis()
+        // Монотонные часы: currentTimeMillis() — настенные, и смена времени
+        // телефона посреди хода давала отрицательную или завышенную длительность.
+        val turnStarted = System.nanoTime()
         onProgress?.invoke("Запрос к модели…")
         var totalTokens = 0
         var roundsDone = 0
@@ -417,44 +491,72 @@ object AiAgent {
         for (round in 1..12) {
             val parsedCalls = parseToolCalls(context, answer)
             if (parsedCalls.isEmpty()) break
-            val calls = parsedCalls.filter { call ->
-                val fresh = executedCalls.add(call.name + "\u0000" + call.args.toString())
-                // Поиск пропускается только когда бюджет исчерпан; при этом
-                // остальные инструменты раунда (например reader_do) выполняются
-                // как обычно — иначе агент встал бы целиком.
-                fresh && (call.name != "web_search" || searchesUsed < searchBudget)
+            // Считаем, что ПОВТОР за ход и ЛИМИТ — разные вещи, и агент
+            // должен называть причину, а не «уже использовано».
+            // Главное: в executedCalls попадает только то, что РЕАЛЬНО ушло
+            // в execute(). Раньше отклонённый вызов тоже туда попадал, и на
+            // следующем круге тот же инструмент отваливался уже как «повтор» —
+            // агент писал «пропускаю» про то, что никогда не выполнялось.
+            val takenThisRound = mutableSetOf<String>()
+            val calls = mutableListOf<ToolCall>()
+            val skipped = mutableListOf<Pair<ToolCall, String>>()
+            for (call in parsedCalls) {
+                val sig = callSignature(call)
+                when {
+                    sig in executedCalls || sig in takenThisRound ->
+                        skipped += call to "тот же вызов уже выполнялся в этом ходе"
+                    call.name == "web_search" && searchesUsed >= searchBudget ->
+                        skipped += call to "лимит web_search — $searchBudget поиска за ход"
+                    else -> {
+                        takenThisRound += sig
+                        calls += call
+                    }
+                }
             }
+            executedCalls += takenThisRound
             if (calls.isEmpty() && parsedCalls.any { it.name == "web_search" } &&
                 searchesUsed >= searchBudget
             ) {
                 answer = stripToolSyntax(context, answer).ifBlank {
-                    "Поиск в сети уже выполнялся $searchBudget раза и результат использован. " +
-                        "Дальше искать нечего — отвечаю по тому, что уже есть."
+                    "Поиск в сети уже выполнялся $searchBudget раза за этот ход, и результат использован. " +
+                        "Дальше искать нечего — отвечаю по тому, что уже есть. " +
+                        "Если нужна другая страница, назови её точно, и я сделаю один прямой запрос через web_fetch."
                 }
                 break
             }
             searchesUsed += calls.count { it.name == "web_search" }
             if (calls.isEmpty()) {
+                val why = skipped.joinToString(", ") { (c, r) -> "${c.name}: $r" }.take(240)
                 answer = stripToolSyntax(context, answer).ifBlank {
-                    "Все запрошенные инструменты уже выполнены; повторный вызов пропущен."
+                    "Инструменты не выполнены — $why. " +
+                        "Используй уже полученный результат или измени аргументы; " +
+                        "остальные инструменты (кроме web_search) лимитом не ограничены."
                 }
                 break
             }
             roundsDone = round
             onProgress?.invoke("Инструменты: ${calls.joinToString(", ") { it.name }}")
             val outputs = calls.map { call ->
-                val t0 = System.currentTimeMillis()
-                // Инструменты больше не могут зависнуть навсегда (gen_image /
-                // check_site на медленной сети): жёсткий таймаут 120 секунд.
+                val t0 = System.nanoTime()
+                // Инструменты не могут зависнуть навсегда, но и не должны
+                // обрываться раньше, чем их собственные таймауты: gen_video
+                // ждёт 9 минут, runner_start — 12, и общий 120-секундный
+                // ограничитель убивал их всегда, то есть эти инструменты не
+                // могли succeed НИКОГДА.
+                val limit = TOOL_TIMEOUT_MS[call.name] ?: DEFAULT_TOOL_TIMEOUT_MS
                 val r = runCatching {
-                    withTimeoutOrNull(120_000L) { execute(context, call, chat, mangaId) }
-                        ?: ToolResult(call.name, "ОШИБКА: инструмент не ответил за 120 секунд", status = "error")
+                    withTimeoutOrNull(limit) { execute(context, call, chat, mangaId, onProgress) }
+                        ?: ToolResult(
+                            call.name,
+                            "ОШИБКА: инструмент не ответил за ${humanMs(limit)}",
+                            status = "error",
+                        )
                 }
                     .getOrElse { ToolResult(call.name, "ОШИБКА: ${it.message?.take(160)}", status = "error") }
                     .copy(
                         args = call.args.toString().take(200),
                         round = round,
-                        tookMs = System.currentTimeMillis() - t0,
+                        tookMs = (System.nanoTime() - t0) / 1_000_000,
                     )
                 val finalR = if (r.output.startsWith("ОШИБКА")) r.copy(status = "error") else r
                 if (finalR.fileProduced != null && finalR.name == "gen_image") images += finalR.fileProduced
@@ -463,7 +565,7 @@ object AiAgent {
                 onProgress?.invoke(
                     buildString {
                         append(finalR.name)
-                        if (finalR.tookMs > 0) append(" · ").append(finalR.tookMs / 1000).append(" с")
+                        if (finalR.tookMs > 0) append(" · ").append(humanMs(finalR.tookMs))
                         if (file != null) {
                             append(" · файл ").append(file.name).append(" · ")
                             append(file.length() / 1024).append(" КБ")
@@ -514,7 +616,7 @@ object AiAgent {
             cleanText, results, images,
             reasoning = reasoning, model = usedModel,
             tokens = totalTokens,
-            tookMs = System.currentTimeMillis() - turnStarted,
+            tookMs = (System.nanoTime() - turnStarted) / 1_000_000,
             rounds = roundsDone,
             choices = choices,
         )
@@ -531,10 +633,21 @@ object AiAgent {
     internal fun stripChoices(text: String): String = choiceRe.replace(text, "").trim()
 
     /** Имена всех известных инструментов — для «мягкого» синтаксиса без @tool. */
+    /**
+     * Действия читалки, которые промпт документирует как отдельные @tool.
+     * Раньше они были описаны словами, но в [knownToolNames] не попадали —
+     * `parseToolCalls` молча выбрасывал `@tool see_page {...}`, и модель
+     * получала НИ результата, НИ ошибки: раунд просто исчезал.
+     */
+    private val READER_ACTION_ALIASES = listOf(
+        "speak_page", "speak_chapter", "stop_speak", "page_text",
+        "see_page", "page_count", "turn_page", "auto_read",
+    )
+
     private fun knownToolNames(context: Context): Set<String> =
         setOf(
             "write_file", "edit_file", "append_file", "read_file", "gen_image",
-            "check_site", "web_search", "web_fetch", "gen_images",
+            "check_site", "web_search", "web_fetch", "web_screenshot", "gen_images",
             "runner_runs", "runner_events", "repo_pulls", "book_recall", "book_remember", "book_learn",
             "reader_actions", "reader_do",
             "list_ext", "filter_ext", "find_manga", "zip_workspace",
@@ -545,7 +658,7 @@ object AiAgent {
             "provider_create", "provider_edit", "provider_delete", "provider_list",
             "ui_action_create", "ui_action_edit", "ui_action_delete", "ui_action_list",
             "ui_tab_hide", "ui_tab_show", "ui_tab_list",
-        ) + AiReaderTools.TOOL_NAMES + AiChatTools.TOOL_NAMES +
+        ) + AiReaderTools.TOOL_NAMES + AiChatTools.TOOL_NAMES + READER_ACTION_ALIASES +
             AiPlugins.list(context).map { it.name } + AiSkills.list(context).map { it.name }
 
     /**
@@ -736,6 +849,7 @@ object AiAgent {
         call: ToolCall,
         chatFn: suspend (String, String) -> AiAssistant.ChatReply?,
         mangaId: Long? = null,
+        onProgress: ((String) -> Unit)? = null,
     ): ToolResult = when (call.name) {
         // Инструменты читалки: видят те же реестры и настройки, что и экраны,
         // поэтому ответ агента не может разойтись с настройками пользователя.
@@ -803,6 +917,9 @@ object AiAgent {
                 call.args.optString("text"),
                 call.args.optInt("fps", 3),
                 call.args.optString("name").ifBlank { null },
+                // Раньше статус не показывался, и сборка видео висела молча до
+                // 10 минут (лимит gen_video) — выглядело как зависание.
+                onStatus = { st -> onProgress?.invoke("Видео: $st") },
             )
         }.fold(
             onSuccess = { outcome ->
@@ -1172,6 +1289,13 @@ object AiAgent {
             ToolResult("web_fetch", webFetch(url, maxChars))
         }
 
+        "web_screenshot" -> {
+            val url = call.args.optString("url")
+            val width = call.args.optInt("width", 1280).coerceIn(320, 2000)
+            val question = call.args.optString("question")
+            webScreenshot(context, url, width, question)
+        }
+
         "book_recall" -> ToolResult("book_recall", BookKnowledge.render(context, mangaId))
 
         "reader_actions" -> ToolResult("reader_actions", ReaderAiActions.describe())
@@ -1180,6 +1304,14 @@ object AiAgent {
             val action = call.args.optString("action")
             ToolResult("reader_do", ReaderAiActions.run(action, call.args))
         }
+
+        // Прямые @tool see_page/turn_page/… идут в тот же реестр, что и
+        // reader_do: промпт называет их отдельными инструментами, и раньше
+        // такие вызовы просто исчезали без результата и без ошибки.
+        in READER_ACTION_ALIASES -> ToolResult(
+            call.name,
+            ReaderAiActions.run(call.name, call.args),
+        )
 
         "book_learn" -> {
             val manga = mangaId
@@ -1797,6 +1929,103 @@ object AiAgent {
         }.getOrElse { "ОШИБКА загрузки: ${it.message?.take(120)}" }
     }
 
+    /**
+     * Скриншот ВЕБ-страницы. Без него «посмотри страницу и сделай похожее»
+     * было нечем выполнить: `web_fetch` отдаёт только текст, а `see_page`
+     * смотрит на страницу книги в читалке — то есть на совсем другую картинку.
+     *
+     * На устройстве нет headless-браузера, поэтому рендерим внешним сервисом
+     * (mshots/thum.io, без ключа) и сразу спрашиваем vision — иначе агент
+     * получил бы файл и должен был догадаться, что с ним делать.
+     */
+    private suspend fun webScreenshot(
+        context: Context,
+        rawUrl: String,
+        width: Int,
+        question: String,
+    ): ToolResult {
+        val url = rawUrl.trim()
+        if (url.isBlank()) return ToolResult("web_screenshot", "ОШИБКА: пустой URL", status = "error")
+        if (!url.startsWith("http")) return ToolResult("web_screenshot", "ОШИБКА: нужен полный URL с http(s)", status = "error")
+        val enc = java.net.URLEncoder.encode(url, "UTF-8")
+        val services = listOf(
+            "https://s.wordpress.com/mshots/v1/$enc?w=$width" to "mshots",
+            "https://image.thum.io/get/width/$width/noanimate/$enc" to "thum.io",
+        )
+        var lastError = "сервис не ответил"
+        for ((endpoint, label) in services) {
+            val bytes = runCatching { downloadBytes(endpoint, 30_000) }.getOrNull()
+            if (bytes == null || bytes.size < 2_000 || !looksLikeImage(bytes)) {
+                lastError = if (bytes != null && bytes.size < 2_000) {
+                    "$label вернул ${bytes.size} Б — это не скриншот (страница отдала заглушку или редирект)"
+                } else {
+                    "$label недоступен"
+                }
+                continue
+            }
+            val f = AiWorkspace.newImageFile(context, "web", sanitizeForFile(url))
+            f.writeBytes(bytes)
+            val rel = AiWorkspace.relPath(context, f)
+            val answer = askAboutImageFile(
+                f,
+                question.ifBlank { "Опиши эту веб-страницу: вёрстка, цвета, шрифты, композиция, и что именно можно повторить." },
+            )
+            return ToolResult(
+                "web_screenshot",
+                buildString {
+                    append("Скриншот $url сохранён: ").append(rel)
+                    append(" (").append(bytes.size / 1024).append(" КБ, ширина ").append(width).append(")")
+                    if (answer != null) {
+                        append("\n\nЧто на скриншоте (vision-модель):\n").append(answer)
+                    } else {
+                        append(
+                            "\n\nВопрос к vision-модели не задан: нужен движок ZenFree, Google AI или OpenRouter. " +
+                                "Посмотреть картинку позже можно see_image {\"name\":\"" + rel + "\"," +
+                                "\"question\":\"...\"}.",
+                        )
+                    }
+                },
+                fileProduced = f,
+            )
+        }
+        return ToolResult(
+            "web_screenshot",
+            "ОШИБКА: скриншот не получен ($lastError). Для текста страницы используй web_fetch — " +
+                "он отдаст текст без разметки.",
+            status = "error",
+        )
+    }
+
+    private fun looksLikeImage(bytes: ByteArray): Boolean =
+        (bytes.size > 8 && bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte()) || // PNG
+            (bytes.size > 3 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte()) || // JPEG
+            (bytes.size > 12 && bytes[0] == 'R'.code.toByte() && bytes[1] == 'I'.code.toByte()) || // RIFF/WEBP
+            (bytes.size > 3 && bytes[0] == 'G'.code.toByte() && bytes[1] == 'I'.code.toByte()) // GIF
+
+    private fun downloadBytes(url: String, timeoutMs: Int): ByteArray? {
+        val conn = AiAssistant.openConnection(url)
+        conn.connectTimeout = 12_000
+        conn.readTimeout = timeoutMs
+        conn.instanceFollowRedirects = true
+        conn.requestMethod = "GET"
+        conn.setRequestProperty(
+            "User-Agent",
+            "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile Safari/537.36",
+        )
+        return try {
+            conn.getInputStream().use { it.readBytes() }
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun sanitizeForFile(url: String): String =
+        url.removePrefix("https://").removePrefix("http://")
+            .substringBefore('/')
+            .replace(Regex("[^A-Za-z0-9._-]"), "_")
+            .take(30)
+            .ifBlank { "page" }
+
     private fun fetchText(url: String, maxChars: Int): String {
         val conn = AiAssistant.openConnection(url)
         conn.connectTimeout = 12_000
@@ -2045,7 +2274,4 @@ object AiAgent {
         )
     }
 
-    // JSONArray импортирован для будущих инструментов; подавляем предупреждение
-    @Suppress("unused")
-    private val unusedKeep = JSONArray()
 }

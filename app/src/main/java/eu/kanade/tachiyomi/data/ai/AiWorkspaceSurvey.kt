@@ -104,7 +104,13 @@ object AiWorkspaceSurvey {
                 continue
             }
             if (f.extension.lowercase() in IMAGE_EXT) {
-                sb.append("— $name: изображение ${f.length() / 1024} КБ, я не вижу картинки, опиши словами или используй другое изображение\n")
+                // Раньше здесь было «я не вижу картинки». Это неправда: и
+                // read_file, и see_image спрашивают vision-модель. Одно
+                // сообщение говорило «не вижу», другое — «спрошу», и модель
+                // верила тому, что прочитала последним.
+                sb.append("— $name: изображение ${f.length() / 1024} КБ; текста нет. ")
+                sb.append("Спросить vision можно see_image {\"name\":\"$name\",\"question\":\"что на ней\"}, ")
+                sb.append("прочитать — read_file\n")
                 continue
             }
             val text = runCatching { f.readText() }.getOrElse {

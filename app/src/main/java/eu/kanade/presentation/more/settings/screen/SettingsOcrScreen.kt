@@ -98,6 +98,7 @@ object SettingsOcrScreen : SearchableSettings {
             getDiagnosticsGroup(onOpenEval = { showEval = true }),
             getEnginesGroup(prefs = prefs, navigator = navigator, availableIds = availableIds),
             getGlensLanguageGroup(prefs = prefs),
+            getPageOverlayGroup(prefs = prefs),
             getHistoryGroup(onOpenHistory = { showHistory = true }),
         )
     }
@@ -136,6 +137,31 @@ object SettingsOcrScreen : SearchableSettings {
                     subtitle = "6 страниц с русским текстом: время детекта и чтения в мс,\n" +
                         "что ожидалось и что прочитано, CER в процентах",
                     onClick = onOpenEval,
+                ),
+            ),
+        )
+    }
+
+    /**
+     * Видимость распознанного текста поверх страницы. Без этого пункта
+     * оверлей нельзя было убрать вообще: на светлой странице белый текст
+     * поверх белой бумаги не читался, а карточку результата закрывать не
+     * хотелось.
+     */
+    @Composable
+    private fun getPageOverlayGroup(prefs: OcrPreferences): Preference.PreferenceGroup {
+        return Preference.PreferenceGroup(
+            title = "Текст поверх страницы",
+            preferenceItems = listOf(
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = prefs.ocrPageTextOverlay(),
+                    title = "Показывать распознанный текст",
+                    subtitle = "Выключите, если текст поверх рисунка мешает читать",
+                ),
+                Preference.PreferenceItem.InfoPreference(
+                    title = "Кнопка «Скрыть текст» есть и в карточке результата: она\n" +
+                        "убирает текст со страницы, не закрывая сам результат.\n" +
+                        "Этот переключатель действует постоянно, до перезапуска.",
                 ),
             ),
         )

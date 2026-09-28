@@ -54,6 +54,7 @@ import mihon.domain.ocr.model.OcrBoundingBox
 import mihon.domain.ocr.model.OcrPageResult
 import mihon.domain.ocr.model.flattenOcrTextForQuery
 import mihon.domain.ocr.model.normalizeOcrTextForDisplay
+import mihon.domain.ocr.service.OcrPreferences
 import mihon.domain.panel.model.DebugPanelDetection
 import okio.BufferedSource
 import tachiyomi.core.common.util.system.ImageUtil
@@ -116,6 +117,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
             color = Color.WHITE
             textAlign = Paint.Align.LEFT
         }
+    private val ocrPrefs by lazy { Injekt.get<OcrPreferences>() }
     private val ocrOverlayRenderer by lazy {
         ReaderOcrOverlayRenderer(
             textPaint = ocrOverlayTextPaint,
@@ -764,8 +766,20 @@ open class ReaderPageImageView @JvmOverloads constructor(
     }
 
     private fun drawActiveOcrOverlay(canvas: Canvas) {
+        // Выключатель из Настройки → Распознавание: пользователь убирает
+        // оверлей совсем, когда текст поверх страницы мешает читать картинку.
+        if (!ocrPrefs.ocrPageTextOverlay().get()) return
         val overlayLayout = getOrBuildActiveOverlayLayout() ?: return
-        // Draw OCR overlay text highlights without opaque blocking box
+        // Подложка под текстом обязательна. Раньше её убрали («solid white
+        // background box»), и на светлой странице белый текст поверх белой
+        // бумаги просто исчезал — оверлей был, а прочитать его нельзя.
+        // Заливка идёт по textRect (области текста), а не по всему
+        // boundingBox, и полупрозрачная: картинка под ней остаётся видна.
+        val pad = resources.displayMetrics.density * 4f
+        val bg = RectF(overlayLayout.textRect).apply { inset(-pad, -pad) }
+        val radius = resources.displayMetrics.density * 6f
+        canvas.drawRoundRect(bg, radius, radius, ocrOverlayBackgroundPaint)
+        canvas.drawRoundRect(bg, radius, radius, ocrOverlayStrokePaint)
         ocrOverlayRenderer.drawOverlay(canvas, overlayLayout)
     }
 

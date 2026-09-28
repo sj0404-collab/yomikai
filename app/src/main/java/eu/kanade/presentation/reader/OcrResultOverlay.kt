@@ -55,6 +55,12 @@ fun OcrResultOverlay(
     onChooseVoice: () -> Unit = {},
     onSpeakRole: (String) -> Unit = {},
     onAddToDictionary: () -> Unit = {},
+    /**
+     * Убрать распознанный текст со страницы, не закрывая карточку. Раньше
+     * оверлей нельзя было убрать, не закрыв результат, — а на светлой
+     * странице он всё равно мешал.
+     */
+    onHidePageOverlay: (() -> Unit)? = null,
 ) {
     BackHandler(onBack = onDismissRequest)
     // Словарей нет — не дёргаем поиск и не показываем «No Dictionaries
@@ -87,6 +93,7 @@ fun OcrResultOverlay(
                     onChooseVoice = onChooseVoice,
                     onSpeakRole = onSpeakRole,
                     onAddToDictionary = onAddToDictionary,
+                    onHidePageOverlay = onHidePageOverlay,
                 )
             }
             presentation == OcrResultPresentation.POPUP && anchorRect != null -> {
@@ -125,12 +132,13 @@ fun OcrResultOverlay(
 private fun OcrPlainTextCard(
     text: String,
     source: OcrTextSource?,
-    onCopyText: () -> Unit,
     onDismissRequest: () -> Unit,
+    onCopyText: () -> Unit,
     onSpeak: () -> Unit = {},
     onChooseVoice: () -> Unit = {},
     onSpeakRole: (String) -> Unit = {},
     onAddToDictionary: () -> Unit = {},
+    onHidePageOverlay: (() -> Unit)? = null,
 ) {
     Box(
         modifier = Modifier.fillMaxSize(),
@@ -185,6 +193,11 @@ private fun OcrPlainTextCard(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End,
                     ) {
+                        if (onHidePageOverlay != null) {
+                            androidx.compose.material3.TextButton(onClick = onHidePageOverlay) {
+                                androidx.compose.material3.Text("👁 Скрыть текст")
+                            }
+                        }
                         androidx.compose.material3.TextButton(onClick = onCopyText) {
                             androidx.compose.material3.Text("Копировать")
                         }

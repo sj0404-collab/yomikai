@@ -3,6 +3,7 @@ package eu.kanade.presentation.reader.components
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -92,9 +93,9 @@ import eu.kanade.tachiyomi.data.ai.AiHistoryManager.Msg
 import eu.kanade.tachiyomi.data.ai.BookChatProfile
 import eu.kanade.tachiyomi.data.ai.BookKnowledge
 import eu.kanade.tachiyomi.data.tts.TtsSpeaker
-import eu.kanade.tachiyomi.util.storage.getUriCompat
+import eu.kanade.tachiyomi.util.storage.mimeType
+import eu.kanade.tachiyomi.util.storage.toViewIntent
 import eu.kanade.tachiyomi.util.system.toast
-import eu.kanade.tachiyomi.util.system.toShareIntent
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -290,11 +291,21 @@ fun ReaderAiChatOverlay(
     // История книги грузится один раз на книгу: перечитывать её на каждый
     // ответ нельзя — файл на диске ещё не дописан, и перезагрузка стирала бы
     // сообщение, которое агент только что сохранил.
-    // Канал входит в ключ: у отыгрыша своя переписка, и переключение режима
-    // должно показывать именно её, а не смешанную с обычным чатом.
-    LaunchedEffect(mangaId, historyChannel) {
+    // Канал входит в ключ ОТДЕЛЬНО: раньше он был в одном ключе с mangaId, и
+    // переключение «Чат ⇄ Отыгрыш» делало history.clear() прямо посреди
+    // разговора — читатель видел пустой чат и делал вывод, что агент всё
+    // забыл.
+    LaunchedEffect(mangaId) {
         history.clear()
         history.addAll(AiHistoryManager.load(context, mangaId, historyChannel))
+        runCatching { listState.scrollToItem((history.size - 1).coerceAtLeast(0)) }
+    }
+    LaunchedEffect(mangaId, historyChannel) {
+        if (history.isEmpty()) return@LaunchedEffect
+        val loaded = AiHistoryManager.load(context, mangaId, historyChannel)
+        if (loaded.isEmpty()) return@LaunchedEffect
+        history.clear()
+        history.addAll(loaded)
         runCatching { listState.scrollToItem((history.size - 1).coerceAtLeast(0)) }
     }
 
@@ -406,16 +417,18 @@ fun ReaderAiChatOverlay(
                     WorkspaceFilesPanel(
                         context = context,
                         refresh = filesRefresh,
+                        // «Открыть» = показать файл. Раньше здесь был
+                        // toShareIntent (ACTION_SEND), и кнопка открывала лист
+                        // отправки: чтобы просто глянуть картинку, файл надо
+                        // было сначала скопировать или отправить себе.
                         onOpen = { file ->
                             runCatching {
                                 context.startActivity(
-                                    file.getUriCompat(context).toShareIntent(
-                                        context = context,
-                                        type = "application/octet-stream",
-                                        message = file.name,
-                                    ),
+                                    file.toViewIntent(context).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                                 )
-                            }.onFailure { showToast("Не удалось открыть файл") }
+                            }.onFailure {
+                                showToast("Не открыть ${file.name}: нет приложения для ${file.mimeType()}")
+                            }
                         },
                     )
                 } else {
@@ -748,7 +761,7 @@ private fun sendMessage(
                     buildString {
                         append(tr.name)
                         if (tr.status == "error") append(" — ошибка")
-                        if (tr.tookMs > 0) append(" · ").append(tr.tookMs / 1000).append(" с")
+                        if (tr.tookMs > 0) append(" · ").append(AiAgent.humanMs(tr.tookMs))
                         val produced = tr.fileProduced
                         if (produced != null) {
                             append(" · ").append(produced.name).append(' ')
@@ -835,8 +848,20 @@ private suspend fun chatOnce(
         }
         val priorTurns = history
             .dropLast(1)
+            // Сводка сжатия — не реплика, окно на неё тратить не надо.
+            .filterNot { it.text.startsWith("[Сжато: ") || it.text.startsWith("[Сводка прошлого контекста]") }
             .map { it.role to it.text }
-            .takeLast(6)
+            // Раньше жёстко 6 сообщений (~3 обмена) при том, что и настройка,
+            // и подпись в промпте обещали 12: первая тема исчезала через пару
+            // реплик — читатель и видел «AI ничего не помнит».
+            .takeLast(
+                runCatching {
+                    Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+                        .aiHistoryLimit()
+                        .get()
+                        .coerceIn(4, 100)
+                }.getOrDefault(12),
+            )
         val knowledge = eu.kanade.tachiyomi.data.ai.BookKnowledge.render(context, mangaId)
             .ifBlank {
                 "ЗНАНИЕ О КНИГЕ: пока ничего не проверено — выясни через web_search, " +
@@ -1013,18 +1038,16 @@ private fun ChatBubble(
                                 } else {
                                     runCatching {
                                         context.startActivity(
-                                            file.getUriCompat(context).toShareIntent(
-                                                context = context,
-                                                type = "application/octet-stream",
-                                                message = rel,
-                                            ),
+                                            file.toViewIntent(context).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                                         )
-                                    }.onFailure { context.toast("Не удалось открыть файл") }
+                                    }.onFailure {
+                                        context.toast("Не открыть ${file.name}: нет приложения для ${file.mimeType()}")
+                                    }
                                 }
                             },
                             enabled = file.exists(),
                         ) {
-                            Text("Отправить")
+                            Text("Открыть")
                         }
                     }
                 }

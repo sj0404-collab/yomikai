@@ -1268,6 +1268,7 @@ class ReaderActivity : BaseActivity() {
                                 )
                             },
                             onChooseVoice = { showVoicePicker = true },
+                            onHidePageOverlay = ::hideActiveOcrOverlayText,
                             onAddToDictionary = {
                                 val added = mihon.data.ocr.OcrVocabulary.addFromText(
                                     dialog.queryText,
@@ -1287,6 +1288,7 @@ class ReaderActivity : BaseActivity() {
                                     )
                                 },
                                 onChooseVoice = { showVoicePicker = true },
+                                onHidePageOverlay = ::hideActiveOcrOverlayText,
                                 modifier = Modifier
                                     .align(Alignment.BottomCenter)
                                     .navigationBarsPadding(),
@@ -2069,6 +2071,15 @@ class ReaderActivity : BaseActivity() {
 
     fun hasActiveOcrOverlaySession(): Boolean {
         return activeOcrOverlaySession != null
+    }
+
+    /**
+     * Убрать распознанный текст со страницы, оставив карточку результата
+     * открытой. Оверлей поверх рисунка мешает читать саму страницу, а раньше
+     * убрать его можно было только закрыв результат целиком.
+     */
+    private fun hideActiveOcrOverlayText() {
+        clearActiveOcrOverlaySession()
     }
 
     fun searchActiveOcrOverlay(offset: Int) {

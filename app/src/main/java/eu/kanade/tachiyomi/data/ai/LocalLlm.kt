@@ -316,31 +316,21 @@ object LocalLlm {
     }
 
     /**
-     * ТЕСТ ПЕРЕД ЗАПУСКОМ: реальный probe-инференс. Возвращает пару
-     * (успех, сообщение с временем ответа или ошибкой).
+     * ТЕСТ ПЕРЕД ЗАПУСКОМ. Движка нет в сборке, поэтому честный ответ — «нет»,
+     * а не «Тест пройден». Раньше здесь стоял `error(...)` внутри
+     * `runCatching`, и он был недостижим: probe() не вызывался НИ ОТКУДА, то
+     * есть кнопка «Тест» проверяла только наличие файла и рапортовала «OK».
      */
     suspend fun probe(context: Context, m: Model): Pair<Boolean, String> = withContext(Dispatchers.IO) {
-        _probeState.value = _probeState.value + (m.id to "testing")
+        _probeState.value = _probeState.value + (m.id to "fail")
         val ramGb = deviceRamGb(context)
-        if (m.tier.minRamGb > ramGb) {
-            _probeState.value = _probeState.value + (m.id to "fail")
-            return@withContext false to "Мало ОЗУ: у устройства $ramGb ГБ, модели нужно ${m.tier.label}"
+        val ramNote = if (m.tier.minRamGb > ramGb) {
+            " (и ОЗУ мало: у устройства $ramGb ГБ, нужно ${m.tier.label})"
+        } else {
+            ""
         }
-        val started = System.currentTimeMillis()
-        val result = runCatching<String> {
-            error("Локальный LLM-движок удалён из сборки для уменьшения размера APK")
-        }
-        val took = System.currentTimeMillis() - started
-        result.fold(
-            onSuccess = {
-                _probeState.value = _probeState.value + (m.id to "ok")
-                true to "Тест пройден за ${took / 1000.0}с: «${it.take(40).trim()}»"
-            },
-            onFailure = {
-                _probeState.value = _probeState.value + (m.id to "fail")
-                false to "Тест провален: ${it.message?.take(120)}"
-            },
-        )
+        false to "Движок локальной LLM не входит в эту сборку (её убрали ради размера APK)$ramNote. " +
+            "Используйте Онлайн или Полу-онлайн; файл .task можно выгрузить на ранер."
     }
 
     /** Локальный чат: полностью офлайн-ответ установленной моделью. */

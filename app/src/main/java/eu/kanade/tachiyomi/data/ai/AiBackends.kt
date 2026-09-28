@@ -178,13 +178,16 @@ object AiBackends {
             }
 
             BACKEND_LOCAL -> {
-                if (!state.localModelInstalled) missing += AiRequirement.MODEL_DOWNLOAD
-                detail = when {
-                    state.localModelId.isBlank() -> "Модель не выбрана"
-                    state.localModelSizeMb > 0 ->
-                        "${state.localModelId} • ${state.localModelSizeMb} МБ" +
-                            if (state.localModelInstalled) " • установлена" else " • не скачана"
-                    else -> state.localModelId
+                // Требование «скачать модель» больше не может выполниться:
+                // движка в сборке нет, поэтому показывать его — враньё, из-за
+                // которого пользователь ждал бесконечную загрузку .task.
+                detail = buildString {
+                    append("Движок не в сборке — используйте Онлайн или Полу-онлайн")
+                    if (state.localModelId.isNotBlank()) {
+                        append(". Файл .task: ${state.localModelId}")
+                        if (state.localModelSizeMb > 0) append(" (${state.localModelSizeMb} МБ)")
+                        if (state.localModelInstalled) append(" — лежит на устройстве, пригоден для выгрузки на ранер")
+                    }
                 }
             }
 
@@ -238,16 +241,20 @@ object AiBackends {
     fun route(backendId: String?, state: AiBackendState): Route {
         val plugin = byId(backendId)
         return when (plugin.id) {
+            // Локальная LLM — честно «не в сборке». Раньше готовность
+            // определялась ТОЛЬКО наличием файла .task, backend отдавал
+            // ready=true, блок возможностей писал «✅ Локальная LLM», и каждый
+            // ход падал в LocalLlm.chat, который бросает error(): читателю
+            // показывали «Нет ответа от AI-бененда после повторов», и он искал
+            // несуществующую проблему с прокси.
             BACKEND_LOCAL ->
-                if (state.localModelId.isNotBlank() && state.localModelInstalled) {
-                    Route(plugin.id, ready = true)
-                } else {
-                    Route(
-                        plugin.id,
-                        ready = false,
-                        message = "Локальная модель не готова: скачайте её в ⚙ → Локальные LLM и прогоните «Тест»",
-                    )
-                }
+                Route(
+                    plugin.id,
+                    ready = false,
+                    message = "Локальный LLM отключён в этой сборке: движок не включён " +
+                        "(это было сделано ради размера APK). Берите Онлайн или Полу-онлайн; " +
+                        "файлы .task остаются для экспорта на ранер.",
+                )
 
             BACKEND_RUNNER ->
                 if (state.runnerSessionAlive) {

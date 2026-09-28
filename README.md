@@ -77,7 +77,7 @@ The developer(s) of this application have no affiliation with the content provid
 ### License
 Copyright © 2015 Javier Tomás  
 Copyright © 2024 Mihon Open Source Project  
-Copyright © 2026 Yomikai  
+Copyright © 2025 Yomikai  
 
 Licensed under the Apache License, Version 2.0. See the [LICENSE](/LICENSE) file for more details.
 

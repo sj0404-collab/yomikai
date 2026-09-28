@@ -66,11 +66,18 @@ object AiCapabilityReporter {
                 !allowGithub -> "Выключено в Настройки → AI"
                 else -> "OK"
             }),
-            Capability("Локальная LLM (.task в /sdcard/Yomikai/models)", FileProbe.hasLocalLlm(context), if (!FileProbe.hasLocalLlm(context)) "Нет .task модели" else "OK"),
-            Capability("Бэкенд чата: $backend", true, when (backend) {
-                "online" -> if (hasNetwork) "OK" else "Нет сети"
-                "local" -> if (FileProbe.hasLocalLlm(context)) "OK" else "Нет модели"
-                "runner" -> if (hasGithubPat && allowRunner) "OK" else "См. выше"
+            // Локальная LLM: движка нет в сборке, и писать «OK» по наличию
+            // файла .task было враньём — модель бралась за несуществующий
+            // бэкенд и падала на каждом ходу.
+            Capability(
+                "Локальная LLM (.task в /sdcard/Yomikai/models)",
+                false,
+                "Движок не в сборке — только Онлайн/Полу-онлайн",
+            ),
+            Capability("Бэкенд чата: $backend", backend != "local", when {
+                backend == "local" -> "Локальный движок не в сборке"
+                backend == "online" -> if (hasNetwork) "OK" else "Нет сети"
+                backend == "runner" -> if (hasGithubPat && allowRunner) "OK" else "См. выше"
                 else -> "Неизвестный бэкенд"
             }),
         )

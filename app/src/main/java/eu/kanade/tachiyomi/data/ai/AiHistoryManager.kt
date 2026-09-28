@@ -98,13 +98,28 @@ object AiHistoryManager {
         }
     }
 
+    private val saveLock = Any()
+
     fun save(context: Context, history: List<Msg>, mangaId: Long? = null, channel: String = CHANNEL_CHAT) {
-        try {
-            val limit = prefs().aiHistoryLimit().get().coerceIn(4, 100)
-            val toSave = history.takeLast(limit)
-            historyFile(context, mangaId, channel).writeText(json.encodeToString(toSave))
-        } catch (e: Exception) {
-            logcat(LogPriority.WARN, e) { "AiHistoryManager save failed" }
+        // Пишем через временный файл и переименовываем. Раньше шли три
+        // несинхронизированных writeText() на один и тот же файл (append плюс
+        // два вызова из UI), и оборванная запись оставляла битый JSON — после
+        // него load() молча отдавал пустую историю, то есть вся переписка
+        // исчезала без единого слова читателю.
+        synchronized(saveLock) {
+            try {
+                val limit = prefs().aiHistoryLimit().get().coerceIn(4, 100)
+                val toSave = history.takeLast(limit)
+                val target = historyFile(context, mangaId, channel)
+                val tmp = File(target.parentFile, target.name + ".tmp")
+                tmp.writeText(json.encodeToString(toSave))
+                if (!tmp.renameTo(target)) {
+                    target.writeText(tmp.readText())
+                    tmp.delete()
+                }
+            } catch (e: Exception) {
+                logcat(LogPriority.WARN, e) { "AiHistoryManager save failed" }
+            }
         }
     }
 
@@ -122,10 +137,9 @@ object AiHistoryManager {
             val oldest = history.removeAt(0)
             val second = if (history.isNotEmpty()) history.removeAt(0) else null
             val summary = buildString {
-                append("[Сжато: ")
+                append("[Сводка прошлого контекста] ")
                 append(oldest.role).append(": ").append(oldest.text.take(80))
                 if (second != null) append(" | ").append(second.role).append(": ").append(second.text.take(80))
-                append("]")
             }
             history.add(0, Msg(role = "ai", text = summary, time = System.currentTimeMillis()))
         }

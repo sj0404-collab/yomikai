@@ -100,6 +100,13 @@ object AiPlugins {
         // Инструменты реестра видимости вкладок (UiTabs): тоже закрыты, иначе
         // плагин с именем ui_tab_hide перехватил бы управление навигацией.
         "ui_tab_hide", "ui_tab_show", "ui_tab_list",
+        // Пакетная генерация, просмотр картинок и обзор папки тоже закрыты:
+        // иначе плагин разработчика перехватил бы gen_images и see_image.
+        "gen_images", "see_image", "read_many", "workspace_list",
+        "runner_runs", "runner_events", "repo_pulls",
+        "skill_create", "skill_list", "skill_run",
+        "reader_actions", "reader_do",
+        "web_screenshot",
     ) + AiReaderTools.TOOL_NAMES + AiChatTools.TOOL_NAMES
 
     private fun toJson(p: Plugin) = JSONObject()

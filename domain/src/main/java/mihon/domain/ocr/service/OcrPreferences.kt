@@ -347,6 +347,16 @@ class OcrPreferences(
     /** Компактный оверлей (уменьшенный) вместо полноэкранного затемнения */
     fun ocrOverlayCompact() = preferenceStore.getBoolean("pref_ocr_overlay_compact", true)
 
+    /**
+     * Рисовать распознанный текст поверх страницы в читалке.
+     *
+     * Выключено = оверлей не рисуется вовсе: на светлых страницах (бумага,
+     * скан с белым фоном) белый текст поверх картинки был не виден, а
+     * выключить его было нечем — кроме как уйти в настройки шапки, где такой
+     * пункт не было.
+     */
+    fun ocrPageTextOverlay() = preferenceStore.getBoolean("pref_ocr_page_text_overlay", true)
+
     /** Дублировать распознанный текст в шторку уведомлений */
     fun ocrToNotification() = preferenceStore.getBoolean("pref_ocr_to_notification", false)
 

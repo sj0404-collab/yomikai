@@ -9,6 +9,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.RecordVoiceOver
 import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -39,6 +40,7 @@ fun OcrVoiceFloatingControls(
     enabled: Boolean,
     onSpeak: () -> Unit,
     onChooseVoice: () -> Unit,
+    onHidePageOverlay: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     // Пользовательские действия реестра UiActions для карточки OCR.
@@ -66,6 +68,17 @@ fun OcrVoiceFloatingControls(
                 contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                 text = { Text("Выбрать голос") },
             )
+            // Убрать текст со страницы, не закрывая результат: на светлых
+            // страницах оверлей всё равно перекрывал рисунок.
+            if (onHidePageOverlay != null) {
+                ExtendedFloatingActionButton(
+                    onClick = onHidePageOverlay,
+                    icon = { Icon(Icons.Outlined.VisibilityOff, contentDescription = null) },
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    text = { Text("Скрыть текст") },
+                )
+            }
         }
         // Свои действия — отдельной прокручиваемой строкой, чтобы длинный
         // список не уезжал за экран и не ломал основные кнопки озвучки.
