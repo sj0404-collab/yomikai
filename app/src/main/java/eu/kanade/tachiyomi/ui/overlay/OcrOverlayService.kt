@@ -852,7 +852,8 @@ class OcrOverlayService : Service() {
         val menu = LinearLayout(this)
         menu.orientation = LinearLayout.VERTICAL
 
-        readButton = roundButton(if (isReading) "⏹" else "▶", active = isReading) {
+        // Локальная non-null копия: поле — TextView?, а меню ждёт TextView.
+        val readBtn = roundButton(if (isReading) "⏹" else "▶", active = isReading) {
             if (isReading) {
                 stopReading()
                 refreshReadButton()
@@ -860,7 +861,8 @@ class OcrOverlayService : Service() {
                 OcrCaptureActivity.request(applicationContext)
             }
         }
-        val readRow = menuRow(if (isReading) "Стоп-чтение" else "Читать рамку", readButton)
+        readButton = readBtn
+        val readRow = menuRow(if (isReading) "Стоп-чтение" else "Читать рамку", readBtn)
         readRowLabel = readRow.label()
         menu.addView(readRow, rowParams())
 
@@ -879,18 +881,20 @@ class OcrOverlayService : Service() {
             rowParams(),
         )
 
-        sttButton = roundButton("🎙", active = false) { toggleStt() }
+        val sttBtn = roundButton("🎙", active = false) { toggleStt() }
+        sttButton = sttBtn
         menu.addView(
             menuRow(
                 "STT · распознать речь",
-                sttButton,
+                sttBtn,
                 roundButton("📋", active = false) { fromClipboard() },
             ),
             rowParams(),
         )
 
-        regionButton = roundButton("▦", active = false) { cycleRegionMode() }
-        val regionRow = menuRow(regionModeLabel(), roundButton("✏", active = false) { openSelector() }, regionButton)
+        val regionBtn = roundButton("▦", active = false) { cycleRegionMode() }
+        regionButton = regionBtn
+        val regionRow = menuRow(regionModeLabel(), roundButton("✏", active = false) { openSelector() }, regionBtn)
         regionRowLabel = regionRow.label()
         menu.addView(regionRow, rowParams())
 

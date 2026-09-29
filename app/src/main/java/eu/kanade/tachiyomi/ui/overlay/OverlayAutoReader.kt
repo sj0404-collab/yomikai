@@ -8,18 +8,19 @@ import eu.kanade.tachiyomi.data.tts.TtsSpeaker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlin.coroutines.coroutineContext
 import mihon.data.ocr.OcrPlugins
 import mihon.domain.ocr.model.OcrImage
 import mihon.domain.ocr.repository.OcrRepository
 import mihon.domain.ocr.service.OcrPreferences
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import kotlin.coroutines.coroutineContext
 
 /**
  * Чтение рамки поверх чужого приложения.
@@ -159,7 +160,12 @@ class OverlayAutoReader(
      */
     private suspend fun awaitGestureService(onNote: (String) -> Unit): Boolean {
         var waited = 0L
-        while (isActive && !OverlayGestureService.isEnabled() && waited < GESTURE_WAIT_MAX_MS) {
+        // currentCoroutineContext(), а не isActive: здесь нет CoroutineScope,
+        // и isActive без получателя просто не разрешается.
+        while (currentCoroutineContext().isActive &&
+            !OverlayGestureService.isEnabled() &&
+            waited < GESTURE_WAIT_MAX_MS
+        ) {
             if (waited == 0L) onNote("Включите Службу доступности — жду, чтобы листать")
             delay(GESTURE_WAIT_MS)
             waited += GESTURE_WAIT_MS
@@ -168,7 +174,7 @@ class OverlayAutoReader(
             onNote("Без Службы доступности листать нечем — чтение остановлено")
             return false
         }
-        return isActive
+        return currentCoroutineContext().isActive
     }
 
     /**
