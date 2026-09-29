@@ -535,6 +535,20 @@
     <!-- Launch Screen -->
     <!--===============-->
 
+    <!--
+         Прозрачная activity только для системного диалога захвата экрана.
+         На экране не видна ничего: своего содержимого у неё нет, она только
+         спрашивает разрешение и сразу закрывается.
+    -->
+    <style name="Theme.Tachiyomi.CaptureDialog" parent="Theme.Tachiyomi">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
+
     <!--== Splash Theme ==-->
     <style name="Theme.Tachiyomi.SplashScreen" parent="Theme.SplashScreen">
         <item name="windowSplashScreenAnimatedIcon">@drawable/ic_mihon_splash</item>

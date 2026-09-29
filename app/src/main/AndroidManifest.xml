@@ -39,6 +39,12 @@
          не гасился системой. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- Захват экрана рамкой оверлея. С Android 14 (targetSdk 36) система
+         требует, чтобы приложение ДО вызова getMediaProjection() держало
+         работающий foreground service с типом mediaProjection и объявленным
+         правом — иначе вызов падает с SecurityException и рамка молча не
+         читает ничего. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <!-- v1.9.72: STT для игр — слушаем речь микрофоном (реал-тайм),
          английские голоса → текст → русские голоса. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -267,7 +273,40 @@
         <service
             android:name=".ui.overlay.OcrOverlayService"
             android:exported="false"
-            android:foregroundServiceType="mediaPlayback" />
+            android:foregroundServiceType="mediaPlayback|mediaProjection" />
+
+        <!--
+             Прозрачная activity: только чтобы показать системный диалог
+             захвата экрана. MediaProjection нельзя запустить из сервиса,
+             поэтому оверлей поднимает её, а результат уходит обратно в
+             сервис. Видимого содержимого у неё нет.
+        -->
+        <activity
+            android:name=".ui.overlay.OcrCaptureActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Tachiyomi.CaptureDialog" />
+
+        <!--
+             Служба доступности существует ровно для одной вещи: отправлять
+             свайпы чужому приложению, чтобы рамка поверх окна листала его
+             самостоятельно. Ни события не читает, ни узлы не обходит, ни
+             ничего не выполняет — только dispatchGesture по координатам.
+             По умолчанию выключена, включается читателем в настройках. -->
+        <service
+            android:name=".ui.overlay.OverlayGestureService"
+            android:exported="true"
+            android:label="@string/ocr_overlay_gesture_service"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/ocr_overlay_gesture_service" />
+        </service>
 
         <provider
             android:name="androidx.core.content.FileProvider"

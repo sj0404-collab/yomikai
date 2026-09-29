@@ -81,6 +81,8 @@ object OcrOverlaySettingsScreen : Screen {
             .collectAsState(initial = prefs.overlayWatchClipboard().get())
         val appEngine by prefs.appOcrEngine().changes()
             .collectAsState(initial = prefs.appOcrEngine().get())
+        val ownEngine by prefs.overlayOwnEngine().changes()
+            .collectAsState(initial = prefs.overlayOwnEngine().get())
 
         val canDraw = OcrOverlayService.canDrawOverlays(context)
 
@@ -184,7 +186,45 @@ object OcrOverlaySettingsScreen : Screen {
                     },
                 )
 
+                OverlaySectionTitle("Чтение рамки и своя прокрутка")
+                Text(
+                    text = "Кнопка «▶ Читать рамку» на панели снимает область экрана, " +
+                        "распознаёт, озвучивает и листает приложение СВОИМ свайпом — " +
+                        "не полагаясь на его собственную прокрутку. Дальше листать " +
+                        "чужое приложение можно только жестом, а жест умеет " +
+                        "отправлять Служба доступности. Она ничего не читает и " +
+                        "ничего не выполняет — только свайп по вашей команде.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+                SwitchRow(
+                    title = "Служба доступности включена",
+                    subtitle = "Нужна для прокрутки. Если выключена, чтение озвучивает " +
+                        "кадр, но листать не сможет.",
+                    checked = OverlayGestureService.isEnabled(),
+                    onChange = { context.requestGestureService() },
+                )
+                Text(
+                    text = "Пауза после реплики: ${prefs.overlayReadPause().get()} мс • " +
+                        "ожидание перерисовки: ${prefs.overlayScrollSettle().get()} мс • " +
+                        "длина свайпа: ${prefs.overlayScrollStep().get()}% высоты области",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+
                 OverlaySectionTitle("Технология распознавания")
+                SwitchRow(
+                    title = "Свой движок для оверлея",
+                    subtitle = "Выключено — читает тем же движком, что и читалка. " +
+                        "Включено — собственным, заданным ниже.",
+                    checked = ownEngine,
+                    onChange = {
+                        prefs.overlayOwnEngine().set(it)
+                        OcrOverlayService.refresh(context)
+                    },
+                )
                 Text(
                     text = "Движок, которым оверлей читает текст поверх приложений.",
                     style = MaterialTheme.typography.bodySmall,

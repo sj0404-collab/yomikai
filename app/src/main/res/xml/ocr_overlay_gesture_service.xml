@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Служба не читает ничего: не подписывается на события, не запрашивает
+    содержимое узлов и не выполняет действия. Единственная возможность,
+    которая ей остаётся, — отправить жест по координатам. Ровно это и
+    нужно, чтобы рамка поверх окна листала чужое приложение сама.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault"
+    android:canPerformGestures="true"
+    android:canRetrieveWindowContent="false"
+    android:notificationTimeout="200"
+    android:description="@string/ocr_overlay_gesture_service_desc" />

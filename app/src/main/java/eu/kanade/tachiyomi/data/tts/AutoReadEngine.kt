@@ -794,6 +794,12 @@ class AutoReadEngine(
      * Мгновенный скриншот: распознать текущий кадр выбранным движком (в т.ч.
      * Glens) и сохранить в буфер «Скриншоты», НЕ озвучивая и не трогая
      * состояние авточтения. Вызывается с плавающей кнопки читалки.
+     *
+     * Кадр читается ЗДЕСЬ, на потоке вызывающего, и в фон уходит его копия.
+     * Раньше фоновой задаче отдавался исходный битмап, а вызывающий
+     * переиспользовал его сразу же: гонка приводила к `getPixels` по
+     * переиспользованному битмапу, и приложение падало сразу после сообщения
+     * «Скриншот сохранён» — без всякой ошибки на экране.
      */
     fun captureInstantScreenshot(
         bitmap: Bitmap,
@@ -801,59 +807,67 @@ class AutoReadEngine(
         pageIndex: Int,
         scrollFraction: Float,
     ) {
-        if (prefs.autoScreenshotEnabled().get()) {
-            scope.launch {
-                // Скриншот в фоне и в минимально читаемом разрешении.
-                val scaled = downscaleForScan(bitmap)
-                try {
-                    val result = try {
-                        withTimeout(OCR_FRAME_TIMEOUT_MS) {
-                            scanPageOcr.await(chapterId, pageIndex, scaled.toOcrImage())
-                        }
-                    } catch (e: TimeoutCancellationException) {
-                        logcat(LogPriority.WARN) {
-                            "Instant screenshot OCR timeout (${OCR_FRAME_TIMEOUT_MS}ms)"
-                        }
-                        return@launch
+        if (!prefs.autoScreenshotEnabled().get()) return
+        if (bitmap.isRecycled) return
+
+        // Фоновой задаче нужна ЕЁ копия. Кадр вызывающего может быть
+        // переиспользован сразу после возврата, а уменьшение не всегда
+        // требуется — тогда downscaleForScan отдаёт тот же объект, и гонка
+        // вернулась бы вместе с падением по переиспользованному битмапу.
+        val scaled = downscaleForScan(bitmap).takeIf { it !== bitmap }
+            ?: runCatching { bitmap.copy(bitmap.config ?: android.graphics.Bitmap.Config.ARGB_8888, false) }
+                .getOrNull()
+            ?: return
+        scope.launch {
+            try {
+                val result = try {
+                    withTimeout(OCR_FRAME_TIMEOUT_MS) {
+                        scanPageOcr.await(chapterId, pageIndex, scaled.toOcrImage())
                     }
-                    // JPEG-кадр пишем ДО recycle: после него пикселей не будет.
-                    val jpeg = runCatching { encodeJpeg(scaled, JPEG_QUALITY) }.getOrNull()
-                    val width = scaled.width
-                    val height = scaled.height
-                    if (result.regions.isEmpty()) return@launch
-                    val ordered = orderRegions(
-                        result.regions.map {
-                            Line(
-                                text = it.text,
-                                boundingBox = it.boundingBox,
-                            )
-                        },
-                        OcrRegionRules.readingOrderFor(prefs),
-                    )
-                    OcrScreenshotBuffer.add(
-                        chapterId = chapterId,
-                        pageIndex = pageIndex,
-                        scrollFraction = scrollFraction,
-                        regions = ordered.mapIndexed { idx, line ->
-                            OcrRegion(
-                                order = idx,
-                                text = line.text,
-                                boundingBox = line.boundingBox,
-                                textOrientation = OcrTextOrientation.Horizontal,
-                            )
-                        },
-                        engineUsed = result.ocrModel.name.lowercase(),
-                        imageWidth = width,
-                        imageHeight = height,
-                        imageJpeg = jpeg,
-                    )
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    logcat(LogPriority.WARN, e) { "Instant screenshot OCR failed" }
-                } finally {
-                    if (scaled !== bitmap && !scaled.isRecycled) scaled.recycle()
+                } catch (e: TimeoutCancellationException) {
+                    logcat(LogPriority.WARN) {
+                        "Instant screenshot OCR timeout (${OCR_FRAME_TIMEOUT_MS}ms)"
+                    }
+                    return@launch
                 }
+                // JPEG-кадр пишем ДО recycle: после него пикселей не будет.
+                val jpeg = runCatching { encodeJpeg(scaled, JPEG_QUALITY) }.getOrNull()
+                val width = scaled.width
+                val height = scaled.height
+                if (result.regions.isEmpty()) return@launch
+                val ordered = orderRegions(
+                    result.regions.map {
+                        Line(
+                            text = it.text,
+                            boundingBox = it.boundingBox,
+                        )
+                    },
+                    OcrRegionRules.readingOrderFor(prefs),
+                )
+                OcrScreenshotBuffer.add(
+                    chapterId = chapterId,
+                    pageIndex = pageIndex,
+                    scrollFraction = scrollFraction,
+                    regions = ordered.mapIndexed { idx, line ->
+                        OcrRegion(
+                            order = idx,
+                            text = line.text,
+                            boundingBox = line.boundingBox,
+                            textOrientation = OcrTextOrientation.Horizontal,
+                        )
+                    },
+                    engineUsed = result.ocrModel.name.lowercase(),
+                    imageWidth = width,
+                    imageHeight = height,
+                    imageJpeg = jpeg,
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logcat(LogPriority.WARN, e) { "Instant screenshot OCR failed" }
+            } finally {
+                // Переиспользуем только копию: кадр вызывающего остаётся его.
+                if (scaled !== bitmap && !scaled.isRecycled) scaled.recycle()
             }
         }
     }
@@ -1558,6 +1572,8 @@ class AutoReadEngine(
 
         /** Возвращает кадр в минимально читаемом разрешении (сам же, если он уже мал). */
         private fun downscaleForScan(src: Bitmap): Bitmap {
+            // Переиспользованный кадр отдавать нельзя: следующий же getPixels
+            // на нём роняет процесс. Лучше пустой результат, чем падение.
             if (src.isRecycled) return src
             val longEdge = maxOf(src.width, src.height)
             if (longEdge <= OCR_SCAN_MAX_EDGE) return src

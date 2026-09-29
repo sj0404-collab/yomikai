@@ -5,15 +5,17 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.app.usage.UsageStatsManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.graphics.Canvas
 import android.graphics.Paint
-import android.app.usage.UsageStatsManager
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
@@ -21,6 +23,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
+import kotlinx.coroutines.cancel
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -72,6 +75,11 @@ class OcrOverlayService : Service() {
 
         /** Как часто проверять, не открыто ли наше собственное приложение. */
         private const val FOREGROUND_POLL_MS = 700L
+
+        /** Действие: начать чтение рамки с уже полученным разрешением. */
+        private const val ACTION_START_READING = "eu.kanade.tachiyomi.ocr.START_READING"
+        private const val EXTRA_RESULT_CODE = "resultCode"
+        private const val EXTRA_RESULT_DATA = "resultData"
 
         fun canDrawOverlays(context: Context): Boolean =
             Settings.canDrawOverlays(context)
@@ -142,6 +150,22 @@ class OcrOverlayService : Service() {
         fun selectRegion(context: Context) {
             startWith(context, intentFor(context).setAction(ACTION_SELECT_REGION))
         }
+
+        /**
+         * Начать чтение рамки с уже полученным разрешением на захват.
+         *
+         * Разрешение добывает [OcrCaptureActivity]: сервис не может
+         * показать системный диалог и получить его результат.
+         */
+        fun startReading(context: Context, resultCode: Int, data: Intent) {
+            startWith(
+                context,
+                intentFor(context)
+                    .setAction(ACTION_START_READING)
+                    .putExtra(EXTRA_RESULT_CODE, resultCode)
+                    .putExtra(EXTRA_RESULT_DATA, data),
+            )
+        }
     }
 
     private lateinit var wm: WindowManager
@@ -172,6 +196,78 @@ class OcrOverlayService : Service() {
     // Селектор области (полноэкранное окно для ручного выделения).
     private var selectorRoot: FrameLayout? = null
     private var selectorDraw: RegionDrawView? = null
+
+    // ---- Чтение рамки поверх чужого приложения ----
+    private var capture: OverlayCaptureEngine? = null
+    private var autoReader: OverlayAutoReader? = null
+    private var readJob: kotlinx.coroutines.Job? = null
+    private var readProjection: android.media.projection.MediaProjection? = null
+    private var readButton: Button? = null
+
+    /** Прямоугольник зафиксированной области в пикселях экрана. */
+    private fun fixedRegionRect(): Rect? {
+        val region = parseRegion() ?: return null
+        val dm = resources.displayMetrics
+        return Rect(
+            (region.l * dm.widthPixels).toInt(),
+            (region.t * dm.heightPixels).toInt(),
+            (region.r * dm.widthPixels).toInt(),
+            (region.b * dm.heightPixels).toInt(),
+        ).takeIf { it.width() > 0 && it.height() > 0 }
+    }
+
+    /**
+     * Включает режим чтения.
+     *
+     * Захват экрана разрешается системным диалогом, поэтому его нельзя
+     * начать из фонового сервиса молча: вызывающий обязан получить
+     * [MediaProjection] из [MediaProjectionManager.getMediaProjection].
+     */
+    fun startReading(projection: android.media.projection.MediaProjection) {
+        val rect = fixedRegionRect()
+        if (rect == null) {
+            toast("Сначала задайте область рамки")
+            return
+        }
+        if (!OverlayGestureService.isEnabled()) {
+            toast("Включите Службу доступности, чтобы листать самому")
+        }
+        stopReading()
+        readProjection = projection
+        val engine = OverlayCaptureEngine(applicationContext, projection)
+        capture = engine
+        val reader = OverlayAutoReader(applicationContext, engine)
+        autoReader = reader
+        readJob = reader.start(
+            scope = serviceScope,
+            region = rect,
+            onPage = { text -> uiHandler.post { setBubble(text) } },
+            onNote = { note ->
+                uiHandler.post {
+                    setBubble(note)
+                    readButton?.text = if (isReading) "⏹ Стоп-чтение" else "▶ Читать рамку"
+                }
+            },
+        )
+        toast("Чтение: ${reader.engineTitle()}")
+    }
+
+    fun stopReading() {
+        readJob?.cancel()
+        readJob = null
+        runCatching { capture?.stop() }
+        capture = null
+        runCatching { readProjection?.stop() }
+        readProjection = null
+        autoReader = null
+        runCatching { readEngine.stop() }
+    }
+
+    val isReading: Boolean get() = readJob?.isActive == true
+
+    private val serviceScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate,
+    )
 
     private fun dp(v: Float): Int = (v * resources.displayMetrics.density).toInt().coerceAtLeast(1)
 
@@ -204,6 +300,24 @@ class OcrOverlayService : Service() {
             ACTION_REFRESH -> {
                 applyClipboardWatch()
                 applyFrame()
+            }
+            ACTION_START_READING -> {
+                val code = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
+                val data: Intent? = intent.getParcelableExtra(EXTRA_RESULT_DATA)
+                if (data == null) {
+                    toast("Разрешение на захват не получено")
+                } else {
+                    val projection = runCatching {
+                        val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE)
+                            as android.media.projection.MediaProjectionManager
+                        mpm.getMediaProjection(code, data)
+                    }.getOrNull()
+                    if (projection == null) {
+                        toast("Не удалось начать захват экрана")
+                    } else {
+                        startReading(projection)
+                    }
+                }
             }
         }
         applyClipboardWatch()
@@ -286,7 +400,18 @@ class OcrOverlayService : Service() {
             .setSmallIcon(android.R.drawable.ic_menu_view)
             .setOngoing(true)
         if (contentIntent != null) b.setContentIntent(contentIntent)
-        startForeground(NOTIF_ID, b.build())
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // Тип mediaProjection обязателен: без него на Android 14+ система
+            // не отдаст MediaProjection и захват рамки не запустится.
+            startForeground(
+                NOTIF_ID,
+                b.build(),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK or
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
+            )
+        } else {
+            startForeground(NOTIF_ID, b.build())
+        }
     }
 
     // ---------- Озвучка (тот же движок, что в читалке) ----------
@@ -722,6 +847,20 @@ class OcrOverlayService : Service() {
         row3.addView(textButton("▦") { toggleFrame() })
         content.addView(row3, rowParams())
 
+        // Чтение рамки: захват экрана, распознавание, озвучка и своя
+        // прокрутка. Захват разрешается системным диалогом, а сервис не
+        // умеет просить разрешения — этим занимается прозрачная activity.
+        readButton = textButton(if (isReading) "⏹ Стоп-чтение" else "▶ Читать рамку") {
+            if (isReading) {
+                stopReading()
+                uiHandler.post { readButton?.text = "▶ Читать рамку" }
+            } else {
+                OcrCaptureActivity.request(applicationContext)
+            }
+        }
+        content.addView(readButton, rowParams())
+
+
         // Ручной ввод (если в другом приложении нельзя копировать).
         val inputEdit = EditText(this)
         inputEdit.hint = "Текст для бабла…"
@@ -923,6 +1062,10 @@ class OcrOverlayService : Service() {
     }
 
     override fun onDestroy() {
+        stopReading()
+        // Цикл чтения живёт в serviceScope: без отмены задача продолжала бы
+        // держать сервис и захват после его смерти.
+        serviceScope.cancel()
         foregroundHandler.removeCallbacks(foregroundCheck)
         runCatching { stt?.destroy() }
         stt = null

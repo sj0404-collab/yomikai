@@ -194,8 +194,17 @@ class OcrRepositoryImpl(
         ZEN_FREE,
     }
 
-    private fun selectedEngineType(): EngineType {
-        val engine = when (ocrModelPref.get()) {
+    private fun selectedEngineType(): EngineType = engineTypeOf(ocrModelPref.get())
+
+    /**
+     * Модель в тип движка.
+     *
+     * Вынесено отдельно от [selectedEngineType], потому что оверле поверх
+     * чужого приложения распознаёт своим движком, а не тем, что выбран для
+     * манги, — и он тоже не должен молча уезжать в ML Kit на кириллице.
+     */
+    private fun engineTypeOf(model: OcrModel): EngineType {
+        val engine = when (model) {
             OcrModel.CYRILLIC -> EngineType.CYRILLIC
             OcrModel.MLKIT -> EngineType.MLKIT
             // Old offline selections migrate transparently to the Russian
@@ -451,10 +460,13 @@ class OcrRepositoryImpl(
         return primaryText ?: throw lastError ?: OcrException.InitializationError()
     }
 
-    override suspend fun recognizeText(image: OcrImage): String {
+    override suspend fun recognizeText(image: OcrImage): String = recognizeText(image, null)
+
+    override suspend fun recognizeText(image: OcrImage, model: OcrModel?): String {
         // Новый вызов — новый отчёт: без сброса неудача показала бы движок
-        // ПРЕДЫДУщего распознавания.
+        // ПРЕДЫДУЩЕГО распознавания.
         lastRecognizedEngine = null
+        val engine = model?.let(::engineTypeOf) ?: selectedEngineType()
         return withActiveOperation {
             submitTask(PrioritizedTaskQueue.Priority.HIGH) {
                 image.useBitmap { bitmap ->
@@ -467,12 +479,15 @@ class OcrRepositoryImpl(
                     // пробуем вовсе. Крупный кроп оставляем как был.
                     val tiny = minOf(bitmap.width, bitmap.height) < onlineMinSidePx
                     recognizeWithFallback(
-                        primary = selectedEngineType(),
+                        primary = engine,
                         image = bitmap,
                         fallbackBudgetMs = if (tiny) tinyFallbackBudgetMs else defaultFallbackBudgetMs,
                         allowOnlineFallback = !tiny,
                     )
                 }
+            }
+        }
+    }
             }
         }
     }

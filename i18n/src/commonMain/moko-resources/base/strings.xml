@@ -1414,4 +1414,6 @@
     <string name="pref_reader_actions_builtin">built-in</string>
     <string name="constructor">Constructor</string>
     <string name="constructor_summary">Tabs, panel modules, custom buttons: hide, reorder, create</string>
+    <string name="ocr_overlay_gesture_service">Yomikai — прокрутка рамки</string>
+    <string name="ocr_overlay_gesture_service_desc">Нужна только для прокрутки: чтобы рамка поверх окна могла листать приложение сама. Приложение не читает содержимое экрана и не выполняет действия — только отправляет свайп по вашей команде.</string>
 </resources>

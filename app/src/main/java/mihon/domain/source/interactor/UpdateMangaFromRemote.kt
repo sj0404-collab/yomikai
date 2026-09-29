@@ -6,8 +6,12 @@ import eu.kanade.domain.manga.model.hasCustomCover
 import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
+import eu.kanade.tachiyomi.network.HttpException
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.model.SMangaUpdate
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import logcat.LogPriority
 import mihon.domain.source.models.RemoteMangaUpdate
 import tachiyomi.core.common.util.lang.withIOContext
@@ -20,6 +24,9 @@ import tachiyomi.domain.manga.model.MangaUpdate
 import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.source.local.isLocal
+import java.io.InterruptedIOException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.time.Instant
 
 class UpdateMangaFromRemote(
@@ -60,7 +67,7 @@ class UpdateMangaFromRemote(
             val chapters = chapterRepository.getChapterByMangaId(manga.id)
                 .sortedBy { it.sourceOrder }
             val update = withIOContext {
-                source.getMangaUpdate(
+                source.getMangaUpdateWithRetry(
                     manga = manga.toSManga(),
                     chapters = chapters.map(Chapter::toSChapter),
                     fetchDetails = fetchDetails,
@@ -82,6 +89,47 @@ class UpdateMangaFromRemote(
             logcat(LogPriority.ERROR, e)
             Result.failure(e)
         }
+    }
+
+    /**
+     * Забрать обновление у источника, повторив запрос при временной ошибке.
+     *
+     * Источники (особенно сайты без API) отдают 500/502/429 и рвут соединение
+     * без всякой причины: на второй попытке тот же запрос обычно проходит. Без
+     * повтора страница манги оставалась с «0 глав» и единственным следом была
+     * исчезающая строка ошибки. Повтор делается только для временных отказов:
+     * 404 или «источник не установлен» повторять бессмысленно.
+     */
+    private suspend fun Source.getMangaUpdateWithRetry(
+        manga: SManga,
+        chapters: List<eu.kanade.tachiyomi.source.model.SChapter>,
+        fetchDetails: Boolean,
+        fetchChapters: Boolean,
+    ): SMangaUpdate {
+        var lastError: Exception? = null
+        repeat(ATTEMPTS) { attempt ->
+            try {
+                return getMangaUpdate(manga, chapters, fetchDetails, fetchChapters)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (!e.isTemporary()) throw e
+                lastError = e
+                logcat(LogPriority.WARN) { "Temporary source failure (${e.message}), attempt ${attempt + 1}" }
+                delay(RETRY_DELAY_MS * (attempt + 1))
+            }
+        }
+        throw lastError ?: IllegalStateException("Не удалось получить данные у источника")
+    }
+
+    /** Временный ли отказ: сервер перегружен, сеть дёрнулась, источник не ответил вовремя. */
+    private fun Exception.isTemporary(): Boolean = when (this) {
+        is HttpException -> code >= 500 || code == 408 || code == 429
+        is UnknownHostException -> true
+        is SocketTimeoutException -> true
+        is InterruptedIOException -> true
+        is java.net.ConnectException -> true
+        else -> message?.contains("Failed to connect", ignoreCase = true) == true
     }
 
     private suspend fun awaitUpdateFromSource(
@@ -140,5 +188,13 @@ class UpdateMangaFromRemote(
             downloadManager.renameManga(localManga, title)
         }
         return success
+    }
+
+    companion object {
+        /** Сколько раз пробуем достой запрос источника. */
+        private const val ATTEMPTS = 3
+
+        /** Пауза перед повтором, мс; растёт с каждой попыткой. */
+        private const val RETRY_DELAY_MS = 800L
     }
 }

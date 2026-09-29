@@ -92,6 +92,10 @@ class AppModule(val app: Application) : InjektModule {
             Json {
                 ignoreUnknownKeys = true
                 explicitNulls = false
+                // Ответы трекеров и источников приходят неполными: вместо
+                // «pages»: null или «rating»: "N/A" раньше падал весь разбор
+                // ответа. Теперь такое значение заменяется дефолтом типа.
+                coerceInputValues = true
             }
         }
         addSingletonFactory<XML> {

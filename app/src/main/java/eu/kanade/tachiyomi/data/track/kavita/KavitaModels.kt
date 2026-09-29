@@ -12,14 +12,17 @@ data class SeriesDto(
     val thumbnail_url: String? = "",
     val localizedName: String? = "",
     val sortName: String? = "",
-    val pages: Int,
+    // Kavita не отдаёт pages для части серий (и для серий-заглушек вовсе).
+    // Без значения по умолчанию весь разбор DTO падал целиком, и страница
+    // манги показывала ошибку вместо трекера.
+    val pages: Int = 0,
     val coverImageLocked: Boolean = true,
-    val pagesRead: Int,
+    val pagesRead: Int = 0,
     val userRating: Int? = 0,
     val userReview: String? = "",
-    val format: Int,
+    val format: Int = 0,
     val created: String? = "",
-    val libraryId: Int,
+    val libraryId: Int = 0,
     val libraryName: String? = "",
 ) {
     fun toTrack(): TrackSearch = TrackSearch.create(TrackerManager.KAVITA).also {
@@ -32,12 +35,12 @@ data class SeriesDto(
 data class VolumeDto(
     val id: Int,
     val number: Int,
-    val name: String,
-    val pages: Int,
-    val pagesRead: Int,
-    val lastModified: String,
-    val created: String,
-    val seriesId: Int,
+    val name: String = "",
+    val pages: Int = 0,
+    val pagesRead: Int = 0,
+    val lastModified: String = "",
+    val created: String = "",
+    val seriesId: Int = 0,
     val chapters: List<ChapterDto> = emptyList(),
 )
 

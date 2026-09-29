@@ -432,6 +432,26 @@ class OcrPreferences(
     /** Самому следить за буфером обмена и озвучивать новое. */
     fun overlayWatchClipboard() = preferenceStore.getBoolean("pref_overlay_watch_clipboard", false)
 
+    // ---- Чтение рамки поверх чужого приложения ----
+
+    /**
+     * Брать для оверлея свой движок распознавания.
+     *
+     * Выключено — оверлей читает тем же движком, что и читалка. Включено —
+     * отдельным, заданным в [appOcrEngine]. Разделение нужно там, где у
+     * читалки движок подобран под мангу, а оверлею — под игровой шрифт.
+     */
+    fun overlayOwnEngine() = preferenceStore.getBoolean("pref_overlay_own_engine", false)
+
+    /** Пауза после конца реплики перед прокруткой, мс. */
+    fun overlayReadPause() = preferenceStore.getInt("pref_overlay_read_pause", 900)
+
+    /** Пауза после свайпа, пока приложение перерисует кадр, мс. */
+    fun overlayScrollSettle() = preferenceStore.getInt("pref_overlay_scroll_settle", 1200)
+
+    /** Длина свайпа в процентах высоты области. */
+    fun overlayScrollStep() = preferenceStore.getInt("pref_overlay_scroll_step", 45)
+
     // ---- Озвучка книг (свои настройки, отдельно от читалки манги) ----
     fun bookSpeechRate() = preferenceStore.getFloat("pref_book_speech_rate", 1.0f)
     fun bookSpeechPitch() = preferenceStore.getFloat("pref_book_speech_pitch", 1.0f)

@@ -304,7 +304,17 @@ class MangaScreenModel(
             }
 
             screenModelScope.launch {
-                snackbarHostState.showSnackbar(message = message)
+                // Повтор прямо в сообщении: строка с ошибкой исчезает через
+                // несколько секунд, а список глав остаётся пустым, и «0 глав»
+                // выглядит как правда. Кнопка «Повторить» возвращает список.
+                val retry = snackbarHostState.showSnackbar(
+                    message = message,
+                    actionLabel = "Повторить",
+                    withDismissAction = true,
+                )
+                if (retry == SnackbarResult.ActionPerformed) {
+                    fetchAllFromSource(manualFetch = true)
+                }
             }
         }
     }
