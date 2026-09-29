@@ -488,9 +488,6 @@ class OcrRepositoryImpl(
             }
         }
     }
-            }
-        }
-    }
 
     /**
      * Вопрос к vision-модели по выбранному движку.
