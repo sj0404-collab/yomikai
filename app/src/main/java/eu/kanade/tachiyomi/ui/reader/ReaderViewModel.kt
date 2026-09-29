@@ -866,62 +866,6 @@ class ReaderViewModel @JvmOverloads constructor(
      * Прогрев OCR-двика при входе в читалку: первая ручная область не
      * должна ждать инициализацию модели («долго грузит»).
      */
-    /**
-     * Сохранение страниц скачанной главы в папки оффлайн-чтения:
-     * <files>/offline/<манга>/<глава>/… (запрос пользователя).
-     */
-    fun exportChapterToOfflineFolder(context: android.content.Context) {
-        viewModelScope.launchIO {
-            val manga = state.value.manga
-            val chapter = state.value.currentChapter?.chapter
-            if (manga == null || chapter == null) return@launchIO
-            val source = sourceManager.getOrStub(manga.source)
-            val chapterDir = downloadProvider.findChapterDir(
-                chapterName = chapter.name,
-                chapterScanlator = chapter.scanlator,
-                chapterUrl = chapter.url,
-                mangaTitle = manga.title,
-                source = source,
-            )
-            if (chapterDir == null) {
-                withUIContext {
-                    eventChannel.send(
-                        Event.OfflineExportResult(
-                            "Глава не скачана: скачайте её (загрузки), затем повторите",
-                        ),
-                    )
-                }
-                return@launchIO
-            }
-            val safeManga = manga.title.replace(Regex("[^A-Za-zА-Яа-яЁё0-9 _-]"), "_").take(60)
-            val safeChap = chapter.name.replace(Regex("[^A-Za-zА-Яа-яЁё0-9 ._-]"), "_").take(60)
-            val target = java.io.File(context.getExternalFilesDir(null), "offline/$safeManga/$safeChap")
-            target.mkdirs()
-            var count = 0
-            fun copyDir(src: com.hippo.unifile.UniFile, dst: java.io.File) {
-                for (f in src.listFiles() ?: emptyArray()) {
-                    val name = f.name ?: continue
-                    if (f.isDirectory) {
-                        val nd = java.io.File(dst, name)
-                        nd.mkdirs()
-                        copyDir(f, nd)
-                    } else {
-                        val out = java.io.File(dst, name)
-                        f.openInputStream().use { ins -> out.outputStream().use { ins.copyTo(it) } }
-                        count++
-                    }
-                }
-            }
-            runCatching { copyDir(chapterDir, target) }
-                .onFailure { e -> logcat(LogPriority.ERROR, e) { "Offline export failed" } }
-            withUIContext {
-                eventChannel.send(
-                    Event.OfflineExportResult("Сохранено страниц: $count → ${target.absolutePath}"),
-                )
-            }
-        }
-    }
-
     fun warmupOcr() {
         viewModelScope.launchIO {
             runCatching {
@@ -1440,7 +1384,6 @@ class ReaderViewModel @JvmOverloads constructor(
         /** Результат ручного распознавания помечен в буфере «Скриншоты». */
         data object OcrResultMarked : Event
 
-        data class OfflineExportResult(val message: String) : Event
         data object OcrMemoryError : Event
         data object OcrInitializationError : Event
         /** Общая ошибка OCR. `message` — реальная причина (или null). */

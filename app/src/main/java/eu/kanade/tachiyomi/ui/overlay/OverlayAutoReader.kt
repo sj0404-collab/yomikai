@@ -8,12 +8,12 @@ import eu.kanade.tachiyomi.data.tts.TtsSpeaker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.coroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.coroutineContext
 import mihon.data.ocr.OcrPlugins
 import mihon.domain.ocr.model.OcrImage
 import mihon.domain.ocr.repository.OcrRepository
@@ -106,7 +106,7 @@ class OverlayAutoReader(
         // Служба доступности может подключиться позже, чем нажали «Читать»:
         // пока она выключена, листать нечем, и раньше цикл молча завершался
         // после первой реплики. Теперь ждём и продолжаем.
-        if (!awaitGestureService()) return@launch
+        if (!awaitGestureService(onNote)) return@launch
 
         while (isActive) {
             val text = readOnce(region)
@@ -157,7 +157,7 @@ class OverlayAutoReader(
      *
      * @return false, если службу так и не включили либо чтение отменили
      */
-    private suspend fun awaitGestureService(): Boolean {
+    private suspend fun awaitGestureService(onNote: (String) -> Unit): Boolean {
         var waited = 0L
         while (isActive && !OverlayGestureService.isEnabled() && waited < GESTURE_WAIT_MAX_MS) {
             if (waited == 0L) onNote("Включите Службу доступности — жду, чтобы листать")

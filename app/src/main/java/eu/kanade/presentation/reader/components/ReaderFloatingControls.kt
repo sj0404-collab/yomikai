@@ -29,7 +29,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Tune
-import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.AutoMode
 import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.Close
@@ -95,7 +94,6 @@ fun ReaderFloatingControls(
     /** Пресет типа контента (id из OcrContentType): задаёт и порядок чтения. */
     contentPreset: String = "balanced",
     onContentPresetChange: (String) -> Unit = {},
-    onExportChapter: () -> Unit = {},
     /** true — голос выбирает читатель, false — определяется автоматически. */
     manualVoiceMode: Boolean = false,
     /** Голос в ручном режиме: "female" | "male". */
@@ -331,19 +329,6 @@ fun ReaderFloatingControls(
                                                 MaterialTheme.colorScheme.onSurface
                                             },
                                         )
-                                    }
-                                }
-
-                                }
-                                if (!hiddenM.contains("r_export")) {
-
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Сохранить главу в папку  ", style = MaterialTheme.typography.labelMedium)
-                                    SmallFloatingActionButton(onClick = {
-                                        beepAction()
-                                        onExportChapter()
-                                    }) {
-                                        Icon(Icons.Outlined.Download, contentDescription = "Оффлайн")
                                     }
                                 }
 

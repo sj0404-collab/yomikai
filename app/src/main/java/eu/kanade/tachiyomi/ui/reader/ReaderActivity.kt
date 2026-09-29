@@ -457,9 +457,6 @@ class ReaderActivity : BaseActivity() {
                     is ReaderViewModel.Event.SetCoverResult -> {
                         onSetAsCoverResult(event.result)
                     }
-                    is ReaderViewModel.Event.OfflineExportResult -> {
-                        toast(event.message)
-                    }
                     ReaderViewModel.Event.OcrNoTextFound -> {
                         clearActiveOcrOverlaySession()
                         toast(MR.strings.no_results_found)
@@ -1108,7 +1105,6 @@ class ReaderActivity : BaseActivity() {
                         readingOrderState = order
                         toast("Режим: ${type.title} — ${mihon.data.ocr.OcrRegionRules.orderTitle(order)}")
                     },
-                    onExportChapter = { viewModel.exportChapterToOfflineFolder(this@ReaderActivity) },
                 )
 
                 val scanShapeId by uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()

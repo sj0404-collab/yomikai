@@ -123,7 +123,8 @@ class OverlayGestureService : AccessibilityService() {
                     }
                 },
                 callbackHandler,
-            )            if (!sent) return false
+            )
+            if (!sent) return false
             return withTimeoutOrNull(GESTURE_TIMEOUT_MS) { result.await() } ?: false
         }
 

@@ -301,7 +301,12 @@ object HomeScreen : Screen() {
             label = {
                 Text(
                     text = tab.options.title,
-                    style = MaterialTheme.typography.labelLarge,
+                    // Восемь вкладок в ряд: подпись labelLarge не влезала
+                    // («Библ…», «Лока…», «Обно…»), и строка под иконками
+                    // превращалась в нечитаемую полосу. Мелкий кегль
+                    // помещает названия целиком, а лишнее на самом узком
+                    // экране обрежет уже сам Material.
+                    style = MaterialTheme.typography.labelMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
