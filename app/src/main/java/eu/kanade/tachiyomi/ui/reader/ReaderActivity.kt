@@ -32,7 +32,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.clickable.clickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.animateFloat
@@ -888,6 +888,10 @@ class ReaderActivity : BaseActivity() {
                 // Полная настройка «как читать баблы» (OCR): отдельная кнопка в
                 // плавающем меню читалки, не уводит из главы.
                 var showOcrBubbleSettings by remember { mutableStateOf(false) }
+                // Единый хаб настроек вместо россыпи отдельных экранов: одна
+                // кнопка в плавающем меню, а внутри — звук, распознавание,
+                // книги и прочее по разделам.
+                var showSettingsHub by remember { mutableStateOf(false) }
                 // Порядок чтения реплик (флажок на кнопке в плавающем меню);
                 // объявлен выше, чтобы диалог настроек OCR мог его обновлять.
                 var readingOrderState by androidx.compose.runtime.remember {
@@ -932,6 +936,16 @@ class ReaderActivity : BaseActivity() {
                             startActivity(intent)
                         },
                     )
+                }
+                if (showSettingsHub) {
+                    // Полноэкранный лист: хаб не влезает в диалог, а лишний
+                    // экран в стеке Voyager внутри читалки некуда класть.
+                    eu.kanade.presentation.components.AdaptiveSheet(
+                        onDismissRequest = { showSettingsHub = false },
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        eu.kanade.tachiyomi.ui.settings.SettingsHubContent()
+                    }
                 }
                 if (showOcrBubbleSettings) {
                     eu.kanade.presentation.reader.OcrBubbleSettingsDialog(
@@ -1137,6 +1151,9 @@ class ReaderActivity : BaseActivity() {
                     },
                     onOpenFullOcrSettings = {
                         showOcrBubbleSettings = true
+                    },
+                    onOpenSettingsHub = {
+                        showSettingsHub = true
                     },
                     onOpenAiChat = {
                         ensureBookAiSession(announce = false)
