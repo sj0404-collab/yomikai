@@ -58,8 +58,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import cafe.adriel.voyager.navigator.LocalNavigator
-import cafe.adriel.voyager.navigator.current
+import androidx.compose.runtime.staticCompositionLocalOf
+import cafe.adriel.voyager.core.screen.Screen as VoyagerScreen
 import eu.kanade.presentation.more.settings.screen.SettingsAdvancedScreen
 import eu.kanade.presentation.more.settings.screen.SettingsAiScreen
 import eu.kanade.presentation.more.settings.screen.SettingsBrowseScreen
@@ -125,14 +125,23 @@ object SettingsHubScreen : Screen() {
 }
 
 /**
+ * Открытие полноэкранных настроек, в которые ведут ссылки из вкладок.
+ *
+ * Навигатор намеренно НЕ достаётся изнутри хаба: хаб открывают и поверх
+ * читалки, где Voyager-стека нет, и доставать его оттуда нечем. Владелец
+ * передаёт переход через [LocalSettingsHubOpener] — в читалке переход не нужен
+ * и ссылки просто ничего не делают, вкладка с настройками их предоставляет.
+ */
+val LocalSettingsHubOpener = staticCompositionLocalOf<(VoyagerScreen) -> Unit> { {} }
+
+/**
  * Публичная точка входа как обычный composable: тот же экран можно встроить
- * в любое место, где есть [cafe.adriel.voyager.navigator.LocalNavigator]
- * (например, поверх читалки), без Voyager-экрана.
+ * в любое место (например, поверх читалки) без Voyager-экрана.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsHubContent(modifier: Modifier = Modifier) {
-    val navigator = LocalNavigator.current
+    val openScreen = LocalSettingsHubOpener.current
     val backPress = LocalBackPress.current
 
     // Открыт ровно один раздел, у него выбрана одна вкладка. Индексы вкладок
@@ -145,14 +154,10 @@ fun SettingsHubContent(modifier: Modifier = Modifier) {
         if (openSection != null) {
             openSection = null
         } else {
-            // Хаб открывают и внутри читалки, где Voyager-стека нет: тогда
-            // закрывать нечем, и это не ошибка, а обычный случай.
-            val nav = navigator
-            when {
-                backPress != null -> backPress.invoke()
-                nav != null && nav.canPop -> nav.pop()
-                else -> Unit
-            }
+            // Хаб открывают и внутри читалки, где Voyager-стека нет: закрывать
+            // тогда нечем, и это обычный случай, а не ошибка. Выход «назад»
+            // обрабатывает владелец экрана (AdaptiveSheet умеет закрываться сам).
+            backPress?.invoke()
         }
     }
 
@@ -328,7 +333,7 @@ private val HUB_SECTIONS: List<HubSection> = listOf(
 @Composable
 private fun SoundVoiceTab() {
     val prefs = remember { Injekt.get<OcrPreferences>() }
-    val navigator = LocalNavigator.current
+    val openScreen = LocalSettingsHubOpener.current
     val engine by prefs.voiceEngine().changes().collectAsState(initial = prefs.voiceEngine().get())
     val rate by prefs.speechRate().changes().collectAsState(initial = prefs.speechRate().get())
     val pitch by prefs.speechPitch().changes().collectAsState(initial = prefs.speechPitch().get())
@@ -476,7 +481,7 @@ private fun SoundVoiceTab() {
             onDismissRequest = { showEditor = false },
             onOpenFullSettings = {
                 showEditor = false
-                navigator?.push(SettingsMainScreen)
+                openScreen(SettingsMainScreen)
             },
         )
     }
@@ -486,7 +491,7 @@ private fun SoundVoiceTab() {
 @Composable
 private fun SoundRolesTab() {
     val prefs = remember { Injekt.get<OcrPreferences>() }
-    val navigator = LocalNavigator.current
+    val openScreen = LocalSettingsHubOpener.current
     val mode by prefs.voiceMode().changes().collectAsState(initial = prefs.voiceMode().get())
     val narrator by prefs.narratorGender().changes()
         .collectAsState(initial = prefs.narratorGender().get())
@@ -608,7 +613,7 @@ private fun SoundRolesTab() {
             onDismissRequest = { showEditor = false },
             onOpenFullSettings = {
                 showEditor = false
-                navigator?.push(SettingsMainScreen)
+                openScreen(SettingsMainScreen)
             },
         )
     }
@@ -817,7 +822,7 @@ private fun SoundHighlightTab() {
 @Composable
 private fun OcrPresetsTab() {
     val prefs = remember { Injekt.get<OcrPreferences>() }
-    val navigator = LocalNavigator.current
+    val openScreen = LocalSettingsHubOpener.current
     val contentType by prefs.contentType().changes().collectAsState(initial = prefs.contentType().get())
     val autoPreset by prefs.autoPreset().changes().collectAsState(initial = prefs.autoPreset().get())
     val localMode by prefs.localMode().changes().collectAsState(initial = prefs.localMode().get())
@@ -901,13 +906,13 @@ private fun OcrPresetsTab() {
         icon = Icons.Outlined.ArrowForward,
         title = "Полные настройки распознавания",
         subtitle = "Весь список параметров движка",
-        onClick = { navigator?.push(SettingsOcrScreen) },
+        onClick = { openScreen(SettingsOcrScreen) },
     )
     HubLinkRow(
         icon = Icons.Outlined.AutoMode,
         title = "Плагины и цепочки движков",
         subtitle = "Установленные плагины, доступность по сети",
-        onClick = { navigator?.push(SettingsOcrPluginsScreen) },
+        onClick = { openScreen(SettingsOcrPluginsScreen) },
     )
 
     if (showBubbles) {
@@ -915,7 +920,7 @@ private fun OcrPresetsTab() {
             onDismissRequest = { showBubbles = false },
             onOpenFullSettings = {
                 showBubbles = false
-                navigator?.push(SettingsOcrScreen)
+                openScreen(SettingsOcrScreen)
             },
         )
     }
@@ -933,7 +938,7 @@ private fun OcrRegionTab() {
     val shape by prefs.scanShape().changes().collectAsState(initial = prefs.scanShape().get())
     val remembered by prefs.rememberedScanRegion().changes()
         .collectAsState(initial = prefs.rememberedScanRegion().get())
-    val navigator = LocalNavigator.current
+    val openScreen = LocalSettingsHubOpener.current
     var showBubbles by remember { mutableStateOf(false) }
 
     HubOptions(
@@ -1000,7 +1005,7 @@ private fun OcrRegionTab() {
         icon = Icons.Outlined.ArrowForward,
         title = "Полные настройки распознавания",
         subtitle = "Все параметры движка одним списком",
-        onClick = { navigator?.push(SettingsOcrScreen) },
+        onClick = { openScreen(SettingsOcrScreen) },
     )
 
     if (showBubbles) {
@@ -1008,7 +1013,7 @@ private fun OcrRegionTab() {
             onDismissRequest = { showBubbles = false },
             onOpenFullSettings = {
                 showBubbles = false
-                navigator?.push(SettingsOcrScreen)
+                openScreen(SettingsOcrScreen)
             },
         )
     }
@@ -1101,7 +1106,7 @@ private fun OcrLanguageTab() {
         .collectAsState(initial = prefs.keepOfflinePacks().get())
     val zenFree by prefs.zenFreeEnabled().changes()
         .collectAsState(initial = prefs.zenFreeEnabled().get())
-    val navigator = LocalNavigator.current
+    val openScreen = LocalSettingsHubOpener.current
 
     HubOptions(
         title = "Язык Google Lens",
@@ -1198,7 +1203,7 @@ private fun OcrLanguageTab() {
         icon = Icons.Outlined.AutoMode,
         title = "Плагины и цепочки движков",
         subtitle = "Требования каждого движка и их доступность",
-        onClick = { navigator?.push(SettingsOcrPluginsScreen) },
+        onClick = { openScreen(SettingsOcrPluginsScreen) },
     )
 }
 
@@ -1235,7 +1240,7 @@ private fun BooksFormatTab() {
 @Composable
 private fun BooksPageTab() {
     val prefs = remember { Injekt.get<OcrPreferences>() }
-    val navigator = LocalNavigator.current
+    val openScreen = LocalSettingsHubOpener.current
     val pageOcr by prefs.bookPageOcr().changes().collectAsState(initial = prefs.bookPageOcr().get())
     val fullscreen by prefs.bookFullscreen().changes()
         .collectAsState(initial = prefs.bookFullscreen().get())
@@ -1274,7 +1279,7 @@ private fun BooksPageTab() {
         icon = Icons.Outlined.ArrowForward,
         title = "Полные настройки распознавания",
         subtitle = "Пороги детектора и цепочки движков",
-        onClick = { navigator?.push(SettingsOcrScreen) },
+        onClick = { openScreen(SettingsOcrScreen) },
     )
 }
 
@@ -1282,7 +1287,7 @@ private fun BooksPageTab() {
 @Composable
 private fun BooksVoiceTab() {
     val prefs = remember { Injekt.get<OcrPreferences>() }
-    val navigator = LocalNavigator.current
+    val openScreen = LocalSettingsHubOpener.current
     val engine by prefs.bookTtsEngine().changes().collectAsState(initial = prefs.bookTtsEngine().get())
     val rate by prefs.bookSpeechRate().changes()
         .collectAsState(initial = prefs.bookSpeechRate().get())
@@ -1381,7 +1386,7 @@ private fun BooksVoiceTab() {
             onDismissRequest = { showEditor = false },
             onOpenFullSettings = {
                 showEditor = false
-                navigator?.push(SettingsMainScreen)
+                openScreen(SettingsMainScreen)
             },
         )
     }
@@ -1400,7 +1405,7 @@ private fun BooksVoiceTab() {
 @Composable
 private fun OtherOverlayTab() {
     val prefs = remember { Injekt.get<OcrPreferences>() }
-    val navigator = LocalNavigator.current
+    val openScreen = LocalSettingsHubOpener.current
     val mode by prefs.overlayRegionMode().changes()
         .collectAsState(initial = prefs.overlayRegionMode().get())
     val showFrame by prefs.overlayShowFrame().changes()
@@ -1476,7 +1481,7 @@ private fun OtherOverlayTab() {
         icon = Icons.Outlined.Layers,
         title = "Настройки оверлея",
         subtitle = "Запуск, разрешения, список приложений, доступность",
-        onClick = { navigator?.push(OcrOverlaySettingsScreen) },
+        onClick = { openScreen(OcrOverlaySettingsScreen) },
     )
 }
 
@@ -1484,7 +1489,7 @@ private fun OtherOverlayTab() {
 @Composable
 private fun OtherAgentsTab() {
     val prefs = remember { Injekt.get<OcrPreferences>() }
-    val navigator = LocalNavigator.current
+    val openScreen = LocalSettingsHubOpener.current
     val backend by prefs.aiBackend().changes().collectAsState(initial = prefs.aiBackend().get())
     val provider by prefs.aiProvider().changes().collectAsState(initial = prefs.aiProvider().get())
     val orchestrator by prefs.aiOrchestratorBackend().changes()
@@ -1589,7 +1594,7 @@ private fun OtherAgentsTab() {
         icon = Icons.Outlined.Psychology,
         title = "Настройки AI",
         subtitle = "Бэкенды, модели, история чата и отчёт о готовности",
-        onClick = { navigator?.push(SettingsAiScreen) },
+        onClick = { openScreen(SettingsAiScreen) },
     )
 }
 
@@ -1597,7 +1602,7 @@ private fun OtherAgentsTab() {
 @Composable
 private fun OtherExperimentalTab() {
     val prefs = remember { Injekt.get<OcrPreferences>() }
-    val navigator = LocalNavigator.current
+    val openScreen = LocalSettingsHubOpener.current
     val textOverlay by prefs.ocrPageTextOverlay().changes()
         .collectAsState(initial = prefs.ocrPageTextOverlay().get())
     val toNotification by prefs.ocrToNotification().changes()
@@ -1678,14 +1683,14 @@ private fun OtherExperimentalTab() {
         icon = Icons.Outlined.Tune,
         title = "Продвинутые настройки",
         subtitle = "Полный список экспериментального и внутреннего",
-        onClick = { navigator?.push(SettingsAdvancedScreen) },
+        onClick = { openScreen(SettingsAdvancedScreen) },
     )
 }
 
 /** Конструктор интерфейса. */
 @Composable
 private fun OtherConstructorTab() {
-    val navigator = LocalNavigator.current
+    val openScreen = LocalSettingsHubOpener.current
     HubNote(
         "Конструктор собирает вид приложения: вкладки нижней панели, модули " +
             "панели читалки и браузера, собственные кнопки действий. Значения " +
@@ -1695,20 +1700,20 @@ private fun OtherConstructorTab() {
         icon = Icons.Outlined.MoreVert,
         title = "Конструктор интерфейса",
         subtitle = "Вкладки, модули панелей и свои кнопки действий",
-        onClick = { navigator?.push(SettingsConstructorScreen) },
+        onClick = { openScreen(SettingsConstructorScreen) },
     )
     HubLinkRow(
         icon = Icons.Outlined.Settings,
         title = "Полные настройки приложения",
         subtitle = "Вид, данные, загрузки, безопасность",
-        onClick = { navigator?.push(SettingsMainScreen) },
+        onClick = { openScreen(SettingsMainScreen) },
     )
 }
 
 /** Источники и расширения. */
 @Composable
 private fun OtherSourcesTab() {
-    val navigator = LocalNavigator.current
+    val openScreen = LocalSettingsHubOpener.current
     HubNote(
         "Источники и расширения настраиваются в своём разделе: там же обновление " +
             "и удаление репозиториев. В читалке их настройки не дублируются.",
@@ -1717,7 +1722,7 @@ private fun OtherSourcesTab() {
         icon = Icons.Outlined.Public,
         title = "Источники и расширения",
         subtitle = "Репозитории, обновление, установка",
-        onClick = { navigator?.push(SettingsBrowseScreen) },
+        onClick = { openScreen(SettingsBrowseScreen) },
     )
 }
 
