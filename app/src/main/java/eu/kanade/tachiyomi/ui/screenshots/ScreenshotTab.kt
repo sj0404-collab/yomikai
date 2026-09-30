@@ -314,7 +314,9 @@ fun shareScreenshot(context: Context, file: File) {
             ),
         )
     }.onFailure { e ->
-        logcat(LogPriority.WARN, e) { "Share screenshot failed for ${file.name}" }
+        // logcat здесь — расширение на Any, поэтому без явного получателя
+        // вызов внутри лямбды не резолвится: e — и приёмник, и исключение.
+        e.logcat(LogPriority.WARN, e) { "Share screenshot failed for ${file.name}" }
         context.toast("Не удалось открыть отправку: ${e.message ?: "нет приложений"}")
     }
 }

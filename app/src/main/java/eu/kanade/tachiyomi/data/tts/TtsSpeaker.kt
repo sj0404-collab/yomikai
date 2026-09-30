@@ -319,12 +319,18 @@ object TtsSpeaker {
         speakAs(context, text, gender = null, onState = onState)
     }
 
-    /** v1.9.40: spec голоса роли («пакет::имя») из слотов настроек. */
-    fun slotVoiceSpec(role: String): String? = runCatching {
+    /**
+     * v1.9.40: spec голоса роли («пакет::имя») из слотов настроек.
+     *
+     * [text] — сама реплика: роль из словаря ищется не только по имени кнопки,
+     * но и по упоминанию имени в тексте, иначе на карточке распознанного текста
+     * роль «Аки» не находилась ни по чему (в разметке имени нет).
+     */
+    fun slotVoiceSpec(role: String, text: String? = null): String? = runCatching {
         // Словарь голосовых ролей имеет приоритет над legacy-слотами:
         // роль из {имя:Аки} или кнопки ♀/♂ может быть описана там точнее.
         val dictVoice = VoiceRoleDictionary.load(prefs())
-            .firstOrNull { it.matchesName(role) }
+            .firstOrNull { it.matchesName(role) || (!text.isNullOrBlank() && it.mentionedIn(text)) }
             ?.voice
             ?.takeIf { it.isNotBlank() }
         if (dictVoice != null) return@runCatching dictVoice
@@ -497,7 +503,7 @@ object TtsSpeaker {
         role: String,
         onState: (Boolean) -> Unit = {},
     ) {
-        val spec = slotVoiceSpec(role)
+        val spec = slotVoiceSpec(role, SpeechMarkup.strip(text))
         if (spec != null) {
             speakWithVoice(context, text, spec, onState)
             return
@@ -535,10 +541,12 @@ object TtsSpeaker {
     }
 
     /**
-     * Озвучка с учётом пола говорящего: gender = "female" | "male" | null.
+     * Озвучка с учётом роли говорящего: gender = "female" | "male" | null.
      * Для системного движка используется соответствующий голос из пресетов
-     * (Настройки озвучки → Женский голос / Мужской голос). Для веб-движка
-     * пол недоступен (у Google Translate один голос на язык).
+     * (Настройки озвучки → Женский голос / Мужской голос). Сетевые движки тоже
+     * получают роль: у Edge и ElevenLabs есть женские и мужские голоса, а у
+     * удалённого — голос по полу, — раньше всё это терялось, и глава на этих
+     * движках читалась ОДНИМ голосом.
      */
     @JvmOverloads
     fun speakAs(
@@ -568,7 +576,7 @@ object TtsSpeaker {
         }.getOrNull()
         val effectiveGender = manual ?: gender ?: SpeechMarkup.genderOf(text)
         val slot = if (speakerSlot != 0) speakerSlot else SpeechMarkup.speakerSlot(text)
-// Имя говорящего ({имя:Аки}) нужно словарю голосовых ролей, чтобы
+        // Имя говорящего ({имя:Аки}) нужно словарю голосовых ролей, чтобы
         // подобрать голос/питч/темп конкретного персонажа.
         val speakerName = SpeechMarkup.speakerName(text)
         // «Только голос телефона» (pref_voice_phone_only, по умолчанию
@@ -583,14 +591,62 @@ object TtsSpeaker {
             phoneOnly = phoneOnly,
             online = online,
         )
+        // Роль решает, ЧЕМ звучит реплика, и должна быть известна ВСЕМ движкам:
+        // именно её теряли google_web/edge/eleven, поэтому на них читалось всё
+        // одним голосом. Текст реплики нужен потому, что на OCR-чтении имени в
+        // разметке нет — роль опознаётся по упоминанию имени в тексте.
+        val resolvedRole = runCatching {
+            VoiceRoleDictionary.resolve(prefs(), speakerName, effectiveGender, spoken)
+        }.getOrNull()
+        // Ручной режим — выбор читателя, и словарь ролей его не перебивает:
+        // голос и тон из роли на сетевых движках раньше не применялись, и
+        // применять их именно там, где читатель нажал кнопку, значило бы
+        // сломать его выбор. Системный движок ведёт себя как раньше.
+        val role = if (manual != null) null else resolvedRole
+        val roleVoice = role?.voice?.takeIf { it.isNotBlank() }
+        // У сетевых движков важен только сам голос, без пакета: «пакет::имя».
+        val roleSpec = roleVoice?.let { spec ->
+            parseVoiceSpec(spec).second.takeIf { it.isNotBlank() }
+        }
         when (effective) {
-            ENGINE_GOOGLE_WEB -> speakGoogleWeb(context, spoken)
-            ENGINE_EDGE_TTS -> speakEdgeTts(context, spoken)
-            ENGINE_ELEVENLABS -> speakElevenLabs(context, spoken)
+            // У Google Translate на язык ровно ОДИН голос, поэтому пол и слот
+            // там невыразимы — их и некуда девать. Единственное, чем здесь
+            // может помочь словарь ролей, — СЕТЕВОЙ голос персонажа (Edge):
+            // его веб-движок всё равно не умеет. Локальный голос роли сюда не
+            // маршрутизируем намеренно — проверить, есть ли он на устройстве,
+            // здесь нечем, а вслух тогда не произнеслось бы ничего.
+            ENGINE_GOOGLE_WEB -> if (roleSpec != null && isEdgeVoiceName(roleSpec)) {
+                speakWithEdgeVoice(context, spoken, roleSpec, onState)
+            } else {
+                speakGoogleWeb(context, spoken)
+            }
+            // У Edge женские и мужские голоса настоящие, поэтому пол и слот
+            // персонажа там работают по-настоящему.
+            ENGINE_EDGE_TTS -> speakEdgeTts(
+                context = context,
+                text = spoken,
+                voiceName = roleSpec,
+                gender = effectiveGender,
+                speakerSlot = slot,
+                role = role,
+            )
+            ENGINE_ELEVENLABS -> speakElevenLabs(
+                context = context,
+                text = spoken,
+                roleVoice = roleVoice,
+                gender = effectiveGender,
+            )
             // legacy-значения pref_voice_engine со сборок с ONNX:
             // нейроголоса теперь живут на сервере, маршрутизируем туда же.
-            ENGINE_REMOTE, "onnx_tts", "onnx" -> speakRemote(context, spoken, effectiveGender)
-            else -> speakSystem(context, spoken, effectiveGender, slot, speakerName)
+            ENGINE_REMOTE, "onnx_tts", "onnx" -> speakRemote(
+                context = context,
+                text = spoken,
+                gender = effectiveGender,
+                roleVoice = roleVoice,
+                speakerSlot = slot,
+                speakerName = speakerName,
+            )
+            else -> speakSystem(context, spoken, effectiveGender, slot, speakerName, role)
         }
     }
 
@@ -641,6 +697,11 @@ object TtsSpeaker {
         gender: String? = null,
         speakerSlot: Int = 0,
         speakerName: String? = null,
+        /**
+         * Роль, уже найденная в [speakAs], чтобы не разбирать словарь дважды;
+         * null = определить роль здесь (ручной режим голоса).
+         */
+        resolvedRole: VoiceRole? = null,
     ) {
         val slotVoiceRaw = runCatching {
             val arr = org.json.JSONArray(prefs().voiceSlots().get())
@@ -650,9 +711,10 @@ object TtsSpeaker {
         }.getOrDefault("")
         val savedRawVoice = runCatching { prefs().voiceName().get() }.getOrDefault("")
         // Словарь голосовых ролей подбирает роль по имени говорящего
-        // ({имя:Аки}), затем по полу. Голос/питч/темп роли перекрывают
-        // слоты и пресеты пола, которые работают только по полу.
-        val role = VoiceRoleDictionary.resolve(prefs(), speakerName, gender)
+        // ({имя:Аки}), затем по имени/метке, упомянутым в самой реплике
+        // (на OCR-чтении разметки нет), затем по полу. Голос/питч/темп роли
+        // перекрывают слоты и пресеты пола, которые работают только по полу.
+        val role = resolvedRole ?: VoiceRoleDictionary.resolve(prefs(), speakerName, gender, text)
         // ВАЖНО: роль может как задать точный голос, так и только
         // модификаторы; распознаём оба случая отдельно.
         val rolePitch = role?.pitch?.takeIf { it > 0f && it != 1f } ?: 1f
@@ -974,17 +1036,38 @@ object TtsSpeaker {
      * сервере (tools/remote_tts_server.py): приложение шлёт предложение и
      * проигрывает готовый wav. Нет адреса или сервер молчит — дочитываем
      * системным голосом (принцип AlReader: текст всегда озвучен).
+     *
+     * Сервер различает голос по полю и по id модели (irina/dmitri/ruslan), а
+     * слот персонажа не понимает: на сервере один женский голос, поэтому пол
+     * и голос роли — всё, что можно передать честно.
      */
-    private fun speakRemote(context: Context, text: String, gender: String?) {
+    private fun speakRemote(
+        context: Context,
+        text: String,
+        gender: String?,
+        roleVoice: String? = null,
+        speakerSlot: Int = 0,
+        speakerName: String? = null,
+    ) {
         val p = prefs()
         currentJob = scope.launch {
             setSpeaking(true)
             val url = p.remoteTtsUrl().get().trim()
+            // Голос: id модели из роли, иначе пол. Сервер для неизвестного
+            // значения молча берёт «irina» (tools/remote_tts_server.py), поэтому
+            // берём только id из ЕГО каталога — иначе голос локального движка
+            // в спеке уронил бы мужскую реплику на женский голос.
+            val serverVoice = roleVoice
+                ?.let { spec -> parseVoiceSpec(spec).second.ifBlank { spec } }
+                ?.takeIf { it.lowercase(Locale.US) in REMOTE_SERVER_VOICE_IDS }
+                ?: gender
             // Предложения разворачиваются в куски с подачей, чтобы «ааа» и
             // вздох из ремарки ушли отдельным запросом со своим темпом.
             val sentences = splitSentences(text).flatMap { splitForRemote(it) }
             if (url.isBlank()) {
-                withContext(Dispatchers.Main) { speakSystem(context, text, gender) }
+                withContext(Dispatchers.Main) {
+                    speakSystem(context, text, gender, speakerSlot, speakerName)
+                }
                 return@launch
             }
             var doneUpTo = 0
@@ -993,14 +1076,24 @@ object TtsSpeaker {
                 for (sentence in sentences) {
                     if (currentJob?.isActive != true) break
                     val trimmed = sentence.text.trim()
-                    val wav = synthesizeRemote(context, url, trimmed, gender, sentence.rate)
+                    // Словарь интонаций доступен и сетевому движку: сервер
+                    // принимает темп (`speed`) и паузу между кусками, поэтому
+                    // правило «шёпот/крик» меняет подачу реплики и здесь.
+                    val rule = VoiceIntonationDictionary.matchRule(p, trimmed)
+                    val wav = synthesizeRemote(
+                        context = context,
+                        url = url,
+                        text = trimmed,
+                        voice = serverVoice,
+                        rateFactor = sentence.rate * (rule?.rate ?: 1f),
+                    )
                     if (wav == null) {
                         failed = true
                         break
                     }
                     playFileBlocking(wav)
                     doneUpTo++
-                    kotlinx.coroutines.delay(180L)
+                    kotlinx.coroutines.delay((rule?.pauseMs ?: 0).toLong() + 180L)
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 setSpeaking(false)
@@ -1012,7 +1105,9 @@ object TtsSpeaker {
             if (failed && doneUpTo < sentences.size && currentJob?.isActive == true) {
                 val rest = sentences.drop(doneUpTo).joinToString(" ") { it.text }
                 logcat(LogPriority.WARN) { "remote TTS fallback to system from sentence $doneUpTo" }
-                withContext(Dispatchers.Main) { speakSystem(context, rest, gender) }
+                withContext(Dispatchers.Main) {
+                    speakSystem(context, rest, gender, speakerSlot, speakerName)
+                }
             } else {
                 setSpeaking(false)
             }
@@ -1033,12 +1128,17 @@ object TtsSpeaker {
         return SpeechCue.deliveries(trimmed).map { RemoteChunk(it.text, it.rate) }
     }
 
-    /** POST {text, voice, speed} на /tts сервера; ответ — wav-байты. */
+    /**
+     * POST {text, voice, speed} на /tts сервера; ответ — wav-байты.
+     *
+     * [voice] — id модели сервера (irina/dmitri/ruslan) либо пол реплики:
+     * ровно эти два значения сервер понимает (tools/remote_tts_server.py).
+     */
     private suspend fun synthesizeRemote(
         context: Context,
         url: String,
         text: String,
-        gender: String?,
+        voice: String?,
         rateFactor: Float = 1f,
     ): File? = withContext(Dispatchers.IO) {
         runCatching {
@@ -1050,7 +1150,7 @@ object TtsSpeaker {
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json")
             val speed = (prefs().speechRate().get() * rateFactor).coerceIn(0.5f, 2f)
-            val body = "{\"text\":${jsonQuote(text)},\"voice\":${jsonQuote(gender ?: "auto")},\"speed\":$speed}"
+            val body = "{\"text\":${jsonQuote(text)},\"voice\":${jsonQuote(voice ?: "auto")},\"speed\":$speed}"
             conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
             if (conn.responseCode != 200) {
                 logcat(LogPriority.WARN) { "remote TTS HTTP ${conn.responseCode}" }
@@ -1072,6 +1172,14 @@ object TtsSpeaker {
 
     // region GOOGLE WEB (без API-ключа)
 
+    /**
+     * Озвучка с сайта Google Translate: без ключа, нужен интернет.
+     *
+     * Пол и слот здесь принципиально не выразимы: у этого endpoint ровно ОДИН
+     * голос на язык и нет параметров просодии. Поэтому роль применяется только
+     * тем, что endpoint умеет, — заданным для персонажа голосом (маршрутизация
+     * делается в [speakAs]); если голоса роли нет, звучит как раньше.
+     */
     private fun speakGoogleWeb(context: Context, text: String) {
         val lang = prefs().ttsWebLanguage().get().ifBlank { "ru" }
         currentJob = scope.launch {
@@ -1101,16 +1209,33 @@ object TtsSpeaker {
 
     /**
      * Озвучка онлайн-голосами Microsoft Edge (edge-tts). Бесплатно, без
-     * API-ключа, нужен интернет. Выбранный голос — pref_edge_voice; если
-     * редактором выбран мультиязычный голос, он читает любой язык.
-     * Скорость/высота берутся из обычных настроек озвучки.
+     * API-ключа, нужен интернет. Голос выбирается по РОЛИ реплики: у Edge есть
+     * настоящие женские и мужские голоса каждого языка, поэтому пол и слот
+     * персонажа выразимы (см. [edgeVoiceFor]), а не теряются, как было раньше.
+     * Скорость/высота — из настроек озвучки, умноженные на питч/темп роли и
+     * правила словаря интонаций.
      */
-    private fun speakEdgeTts(context: Context, text: String, voiceName: String? = null) {
+    private fun speakEdgeTts(
+        context: Context,
+        text: String,
+        voiceName: String? = null,
+        gender: String? = null,
+        speakerSlot: Int = 0,
+        role: VoiceRole? = null,
+    ) {
         val p = prefs()
-        val voice = voiceName?.takeIf { it.isNotBlank() }
-            ?: p.edgeVoice().get().ifBlank { EdgeTts.DEFAULT_VOICE }
-        val ratePercent = ((p.speechRate().get().coerceIn(0.5f, 2f) - 1f) * 100).toInt().coerceIn(-50, 100)
-        val pitchHz = ((p.speechPitch().get().coerceIn(0.5f, 2f) - 1f) * 40).toInt().coerceIn(-50, 50)
+        val voice = voiceName?.takeIf { it.isNotBlank() } ?: edgeVoiceFor(gender, speakerSlot)
+        // Правило интонаций ищется по всей реплике: Edge синтезирует её одним
+        // запросом, разбивать её на предложения с разным тоном здесь нельзя.
+        val rule = VoiceIntonationDictionary.matchRule(p, text)
+        val roleRate = role?.rate?.takeIf { it > 0f && it != 1f } ?: 1f
+        val rolePitch = role?.pitch?.takeIf { it > 0f && it != 1f } ?: 1f
+        // Prosody Edge — в процентах темпа и в герцах тона (его ratePercent/
+        // pitchHz), поэтому множители роли и интонации пересчитываются туда же.
+        val rate = (p.speechRate().get() * roleRate * (rule?.rate ?: 1f)).coerceIn(0.5f, 2f)
+        val pitch = (p.speechPitch().get() * rolePitch * (rule?.pitch ?: 1f)).coerceIn(0.5f, 2f)
+        val ratePercent = ((rate - 1f) * 100).toInt().coerceIn(-50, 100)
+        val pitchHz = ((pitch - 1f) * 40).toInt().coerceIn(-50, 50)
         currentJob = scope.launch {
             var delegated = false
             setSpeaking(true)
@@ -1125,7 +1250,12 @@ object TtsSpeaker {
                 )
                 if (file == null) {
                     delegated = true
-                    withContext(Dispatchers.Main) { speakSystem(context, text) }
+                    // Откат на системный голос с полом и слотом реплики: иначе
+                    // при сбое сети голос бы сбрасывался на общий, и слушатель
+                    // решил бы, что «пол сломался».
+                    withContext(Dispatchers.Main) {
+                        speakSystem(context, text, gender, speakerSlot)
+                    }
                 } else {
                     playFileBlocking(file, deleteAfterPlayback = false)
                 }
@@ -1134,11 +1264,61 @@ object TtsSpeaker {
             } catch (e: Exception) {
                 delegated = true
                 logcat(LogPriority.WARN, e) { "Edge TTS failed; using system voice" }
-                withContext(Dispatchers.Main) { speakSystem(context, text) }
+                withContext(Dispatchers.Main) { speakSystem(context, text, gender, speakerSlot) }
             } finally {
                 if (!delegated) setSpeaking(false)
             }
         }
+    }
+
+    /**
+     * Голос Edge под реплику: пол и слот персонажа.
+     *
+     * Порядок выбора:
+     *  1. голос, заданный ролью (словарь ролей) — точнее всех;
+     *  2. голос, явно сохранённый для пола (пресеты Ж/М), если это Edge-голос;
+     *  3. подбор по полу из таблицы: слот персонажа сдвигает выбор, чтобы
+     *     две женщины в сцене звучали по-разному;
+     *  4. голос из настроек и [EdgeTts.DEFAULT_VOICE] — когда пол неизвестен.
+     *
+     * Пункт 3 важнее общего голоса из настроек: один голос на весь текст — это
+     * ровно тот дефект, из-за которого сетевой движок читался «все голоса
+     * сразу» (или одним голосом), и он тем заметнее, что у Edge голоса по полу
+     * настоящие. Кто хочет один конкретный голос — задаёт его ролью.
+     */
+    private fun edgeVoiceFor(gender: String?, speakerSlot: Int): String {
+        val p = prefs()
+        val presetByGender = when (gender) {
+            "female" -> p.voiceFemale().get()
+            "male" -> p.voiceMale().get()
+            else -> ""
+        }.let { parseVoiceSpec(it).second }
+        if (!presetByGender.isNullOrBlank() && isEdgeVoiceName(presetByGender)) {
+            return presetByGender
+        }
+        if (gender == null) {
+            return p.edgeVoice().get().takeIf { it.isNotBlank() } ?: EdgeTts.DEFAULT_VOICE
+        }
+        val lang = edgeLanguage()
+        val pool = EDGE_GENDER_VOICES[lang]?.get(gender)
+            ?: EDGE_GENDER_VOICES[lang]?.values?.firstOrNull()
+            ?: EDGE_MULTILINGUAL_VOICES[gender]?.let(::listOf)
+            ?: listOf(EdgeTts.DEFAULT_VOICE)
+        return pool.getOrNull(speakerSlot.coerceAtLeast(0) % pool.size) ?: EdgeTts.DEFAULT_VOICE
+    }
+
+    /**
+     * Язык Edge-голоса: явный выбор в настройках (`pref_edge_language`), иначе
+     * язык уже выбранного голоса, иначе русский — как у [EdgeTts.DEFAULT_VOICE].
+     */
+    private fun edgeLanguage(): String {
+        val pref = runCatching { prefs().edgeLanguage().get() }.getOrDefault("")
+            .trim().lowercase(Locale.US)
+        if (pref.isNotEmpty() && pref != "auto" && pref != "🌐") return pref
+        val voice = runCatching { prefs().edgeVoice().get() }.getOrDefault("")
+        // «ru-RU-SvetlanaNeural» -> «ru»
+        return voice.substringBefore('-').lowercase(Locale.US)
+            .takeIf { it.isNotEmpty() && it.all(Char::isLetter) } ?: "ru"
     }
 
     /** Проба конкретного голоса Edge TTS (кнопка «Проба» в списке голосов). */
@@ -1176,7 +1356,18 @@ object TtsSpeaker {
 
     // region ELEVENLABS (API-ключ)
 
-    private fun speakElevenLabs(context: Context, text: String) {
+    /**
+     * Озвучка ElevenLabs. Запрос уходит с ОДНИМ voice_id, поэтому роль
+     * выражается самим голосом: голос из словаря ролей, иначе голос из
+     * настроек, иначе дефолт по полу ([elevenVoiceId]). Раньше пол и слот
+     * терялись, и весь текст звучал одним и тем же голосом.
+     */
+    private fun speakElevenLabs(
+        context: Context,
+        text: String,
+        roleVoice: String? = null,
+        gender: String? = null,
+    ) {
         val p = prefs()
         val apiKey = p.elevenApiKey().get()
         if (apiKey.isBlank()) {
@@ -1184,7 +1375,7 @@ object TtsSpeaker {
             speakGoogleWeb(context, text)
             return
         }
-        val voiceId = p.elevenVoiceId().get().ifBlank { "21m00Tcm4TlvDq8ikWAM" }
+        val voiceId = elevenVoiceId(roleVoice, gender)
         currentJob = scope.launch {
             setSpeaking(true)
             try {
@@ -1215,6 +1406,23 @@ object TtsSpeaker {
                 setSpeaking(false)
             }
         }
+    }
+
+    /**
+     * voice_id для реплики: голос роли → голос из настроек → дефолт по полу.
+     *
+     * Питч и темп сюда НЕ передаются: запрос ElevenLabs собирается только из
+     * text/model_id/voice_id, и выдумывать параметры просодии, которых этот
+     * вызов не отправляет, бессмысленно — они бы просто потерялись.
+     */
+    private fun elevenVoiceId(roleVoice: String?, gender: String?): String {
+        roleVoice?.let { spec ->
+            val id = parseVoiceSpec(spec).second.ifBlank { spec }
+            if (ELEVEN_VOICE_ID.matches(id)) return id
+        }
+        val saved = runCatching { prefs().elevenVoiceId().get() }.getOrDefault("").trim()
+        if (saved.isNotBlank()) return saved
+        return if (gender == "male") ELEVEN_MALE_VOICE else ELEVEN_FEMALE_VOICE
     }
 
     /** Фолбэк внутри уже запущенной корутины. */
@@ -1385,6 +1593,59 @@ object TtsSpeaker {
             }
         }
     }
+
+    // endregion
+
+    // region Таблицы голосов сетевых движков
+
+    /**
+     * Настоящие женские/мужские голоса Edge по языкам. Слот персонажа сдвигает
+     * выбор по списку, поэтому две женщины (или два мужчины) в одной сцене
+     * говорят разными голосами — ровно то, чего не хватало авточтению.
+     * Имена взяты из публичного каталога edge-tts; неизвестный серверу голос
+     * даёт пустой ответ, и [speakEdgeTts] откатывается на системный.
+     */
+    private val EDGE_GENDER_VOICES: Map<String, Map<String, List<String>>> = mapOf(
+        "ru" to mapOf(
+            "female" to listOf("ru-RU-SvetlanaNeural", "ru-RU-DariyaNeural", "ru-RU-XeniaNeural"),
+            "male" to listOf("ru-RU-DmitryNeural", "ru-RU-MaximNeural"),
+        ),
+        "uk" to mapOf(
+            "female" to listOf("uk-UA-PolinaNeural"),
+            "male" to listOf("uk-UA-VolodymyrNeural"),
+        ),
+        "en" to mapOf(
+            "female" to listOf("en-US-AriaNeural", "en-US-JennyNeural", "en-US-MichelleNeural"),
+            "male" to listOf("en-US-GuyNeural", "en-US-EricNeural", "en-US-ChristopherNeural"),
+        ),
+    )
+
+    /**
+     * Мультиязычные голоса Edge — запасной вариант для языка, на который в
+     * таблице выше голоса нет: они понимают и русский, и восточноазиатские
+     * языки, поэтому озвучка не превращается в «все голоса сразу».
+     */
+    private val EDGE_MULTILINGUAL_VOICES = mapOf(
+        "female" to "en-US-AvaMultilingualNeural",
+        "male" to "en-US-AndrewMultilingualNeural",
+    )
+
+    /** Голоса по умолчанию ElevenLabs из стартовой библиотеки аккаунта. */
+    private const val ELEVEN_FEMALE_VOICE = "21m00Tcm4TlvDq8ikWAM" // Rachel
+    private const val ELEVEN_MALE_VOICE = "VR6AewLTIGv4JNBf1nQv" // Arnold
+
+    /**
+     * id моделей удалённого сервера: ровно эти значения он понимает (плюс
+     * «female»/«male»/«auto»). Список берём из каталога голосов приложения, а
+     * не выдумываем, иначе сервер тихо подставит «irina» всем.
+     */
+    private val REMOTE_SERVER_VOICE_IDS: Set<String> =
+        eu.kanade.tachiyomi.data.voice.VoicePlugins.REMOTE_VOICE_CATALOG_IDS
+            .map { it.lowercase(Locale.US) }
+            .toSet()
+
+    /** voice_id ElevenLabs: буквы и цифры без разделителей. */
+    private val ELEVEN_VOICE_ID = Regex("""[A-Za-z0-9]{16,32}""")
 
     // endregion
 }

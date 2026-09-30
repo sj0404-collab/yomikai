@@ -111,44 +111,133 @@ class AutoReadEngine(
     val frameRegions = _frameRegions.asStateFlow()
 
     /**
-     * Слоты голосов ВСЕЙ сессии чтения: пол → последний выданный слот.
-     * Не сбрасываются между кадрами (только в [stop]), поэтому персонаж,
-     * начавший реплику в одном кадре и продолживший в следующем (перекрытие
-     * вебтуна), звучит тем же голосом, а каждый НОВЫЙ персонаж того же пола
-     * получает следующий свободный голос.
+     * Персонаж сессии чтения и выданный ему слот голоса.
+     *
+     * Раньше слот выдавался ПО ПОЛУ на каждую новую реплику, поэтому
+     * реплики [А♀, Б♀, А♀, Б♀] звучали голосами 0, 1, 2, 3: один и тот же
+     * персонаж посреди сцены менял голос, а на устройстве с 4+ русскими
+     * голосами каждая реплика звучала как новый говорящий — «все голоса
+     * сразу». Теперь слот принадлежит ПЕРСОНАЖУ.
      */
-    private val speakerSlots = mutableMapOf<String, Int>()
+    private class TrackedSpeaker(
+        val key: String,
+        val gender: String,
+        val slot: Int,
+        var lastText: String,
+    )
 
-    /** Полы реплик прошлого кадра (в порядке чтения) — для определения
-     *  продолжения одного персонажа через границу кадров. */
-    private var prevFrameGenders: List<String?> = emptyList()
+    /**
+     * Персонажи, которых движок помнит с начала чтения. Память нужна только
+     * чтобы отличить «тот же персонаж» от «нового», поэтому она ограничена
+     * (см. [MAX_TRACKED_SPEAKERS]) и живёт через границы кадров: хвост
+     * реплики, начатой на прошлом кадре, обязан звучать тем же голосом.
+     */
+    private val trackedSpeakers = ArrayDeque<TrackedSpeaker>()
 
     /**
      * Слот голоса для реплики в режиме «много голосов» / «свой голос
-     * персонажу». frameOccurrence — сколько реплик БОЛЬШЕ ТОГО же пола уже
-     * прочитано в этом кадре (0 = первый персонаж этого пола в сцене).
-     *
-     * Правило:
+     * персонажу». Слот принадлежит персонажу, а не полу, поэтому порядок
+     * такой:
      *  • null-пол (нарратор) → слот 0 (свой голос нарратора);
-     *  • продолжение реплики прошлого кадра (текст похож на прошлый кадр,
-     *    это обычное 65%-перекрытие вебтуна) → ТОТ ЖЕ слот, что и раньше;
-     *  • иначе (новый персонаж или следующая реплика того же пола) →
-     *    следующий свободный слот сессии.
+     *  • имя из разметки `{имя:…}` или из подписи «АКИ: …» → тот же слот, что
+     *    у этого имени;
+     *  • продолжение реплики (похожа на последнюю реплику известного
+     *    персонажа — это и перекрытие вебтуна, и длинная реплика из двух
+     *    облачков) → ТОТ ЖЕ слот;
+     *  • иначе новая реплика = новый персонаж = следующий свободный слот
+     *    ВНУТРИ своего пола (нумерация по полам, чтобы слот 0 и слот 1
+     *    означали первого и второго мужчину, а не «первого и третьего»).
      */
-    private fun voiceSlotFor(gender: String?, text: String, frameOccurrence: Int): Int {
-        val key = gender ?: return 0
-        val current = speakerSlots[key] ?: -1
-        val continuesPrev = frameOccurrence == 0 &&
-            prevFrameGenders.lastOrNull() == gender &&
-            prevFrameLines.any { prev ->
-                trigramSimilarity(
-                    prev.lowercase().filter { it.isLetterOrDigit() },
-                    text.lowercase().filter { it.isLetterOrDigit() },
-                ) >= 0.45f
-            }
-        val next = if (continuesPrev) current else current + 1
-        speakerSlots[key] = next
-        return next
+    private fun voiceSlotFor(gender: String?, text: String, speakerName: String?): Int {
+        val g = gender ?: return 0
+        val fingerprint = voiceFingerprint(text)
+        val sameGender = trackedSpeakers.filter { it.gender == g }
+        val byName = speakerName?.takeIf { it.isNotBlank() }
+            ?.let { name -> sameGender.firstOrNull { it.key == speakerKeyByName(name) } }
+        // Короткие реплики («Да!», «Нет!») по 3-граммам неразличимы, поэтому
+        // для них продолжение не ищем: иначе все «Да!» в сцене схлопнулись бы
+        // в одного персонажа.
+        val byText = if (fingerprint.length >= MIN_FINGERPRINT) {
+            sameGender.asSequence()
+                .maxByOrNull { trigramSimilarity(it.lastText, fingerprint) }
+                ?.takeIf { trigramSimilarity(it.lastText, fingerprint) >= CONTINUATION_SIMILARITY }
+        } else {
+            null
+        }
+        val known = byName ?: byText
+        if (known != null) {
+            rememberSpoken(known, fingerprint)
+            return known.slot
+        }
+        val speaker = TrackedSpeaker(
+            key = speakerName?.takeIf { it.isNotBlank() }?.let(::speakerKeyByName)
+                ?: "?" + trackedSpeakers.size + ":" + fingerprint.take(16),
+            gender = g,
+            slot = nextSlotFor(g),
+            lastText = fingerprint,
+        )
+        trackedSpeakers.addLast(speaker)
+        trimTrackedSpeakers()
+        return speaker.slot
+    }
+
+    /** Слот персонажа с учётом режима голоса: в обычном режиме слот не нужен. */
+    private fun speakerSlotFor(
+        roleMode: VoiceModeResolver.Mode,
+        gender: String?,
+        text: String,
+        speakerName: String?,
+    ): Int =
+        if (roleMode == VoiceModeResolver.Mode.MULTI || prefs.perSpeakerVoices().get()) {
+            voiceSlotFor(gender, text, speakerName)
+        } else {
+            0
+        }
+
+    /**
+     * Пол говорящего. Ручной режим важнее автоопределения: читатель выбрал
+     * голос кнопкой и ждёт именно его. Функция общая для обычного цикла и для
+     * потокового прохода — раньше потоковый проход звал speakAndAwait с
+     * gender = null, и первые баблы кадра звучали голосом по умолчанию, пока
+     * хвост читался настоящими ролями (голос прыгал туда-сюда).
+     */
+    private fun speakerGenderFor(
+        roleMode: VoiceModeResolver.Mode,
+        detected: String?,
+    ): String = when {
+        prefs.manualVoiceMode().get() ->
+            prefs.manualVoiceGender().get().takeIf { it.isNotBlank() } ?: "female"
+        roleMode == VoiceModeResolver.Mode.SINGLE -> VoiceModeResolver.narratorGender()
+        else -> detected
+    }
+
+    /** Ключ персонажа по имени: «Аки» и «АКИ» — один и тот же персонаж. */
+    private fun speakerKeyByName(name: String): String = "n:" + name.trim().lowercase()
+
+    /** Текст реплики без знаков и регистра — для сравнения персонажей. */
+    private fun voiceFingerprint(text: String): String =
+        text.lowercase().filter { it.isLetterOrDigit() }
+
+    /** Помечает реплику последней для персонажа и подрезает память. */
+    private fun rememberSpoken(speaker: TrackedSpeaker, fingerprint: String) {
+        speaker.lastText = fingerprint
+        // Переносим в конец: самые недавленные персонажи важнее при подборе
+        // продолжения, иначе память забивается персонажами начала главы.
+        trackedSpeakers.remove(speaker)
+        trackedSpeakers.addLast(speaker)
+        trimTrackedSpeakers()
+    }
+
+    private fun trimTrackedSpeakers() {
+        while (trackedSpeakers.size > MAX_TRACKED_SPEAKERS) trackedSpeakers.removeFirst()
+    }
+
+    /** Следующий свободный слот среди уже известных персонажей этого пола. */
+    private fun nextSlotFor(gender: String): Int {
+        val used = trackedSpeakers.filter { it.gender == gender }.map { it.slot }.toSet()
+        var slot = 0
+        while (slot in used) slot++
+        return slot
     }
 
     /**
@@ -640,9 +729,6 @@ class AutoReadEngine(
                 if (ordered.isNotEmpty()) {
                     lastFrameText = ordered.joinToString("\n") { it.text }
                 }
-                // Полы текущего кадра — для слотов голосов следующего кадра
-                // (продолжение персонажа через перекрытие вебтуна).
-                prevFrameGenders = (0 until ordered.size).map { genders.get(it) }
 
                 // 3.7) перевод ВСЕЙ страницы одним запросом (раньше был
                 // отдельный HTTP-запрос на каждую реплику — на 15 бабблах
@@ -705,14 +791,19 @@ class AutoReadEngine(
                     //  • MULTI — как DUAL, но с отдельным слотом каждому
                     //    персонажу одного пола (см. slot ниже).
                     val roleMode = VoiceModeResolver.currentMode()
-                    val gender = when {
-                        prefs.manualVoiceMode().get() ->
-                            prefs.manualVoiceGender().get().takeIf { it.isNotBlank() } ?: "female"
-                        roleMode == VoiceModeResolver.Mode.SINGLE -> VoiceModeResolver.narratorGender()
-                        else -> genders.get(i) // мог дозаполниться AI пока читали предыдущие
-                    }
+                    val gender = speakerGenderFor(
+                        roleMode,
+                        genders.get(i), // мог дозаполниться AI пока читали предыдущие
+                    )
 
-                    // Служебные пометки: номер по порядку чтения и пол.
+                    // Имя персонажа: разметка `{имя:…}` (если пришла извне) либо
+                    // подпись в самой реплике («АКИ: …», «Аки — …»). Оно нужно
+                    // сразу двум: слоту голоса (узнать, тот же это персонаж или
+                    // новый) и словарю голосовых ролей, который по имени выбирает
+                    // голос/питч/темп.
+                    val speakerName = SpeechMarkup.speakerNameOrGuess(region.text)
+
+                    // Служебные пометки: номер по порядку чтения, пол и имя.
                     // Они показываются на экране, но НЕ произносятся —
                     // SpeechMarkup.strip() снимает их перед синтезом.
                     val marks = buildString {
@@ -721,6 +812,7 @@ class AutoReadEngine(
                             "female" -> append("{ж}")
                             "male" -> append("{м}")
                         }
+                        if (speakerName != null) append("{имя:").append(speakerName).append("}")
                     }
 
                     _currentRegion.value = SpokenRegion(
@@ -732,22 +824,23 @@ class AutoReadEngine(
                         marks = marks,
                     )
 
-                    // Слот говорящего: каждый персонаж одного пола в сцене
-                    // получает свой голос. Слоты сессионные (переживают кадры):
-                    // продолжение реплики прошлого кадра звучит тем же голосом,
-                    // новый персонаж — следующим свободным. В режиме «много
-                    // голосов» и при «свой голос персонажу» всегда включено.
-                    val slot = if (
-                        roleMode == VoiceModeResolver.Mode.MULTI ||
-                        prefs.perSpeakerVoices().get()
-                    ) {
-                        val occurrence = (0 until i).count { genders.get(it) == gender }
-                        voiceSlotFor(gender, region.text, occurrence)
-                    } else {
-                        0
-                    }
+                    // Слот говорящего: голос ПРИНАДЛЕЖИТ ПЕРСОНАЖУ, поэтому
+                    // один и тот же герой звучит одинаково через всю главу, а
+                    // каждый новый персонаж того же пола получает следующий
+                    // свободный слот. В режиме «много голосов» и при «свой
+                    // голос персонажу» включено, иначе голос только по полу.
+                    val slot = speakerSlotFor(roleMode, gender, region.text, speakerName)
 
-                    when (speakAndAwait(SpeechMarkup.strip(speakTextRaw), gender, slot)) {
+                    // Имя уезжает вместе с текстом в движок: словарь ролей
+                    // читает его из разметки, а метку снимает
+                    // [SpeechMarkup.strip]. Само слово имени при этом остаётся
+                    // в тексте реплики, поэтому имя звучит ровно один раз —
+                    // как на кадре, а не «метка + слово».
+                    val spokenText = SpeechMarkup.withSpeakerName(
+                        SpeechMarkup.strip(speakTextRaw),
+                        speakerName,
+                    )
+                    when (speakAndAwait(spokenText, gender, slot)) {
                         SpeakOutcome.SPOKEN, SpeakOutcome.SILENT -> rejectedStreak = 0
                         SpeakOutcome.NO_ENGINE -> {
                             blockAutoread(NO_VOICE_MESSAGE)
@@ -1029,8 +1122,9 @@ class AutoReadEngine(
 
     fun stop() {
         spokenLines.clear()
-        speakerSlots.clear()
-        prevFrameGenders = emptyList()
+        // Голоса персонажей — память сессии: новая глава начинается с нуля,
+        // иначе новый персонаж продолжил бы чужую нумерацию слотов.
+        trackedSpeakers.clear()
         rejectedStreak = 0
         _voiceBlock.value = null
         generation++ // инвалидируем все pending-колбэки
@@ -1053,13 +1147,17 @@ class AutoReadEngine(
     fun speakSingle(text: String, gender: String? = null, speakerSlot: Int = 0) {
         val clean = SpeechMarkup.strip(text).trim()
         if (clean.isBlank()) return
+        // Имя из подписи реплики («АКИ: …») едет в движок так же, как при
+        // авточтении: одиночный бабл, нажатый значком 🔊, тоже должен уметь
+        // попасть под словарь ролей.
+        val spoken = SpeechMarkup.withSpeakerName(clean, SpeechMarkup.speakerNameOrGuess(text))
         if (_isReading.value) TtsSpeaker.stop()
         job?.cancel()
         val myGen = ++generation
         job = scope.launch {
             _isReading.value = true
             try {
-                speakAndAwait(clean, gender, speakerSlot)
+                speakAndAwait(spoken, gender, speakerSlot)
             } finally {
                 if (generation == myGen) _isReading.value = false
             }
@@ -1089,11 +1187,14 @@ class AutoReadEngine(
      * Озвучивает реплику, распознанную локальным движком, не дожидаясь конца
      * страницы, и помечает её прочитанной.
      *
-     * Потоковый проход сознательно «глупый»: без определения пола по картинке,
-     * без перевода, без склейки соседних строк в одну реплику. Всё это требует
-     * знать всю страницу и не может работать на лету. Зато читатель слышит
-     * первую реплику сразу, а основной конвейер позже дочитывает остальные и
-     * пропускает уже озвученное через [spokenLines].
+     * Потоковый проход сознательно «глупый»: без перевода и без склейки
+     * соседних строк в одну реплику — всё это требует знать всю страницу и не
+     * может работать на лету. Зато читатель слышит первую реплику сразу, а
+     * основной конвейер позже дочитывает остальные и пропускает уже озвученное
+     * через [spokenLines]. Пол же и слот считаются ТЕМИ ЖЕ функциями, что и в
+     * обычном цикле: раньше первые баблы кадра (порядок ltr/vertical) читались
+     * голосом по умолчанию, а хвост — настоящими ролями, и голос прыгал
+     * туда-сюда на одной странице.
      *
      * Номера реплик в потоковом режиме не совпадают с итоговой нумерацией
      * страницы: итоговую расставляет конвейер ниже, когда страница собрана.
@@ -1117,7 +1218,17 @@ class AutoReadEngine(
             FrameRegion.State.CURRENT,
             text,
         )
-        return when (speakAndAwait(text, gender = null)) {
+        val roleMode = VoiceModeResolver.currentMode()
+        val speakerName = SpeechMarkup.speakerNameOrGuess(text)
+        // Пол: та же локальная морфология и словарный фолбэк, что и в обычном
+        // цикле (там они уточняются данными со всей страницы).
+        val gender = speakerGenderFor(
+            roleMode,
+            LocalSpeakerAi.guessGender(text) ?: detectGenderByDictionary(text),
+        )
+        val slot = speakerSlotFor(roleMode, gender, text, speakerName)
+        val spokenText = SpeechMarkup.withSpeakerName(text, speakerName)
+        return when (speakAndAwait(spokenText, gender, slot)) {
             SpeakOutcome.SPOKEN -> {
                 spokenLines += lineKey(text)
                 markSpokenInFrame(text)
@@ -1170,6 +1281,9 @@ class AutoReadEngine(
 
     /** Озвучка с ожиданием реального окончания фразы. */
     private suspend fun speakAndAwait(text: String, gender: String? = null, speakerSlot: Int = 0): SpeakOutcome {
+        // Реплика может прийти с меткой `{имя:…}` (её снимает сам движок), а в
+        // журнал и таймаут разумно класть то, что реально произносится.
+        val spoken = SpeechMarkup.strip(text).ifBlank { text }
         // Оба флага — MutableStateFlow: onState приходит из потока TTS, а читается
         // из этой корутины (диспетчер IO). Обычный var здесь означает гонку — цикл
         // ожидания мог бы не увидеть `started = true` и сочти фразу неозвученной.
@@ -1180,12 +1294,12 @@ class AutoReadEngine(
         TtsSpeaker.speakAs(context, text, gender, speakerSlot) { speaking ->
             if (speaking && !started.value) {
                 started.value = true
-                logcat(LogPriority.DEBUG) { "TTS started (${System.currentTimeMillis() - t0}ms): ${text.take(60)}" }
+                logcat(LogPriority.DEBUG) { "TTS started (${System.currentTimeMillis() - t0}ms): ${spoken.take(60)}" }
             }
             if (!speaking && started.value) {
                 done.value = true
                 logcat(LogPriority.DEBUG) { "TTS done in ${System.currentTimeMillis() - t0}ms" }
-                OcrHistoryStore.addAutoRead(true, "озвучено (${System.currentTimeMillis() - t0} мс)", text.take(60))
+                OcrHistoryStore.addAutoRead(true, "озвучено (${System.currentTimeMillis() - t0} мс)", spoken.take(60))
             }
         }
         val start = System.currentTimeMillis()
@@ -1208,9 +1322,9 @@ class AutoReadEngine(
             val failure = TtsSpeaker.lastFailure
             val detail = TtsSpeaker.lastFailureDetail
             logcat(LogPriority.WARN) {
-                "TTS never started (${failure.name}${if (detail.isBlank()) "" else ": $detail"}): ${text.take(60)}"
+                "TTS never started (${failure.name}${if (detail.isBlank()) "" else ": $detail"}): ${spoken.take(60)}"
             }
-            OcrHistoryStore.addAutoRead(false, "TTS не запустился", "${failure.name}: ${text.take(60)}")
+            OcrHistoryStore.addAutoRead(false, "TTS не запустился", "${failure.name}: ${spoken.take(60)}")
             return when (failure) {
                 TtsSpeaker.SpeakFailure.NO_ENGINE -> SpeakOutcome.NO_ENGINE
                 TtsSpeaker.SpeakFailure.REJECTED -> SpeakOutcome.REJECTED
@@ -1218,7 +1332,7 @@ class AutoReadEngine(
             }
         }
         // Фаза 2: реплика пошла — ждём завершения по onState.
-        val timeoutMs = ttsTimeoutMs(text.length, prefs.speechRate().get())
+        val timeoutMs = ttsTimeoutMs(spoken.length, prefs.speechRate().get())
         while (!done.value && System.currentTimeMillis() - start < timeoutMs) {
             if (job?.isActive != true) {
                 TtsSpeaker.stop()
@@ -1229,9 +1343,9 @@ class AutoReadEngine(
         // Диагностика недоговорённых реплик: TTS мог прерваться без onDone.
         if (!done.value) {
             logcat(LogPriority.WARN) {
-                "TTS timeout without onDone: ${text.take(60)} (waited ${System.currentTimeMillis() - start}ms)"
+                "TTS timeout without onDone: ${spoken.take(60)} (waited ${System.currentTimeMillis() - start}ms)"
             }
-            OcrHistoryStore.addAutoRead(false, "TTS без завершения", text.take(60))
+            OcrHistoryStore.addAutoRead(false, "TTS без завершения", spoken.take(60))
             // onError приходит в том же Boolean-колбэке, что и onDone, поэтому
             // сбой посреди фразы выглядел как «озвучено». Теперь он виден.
             if (TtsSpeaker.lastFailure == TtsSpeaker.SpeakFailure.REJECTED) {
@@ -1618,6 +1732,29 @@ class AutoReadEngine(
     companion object {
         private const val HISTORY_LIMIT = 600
         private const val MAX_BUBBLES_PER_FRAME = 40
+
+        /**
+         * Сколько последних персонажей движок помнит по полу и имени. Память
+         * нужна только чтобы отличить «тот же персонаж» от «нового»; на длинной
+         * главе она росла бы без границ, и каждая реплика сравнивалась бы со
+         * всеми сразу. Старый персонаж забывается — тогда как раздача его номера
+         * другому не страшна: на такой сцене голосов всё равно больше нет.
+         */
+        private const val MAX_TRACKED_SPEAKERS = 12
+
+        /**
+         * Насколько реплика должна быть похожа на последнюю реплику персонажа,
+         * чтобы считаться её продолжением (3-граммы). Порог тот же, что был у
+         * прежней проверки перекрытия кадров, — он ловит и обрезанный OCR-текст.
+         */
+        private const val CONTINUATION_SIMILARITY = 0.45f
+
+        /**
+         * Короче этого реплики продолжение не ищем: у «Да!»/«Нет!» нет
+         * 3-грамм, иначе все короткие возгласы в сцене схлопнулись бы в одного
+         * персонажа, а разные персонажи — слиплись бы в один голос.
+         */
+        private const val MIN_FINGERPRINT = 12
 
         /**
          * Максимальная длинная сторона кадра для OCR: минимальное разрешение,

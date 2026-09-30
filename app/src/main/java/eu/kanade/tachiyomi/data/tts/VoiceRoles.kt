@@ -7,15 +7,18 @@ import mihon.domain.ocr.service.OcrPreferences
  *
  * Полноценный словарь поверх прежних трёх слотов ♀/♂/🎙: роль связывает имя
  * или метки [markers] с голосом, полом, возрастом и модификаторами
- * питча/темпа. Имя приходит из разметки `{имя:Аки}`, пол — из `{ж}/{м}` или
- * пресета пользователя.
+ * питча/темпа. Имя приходит из разметки `{имя:Аки}` или из подписи в самом
+ * тексте реплики («АКИ: …»), пол — из `{ж}/{м}` или пресета пользователя.
  *
  * Правила подбора, по убыванию приоритета:
  *  1. имя говорящего совпало с меткой роли (без учёта регистра, подстрока);
  *  2. имя совпало с [name];
- *  3. явный пол (male/female) совпал с [gender] роли (клавиши ♀/♂/🎙 и
+ *  3. имя или метка роли упомянуты САМИМ ТЕКСТОМ реплики — единственный путь
+ *     для OCR-чтения, где разметки `{имя:Аки}` нет (иначе все настроенные
+ *     роли молча игнорировались и оставался «только пол»);
+ *  4. явный пол (male/female) совпал с [gender] роли (клавиши ♀/♂/🎙 и
  *     ручной режим);
- *  4. пол «auto» — первая роль запасного совпадения только по имени [name]
+ *  5. пол «auto» — первая роль запасного совпадения только по имени [name]
  *     даже без меток не выбирается (риск ложного срабатывания).
  *
  * Все модификаторы перемножаются с пресетами [VoicePreset], поэтому роль
@@ -50,11 +53,44 @@ data class VoiceRole(
         return roleGender.equals(gender, ignoreCase = true) || roleGender == "narrator"
     }
 
+    /**
+     * Упомянут ли персонаж в тексте реплики: «АКИ: …», «Аки, помоги!».
+     *
+     * Сравнение идёт ПО СЛОВАМ, а не по подстроке: иначе короткая метка
+     * совпала бы с половиной реплики («Анна» внутри «анна‑виктория»), и роль
+     * перехватывала бы чужие реплики. Метка из нескольких слов должна
+     * присутствовать целиком («Ким Чен», а не одно «ким»), слова короче трёх
+     * букв не сверяем — такие встречаются в любом тексте.
+     */
+    fun mentionedIn(text: String): Boolean {
+        val words = text.lowercase()
+            .split(WORD_BREAK)
+            .filter { it.isNotEmpty() }
+            .toSet()
+        if (words.isEmpty()) return false
+        return mentions().any { marker ->
+            val parts = marker.lowercase().trim()
+                .split(WORD_BREAK)
+                .filter { it.isNotEmpty() }
+            parts.isNotEmpty() &&
+                parts.all { it.length >= 3 && it in words }
+        }
+    }
+
+    /** Имя роли и её метки — всё, чем роль может назвать персонажа. */
+    private fun mentions(): List<String> = buildList {
+        add(name)
+        addAll(markers)
+    }
+
     companion object {
         const val GENDER_AUTO = "auto"
         const val GENDER_MALE = "male"
         const val GENDER_FEMALE = "female"
         const val GENDER_NEUTRAL = "neutral"
+
+        /** Разделители слов: всё, кроме букв и цифр. */
+        private val WORD_BREAK = Regex("""[^\p{L}\p{N}]+""")
     }
 }
 
@@ -121,16 +157,22 @@ object VoiceRoleDictionary {
 
     /**
      * Находит роль для реплики. [speakerName] — из `{имя:…}` (приоритет),
-     * [gender] — явный пол (`{ж}/{м}`, кнопки карточки, ручной режим).
+     * [gender] — явный пол (`{ж}/{м}`, кнопки карточки, ручной режим),
+     * [text] — сама реплика: на OCR-чтении разметки с именем нет, поэтому роль
+     * опознаётся по упоминанию имени/метки прямо в тексте.
      */
     fun resolve(
         roles: List<VoiceRole>,
         speakerName: String?,
         gender: String?,
+        text: String? = null,
     ): VoiceRole? {
         val named = roles.filter { it.name.isNotBlank() }
         if (speakerName != null) {
             named.firstOrNull { it.matchesName(speakerName) }?.let { return it }
+        }
+        if (!text.isNullOrBlank()) {
+            named.firstOrNull { it.mentionedIn(text) }?.let { return it }
         }
         if (gender != null && (gender.equals("male", true) || gender.equals("female", true))) {
             named.firstOrNull { it.matchesGender(gender) }?.let { return it }
@@ -138,6 +180,10 @@ object VoiceRoleDictionary {
         return null
     }
 
-    fun resolve(prefs: OcrPreferences, speakerName: String?, gender: String?): VoiceRole? =
-        resolve(load(prefs), speakerName, gender)
+    fun resolve(
+        prefs: OcrPreferences,
+        speakerName: String?,
+        gender: String?,
+        text: String? = null,
+    ): VoiceRole? = resolve(load(prefs), speakerName, gender, text)
 }

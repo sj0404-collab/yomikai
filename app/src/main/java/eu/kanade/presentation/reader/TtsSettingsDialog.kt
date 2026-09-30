@@ -22,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
@@ -111,6 +112,10 @@ fun TtsSettingsDialog(
     var webLang by remember { mutableStateOf(prefs.ttsWebLanguage().get()) }
     var elevenKey by remember { mutableStateOf(prefs.elevenApiKey().get()) }
     var elevenVoice by remember { mutableStateOf(prefs.elevenVoiceId().get()) }
+
+    // Фоновая музыка авточтения манги (та же фича, что в читалке книг).
+    var musicEnabled by remember { mutableStateOf(prefs.autoReadMusicEnabled().get()) }
+    var musicVolume by remember { mutableFloatStateOf(prefs.autoReadMusicVolume().get()) }
 
     var voiceFemale by remember { mutableStateOf(prefs.voiceFemale().get()) }
     var voiceMale by remember { mutableStateOf(prefs.voiceMale().get()) }
@@ -864,6 +869,27 @@ fun TtsSettingsDialog(
                     valueRange = 0.5f..2f,
                 )
 
+                // Музыка приглушается сама на время реплики, поэтому ползунок
+                // задаёт уровень в паузах — это потолок, а не то, что слышно
+                // поверх голоса.
+                SettingSwitchRow(
+                    label = "Фоновая музыка (авточтение)",
+                    checked = musicEnabled,
+                    onCheckedChange = { musicEnabled = it },
+                )
+                if (musicEnabled) {
+                    Text(
+                        "Громкость музыки",
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                    Slider(
+                        value = musicVolume,
+                        onValueChange = { musicVolume = it },
+                        valueRange = 0.04f..0.8f,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+
                 when (engine) {
                     TtsSpeaker.ENGINE_SYSTEM -> {
                         Row(modifier = Modifier.padding(bottom = 4.dp).horizontalScroll(rememberScrollState())) {
@@ -1169,6 +1195,8 @@ fun TtsSettingsDialog(
                     prefs.elevenVoiceId().set(elevenVoice.trim())
                     prefs.edgeVoice().set(edgeVoice.trim())
                     prefs.edgeLanguage().set(edgeLanguage.trim())
+                    prefs.autoReadMusicEnabled().set(musicEnabled)
+                    prefs.autoReadMusicVolume().set(musicVolume.coerceIn(0.04f, 0.8f))
                     context.toast("Настройки озвучки сохранены")
                     onDismissRequest()
                 },
@@ -1197,6 +1225,8 @@ fun TtsSettingsDialog(
                         prefs.elevenVoiceId().set(elevenVoice.trim())
                         prefs.edgeVoice().set(edgeVoice.trim())
                         prefs.edgeLanguage().set(edgeLanguage.trim())
+                        prefs.autoReadMusicEnabled().set(musicEnabled)
+                        prefs.autoReadMusicVolume().set(musicVolume.coerceIn(0.04f, 0.8f))
                         TtsSpeaker.speak(context, "Проверка выбранного голоса Ёмикай.")
                     },
                 ) { Text("Проба") }
@@ -1204,6 +1234,30 @@ fun TtsSettingsDialog(
             }
         },
     )
+}
+
+/**
+ * Ряд-тумблер в том же виде, что в читалке книг (BooksReaderScreen): подпись
+ * слева тянется на всю ширину, переключатель прижат вправо. Отдельный
+ * «дизайн» для музыки заводить не нужно — читатель уже знает этот блок.
+ */
+@Composable
+private fun SettingSwitchRow(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.weight(1f),
+        )
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
 }
 
 /**
