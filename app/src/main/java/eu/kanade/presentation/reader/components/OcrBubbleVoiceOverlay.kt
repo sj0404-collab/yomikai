@@ -41,8 +41,15 @@ import kotlin.math.roundToInt
  * а не россыпь значков по странице. Когда озвучка не идёт, значков на данных
  * нет — остаётся только перетаскиваемый значок для ручной озвучки реплики.
  *
- * Координаты баблов — нормализованные 0..1 относительно изображения. Здесь они
- * маппятся на размер компоновки (как у [AutoReadHighlight] по умолчанию).
+ * Координаты баблов — нормализованные 0..1 относительно СТРАНИЦЫ, а страница
+ * занимает лишь часть окна (поля сверху/снизу у манги, по бокам у вебтуна).
+ * Поэтому [imageRect] — прямоугольник страницы в долях окна (его отдаёт
+ * `Viewer.displayedPageRect()`): раньше координаты умножались на размер всего
+ * окна, и значок уезжал с реплики. Без [imageRect] (например в браузере)
+ * поведение прежнее — вся область.
+ *
+ * Если текущую реплику найти не удалось, значок НЕ рисуется: жёсткая привязка
+ * к углу окна выглядела для читателя как «значок прыгает по странице».
  */
 @Composable
 fun OcrBubbleVoiceOverlay(
@@ -53,6 +60,7 @@ fun OcrBubbleVoiceOverlay(
     draggable: Boolean = true,
     iconColor: Color = Color(0xFF00E5FF),
     isSpeaking: Boolean = false,
+    imageRect: android.graphics.RectF? = null,
 ) {
     if (regions.isEmpty()) return
     BoxWithConstraints(
@@ -64,18 +72,19 @@ fun OcrBubbleVoiceOverlay(
 
         if (isSpeaking) {
             // ЕДИНЫЙ бейдж: один индикатор у реплики, которую TTS озвучивает
-            // сейчас. Если рамка текущей реплики неизвестна — фиксируем значок
-            // в верхнем правом углу страницы, чтобы он всё равно был виден.
+            // сейчас. Нет реплики или нет её рамки — не рисуем ничего.
             val current = regions.firstOrNull { it.state == AutoReadEngine.FrameRegion.State.CURRENT }
-            if (current != null && current.text.isNotBlank() && current.box.isValidForIcon()) {
-                val box = current.box
-                val currentIndex = regions.indexOf(current)
-                val xDp = (box.left * maxW.value).dp
-                val yDp = (box.top * maxH.value).dp
-                val wDp = ((box.right - box.left) * maxW.value).dp
+            val currentIndex = current?.let { regions.indexOf(it) } ?: -1
+            val anchor = remember(current, imageRect, maxW, maxH) {
+                current
+                    ?.takeIf { it.text.isNotBlank() && it.box.isValidForIcon() }
+                    ?.box
+                    ?.iconAnchor(imageRect, maxW, maxH, iconSize)
+            }
+            if (current != null && currentIndex >= 0 && anchor != null) {
                 Box(
                     modifier = Modifier
-                        .offset(x = xDp + wDp - iconSize, y = yDp - iconSize / 3)
+                        .offset(x = anchor.x, y = anchor.y)
                         .size(iconSize)
                         .pointerInput(currentIndex, current.text, onSpeakRegion) {
                             detectTapGestures { onSpeakRegion(current.text, currentIndex) }
@@ -88,20 +97,15 @@ fun OcrBubbleVoiceOverlay(
                 ) {
                     SpeakerBadge(color = iconColor, size = iconSize)
                 }
-            } else {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 8.dp, end = 8.dp)
-                        .size(iconSize),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    SpeakerBadge(color = iconColor, size = iconSize)
-                }
             }
         } else if (draggable) {
             // Не звучит — только перетаскиваемый значок для ручной озвучки.
-            DraggableSpeakIcon(regions = regions, onSpeakRegion = onSpeakRegion, accent = iconColor)
+            DraggableSpeakIcon(
+                regions = regions,
+                onSpeakRegion = onSpeakRegion,
+                accent = iconColor,
+                imageRect = imageRect,
+            )
         }
     }
 }
@@ -132,6 +136,7 @@ private fun DraggableSpeakIcon(
     regions: List<AutoReadEngine.FrameRegion>,
     onSpeakRegion: (String, Int) -> Unit,
     accent: Color,
+    imageRect: android.graphics.RectF?,
 ) {
     var posX by remember { mutableStateOf(0f) }
     var posY by remember { mutableStateOf(0f) }
@@ -146,7 +151,7 @@ private fun DraggableSpeakIcon(
             modifier = Modifier
                 .offset { if (!placed) IntOffset.Zero else IntOffset(posX.roundToInt(), posY.roundToInt()) }
                 .size(36.dp)
-                .pointerInput(pxW, pxH, regions, onSpeakRegion) {
+                .pointerInput(pxW, pxH, regions, onSpeakRegion, imageRect) {
                     detectDragGestures(
                         onDragStart = { placed = true },
                         onDrag = { change, drag ->
@@ -158,10 +163,11 @@ private fun DraggableSpeakIcon(
                             val target = regions
                                 .filter { it.text.isNotBlank() && it.box.isValidForIcon() }
                                 .minByOrNull { r ->
-                                    val cx = r.box.centerX() * pxW
-                                    val cy = r.box.centerY() * pxH
-                                    val dx = cx - (posX + 18f)
-                                    val dy = cy - (posY + 18f)
+                                    // Расстояние до центра бабла считаем в тех же
+                                    // координатах, где лежит значок, иначе он
+                                    // притягивается не к тому тексту.
+                                    val dx = r.box.pageCenterX(imageRect) * pxW - (posX + 18f)
+                                    val dy = r.box.pageCenterY(imageRect) * pxH - (posY + 18f)
                                     dx * dx + dy * dy
                                 }
                             if (target != null) {
@@ -177,6 +183,48 @@ private fun DraggableSpeakIcon(
         }
     }
 }
+
+/** Положение левого верхнего угла значка относительно области композиции. */
+private data class IconAnchor(val x: Dp, val y: Dp)
+
+/**
+ * Куда поставить значок для бабла.
+ *
+ * [imageRect] — прямоугольник страницы в долях (0..1) области: рамка реплики
+ * откладывается внутри страницы, а не от краёв окна.
+ */
+private fun OcrBoundingBox.iconAnchor(
+    imageRect: android.graphics.RectF?,
+    maxWidth: Dp,
+    maxHeight: Dp,
+    iconSize: Dp,
+): IconAnchor {
+    val pageLeft = imageRect?.left ?: 0f
+    val pageTop = imageRect?.top ?: 0f
+    val pageWidth = pageWidthFraction(imageRect)
+    val pageHeight = pageHeightFraction(imageRect)
+    val leftDp = (pageLeft + left * pageWidth) * maxWidth.value
+    val topDp = (pageTop + top * pageHeight) * maxHeight.value
+    val widthDp = (right - left) * pageWidth * maxWidth.value
+    return IconAnchor(
+        x = leftDp.dp + widthDp.dp - iconSize,
+        y = topDp.dp - iconSize / 3f,
+    )
+}
+
+/** Центр бокса по X в долях области (0..1) — с учётом прямоугольника страницы. */
+private fun OcrBoundingBox.pageCenterX(imageRect: android.graphics.RectF?): Float =
+    (imageRect?.left ?: 0f) + centerX() * pageWidthFraction(imageRect)
+
+/** Центр бокса по Y в долях области (0..1) — с учётом прямоугольника страницы. */
+private fun OcrBoundingBox.pageCenterY(imageRect: android.graphics.RectF?): Float =
+    (imageRect?.top ?: 0f) + centerY() * pageHeightFraction(imageRect)
+
+private fun pageWidthFraction(imageRect: android.graphics.RectF?): Float =
+    (imageRect?.width() ?: 1f).coerceAtLeast(0.0001f)
+
+private fun pageHeightFraction(imageRect: android.graphics.RectF?): Float =
+    (imageRect?.height() ?: 1f).coerceAtLeast(0.0001f)
 
 /** Центр нормализованного бокса (0..1). */
 private fun OcrBoundingBox.centerX(): Float = (left + right) / 2f

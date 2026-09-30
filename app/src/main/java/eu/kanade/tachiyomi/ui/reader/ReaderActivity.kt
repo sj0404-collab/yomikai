@@ -18,6 +18,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.View.LAYER_TYPE_HARDWARE
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
@@ -31,6 +32,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.RepeatMode
@@ -81,6 +84,7 @@ import eu.kanade.presentation.reader.ReaderPageIndicator
 import eu.kanade.presentation.reader.ReadingModeSelectDialog
 import eu.kanade.presentation.reader.appbars.ReaderAppBars
 import eu.kanade.presentation.reader.components.ChapterNavigatorType
+import eu.kanade.presentation.reader.components.OcrPageMarksSettings
 import eu.kanade.presentation.reader.settings.ReaderSettingsDialog
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder
@@ -107,6 +111,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderActiveOcrOverlay
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderOcrRegionSelection
+import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderSelectionCapture
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderSelectionRegion
@@ -262,6 +267,12 @@ class ReaderActivity : BaseActivity() {
         val rawX: Float,
         val rawY: Float,
         val actionMasked: Int,
+    )
+
+    /** Кадр страницы и геометрия его источника (null — кадр из нескольких страниц). */
+    private data class ReaderFrameCapture(
+        val bitmap: Bitmap,
+        val geometry: AutoReadEngine.OcrFrameGeometry?,
     )
 
     private var ocrDragStart by mutableStateOf<Offset?>(null)
@@ -609,6 +620,59 @@ class ReaderActivity : BaseActivity() {
                                 color = androidx.compose.material3.MaterialTheme.colorScheme.onPrimaryContainer,
                             )
                         }
+                    }
+                }
+            }
+
+            // ===== Пометки порядка чтения на странице =====
+            // Плашка появляется только там, где на текущей странице есть снимки
+            // с геометрией (иначе переключать нечего), и снимает/ставит рисунок
+            // поверх страницы одним касанием. При открытом меню её нет: там
+            // верх экрана занят панелями.
+            run {
+                val screenshotEntries by mihon.data.ocr.OcrScreenshotBuffer.entries.collectAsState()
+                val marksEnabled by OcrPageMarksSettings.changes().collectAsState(
+                    initial = OcrPageMarksSettings.isEnabled(),
+                )
+                val marksChapterId = state.currentChapter?.chapter?.id
+                val marksPageIndex = (state.currentPage - 1).coerceAtLeast(0)
+                val marksAvailable = remember(screenshotEntries, marksChapterId, marksPageIndex) {
+                    marksChapterId != null && mihon.data.ocr.OcrScreenshotBuffer
+                        .forPage(marksChapterId, marksPageIndex)
+                        .any { it.hasSourceGeometry }
+                }
+                // Новый снимок сделан, пока открыта эта же страница: страницу
+                // надо перерисовать сразу, иначе пометки появятся только после
+                // смены кадра.
+                val lastScreenshot by mihon.data.ocr.OcrScreenshotBuffer.lastEntry.collectAsState()
+                LaunchedEffect(lastScreenshot?.id) {
+                    if (lastScreenshot != null) invalidateReaderViews()
+                }
+                if (marksAvailable && !state.menuVisible) {
+                    androidx.compose.material3.Surface(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 80.dp, end = 12.dp)
+                            .clickable {
+                                OcrPageMarksSettings.setEnabled(!marksEnabled)
+                                invalidateReaderViews()
+                            },
+                        shape = RoundedCornerShape(10.dp),
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.surface.copy(alpha = 0.75f),
+                        contentColor = androidx.compose.material3.MaterialTheme.colorScheme.onSurface,
+                    ) {
+                        Text(
+                            text = "№",
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
+                            // Перечёркнутый значок — пометки выключены, но
+                            // снимки на странице есть: переключатель остаётся.
+                            textDecoration = if (marksEnabled) {
+                                null
+                            } else {
+                                androidx.compose.ui.text.style.TextDecoration.LineThrough
+                            },
+                        )
                     }
                 }
             }
@@ -1032,6 +1096,12 @@ class ReaderActivity : BaseActivity() {
 
                 // Значки 🔊 на рамках реплик: показываются по переключателю.
                 if (voiceIconsEnabled && frameRegions.isNotEmpty()) {
+                    // Прямоугольник САМОЙ СТРАНИЦЫ (0..1 окна), а не всего окна:
+                    // у манги остаются поля сверху и снизу, у вебтуна по бокам,
+                    // и умножение на размер окна уводило значок с реплики.
+                    val voicePageRect = remember(frameRegions) {
+                        runCatching { viewModel.state.value.viewer?.displayedPageRect() }.getOrNull()
+                    }
                     eu.kanade.presentation.reader.components.OcrBubbleVoiceOverlay(
                         regions = frameRegions,
                         onSpeakRegion = { text, _ ->
@@ -1039,6 +1109,7 @@ class ReaderActivity : BaseActivity() {
                         },
                         perBubble = true,
                         draggable = true,
+                        imageRect = voicePageRect,
                         // Единый бейдж: пока TTS озвучивает реплику — один значок.
                         isSpeaking = readingActive,
                     )
@@ -1782,10 +1853,12 @@ class ReaderActivity : BaseActivity() {
             try {
                 val root = binding.root
                 val fullRect = android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
-                val bitmap = cropCurrentSelectionBitmap(fullRect) ?: run {
+                val frame = cropCurrentSelectionFrame(fullRect)
+                if (frame == null) {
                     withUIContext { toast("Не удалось захватить страницу") }
                     return@launchIO
                 }
+                val bitmap = frame.bitmap
                 val chapterId = viewModel.getCurrentChapter()?.chapter?.id ?: -1L
                 val pageIndex = (viewModel.state.value.currentPage - 1).coerceAtLeast(0)
 
@@ -1807,6 +1880,9 @@ class ReaderActivity : BaseActivity() {
                     bitmap = bitmap,
                     chapterId = chapterId,
                     pageIndex = pageIndex,
+                    // Геометрия кадра нужна записи скриншота: по ней пометки
+                    // порядка чтения возвращаются на страницу в книге.
+                    geometry = frame.geometry,
                     onLineSpoken = if (scrollSpeed == "phrase") { box ->
                         // Плавный ПОФРАЗНЫЙ прокрут вебтуна: реплика дочитана —
                         // проматываю ровно на её высоту, следующая уже внизу
@@ -1942,11 +2018,12 @@ class ReaderActivity : BaseActivity() {
             try {
                 val root = binding.root
                 val fullRect = android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
-                val bitmap = cropCurrentSelectionBitmap(fullRect)
-                if (bitmap == null) {
+                val frame = cropCurrentSelectionFrame(fullRect)
+                if (frame == null) {
                     withUIContext { toast("Не удалось получить кадр страницы") }
                     return@launchIO
                 }
+                val bitmap = frame.bitmap
                 val chapterId = viewModel.getCurrentChapter()?.chapter?.id ?: -1L
                 val pageIndex = (viewModel.state.value.currentPage - 1).coerceAtLeast(0)
                 // Итоговый тост ждёт результата движка, а он включает OCR и может
@@ -1957,7 +2034,10 @@ class ReaderActivity : BaseActivity() {
                     bitmap = bitmap,
                     chapterId = chapterId,
                     pageIndex = pageIndex,
-                    scrollFraction = 0f,
+                    scrollFraction = frame.geometry?.scrollFraction ?: 0f,
+                    // Какая часть страницы попала в кадр: без неё пометки
+                    // порядка чтения в книге нарисовать не по чему.
+                    geometry = frame.geometry,
                 )
                 if (!bitmap.isRecycled) bitmap.recycle()
                 withUIContext { toast(result.toToastText(), Toast.LENGTH_LONG) }
@@ -2007,9 +2087,40 @@ class ReaderActivity : BaseActivity() {
         return null
     }
 
+    /**
+     * Перерисовать дерево вьюх читалки.
+     *
+     * Пометки порядка чтения рисует сама вьюха страницы (координаты регионов
+     * лежат в пикселях страницы, а не окна), а invalidate() родителя НЕ
+     * помечает потомков грязными — при аппаратном рендере они переиспользуют
+     * готовые display list. Поэтому обходим дерево и просим каждую вьюху
+     * перерисоваться: так работает и включение/выключение пометок, и появление
+     * нового снимка на открытой странице.
+     */
+    private fun invalidateReaderViews(view: View = binding.root) {
+        view.invalidate()
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) {
+                invalidateReaderViews(view.getChildAt(index))
+            }
+        }
+    }
+
     private suspend fun cropCurrentSelectionBitmap(
         rect: android.graphics.RectF,
-    ): Bitmap? {
+    ): Bitmap? = cropCurrentSelectionFrame(rect)?.bitmap
+
+    /**
+     * Кадр видимой области страницы вместе с его геометрией.
+     *
+     * Кадр без геометрии — половина записи скриншота: координаты распознанных
+     * регионов нормализованы к уменьшенному и обрезанному битмапу кадра, а в
+     * книге их нужно вернуть на страницу. Геометрия доступна только когда кадр
+     * снят с ОДНОЙ страницы ([frameGeometryOf]).
+     */
+    private suspend fun cropCurrentSelectionFrame(
+        rect: android.graphics.RectF,
+    ): ReaderFrameCapture? {
         val captures = resolveSelectionCaptures(rect)
         // Страница может быть ещё не отрисована (или у вебтуна нет разрешимой
         // области выделения) — это обычное состояние, а не ошибка. Раньше здесь
@@ -2020,12 +2131,50 @@ class ReaderActivity : BaseActivity() {
             return null
         }
         val manga = viewModel.manga ?: throw IllegalStateException("Manga unavailable")
-        return selectionBitmapCropper.cropSelectionBitmap(
+        val bitmap = selectionBitmapCropper.cropSelectionBitmap(
             manga = manga,
             captures = captures,
             shape = mihon.data.ocr.ScanShape.fromId(
                 uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>().scanShape().get(),
             ),
+        ) ?: return null
+        return ReaderFrameCapture(bitmap = bitmap, geometry = frameGeometryOf(captures))
+    }
+
+    /**
+     * Какая часть файла страницы попала в кадр, в нормализованных координатах
+     * (0..1) плюс размеры самого файла.
+     *
+     * Размеры берём у вьюхи страницы, потому что [ReaderSelectionCapture.sourceRect]
+     * — это прямоугольник в координатах ИМЕННО ЭТОГО файла (вьюха сама
+     * разворачивает зум, панораму, поворот и обрезку рамок), а размеры кадра
+     * после даунскейла к ним непригодны.
+     *
+     * null — геометрии нет: кадр склеен из нескольких страниц (экран вебтуна
+     * перекрыл границу полос) или страница ещё не отрисована. Тогда запись
+     * скриншота остаётся без геометрии, и в книге она просто ничего не рисует.
+     */
+    private fun frameGeometryOf(
+        captures: List<ReaderSelectionCapture>,
+    ): AutoReadEngine.OcrFrameGeometry? {
+        val capture = captures.singleOrNull() ?: return null
+        val source = (capture.bitmapSource as? ReaderPageImageView)?.sourceSizeOrNull() ?: return null
+        val (sourceWidth, sourceHeight) = source
+        if (sourceWidth <= 0 || sourceHeight <= 0) return null
+        val sourceRect = capture.sourceRect
+        val crop = mihon.data.ocr.SerializableNormalizedRect(
+            left = sourceRect.left.toFloat() / sourceWidth,
+            top = sourceRect.top.toFloat() / sourceHeight,
+            right = sourceRect.right.toFloat() / sourceWidth,
+            bottom = sourceRect.bottom.toFloat() / sourceHeight,
+        )
+        if (!crop.isUsable()) return null
+        return AutoReadEngine.OcrFrameGeometry(
+            sourceWidth = sourceWidth,
+            sourceHeight = sourceHeight,
+            crop = crop,
+            // Прокрутка страницы: сколько её высоты осталось позади кадра.
+            scrollFraction = crop.top,
         )
     }
 
