@@ -36,7 +36,7 @@ object AiChatTools {
 
     /** Документация инструментов для системного промпта агента. */
     val SYSTEM_PROMPT_LINES = listOf(
-        "@tool render_audio {\"text\":\"текст\",\"voice\":\"ru-RU-SvetlanaNeural\",\"name\":\"имя.mp3\"} — озвучить текст голосом в файл MP3 (workspace/audio/), файл появится в чате готовым",
+        "@tool render_audio {\"text\":\"текст\",\"voice\":\"ru-RU-SvetlanaNeural\",\"name\":\"имя.mp3\"} — озвучить ТЕКСТ голосом в файл MP3 (workspace/audio/), файл появится в чате готовым. ВАЖНО: он берёт только текст, страницу книги им прочитать нельзя — за «прочти книгу/страницу и пришли аудиофайл» отвечают действия читалки reader_do {\"action\":\"page_audio\"} и {\"action\":\"chapter_audio\"}: они распознают страницу тем же OCR и синтезируют mp3 в workspace/audio/, файл приходит карточкой в чат. Не подменяй их render_audio и уж тем более авточтением",
         "@tool voice_list {} — список голосов Edge TTS и какой сейчас выбран",
         "@tool voice_preview {\"voice\":\"ru-RU-DmitryNeural\"} — проиграть пробу голоса, чтобы пользователь послушал",
         "@tool voice_set {\"voice\":\"ru-RU-DmitryNeural\"} — сменить голос озвучки приложения на указанный",

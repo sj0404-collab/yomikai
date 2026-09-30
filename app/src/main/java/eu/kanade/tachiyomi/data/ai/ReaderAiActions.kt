@@ -29,10 +29,14 @@ object ReaderAiActions {
 
     fun describe(): String {
         val list = ids().map { it.removePrefix("reader.") }
+        // Действия аудиоэкспорта не проходят через реестр Activity: их
+        // выполняет сам агент. Их имена всё равно нужно назвать, иначе модель,
+        // сверившаяся со списком, решит, что таких инструментов нет.
+        val extra = "плюс всегда доступны: " + ReaderAudioExport.ACTION_NAMES.joinToString(", ")
         return if (list.isEmpty()) {
-            "Читалка не зарегистрировала действия (открой книгу в читалке)."
+            "Читалка не зарегистрировала действия (открой книгу в читалке). $extra"
         } else {
-            "Доступные действия читалки: " + list.joinToString(", ")
+            "Доступные действия читалки: " + list.joinToString(", ") + ". $extra"
         }
     }
 

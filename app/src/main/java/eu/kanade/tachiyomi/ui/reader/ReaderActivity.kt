@@ -89,6 +89,7 @@ import eu.kanade.tachiyomi.data.notification.NotificationReceiver
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.data.saver.Image
 import eu.kanade.tachiyomi.data.saver.ImageSaver
+import eu.kanade.tachiyomi.data.tts.AutoReadEngine
 import eu.kanade.tachiyomi.databinding.ReaderActivityBinding
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
@@ -1928,30 +1929,53 @@ class ReaderActivity : BaseActivity() {
 
     /**
      * «Скриншот сейчас»: захватить текущий видимый кадр страницы и сохранить
-     * как скриншот в буфер «Скриншоты» (OCR выбранным движком — включая Glens).
-     * Не влияет на авточтение и озвучку.
+     * как скриншот в буфер «Скриншоты» (OCR выбранным движком — включая Glens)
+     * и в общую папку `Pictures/Yomikai`. Не влияет на авточтение и озвучку.
+     *
+     * Тост соответствует реальному итогу: движок может не сохранить кадр
+     * (выключенный преф, кадр не скопировался, JPEG не закодировался) или
+     * сохранить только внутрь приложения. Раньше здесь стоял безусловный
+     * «Скриншот сохранён», и читатель уходил искать файл, которого нет.
      */
     private fun captureInstantScreenshot() {
         lifecycleScope.launchIO {
             try {
                 val root = binding.root
                 val fullRect = android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
-                val bitmap = cropCurrentSelectionBitmap(fullRect) ?: return@launchIO
+                val bitmap = cropCurrentSelectionBitmap(fullRect)
+                if (bitmap == null) {
+                    withUIContext { toast("Не удалось получить кадр страницы") }
+                    return@launchIO
+                }
                 val chapterId = viewModel.getCurrentChapter()?.chapter?.id ?: -1L
                 val pageIndex = (viewModel.state.value.currentPage - 1).coerceAtLeast(0)
-                autoReadEngine.captureInstantScreenshot(
+                // Итоговый тост ждёт результата движка, а он включает OCR и может
+                // идти секунды: без этого сообщения нажатие выглядит как «ничего не
+                // произошло». Это честное «сохраняю», а не прежнее «сохранён».
+                withUIContext { toast("Сохраняю кадр…") }
+                val result = autoReadEngine.captureInstantScreenshot(
                     bitmap = bitmap,
                     chapterId = chapterId,
                     pageIndex = pageIndex,
                     scrollFraction = 0f,
                 )
                 if (!bitmap.isRecycled) bitmap.recycle()
-                withUIContext { toast("Скриншот сохранён") }
+                withUIContext { toast(result.toToastText(), Toast.LENGTH_LONG) }
             } catch (e: Exception) {
                 logcat(LogPriority.ERROR, e) { "Failed to capture instant screenshot" }
                 withUIContext { toast("Не удалось сделать скриншот") }
             }
         }
+    }
+
+    /** Текст тоста по итогу [AutoReadEngine.captureInstantScreenshot]. */
+    private fun AutoReadEngine.ScreenshotResult.toToastText(): String = when (this) {
+        is AutoReadEngine.ScreenshotResult.SavedInGallery ->
+            "Скриншот сохранён: буфер «Скриншоты» и Pictures/Yomikai"
+        is AutoReadEngine.ScreenshotResult.SavedInAppOnly ->
+            "Скриншот сохранён только в приложении: $reason"
+        is AutoReadEngine.ScreenshotResult.NotSaved ->
+            "Скриншот не сохранён: $reason"
     }
 
     /** Регион вокруг точки касания (autoclick с удержанием) по центру вьюпорта. */

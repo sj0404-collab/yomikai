@@ -1,6 +1,15 @@
 package mihon.data.ocr
 
+import android.Manifest
+import android.content.ContentValues
 import android.content.Context
+import android.content.pm.PackageManager
+import android.media.MediaScannerConnection
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -14,6 +23,9 @@ import logcat.LogPriority
 import mihon.domain.ocr.model.OcrRegion
 import tachiyomi.core.common.util.system.logcat
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Кольцевой буфер скриншотов авточтения — текст регионов (~1-5 KB) плюс
@@ -31,6 +43,16 @@ object OcrScreenshotBuffer {
     private const val DEFAULT_MAX_ENTRIES = 50
     private const val FILE_NAME = "screenshots.json"
     private const val IMAGE_DIR_NAME = "screenshots_images"
+
+    /** Публичная папка в «Pictures», куда публикуются скриншоты для Галереи. */
+    private const val GALLERY_DIR_NAME = "Yomikai"
+    private const val JPEG_MIME = "image/jpeg"
+
+    /** Префикс имени файла в галерее: по нему кадр узнаётся среди прочих. */
+    private const val GALLERY_NAME_PREFIX = "Yomikai"
+
+    /** Ограничение длины DISPLAY_NAME: длинные имена обрезаются системой. */
+    private const val MAX_GALLERY_NAME_LENGTH = 80
 
     /** Лимит записей (кольцевой буфер). Меняется через dev-панель. */
     @kotlin.jvm.Volatile
@@ -67,6 +89,15 @@ object OcrScreenshotBuffer {
      *
      * @return Созданная запись.
      */
+    /**
+     * Добавить запись в буфер.
+     *
+     * synchronized не лишний: писателей стало два — авточтение пишет кадр за
+     * кадром, а кнопка «Скриншот сейчас» добавляет запись из отдельной
+     * корутины. Без блокировки оба собирали список от одного и того же
+     * состояния, и одна запись молча пропадала.
+     */
+    @Synchronized
     fun add(
         chapterId: Long,
         pageIndex: Int,
@@ -113,6 +144,76 @@ object OcrScreenshotBuffer {
         persist()
         return entry
     }
+    /**
+     * Опубликовать JPEG-кадр в общем хранилище: `Pictures/Yomikai`, то есть
+     * ровно там, где его видят «Галерея», «Файлы» и любой файловый менеджер.
+     *
+     * Зачем это нужно рядом с [add]: картинки буфера лежат в приватном
+     * `filesDir/screenshots_images/`, куда не смотрят ни MediaStore, ни
+     * FileProvider, ни галерея телефона. Читатель нажимал «Скриншот сейчас» и
+     * не находил файл НИГДЕ. Поэтому тот же JPEG дополнительно уходит в
+     * публичное хранилище, а внутренняя копия остаётся для вкладки «Скриншоты»
+     * (там кадр показывается вместе с оверлеем распознанных регионов).
+     *
+     * На Android 10+ (MediaStore) разрешение на запись не нужно вовсе, а при
+     * targetSdk 36 писать в публичные папки через `File` уже нельзя. Ветка для
+     * API < 29 нужна только для Android 8–9: там пишем файлом, но лишь если
+     * WRITE_EXTERNAL_STORAGE реально выдан — с targetSdk 36 система может не
+     * выдать его вовсе, и тогда возвращаем null, а не падаем.
+     *
+     * Ошибки никогда не пробрасываются: публикация — дополнение, из-за неё
+     * скриншот не должен теряться (в logcat пишем причину).
+     *
+     * @return Uri опубликованного файла или null, если публикация не вышла.
+     */
+    fun publishToGallery(context: Context, jpeg: ByteArray, displayName: String): Uri? {
+        val name = galleryFileName(displayName)
+        return runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                insertIntoMediaStore(context, jpeg, name)
+            } else {
+                writeToPublicPictures(context, jpeg, name)
+            }
+        }.getOrElse { e ->
+            logcat(LogPriority.WARN, e) { "OcrScreenshotBuffer: gallery publish failed for $name" }
+            null
+        }
+    }
+
+    /**
+     * Опубликовать в общую галерею JPEG уже сохранённой записи буфера — кнопка
+     * «Сохранить в галерею» во вкладке «Скриншоты» идёт через неё.
+     * Файл не перекодируется: в галерею уходит ровно тот кадр, который видит
+     * читатель (вместе с оверлеем регионов он остаётся во внутренней копии).
+     *
+     * @return Uri опубликованного файла или null — у записи нет картинки, файл
+     * не читается либо публикация не вышла.
+     */
+    fun publishEntryToGallery(context: Context, entry: OcrScreenshotEntry): Uri? {
+        val path = entry.imagePath
+        if (path == null) {
+            logcat(LogPriority.WARN) { "OcrScreenshotBuffer: entry ${entry.id} has no image" }
+            return null
+        }
+        val bytes = runCatching { File(path).readBytes() }.getOrElse { e ->
+            logcat(LogPriority.WARN, e) { "OcrScreenshotBuffer: read image failed for $path" }
+            return null
+        }
+        return publishToGallery(context, bytes, galleryDisplayName(entry.pageIndex, entry.timestamp))
+    }
+
+    /**
+     * Читаемое имя файла в галерее: `Yomikai_20260930_143512_p12`.
+     *
+     * Читатель ищет кадр глазами — в «Файлах», в «Галерее», в «Моих файлах» — и
+     * ориентируется по имени. Папка из сотни безликих `image.jpg` ни о чём не
+     * говорит, поэтому в имени есть приложение, дата, время и номер страницы.
+     * Публикуется это же имя, только с расширением `.jpg`.
+     */
+    fun galleryDisplayName(pageIndex: Int, timestamp: Long = System.currentTimeMillis()): String {
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(timestamp))
+        return "${GALLERY_NAME_PREFIX}_${stamp}_p${pageIndex + 1}"
+    }
 
     /** Все скриншоты для конкретной главы (в порядке добавления). */
     fun forChapter(chapterId: Long): List<OcrScreenshotEntry> =
@@ -150,6 +251,96 @@ object OcrScreenshotBuffer {
     }
 
     // ---- Внутренние ----
+
+    /**
+     * Вставка в MediaStore (Android 10+). Само разрешение на запись в
+     * `Pictures` приложению не нужно — картинка сразу становится видна
+     * Галерее. Если запись в поток не удалась, вставку откатываем: иначе в
+     * `Pictures/Yomikai` остаётся файл нулевого размера, который галерея
+     * показывает как «битую» картинку.
+     */
+    private fun insertIntoMediaStore(context: Context, jpeg: ByteArray, name: String): Uri? {
+        val resolver = context.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(MediaStore.MediaColumns.MIME_TYPE, JPEG_MIME)
+            put(
+                MediaStore.MediaColumns.RELATIVE_PATH,
+                "${Environment.DIRECTORY_PICTURES}/$GALLERY_DIR_NAME",
+            )
+            put(MediaStore.MediaColumns.DATE_MODIFIED, System.currentTimeMillis() / 1000)
+        }
+        val uri = resolver.insert(
+            MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+            values,
+        ) ?: run {
+            logcat(LogPriority.WARN) { "OcrScreenshotBuffer: MediaStore insert returned null for $name" }
+            return null
+        }
+        return try {
+            val output = resolver.openOutputStream(uri, "w")
+            if (output == null) {
+                runCatching { resolver.delete(uri, null, null) }
+                logcat(LogPriority.WARN) { "OcrScreenshotBuffer: openOutputStream returned null for $name" }
+                null
+            } else {
+                output.use { it.write(jpeg) }
+                uri
+            }
+        } catch (e: Exception) {
+            runCatching { resolver.delete(uri, null, null) }
+            throw e
+        }
+    }
+
+    /**
+     * Фолбэк для Android 8–9: публичные «Pictures» ещё пишутся файлом.
+     *
+     * Тут MediaStore ещё не индексирует файл за нас, поэтому после записи
+     * просим сканер перечитать каталог — иначе «Галерея» покажет файл только
+     * после перезагрузки, а это ровно тот случай, когда читатель «не находит
+     * файл НИГДЕ». На Android 10+ MediaStore индексирует вставку сам, там
+     * сканер не нужен.
+     */
+    @Suppress("DEPRECATION")
+    private fun writeToPublicPictures(context: Context, jpeg: ByteArray, name: String): Uri? {
+        if (
+            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            logcat(LogPriority.WARN) {
+                "OcrScreenshotBuffer: WRITE_EXTERNAL_STORAGE not granted, skip gallery publish"
+            }
+            return null
+        }
+        val dir = File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+            GALLERY_DIR_NAME,
+        )
+        if (!dir.exists() && !dir.mkdirs()) return null
+        val file = File(dir, name)
+        file.outputStream().use { it.write(jpeg) }
+        runCatching {
+            MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), null, null)
+        }.onFailure { e ->
+            logcat(LogPriority.WARN, e) { "OcrScreenshotBuffer: media scan failed for ${file.name}" }
+        }
+        return Uri.fromFile(file)
+    }
+
+    /**
+     * Имя файла для галереи: MediaStore не любит слеши и прочие символы пути,
+     * а расширение должно быть ровно `.jpg` — по нему галерея решает, что это
+     * именно изображение, и рисует миниатюру.
+     */
+    private fun galleryFileName(displayName: String): String {
+        val safe = displayName.substringBeforeLast('.')
+            .map { ch -> if (ch.isLetterOrDigit() || ch == '-' || ch == '_') ch else '_' }
+            .joinToString("")
+            .take(MAX_GALLERY_NAME_LENGTH)
+            .trim('_')
+        return "${safe.ifBlank { "screenshot" }}.jpg"
+    }
 
     private fun deleteImageFile(entry: OcrScreenshotEntry) {
         entry.imagePath?.let { path ->

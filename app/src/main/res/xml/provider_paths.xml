@@ -20,6 +20,14 @@
     <files-path
         name="files_ai_workspace"
         path="ai_workspace/" />
+    <!-- Кадры «Скриншот сейчас» лежат в files/screenshots_images — это приватное
+         хранилище, наружу его не отдаёт ни MediaStore, ни галерея. Без files-path
+         кнопка «Поделиться» во вкладке «Скриншоты» падала бы с «Failed to find
+         configured root»: построить content:// URI для кадра было нечем, и
+         отправить его в мессенджер/облако было невозможно. -->
+    <files-path
+        name="files_screenshots_images"
+        path="screenshots_images/" />
     <!--suppress AndroidElementNotAllowed -->
     <root-path
         name="ext_storage"

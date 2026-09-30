@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.data.tts
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.net.Uri
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
@@ -791,24 +792,55 @@ class AutoReadEngine(
     }
 
     /**
+     * Итог «Скриншот сейчас»: что реально удалось сделать с кадром.
+     *
+     * Существует ради одного требования — тост должен быть честным. Пока
+     * сохранение было одной строкой без результата, кнопка сообщала
+     * «Скриншот сохранён» даже тогда, когда JPEG выбрасывался, и читатель
+     * искал файл, которого нет ни в буфере, ни в галерее.
+     */
+    sealed interface ScreenshotResult {
+        /** Кадр сохранён и во внутренний буфер, и в публичную папку Pictures/Yomikai. */
+        data class SavedInGallery(val galleryUri: Uri) : ScreenshotResult
+
+        /**
+         * Кадр сохранён только во внутренний буфер «Скриншоты»: публичное
+         * хранилище недоступно (нет прав на запись, MediaStore отказал).
+         */
+        data class SavedInAppOnly(val reason: String) : ScreenshotResult
+
+        /** Кадр не сохранён нигде, [reason] объясняет почему. */
+        data class NotSaved(val reason: String) : ScreenshotResult
+    }
+
+    /**
      * Мгновенный скриншот: распознать текущий кадр выбранным движком (в т.ч.
-     * Glens) и сохранить в буфер «Скриншоты», НЕ озвучивая и не трогая
-     * состояние авточтения. Вызывается с плавающей кнопки читалки.
+     * Glens) и сохранить его в буфер «Скриншоты» И в общую галерею
+     * (`Pictures/Yomikai`), НЕ озвучивая и не трогая состояние авточтения.
+     * Вызывается с плавающей кнопки читалки.
      *
      * Кадр читается ЗДЕСЬ, на потоке вызывающего, и в фон уходит его копия.
      * Раньше фоновой задаче отдавался исходный битмап, а вызывающий
      * переиспользовал его сразу же: гонка приводила к `getPixels` по
      * переиспользованному битмапу, и приложение падало сразу после сообщения
      * «Скриншот сохранён» — без всякой ошибки на экране.
+     *
+     * Функция suspend и возвращает [ScreenshotResult]: раньше она молча уходила
+     * в `return@launch` на пяти ветках (выключенный преф, переиспользованный
+     * битмап, не удалось скопировать кадр, таймаут OCR, пустой OCR), а читалка
+     * всё равно показывала «Скриншот сохранён» — и читатель искал файл там,
+     * где его нет. Теперь тост показывается по факту.
      */
-    fun captureInstantScreenshot(
+    suspend fun captureInstantScreenshot(
         bitmap: Bitmap,
         chapterId: Long,
         pageIndex: Int,
         scrollFraction: Float,
-    ) {
-        if (!prefs.autoScreenshotEnabled().get()) return
-        if (bitmap.isRecycled) return
+    ): ScreenshotResult {
+        if (!prefs.autoScreenshotEnabled().get()) {
+            return ScreenshotResult.NotSaved("автоскриншоты выключены в настройках")
+        }
+        if (bitmap.isRecycled) return ScreenshotResult.NotSaved("кадр уже освобождён")
 
         // Фоновой задаче нужна ЕЁ копия. Кадр вызывающего может быть
         // переиспользован сразу после возврата, а уменьшение не всегда
@@ -817,26 +849,77 @@ class AutoReadEngine(
         val scaled = downscaleForScan(bitmap).takeIf { it !== bitmap }
             ?: runCatching { bitmap.copy(bitmap.config ?: android.graphics.Bitmap.Config.ARGB_8888, false) }
                 .getOrNull()
-            ?: return
-        scope.launch {
-            try {
-                val result = try {
-                    withTimeout(OCR_FRAME_TIMEOUT_MS) {
-                        scanPageOcr.await(chapterId, pageIndex, scaled.toOcrImage())
-                    }
-                } catch (e: TimeoutCancellationException) {
-                    logcat(LogPriority.WARN) {
-                        "Instant screenshot OCR timeout (${OCR_FRAME_TIMEOUT_MS}ms)"
-                    }
-                    return@launch
+            ?: return ScreenshotResult.NotSaved("не удалось скопировать кадр")
+        return try {
+            // Работа уходит в поток движка, а вызывающий ЖДЁТ результат: тост
+            // должен отражать реальный итог, а не сам факт нажатия. Копия
+            // освобождается внутри фоновой задачи — если вызывающего отменят
+            // (свернули читалку), задача всё равно доработает и уберёт битмап
+            // сама, а не получит его переиспользованным.
+            scope.async {
+                try {
+                    saveInstantScreenshot(scaled, chapterId, pageIndex, scrollFraction)
+                } finally {
+                    // Переиспользуем только копию: кадр вызывающего остаётся его.
+                    if (scaled !== bitmap && !scaled.isRecycled) scaled.recycle()
                 }
-                // JPEG-кадр пишем ДО recycle: после него пикселей не будет.
-                val jpeg = runCatching { encodeJpeg(scaled, JPEG_QUALITY) }.getOrNull()
-                val width = scaled.width
-                val height = scaled.height
-                if (result.regions.isEmpty()) return@launch
-                val ordered = orderRegions(
-                    result.regions.map {
+            }.await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logcat(LogPriority.WARN, e) { "Instant screenshot failed" }
+            ScreenshotResult.NotSaved(e.message ?: "ошибка сохранения")
+        }
+    }
+
+    /**
+     * Само сохранение кадра: JPEG → запись в буфер «Скриншоты» → копия в
+     * публичную галерею.
+     *
+     * Ключевое правило: OCR нужен только ради текста и оверлея регионов, поэтому
+     * его провал (таймаут 25 с, исключение движка, пустой результат) НЕ отменяет
+     * сохранение картинки. Раньше проверка `result.regions.isEmpty()` стояла
+     * после кодирования JPEG и выбрасывала кадр целиком: читатель нажимал
+     * «Скриншот сейчас» на странице, которую OCR не разобрал, и не получал
+     * ничего — ни в буфере, ни в галерее.
+     */
+    private suspend fun saveInstantScreenshot(
+        bitmap: Bitmap,
+        chapterId: Long,
+        pageIndex: Int,
+        scrollFraction: Float,
+    ): ScreenshotResult {
+        val page = try {
+            withTimeout(OCR_FRAME_TIMEOUT_MS) {
+                scanPageOcr.await(
+                    chapterId = chapterId,
+                    pageIndex = pageIndex,
+                    image = bitmap.toOcrImage(),
+                )
+            }
+        } catch (e: TimeoutCancellationException) {
+            logcat(LogPriority.WARN) {
+                "Instant screenshot OCR timeout (${OCR_FRAME_TIMEOUT_MS}ms)"
+            }
+            null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logcat(LogPriority.WARN, e) { "Instant screenshot OCR failed" }
+            null
+        }
+
+        // JPEG-кадр пишем ДО recycle: после него пикселей не будет.
+        val jpeg = runCatching { encodeJpeg(bitmap, JPEG_QUALITY) }.getOrNull()
+            ?: return ScreenshotResult.NotSaved("не удалось закодировать кадр")
+        val width = bitmap.width
+        val height = bitmap.height
+
+        val ordered = page?.regions
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { regions ->
+                orderRegions(
+                    regions.map {
                         Line(
                             text = it.text,
                             boundingBox = it.boundingBox,
@@ -844,31 +927,44 @@ class AutoReadEngine(
                     },
                     OcrRegionRules.readingOrderFor(prefs),
                 )
-                OcrScreenshotBuffer.add(
-                    chapterId = chapterId,
-                    pageIndex = pageIndex,
-                    scrollFraction = scrollFraction,
-                    regions = ordered.mapIndexed { idx, line ->
-                        OcrRegion(
-                            order = idx,
-                            text = line.text,
-                            boundingBox = line.boundingBox,
-                            textOrientation = OcrTextOrientation.Horizontal,
-                        )
-                    },
-                    engineUsed = result.ocrModel.name.lowercase(),
-                    imageWidth = width,
-                    imageHeight = height,
-                    imageJpeg = jpeg,
-                )
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                logcat(LogPriority.WARN, e) { "Instant screenshot OCR failed" }
-            } finally {
-                // Переиспользуем только копию: кадр вызывающего остаётся его.
-                if (scaled !== bitmap && !scaled.isRecycled) scaled.recycle()
             }
+            .orEmpty()
+
+        val entry = OcrScreenshotBuffer.add(
+            chapterId = chapterId,
+            pageIndex = pageIndex,
+            scrollFraction = scrollFraction,
+            regions = ordered.mapIndexed { idx, line ->
+                OcrRegion(
+                    order = idx,
+                    text = line.text,
+                    boundingBox = line.boundingBox,
+                    textOrientation = OcrTextOrientation.Horizontal,
+                )
+            },
+            // Без OCR результата виноват выбранный движок — он и остаётся
+            // подписью записи, чтобы читатель видел, каким движком снималось.
+            engineUsed = (page?.ocrModel ?: prefs.ocrModel().get()).name.lowercase(),
+            imageWidth = width,
+            imageHeight = height,
+            imageJpeg = jpeg,
+        )
+        if (entry.imagePath == null) {
+            // JPEG не записался — записи с картинкой не будет, публиковать нечего.
+            return ScreenshotResult.NotSaved("буфер скриншотов недоступен")
+        }
+
+        // Та же самая картинка в Pictures/Yomikai: без неё файл не видно ни в
+        // галерее телефона, ни в «Файлах» — приватный filesDir наружу не отдаёт.
+        val galleryUri = OcrScreenshotBuffer.publishToGallery(
+            context = context,
+            jpeg = jpeg,
+            displayName = OcrScreenshotBuffer.galleryDisplayName(pageIndex),
+        )
+        return if (galleryUri != null) {
+            ScreenshotResult.SavedInGallery(galleryUri)
+        } else {
+            ScreenshotResult.SavedInAppOnly("галерея недоступна")
         }
     }
 

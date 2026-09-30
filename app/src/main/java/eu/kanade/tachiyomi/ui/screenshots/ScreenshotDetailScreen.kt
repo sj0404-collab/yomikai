@@ -17,6 +17,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -29,6 +31,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,6 +41,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cafe.adriel.voyager.navigator.LocalNavigator
@@ -45,8 +49,6 @@ import cafe.adriel.voyager.navigator.currentOrThrow
 import coil3.compose.AsyncImage
 import eu.kanade.presentation.util.Screen as YomikaiScreen
 import java.io.File
-import cafe.adriel.voyager.navigator.LocalNavigator
-import cafe.adriel.voyager.navigator.currentOrThrow
 import mihon.data.ocr.OcrScreenshotBuffer
 import mihon.data.ocr.OcrScreenshotEntry
 import java.text.SimpleDateFormat
@@ -73,11 +75,16 @@ class ScreenshotDetailScreen(
     @Composable
     override fun Content() {
         val navigator = LocalNavigator.currentOrThrow
+        val context = LocalContext.current
+        val scope = rememberCoroutineScope()
         val entries by OcrScreenshotBuffer.entries.collectAsState()
         val entry = entries.firstOrNull { it.id == entryId }
         val compareEntry = compareWithId?.let { id -> entries.firstOrNull { it.id == id } }
         val dateFormat = remember { SimpleDateFormat("HH:mm:ss, dd.MM", Locale.getDefault()) }
         var showDiff by remember { mutableStateOf(compareEntry != null) }
+        // Кадр лежит в приватном filesDir, поэтому для «Поделиться»/«В галерею»
+        // нужен сам файл: без него кнопок не будет — делить нечего.
+        val imageFile = entry?.imagePath?.let { File(it) }?.takeIf { it.exists() }
 
         Column(modifier = Modifier.fillMaxSize()) {
             TopAppBar(
@@ -98,6 +105,14 @@ class ScreenshotDetailScreen(
                     if (compareEntry != null) {
                         IconButton(onClick = { showDiff = !showDiff }) {
                             Icon(Icons.Outlined.SwapHoriz, contentDescription = "Diff")
+                        }
+                    }
+                    if (entry != null && imageFile != null) {
+                        IconButton(onClick = { shareScreenshot(context, imageFile) }) {
+                            Icon(Icons.Outlined.Share, contentDescription = "Поделиться")
+                        }
+                        IconButton(onClick = { saveScreenshotToGallery(scope, context, entry) }) {
+                            Icon(Icons.Outlined.Download, contentDescription = "Сохранить в галерею")
                         }
                     }
                 },
