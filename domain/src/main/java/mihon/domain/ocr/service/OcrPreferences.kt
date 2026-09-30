@@ -379,6 +379,19 @@ class OcrPreferences(
      */
     fun autoReadWebtoonSpeed() = preferenceStore.getString("pref_autoread_webtoon_speed", "normal")
 
+    // ---- Авточтение: фоновая музыка ----
+    /**
+     * Фоновая музыка в авточтении манги. Порядок треков тот же, что у читалки
+     * книг (процедурные петли eu.kanade.tachiyomi.data.books.BookAmbience), но
+     * настройки отдельные: манга и книга читаются в разных сессиях, и одна
+     * громкость на всех только мешала бы. Выключено по умолчанию — музыка
+     * включается только осознанно, вместе со звуком чужой речи.
+     */
+    fun autoReadMusicEnabled() = preferenceStore.getBoolean("pref_autoread_music_enabled", false)
+
+    /** Громкость фоновой музыки авточтения (0..1); во время речи приглушается. */
+    fun autoReadMusicVolume() = preferenceStore.getFloat("pref_autoread_music_volume", 0.15f)
+
     // ---- Веб: сохранение как локальная глава ----
     /** Сохранять веб-страницы как локальные главы с изоляцией по сайту */
     fun webSavePerSiteFolder() = preferenceStore.getBoolean("pref_web_per_site_folder", true)
