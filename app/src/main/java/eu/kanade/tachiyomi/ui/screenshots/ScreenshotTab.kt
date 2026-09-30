@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.screenshots
 
+import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -20,6 +21,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -32,11 +35,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.navigator.LocalNavigator
@@ -47,6 +52,15 @@ import coil3.compose.AsyncImage
 import eu.kanade.presentation.util.Tab
 import eu.kanade.tachiyomi.data.tts.TtsSpeaker
 import eu.kanade.tachiyomi.ui.main.MainActivity
+import eu.kanade.tachiyomi.util.storage.getUriCompat
+import eu.kanade.tachiyomi.util.system.toShareIntent
+import eu.kanade.tachiyomi.util.system.toast
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import mihon.data.ocr.OcrScreenshotBuffer
 import mihon.data.ocr.OcrScreenshotEntry
 import java.io.File
@@ -80,6 +94,8 @@ data object ScreenshotTab : Tab {
     @Composable
     override fun Content() {
         val navigator = LocalNavigator.currentOrThrow
+        val context = LocalContext.current
+        val scope = rememberCoroutineScope()
         val entries by OcrScreenshotBuffer.entries.collectAsState()
         var showClearDialog = remember { androidx.compose.runtime.mutableStateOf(false) }
 
@@ -136,6 +152,8 @@ data object ScreenshotTab : Tab {
                             onClick = {
                                 navigator.push(ScreenshotDetailScreen(entry.id))
                             },
+                            onShare = { shareScreenshot(context, it) },
+                            onSaveToGallery = { saveScreenshotToGallery(scope, context, it) },
                         )
                     }
                 }
@@ -146,7 +164,13 @@ data object ScreenshotTab : Tab {
             AlertDialog(
                 onDismissRequest = { showClearDialog.value = false },
                 title = { Text("Очистить скриншоты?") },
-                text = { Text("Все ${entries.size} скриншотов будут удалены.") },
+                text = {
+                    // Честно про границы: удаляются только внутренние копии.
+                    // Опубликованные в Pictures/Yomikai — обычные файлы
+                    // телефона, и «Очистить» их не трогает.
+                    Text("Все ${entries.size} скриншотов будут удалены из приложения. " +
+                        "Копии в Pictures/Yomikai останутся.")
+                },
                 confirmButton = {
                     TextButton(onClick = {
                         OcrScreenshotBuffer.clear()
@@ -169,8 +193,11 @@ data object ScreenshotTab : Tab {
 private fun ScreenshotCard(
     entry: OcrScreenshotEntry,
     onClick: () -> Unit,
+    onShare: (File) -> Unit,
+    onSaveToGallery: (OcrScreenshotEntry) -> Unit,
 ) {
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+    val imageFile = entry.imagePath?.let { File(it) }?.takeIf { it.exists() }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -183,9 +210,9 @@ private fun ScreenshotCard(
         verticalAlignment = Alignment.Top,
     ) {
         // Миниатюра настоящего кадра (если запись сохранила JPEG).
-        if (entry.imagePath != null && File(entry.imagePath).exists()) {
+        if (imageFile != null) {
             AsyncImage(
-                model = File(entry.imagePath),
+                model = imageFile,
                 contentDescription = null,
                 modifier = Modifier
                     .size(width = 72.dp, height = 96.dp)
@@ -222,6 +249,36 @@ private fun ScreenshotCard(
                 overflow = TextOverflow.Ellipsis,
                 color = MaterialTheme.colorScheme.onSurface,
             )
+            // Кадр без текста распознавания всё равно нужно куда-то выгрузить,
+            // поэтому действия есть у каждой записи с картинкой, а не только у
+            // той, где OCR что-то нашёл.
+            if (imageFile != null) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(
+                        onClick = { onShare(imageFile) },
+                        modifier = Modifier.size(36.dp),
+                    ) {
+                        Icon(
+                            Icons.Outlined.Share,
+                            contentDescription = "Поделиться",
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                    IconButton(
+                        onClick = { onSaveToGallery(entry) },
+                        modifier = Modifier.size(36.dp),
+                    ) {
+                        Icon(
+                            Icons.Outlined.Download,
+                            contentDescription = "Сохранить в галерею",
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                }
+            }
         }
         Column(horizontalAlignment = Alignment.End) {
             Text(
@@ -235,6 +292,55 @@ private fun ScreenshotCard(
                 text = entry.scanRegion.sourceLabel(),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * Отдать кадр наружу (мессенджер, облако, «Файлы»).
+ *
+ * Content Uri строит FileProvider — корень `screenshots_images` добавлен в
+ * provider_paths.xml, потому что кадры лежат в приватном filesDir и без
+ * явного корня URI не строится («Failed to find configured root»).
+ */
+fun shareScreenshot(context: Context, file: File) {
+    runCatching {
+        context.startActivity(
+            file.getUriCompat(context).toShareIntent(
+                context = context,
+                type = "image/jpeg",
+                message = file.name,
+            ),
+        )
+    }.onFailure { e ->
+        logcat(LogPriority.WARN, e) { "Share screenshot failed for ${file.name}" }
+        context.toast("Не удалось открыть отправку: ${e.message ?: "нет приложений"}")
+    }
+}
+
+/**
+ * Опубликовать кадр из буфера в общую галерею (`Pictures/Yomikai`) — тот же
+ * путь, что и у «Скриншот сейчас», поэтому имя файла и папка совпадают.
+ * Запись уже лежит файлом, так что кадр не перекодируется заново.
+ *
+ * Чтение файла и вставка в MediaStore идут в IO: на главном потоке это были бы
+ * и лишний кадр в интерфейсе, и риск ANR на большом JPEG.
+ */
+fun saveScreenshotToGallery(
+    scope: CoroutineScope,
+    context: Context,
+    entry: OcrScreenshotEntry,
+) {
+    scope.launch(Dispatchers.IO) {
+        val uri = OcrScreenshotBuffer.publishEntryToGallery(context.applicationContext, entry)
+        withContext(Dispatchers.Main) {
+            context.toast(
+                if (uri != null) {
+                    "Скриншот сохранён в Pictures/Yomikai"
+                } else {
+                    "Не удалось сохранить в галерею: файл не читается или хранилище недоступно"
+                },
             )
         }
     }

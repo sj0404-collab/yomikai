@@ -107,7 +107,11 @@ object AiPlugins {
         "skill_create", "skill_list", "skill_run",
         "reader_actions", "reader_do",
         "web_screenshot",
-    ) + AiReaderTools.TOOL_NAMES + AiChatTools.TOOL_NAMES
+    ) + AiReaderTools.TOOL_NAMES + AiChatTools.TOOL_NAMES +
+        // Экспорт страницы и главы в аудиофайл: без этого плагин разработчика
+        // мог бы занять page_audio, и тогда просьба «прочти и пришли аудио»
+        // уходила бы в его код вместо встроенного.
+        ReaderAudioExport.ACTION_NAMES
 
     private fun toJson(p: Plugin) = JSONObject()
         .put("name", sanitize(p.name))

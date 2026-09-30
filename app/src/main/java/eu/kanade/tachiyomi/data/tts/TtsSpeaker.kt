@@ -349,7 +349,10 @@ object TtsSpeaker {
         val raw = voiceSpec?.trim().orEmpty()
         if (raw.isEmpty()) return "" to ""
         val sep = raw.indexOf(SPEC_SEPARATOR)
-        if (sep <= 0) return "" to raw
+        // Разделитель в начале — это «пакета нет, голос задан»: «::ru-ru-…».
+        // Раньше sep <= 0 возвращал такую строку целиком, и имя голоса
+        // оставалось с двоеточиями, а движок его не находил.
+        if (sep < 0) return "" to raw
         return raw.substring(0, sep).trim() to raw.substring(sep + SPEC_SEPARATOR.length).trim()
     }
 
