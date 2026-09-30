@@ -1,11 +1,12 @@
 package eu.kanade.tachiyomi.ui.overlay
 
+import android.app.Activity
+import android.app.Application
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
-import android.app.usage.UsageStatsManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -17,30 +18,70 @@ import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.RectF
-import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
-import kotlinx.coroutines.cancel
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.widget.Button
-import android.widget.EditText
 import android.widget.FrameLayout
-import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.Pause
+import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.StopCircle
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModelStoreOwner
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.lifecycle.setViewTreeViewModelStoreOwner
+import androidx.savedstate.SavedStateRegistry
+import androidx.savedstate.SavedStateRegistryController
+import androidx.savedstate.SavedStateRegistryOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import eu.kanade.presentation.reader.components.OcrControlFab
+import eu.kanade.presentation.reader.components.OcrControlMenuCard
+import eu.kanade.presentation.reader.components.OcrMenuAction
+import eu.kanade.presentation.reader.components.OcrMenuActionButton
+import eu.kanade.presentation.reader.components.OcrMenuRow
 import eu.kanade.tachiyomi.data.tts.AutoReadEngine
+import eu.kanade.tachiyomi.util.view.setComposeContent
+import kotlinx.coroutines.cancel
 import logcat.LogPriority
 import mihon.domain.ocr.service.OcrPreferences
 import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import kotlin.math.roundToInt
 
 /**
  * Плавающая кнопка поверх ДРУГИХ приложений (v1.9.72).
@@ -73,24 +114,33 @@ class OcrOverlayService : Service() {
         private const val BASE_H_DP = 340f
         private const val BTN_DP = 60f
 
-        // Цвета меню — те же роли, что у Material в читалке: карточка,
-        // круглая кнопка, кнопка в активном состоянии, текст и подпись.
-        private const val CARD_BG = 0xF5232A3A.toInt()
-        private const val FAB_BG = 0xF52E4A6B.toInt()
-        private const val BTN_BG = 0xFF3A4A63.toInt()
-        private const val PRIMARY_ACTIVE_BG = 0xFF4A7EAF.toInt()
-        private const val ON_SURFACE = 0xFFF2F4F8.toInt()
-        private const val ON_SURFACE_VARIANT = 0xFFB9C4D6.toInt()
-        private const val CARD_RADIUS_DP = 14f
-        private const val FAB_RADIUS_DP = 30f
-        private const val BTN_RADIUS_DP = 18f
-        private const val BTN_SIZE_DP = 36f
+        // Вид панели теперь рисует общий компонент OcrControlMenuCard, поэтому
+        // своих цветов и радиусов у оверлея больше нет: те же краски, что и в
+        // плавающем меню читалки.
+
+        /** Отступ от края окна до панели и до кнопки, dp. */
+        private const val PANEL_PADDING_DP = 6f
+
+        /** Зазор между карточкой меню и кнопкой, dp. */
+        private const val PANEL_GAP_DP = 8f
+
+        /**
+         * Какую долю высоты экрана может занимать раскрытая панель.
+         *
+         * Раньше окно панели было фиксированной высоты (340 dp) и не умело
+         * прокручиваться, поэтому нижние пункты просто обрезались, а поле ввода
+         * не попадало на экран вообще. Теперь высота окна следует за содержимым,
+         * но не должна закрывать экран целиком.
+         */
+        private const val MAX_PANEL_SCREEN_FRACTION = 0.72f
 
         /** Отступ от края экрана, куда прижимается панель. */
         private const val CORNER_MARGIN_DP = 8f
 
-        /** Как часто проверять, не открыто ли наше собственное приложение. */
-        private const val FOREGROUND_POLL_MS = 700L
+        /** Позиция окна оверлея: отдельные префы, чтобы не спорить с доменными. */
+        private const val POSITION_PREFS = "yomikai_ocr_overlay"
+        private const val KEY_POS_X = "pos_x"
+        private const val KEY_POS_Y = "pos_y"
 
         /** Действие: начать чтение рамки с уже полученным разрешением. */
         private const val ACTION_START_READING = "eu.kanade.tachiyomi.ocr.START_READING"
@@ -190,25 +240,58 @@ class OcrOverlayService : Service() {
 
     private var root: FrameLayout? = null
     private var params: WindowManager.LayoutParams? = null
-    private var bubbleText: TextView? = null
-    private var input: EditText? = null
-    private var contentView: LinearLayout? = null
-    private var floatButton: TextView? = null
-    private var sttButton: TextView? = null
-    private var regionButton: TextView? = null
 
-    /** Подпись строки режима области: на круглой кнопке она не помещается. */
-    private var regionRowLabel: TextView? = null
-    /** Подпись строки чтения рамки — там же, где и состояние кнопки. */
-    private var readRowLabel: TextView? = null
+    // Панель нарисована общим компонентом OcrControlMenuCard, поэтому её вид
+    // описывается состоянием, а не вьюхами: Compose перерисовывает только то,
+    // что реально изменилось.
+    private val menuExpanded = mutableStateOf(false)
+    private val bubble = mutableStateOf("")
+    private val inputText = mutableStateOf("")
+    private val speakingState = mutableStateOf(false)
+    private val readingState = mutableStateOf(false)
+    private val sttState = mutableStateOf(false)
+    private val regionLabelState = mutableStateOf("Область: авто")
+
+    /** Показывается ли рамка зафиксированной области: нужно подписи кнопки. */
+    private val frameVisibleState = mutableStateOf(false)
 
     private val readEngine by lazy { AutoReadEngine(applicationContext) }
     private var stt: GameSttManager? = null
-    private var isSpeaking = false
-    private var expandedW = 0
     private var expandedH = 0
     private var ignoreNextClip = false
     private var lastClipText = ""
+
+    /**
+     * Compose живёт в окне WindowManager, а не в Activity, поэтому владельцев
+     * приходится создавать вручную: без них не работали бы rememberSaveable
+     * (нужен для поля ввода) и освобождение композиции при смерти сервиса.
+     */
+    private val panelLifecycleOwner = object : LifecycleOwner {
+        // Реестр доступен наружу: currentState у интерфейса Lifecycle — только
+        // для чтения, перевести жизненный цикл можно только через сам реестр.
+        val registry: LifecycleRegistry = LifecycleRegistry(this)
+
+        override val lifecycle: Lifecycle get() = registry
+    }
+
+    private val panelSavedStateOwner = object : SavedStateRegistryOwner {
+        // SavedStateRegistryOwner — это ещё и LifecycleOwner, иначе объект не
+        // реализует интерфейс и не скомпилируется.
+        override val lifecycle: Lifecycle get() = panelLifecycleOwner.lifecycle
+
+        // Публичного конструктора у SavedStateRegistry нет, только контроллер.
+        // performAttach() допустим лишь пока жизненный цикл в INITIALIZED,
+        // а он таким и остаётся до onCreate.
+        private val controller = SavedStateRegistryController.create(this).also {
+            it.performAttach()
+        }
+
+        override val savedStateRegistry: SavedStateRegistry get() = controller.savedStateRegistry
+    }
+
+    private val panelViewModelOwner = object : ViewModelStoreOwner {
+        override val viewModelStore = ViewModelStore()
+    }
 
     // Рамка зафиксированной области (отдельное окно, клики — сквозь).
     private var frameRoot: FrameLayout? = null
@@ -223,7 +306,6 @@ class OcrOverlayService : Service() {
     private var autoReader: OverlayAutoReader? = null
     private var readJob: kotlinx.coroutines.Job? = null
     private var readProjection: android.media.projection.MediaProjection? = null
-    private var readButton: TextView? = null
 
     /** Прямоугольник зафиксированной области в пикселях экрана. */
     private fun fixedRegionRect(): Rect? {
@@ -251,7 +333,10 @@ class OcrOverlayService : Service() {
             return
         }
         if (!OverlayGestureService.isEnabled()) {
-            toast("Включите Службу доступности, чтобы листать самому")
+            // Не листаем молча: цикл чтения без Службы доступности провисит,
+            // дожидаясь её включения, и читатель не понимает, чего не хватает.
+            toast("Без Службы доступности листать нечем — включаю настройки")
+            requestGestureService()
         }
         stopReading()
         readProjection = projection
@@ -266,12 +351,11 @@ class OcrOverlayService : Service() {
             onNote = { note ->
                 uiHandler.post {
                     setBubble(note)
-                    readButton?.text = if (isReading) "⏹" else "▶"
-                    readButton?.setBackgroundColor((if (isReading) PRIMARY_ACTIVE_BG else BTN_BG).toInt())
-                    readRowLabel?.text = if (isReading) "Стоп-чтение" else "Читать рамку"
+                    readingState.value = isReading
                 }
             },
         )
+        readingState.value = true
         toast("Чтение: ${reader.engineTitle()}")
     }
 
@@ -283,10 +367,12 @@ class OcrOverlayService : Service() {
         runCatching { readProjection?.stop() }
         readProjection = null
         autoReader = null
+        readingState.value = false
         runCatching { readEngine.stop() }
     }
 
-    val isReading: Boolean get() = readJob?.isActive == true
+    val isReading: Boolean get() = readingState.value
+
 
     private val serviceScope = kotlinx.coroutines.CoroutineScope(
         kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate,
@@ -297,7 +383,10 @@ class OcrOverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        runCatching { panelLifecycleOwner.registry.currentState = Lifecycle.State.RESUMED }
+        (applicationContext as? Application)?.registerActivityLifecycleCallbacks(ownActivityWatcher)
     }
+
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (!canDrawOverlays(this)) {
@@ -346,54 +435,83 @@ class OcrOverlayService : Service() {
         applyClipboardWatch()
         applyFrame()
         // Панель не должна висеть поверх наших собственных настроек и
-        // читалки: раньше оверлей рисовался поверх приложения, открывшего
-        // его, и полупрозрачная панель лежала на экране поверх текста.
-        startForegroundWatcher()
+        // читалки: иначе полупрозрачная панель лежала на экране поверх текста.
+        updatePanelVisibility()
         return START_STICKY
     }
 
-    private val foregroundHandler = Handler(Looper.getMainLooper())
-    private val foregroundCheck = object : Runnable {
-        override fun run() {
-            applyForegroundVisibility()
-            foregroundHandler.postDelayed(this, FOREGROUND_POLL_MS)
-        }
+    /** Свернуть панель в круглую кнопку у края экрана. */
+    private fun collapseNow() {
+        val lp = params ?: return
+        if (!menuExpanded.value) return
+        menuExpanded.value = false
+        setWindowFocusable(false)
+        lp.width = dp(BTN_DP)
+        lp.height = dp(BTN_DP)
+        clampToScreen(lp)
+        snapToCorner(lp)
+        savePanelPosition(lp)
+        runCatching { root?.let { wm.updateViewLayout(it, lp) } }
     }
 
-    private fun startForegroundWatcher() {
-        foregroundHandler.removeCallbacks(foregroundCheck)
-        foregroundHandler.post(foregroundCheck)
+    /** Развернуть панель: ширина фиксированная, высоту досчитает [onPanelMeasured]. */
+    private fun expandNow() {
+        val lp = params ?: return
+        if (menuExpanded.value) return
+        menuExpanded.value = true
+        // Раскрытая панель содержит поле ввода, а ввод в окне без
+        // FLAG_NOT_FOCUSABLE невозможен: окно должно стать фокусируемым.
+        // Свёрнутое — снова нефокусируемое, чтобы клавиатура уходила чужому
+        // приложению, поверх которого оверлей висит.
+        setWindowFocusable(true)
+        lp.width = dp(BASE_W_DP)
+        lp.height = expandedH.coerceAtMost(maxWindowHeightPx()).coerceAtLeast(dp(BASE_H_DP))
+        clampToScreen(lp)
+        snapToCorner(lp)
+        runCatching { root?.let { wm.updateViewLayout(it, lp) } }
     }
 
     /**
      * Прячет панель, пока на экране само приложение.
      *
-     * Сверху окна с разрешением SYSTEM_ALERT_WINDOW не спрятать наше
-     * собственное окно нельзя, но можно не рисовать панель поверх него:
-     * иначе настройки оверлея открывались поверх самих себя.
+     * Сверху окна с разрешением SYSTEM_ALERT_WINDOW нельзя спрятать наше
+     * собственное окно, но можно не рисовать панель поверх него: иначе
+     * настройки оверлея открывались поверх самих себя.
+     *
+     * Раньше «мы на переднем плане» определялось через UsageStatsManager, и
+     * без разрешения «usage access» (оно в приложение не запрашивается)
+     * проверка всегда возвращала false — панель так и висела поверх наших
+     * же настроек. Теперь это обычные колбэки жизненного цикла Activity:
+     * ничего разрешать не нужно и ошибки быть не может.
      */
-    private fun applyForegroundVisibility() {
-        val rootView = root ?: return
-        val foreground = runCatching {
-            val usage = getSystemService("usage") as? UsageStatsManager
-            val now = System.currentTimeMillis()
-            val app = usage?.queryUsageStats(UsageStatsManager.INTERVAL_BEST, now - 3_600_000, now)
-                ?.maxByOrNull { it.lastTimeUsed }
-            val inForeground = app != null &&
-                app.lastTimeUsed > now - 2_000 &&
-                packageManager.getLaunchIntentForPackage(app.packageName)
-                    ?.component?.packageName == packageName
-            inForeground
-        }.getOrDefault(false)
+    private var ownActivitiesResumed = 0
 
-        if (foreground) {
-            if (rootView.visibility != View.GONE) {
-                rootView.visibility = View.GONE
-            }
-        } else if (rootView.visibility != View.VISIBLE) {
-            rootView.visibility = View.VISIBLE
+    private val ownActivityWatcher = object : Application.ActivityLifecycleCallbacks {
+        override fun onActivityResumed(activity: Activity) {
+            if (activity.packageName != packageName) return
+            ownActivitiesResumed++
+            updatePanelVisibility()
         }
+
+        override fun onActivityPaused(activity: Activity) {
+            if (activity.packageName != packageName) return
+            ownActivitiesResumed = (ownActivitiesResumed - 1).coerceAtLeast(0)
+            updatePanelVisibility()
+        }
+
+        override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+        override fun onActivityStarted(activity: Activity) = Unit
+        override fun onActivityStopped(activity: Activity) = Unit
+        override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+        override fun onActivityDestroyed(activity: Activity) = Unit
     }
+
+    private fun updatePanelVisibility() {
+        val view = root ?: return
+        val wanted = if (ownActivitiesResumed > 0) View.GONE else View.VISIBLE
+        if (view.visibility != wanted) view.visibility = wanted
+    }
+
 
     private fun ensureForeground() {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -439,10 +557,10 @@ class OcrOverlayService : Service() {
 
     // ---------- Озвучка (тот же движок, что в читалке) ----------
 
-    private fun currentText(): String = bubbleText?.text?.toString()?.trim().orEmpty()
+    private fun currentText(): String = bubble.value.trim()
 
     private fun setBubble(text: String) {
-        uiHandler.post { bubbleText?.text = text }
+        uiHandler.post { bubble.value = text }
     }
 
     private fun speakText(text: String) {
@@ -451,13 +569,13 @@ class OcrOverlayService : Service() {
             logcat(LogPriority.WARN, it) { "OcrOverlay TTS failed" }
             toast("Не удалось запустить озвучку")
         }
-        isSpeaking = true
+        speakingState.value = true
     }
 
     private fun toggleSpeak() {
-        if (isSpeaking) {
+        if (speakingState.value) {
             runCatching { readEngine.stop() }
-            isSpeaking = false
+            speakingState.value = false
             return
         }
         val text = currentText()
@@ -479,7 +597,7 @@ class OcrOverlayService : Service() {
         runCatching { readEngine.speakSingle(text, role) }.onFailure {
             toast("Не удалось запустить озвучку")
         }
-        isSpeaking = true
+        speakingState.value = true
     }
 
     /** «Выбрать» — системные настройки TTS: движок читалки следует за системой. */
@@ -581,10 +699,7 @@ class OcrOverlayService : Service() {
     }
 
     private fun updateSttButton(on: Boolean) {
-        uiHandler.post {
-            sttButton?.text = if (on) "⏹" else "🎙"
-            sttButton?.setBackgroundColor((if (on) PRIMARY_ACTIVE_BG else BTN_BG).toInt())
-        }
+        uiHandler.post { sttState.value = on }
     }
 
     // ---------- Область: режимы, селектор, рамка ----------
@@ -612,7 +727,7 @@ class OcrOverlayService : Service() {
      * помещалась, и режим области переставал быть виден.
      */
     private fun updateRegionButton() {
-        uiHandler.post { regionRowLabel?.text = regionModeLabel() }
+        uiHandler.post { regionLabelState.value = regionModeLabel() }
     }
 
     private fun cycleRegionMode() {
@@ -711,6 +826,7 @@ class OcrOverlayService : Service() {
         val show = prefs.overlayShowFrame().get() &&
             prefs.overlayRegionMode().get() == "fixed" &&
             parseRegion() != null
+        frameVisibleState.value = show
         if (!show) {
             frameRoot?.let { runCatching { wm.removeView(it) } }
             frameRoot = null
@@ -792,177 +908,28 @@ class OcrOverlayService : Service() {
     }
 
     private fun buildOverlay() {
-        expandedW = dp(BASE_W_DP)
         expandedH = dp(BASE_H_DP)
+        regionLabelState.value = regionModeLabel()
 
         val layout = FrameLayout(this)
 
-        // ===== Развёрнутая панель: как меню читалки, а не «экран» =====
-        val content = LinearLayout(this)
-        content.orientation = LinearLayout.VERTICAL
-        // Панель лежит поверх чужого приложения, и её фон обязан быть
-        // непрозрачным: раньше он был 0xF2 (95%), и сквозь него отлично
-        // читался текст игры — надписи панели сливались с чужими, и
-        // разобрать, где чьё, было невозможно. Светлый текст даже 5%
-        // просвечивания давали читаемую картинку.
-        content.background = rounded(CARD_BG, CARD_RADIUS_DP)
-        content.setPadding(dp(6f), dp(4f), dp(6f), dp(6f))
-
-        val header = LinearLayout(this)
-        header.orientation = LinearLayout.HORIZONTAL
-        header.gravity = Gravity.CENTER_VERTICAL
-        val handle = TextView(this)
-        handle.text = "≡ "
-        handle.textSize = 14f
-        handle.setTextColor(ON_SURFACE.toInt())
-        header.addView(handle)
-        val title = TextView(this)
-        title.text = "OCR-бабл"
-        title.setTextColor(ON_SURFACE_VARIANT.toInt())
-        title.textSize = 12f
-        header.addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        val collapseBtn = textButton("▾") { collapseNow() }
-        val closeBtn = textButton("✕") { stopSelf() }
-        header.addView(collapseBtn)
-        header.addView(closeBtn)
-        content.addView(header, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(30f)))
-
-        val bubble = TextView(this)
-        bubble.setTextColor(ON_SURFACE.toInt())
-        bubble.textSize = 14f
-        bubble.setPadding(dp(10f), dp(8f), dp(10f), dp(8f))
-        bubble.maxLines = 6
-        val bubbleBg = GradientDrawable()
-        bubbleBg.cornerRadius = dp(10f).toFloat()
-        bubbleBg.setColor(0xFF232A3A.toInt())
-        bubbleBg.setStroke(dp(1f), 0xFF4A7EAF.toInt())
-        bubble.background = bubbleBg
-        content.addView(
-            bubble,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = dp(2f) },
-        )
-        bubbleText = bubble
-
-        // Вертикальное меню — как плавающее меню читалки: подпись слева,
-        // круглая кнопка справа. Раньше здесь были ряды прямоугольных кнопок
-        // с текстом, и панель выглядела отдельным экраном поверх игры.
-        val menu = LinearLayout(this)
-        menu.orientation = LinearLayout.VERTICAL
-
-        // Локальная non-null копия: поле — TextView?, а меню ждёт TextView.
-        val readBtn = roundButton(if (isReading) "⏹" else "▶", active = isReading) {
-            if (isReading) {
-                stopReading()
-                refreshReadButton()
-            } else {
-                OcrCaptureActivity.request(applicationContext)
-            }
+        // Панель рисуется тем же компонентом, что и плавающее меню читалки:
+        // одинаковая карточка, одинаковые круглые кнопки, одинаковый FAB.
+        // Compose внутри окна WindowManager требует владельцев жизненного
+        // цикла — без них не работал бы rememberSaveable у поля ввода.
+        val compose = ComposeView(this).apply {
+            setViewTreeLifecycleOwner(panelLifecycleOwner)
+            setViewTreeSavedStateRegistryOwner(panelSavedStateOwner)
+            setViewTreeViewModelStoreOwner(panelViewModelOwner)
+            setComposeContent { OverlayPanel() }
         }
-        readButton = readBtn
-        val readRow = menuRow(if (isReading) "Стоп-чтение" else "Читать рамку", readBtn)
-        readRowLabel = readRow.label()
-        menu.addView(readRow, rowParams())
-
-        menu.addView(
-            menuRow("Голос", roundButton(if (isSpeaking) "⏹" else "▶", active = isSpeaking) { toggleSpeak() }),
-            rowParams(),
-        )
-
-        menu.addView(
-            menuRow(
-                "Голос ♀ / ♂ · движок",
-                roundButton("♀", active = voiceIsFemale()) { speakRole("female") },
-                roundButton("♂", active = !voiceIsFemale()) { speakRole("male") },
-                roundButton("⚙", active = false) { openVoiceChoice() },
-            ),
-            rowParams(),
-        )
-
-        val sttBtn = roundButton("🎙", active = false) { toggleStt() }
-        sttButton = sttBtn
-        menu.addView(
-            menuRow(
-                "STT · распознать речь",
-                sttBtn,
-                roundButton("📋", active = false) { fromClipboard() },
-            ),
-            rowParams(),
-        )
-
-        val regionBtn = roundButton("▦", active = false) { cycleRegionMode() }
-        regionButton = regionBtn
-        val regionRow = menuRow(regionModeLabel(), roundButton("✏", active = false) { openSelector() }, regionBtn)
-        regionRowLabel = regionRow.label()
-        menu.addView(regionRow, rowParams())
-
-        menu.addView(
-            menuRow(
-                "Текст",
-                roundButton("⧉", active = false) { copyBubble() },
-                roundButton("＋", active = false) { addToDictionary() },
-            ),
-            rowParams(),
-        )
-
-        menu.addView(
-            menuRow(
-                "Панель",
-                roundButton("▤", active = false) { toggleFrame() },
-                roundButton("⚙", active = false) { openOverlaySettings() },
-            ),
-            rowParams(),
-        )
-
-        content.addView(menu, rowParams())
-
-        // Ручной ввод (если в другом приложении нельзя копировать).
-        val inputEdit = EditText(this)
-        inputEdit.hint = "Текст для бабла…"
-        inputEdit.setTextColor(ON_SURFACE.toInt())
-        inputEdit.setHintTextColor(ON_SURFACE_VARIANT.toInt())
-        inputEdit.textSize = 13f
-        inputEdit.setPadding(dp(8f), dp(4f), dp(8f), dp(4f))
-        content.addView(inputEdit, rowParams())
-        input = inputEdit
-        val sayRow = LinearLayout(this)
-        sayRow.orientation = LinearLayout.HORIZONTAL
-        sayRow.addView(
-            roundButton("▶", active = false) {
-                val t = input?.text?.toString()?.trim().orEmpty()
-                if (t.isNotBlank()) speakText(t)
-            },
-        )
-        sayRow.addView(
-            roundButton("✕", active = false) {
-                bubble.text = ""
-                input?.text?.clear()
-            },
-        )
-        content.addView(sayRow, rowParams())
-
         layout.addView(
-            content,
-            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
+            compose,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
         )
-        contentView = content
-
-        // ===== Плавающая кнопка (стартовое состояние) =====
-        // Круглая, как FAB читалки: в углу, перетаскивается, тап —
-        // развернуть меню. Прямоугольная кнопка с эмодзи читалась как
-        // «штука поверх экрана», круглая — как часть управления.
-        val floatBtn = TextView(this)
-        floatBtn.text = "☰"
-        floatBtn.textSize = 22f
-        floatBtn.gravity = Gravity.CENTER
-        floatBtn.background = rounded(FAB_BG, FAB_RADIUS_DP)
-        floatBtn.setTextColor(ON_SURFACE.toInt())
-        floatBtn.setOnTouchListener { _, event -> handleFloatTouch(event) }
-        layout.addView(floatBtn, FrameLayout.LayoutParams(dp(BTN_DP), dp(BTN_DP), Gravity.CENTER))
-        floatButton = floatBtn
-        content.visibility = View.GONE
 
         val p = WindowManager.LayoutParams(
             dp(BTN_DP),
@@ -974,90 +941,281 @@ class OcrOverlayService : Service() {
             PixelFormat.TRANSLUCENT,
         )
         p.gravity = Gravity.TOP or Gravity.START
-        p.x = dp(20f)
-        p.y = dp(140f)
+        // Позиция сохраняется: раньше после перезапуска сервиса панель
+        // возвращалась в точку (20, 140) dp и читатель её не находил.
+        val positionPrefs = getSharedPreferences(POSITION_PREFS, Context.MODE_PRIVATE)
+        p.x = positionPrefs.getInt(KEY_POS_X, dp(20f))
+        p.y = positionPrefs.getInt(KEY_POS_Y, dp(140f))
         params = p
 
-        header.setOnTouchListener(dragListener())
-        inputEdit.setOnClickListener { makeFocusable(true) }
-        inputEdit.setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) makeFocusable(false) }
-
         root = layout
-        isCollapsed = true
         runCatching { wm.addView(layout, p) }.onFailure {
             toast("Нет разрешения показывать поверх приложений")
             stopSelf()
         }
     }
 
-    private fun rowParams(): LinearLayout.LayoutParams {
-        return LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        ).apply { topMargin = dp(2f) }
-    }
+    // ---------- Панель: тот же вид, что меню читалки ----------
 
     /**
-     * Строка меню: подпись слева, круглые кнопки справа.
+     * Панель оверлея.
      *
-     * Так устроено плавающее меню читалки, и оверлей повторяет его: читатель
-     * уже знает, что это за вид, и не разбирается заново, что означает
-     * кнопка без подписи.
+     * Свёрнута — круглая кнопка у края экрана, как в читалке. Раскрыта —
+     * карточка пунктов над кнопкой; последняя строка убирает меню в кнопку
+     * («скрыть») и выключает оверлей («закрыть»).
      */
-    private fun menuRow(label: String, vararg buttons: TextView): LinearLayout {
-        val row = LinearLayout(this)
-        row.orientation = LinearLayout.HORIZONTAL
-        row.gravity = Gravity.CENTER_VERTICAL
-        val text = TextView(this)
-        text.text = label
-        text.textSize = 12f
-        text.setTextColor(ON_SURFACE_VARIANT.toInt())
-        row.addView(text, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        buttons.forEach { row.addView(it) }
-        row.tag = text
-        return row
-    }
-
-    /** Подпись строки: нужно, чтобы обновлять её, не пересобирая меню. */
-    private fun LinearLayout.label(): TextView? = tag as? TextView
-
-    /**
-     * Круглая кнопка меню — как SmallFloatingActionButton читалки.
-     *
-     * @param active подсвеченное состояние: кнопка показывает, что действие
-     *   уже идёт (чтение, озвучка, STT)
-     */
-    private fun roundButton(glyph: String, active: Boolean = false, onClick: () -> Unit): TextView {
-        val b = TextView(this)
-        b.text = glyph
-        b.textSize = 15f
-        b.gravity = Gravity.CENTER
-        b.setTextColor(ON_SURFACE.toInt())
-        // Круг получается только при ширине, равной высоте: иначе скругление
-        // рисуется по большой стороне и кнопка выходит прямоугольной.
-        b.background = rounded(if (active) PRIMARY_ACTIVE_BG else BTN_BG, BTN_RADIUS_DP)
-        b.setOnClickListener { onClick() }
-        b.layoutParams = LinearLayout.LayoutParams(dp(BTN_SIZE_DP), dp(BTN_SIZE_DP))
-        return b
-    }
-
-    private fun rounded(color: Int, radiusDp: Float): GradientDrawable {
-        val d = GradientDrawable()
-        d.shape = GradientDrawable.RECTANGLE
-        d.cornerRadius = dp(radiusDp).toFloat()
-        d.setColor(color)
-        return d
-    }
-
-    /** Кнопка чтения: подпись и состояние должны совпадать с тем, что идёт. */
-    private fun refreshReadButton() {
-        uiHandler.post {
-            val on = isReading
-            readButton?.text = if (on) "⏹" else "▶"
-            readButton?.setBackgroundColor((if (on) PRIMARY_ACTIVE_BG else BTN_BG).toInt())
-            readRowLabel?.text = if (on) "Стоп-чтение" else "Читать рамку"
+    @Composable
+    private fun OverlayPanel() {
+        val expanded = menuExpanded.value
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                // Свёрнутая панель — это ровно кнопка 56dp в окне 60dp, любой
+                // дополнительный отступ её бы обрезал.
+                .padding(if (expanded) PANEL_PADDING_DP.dp else 0.dp),
+            verticalArrangement = if (expanded) Arrangement.Bottom else Arrangement.Center,
+            horizontalAlignment = Alignment.End,
+        ) {
+            if (expanded) {
+                OcrControlMenuCard(
+                    rows = menuRows(),
+                    // Ширину окна держим фиксированной, а по высоте следим за
+                    // содержимым: иначе карточка измеряется по ширине кнопки и
+                    // высота неизвестна заранее.
+                    modifier = Modifier.onSizeChanged { onPanelMeasured(it.height) },
+                    maxHeight = maxPanelCardHeight().dp,
+                    status = panelStatus(),
+                    footer = "yomikai " + eu.kanade.tachiyomi.AppInfo.getVersionName(),
+                    extraContent = { panelInput() },
+                )
+                Spacer(Modifier.height(PANEL_GAP_DP.dp))
+            }
+            OcrControlFab(
+                expanded = expanded,
+                onToggle = { if (expanded) collapseNow() else expandNow() },
+                onDrag = ::dragPanelBy,
+                onDragEnd = ::settlePanel,
+                contentDescription = if (expanded) "Скрыть меню оверлея" else "Меню оверлея",
+            )
         }
     }
+
+    /** Высота окна с раскрытой панелью, px. */
+    private fun maxWindowHeightPx(): Int =
+        (resources.displayMetrics.heightPixels * MAX_PANEL_SCREEN_FRACTION).toInt()
+
+    /** Высота, доступная карточке: из окна вычитаем кнопку и отступы, dp. */
+    private fun maxPanelCardHeight(): Int {
+        val overheadPx = dp(BTN_DP) + dp(PANEL_GAP_DP) + dp(PANEL_PADDING_DP) * 2
+        val availablePx = (maxWindowHeightPx() - overheadPx).coerceAtLeast(dp(120f))
+        // Делить на настоящую плотность экрана: dp(1f) округляется до целого и
+        // на экране с density 2.75 дало бы завышенный лимит высоты.
+        return (availablePx / resources.displayMetrics.density).toInt()
+    }
+
+    /**
+     * Высота окна следует за высотой карточки.
+     *
+     * Раньше окно было фиксированной высоты 340dp без прокрутки, и нижние
+     * пункты меню вместе с полем ввода просто обрезались.
+     */
+    private fun onPanelMeasured(cardHeightPx: Int) {
+        val lp = params ?: return
+        if (!menuExpanded.value || cardHeightPx <= 0) return
+        val wanted = (cardHeightPx + dp(BTN_DP) + dp(PANEL_GAP_DP) + dp(PANEL_PADDING_DP) * 2)
+            .coerceAtMost(maxWindowHeightPx())
+        // Запоминаем: после сворачивания окно должно вернуться к этой же
+        // высоте, а не прыгать на 340dp, пока карточка не измерится заново.
+        expandedH = wanted
+        if (lp.height == wanted) return
+        lp.height = wanted
+        clampToScreen(lp)
+        runCatching { root?.let { wm.updateViewLayout(it, lp) } }
+    }
+
+    private fun panelStatus(): String = when {
+        readingState.value && !OverlayGestureService.isEnabled() ->
+            "Включите Службу доступности — жду, чтобы листать"
+        readingState.value -> "Читаю рамку…"
+        bubble.value.isNotBlank() -> bubble.value
+        else -> "Текст пуст — вставьте из буфера (📋) или включите STT"
+    }
+
+    /** Пункты меню оверлея: те же действия, что в читалке, плюс свои. */
+    private fun menuRows(): List<OcrMenuRow> {
+        val reading = readingState.value
+        val speaking = speakingState.value
+        val listening = sttState.value
+        return listOf(
+            OcrMenuRow(
+                label = if (reading) "Стоп-чтение" else "Читать рамку",
+                action = OcrMenuAction(
+                    icon = if (reading) Icons.Outlined.StopCircle else Icons.Outlined.PlayArrow,
+                    active = reading,
+                    contentDescription = if (reading) "Остановить чтение рамки" else "Читать рамку",
+                    onClick = ::toggleFrameReading,
+                ),
+            ),
+            OcrMenuRow(
+                label = "Голос",
+                action = OcrMenuAction(
+                    icon = if (speaking) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                    active = speaking,
+                    contentDescription = if (speaking) "Остановить озвучку" else "Озвучить текст",
+                    onClick = ::toggleSpeak,
+                ),
+            ),
+            OcrMenuRow(
+                label = "Голос ♀ / ♂ · движок",
+                action = OcrMenuAction(
+                    glyph = "♀",
+                    active = voiceIsFemale(),
+                    contentDescription = "Озвучить женским голосом",
+                    onClick = { speakRole("female") },
+                ),
+                secondary = OcrMenuAction(
+                    glyph = "♂",
+                    active = !voiceIsFemale(),
+                    contentDescription = "Озвучить мужским голосом",
+                    onClick = { speakRole("male") },
+                ),
+                tertiary = OcrMenuAction(
+                    glyph = "⚙",
+                    contentDescription = "Настройки синтеза речи",
+                    onClick = ::openVoiceChoice,
+                ),
+            ),
+            OcrMenuRow(
+                label = "STT · распознать речь",
+                action = OcrMenuAction(
+                    glyph = if (listening) "⏹" else "🎙",
+                    active = listening,
+                    contentDescription = if (listening) {
+                        "Остановить распознавание речи"
+                    } else {
+                        "Распознать речь с микрофона"
+                    },
+                    onClick = { toggleStt() },
+                ),
+                secondary = OcrMenuAction(
+                    glyph = "📋",
+                    contentDescription = "Взять текст из буфера обмена",
+                    onClick = { fromClipboard() },
+                ),
+            ),
+            OcrMenuRow(
+                label = regionLabelState.value,
+                action = OcrMenuAction(
+                    glyph = "✏",
+                    contentDescription = "Выделить область вручную",
+                    onClick = ::openSelector,
+                ),
+                secondary = OcrMenuAction(
+                    glyph = "▦",
+                    contentDescription = "Сменить режим области",
+                    onClick = ::cycleRegionMode,
+                ),
+            ),
+            OcrMenuRow(
+                label = "Текст",
+                action = OcrMenuAction(
+                    glyph = "⧉",
+                    contentDescription = "Скопировать текст",
+                    onClick = ::copyBubble,
+                ),
+                secondary = OcrMenuAction(
+                    glyph = "＋",
+                    contentDescription = "Скопировать и открыть словарь",
+                    onClick = ::addToDictionary,
+                ),
+            ),
+            OcrMenuRow(
+                label = "Панель",
+                action = OcrMenuAction(
+                    glyph = "▤",
+                    active = frameVisibleState.value,
+                    contentDescription = "Показать или скрыть рамку области",
+                    onClick = ::toggleFrame,
+                ),
+                secondary = OcrMenuAction(
+                    glyph = "⚙",
+                    contentDescription = "Настройки оверлея",
+                    onClick = ::openOverlaySettings,
+                ),
+            ),
+            OcrMenuRow(
+                label = "Скрыть / закрыть",
+                action = OcrMenuAction(
+                    icon = Icons.Outlined.KeyboardArrowDown,
+                    contentDescription = "Скрыть меню, оставить кнопку",
+                    onClick = ::collapseNow,
+                ),
+                secondary = OcrMenuAction(
+                    icon = Icons.Outlined.Close,
+                    contentDescription = "Закрыть оверлей",
+                    onClick = { stopSelf() },
+                ),
+            ),
+        )
+    }
+
+    /**
+     * Ручной ввод: в сторонней игре скопировать текст нечем, а положить его
+     * в буфер можно и отсюда.
+     */
+    @Composable
+    private fun panelInput() {
+        OutlinedTextField(
+            value = inputText.value,
+            onValueChange = { inputText.value = it },
+            label = { Text("Текст для бабла") },
+            singleLine = true,
+            modifier = Modifier
+                .fillMaxWidth()
+                .onFocusChanged { state -> uiHandler.post { setWindowFocusable(state.isFocused) } },
+        )
+        Spacer(Modifier.height(PANEL_GAP_DP.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(PANEL_GAP_DP.dp)) {
+            OcrMenuActionButton(
+                OcrMenuAction(
+                    icon = Icons.Outlined.PlayArrow,
+                    contentDescription = "Озвучить введённый текст",
+                    onClick = {
+                        val typed = inputText.value.trim()
+                        if (typed.isNotBlank()) speakText(typed)
+                    },
+                ),
+            )
+            OcrMenuActionButton(
+                OcrMenuAction(
+                    icon = Icons.Outlined.Close,
+                    contentDescription = "Очистить введённый текст",
+                    onClick = {
+                        inputText.value = ""
+                        bubble.value = ""
+                    },
+                ),
+            )
+        }
+    }
+
+    /**
+     * Чтение рамки: без Службы доступности листать нечем, поэтому сразу
+     * отводим читателя в настройки, а не ограничиваемся тостом.
+     */
+    private fun toggleFrameReading() {
+        if (isReading) {
+            stopReading()
+            return
+        }
+        if (!OverlayGestureService.isEnabled()) {
+            toast("Без Службы доступности листать нечем — включаю настройки")
+            requestGestureService()
+            return
+        }
+        OcrCaptureActivity.request(applicationContext)
+    }
+
 
     /** Женский ли голос выбран в настройках — от этого зависит вид кнопок. */
     private fun voiceIsFemale(): Boolean {
@@ -1076,121 +1234,36 @@ class OcrOverlayService : Service() {
         }.onFailure { toast("Открой настройки оверлея в приложении") }
     }
 
-    private fun textButton(symbol: String, onClick: () -> Unit): Button {
-        val b = Button(this)
-        b.text = symbol
-        b.textSize = 11f
-        b.setAllCaps(false)
-        b.setPadding(dp(5f), 0, dp(5f), 0)
-        b.setBackgroundColor(0xFF2E4A6B.toInt())
-        b.setOnClickListener { onClick() }
-        return b
-    }
-
-    private fun dragListener(): View.OnTouchListener {
-        return object : View.OnTouchListener {
-            private var startRawX = 0f
-            private var startRawY = 0f
-            private var startX = 0
-            private var startY = 0
-            override fun onTouch(v: View, event: MotionEvent): Boolean {
-                val lp = params ?: return false
-                when (event.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> {
-                        startRawX = event.rawX
-                        startRawY = event.rawY
-                        startX = lp.x
-                        startY = lp.y
-                        return true
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        lp.x = startX + (event.rawX - startRawX).toInt()
-                        lp.y = startY + (event.rawY - startRawY).toInt()
-                        clampToScreen(lp)
-                        root?.let { runCatching { wm.updateViewLayout(it, lp) } }
-                        return true
-                    }
-                    else -> return false
-                }
-            }
-        }
-    }
-
-    private var floatRawX = 0f
-    private var floatRawY = 0f
-    private var floatStartX = 0
-    private var floatStartY = 0
-    private var floatDown = 0L
-
-    /** Перетаскивание плавающей кнопки + тап-разворачивание. */
-    private fun handleFloatTouch(event: MotionEvent): Boolean {
-        val lp = params ?: return false
-        val r = root ?: return false
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                floatRawX = event.rawX
-                floatRawY = event.rawY
-                floatStartX = lp.x
-                floatStartY = lp.y
-                floatDown = System.currentTimeMillis()
-                return true
-            }
-            MotionEvent.ACTION_MOVE -> {
-                lp.x = floatStartX + (event.rawX - floatRawX).toInt()
-                lp.y = floatStartY + (event.rawY - floatRawY).toInt()
-                clampToScreen(lp)
-                runCatching { wm.updateViewLayout(r, lp) }
-                return true
-            }
-            MotionEvent.ACTION_UP -> {
-                val quick = System.currentTimeMillis() - floatDown < 350
-                val dx = (event.rawX - floatRawX).toInt()
-                val dy = (event.rawY - floatRawY).toInt()
-                if (quick && (dx * dx + dy * dy) < 200) {
-                    expandNow()
-                } else {
-                    // Отпустили после перетаскивания — прижать к углу, иначе
-                    // кнопка остаётся висеть там, где палец оторвался, и её
-                    // легко не заметить или случайно задеть.
-                    clampToScreen(lp)
-                    snapToCorner(lp)
-                    runCatching { wm.updateViewLayout(r, lp) }
-                }
-                return true
-            }
-            else -> return false
-        }
-    }
-
-    private var isCollapsed = false
-
-    private fun collapseNow() {
+    private fun dragPanelBy(delta: Offset) {
         val lp = params ?: return
-        if (isCollapsed) return
-        expandedW = lp.width
-        expandedH = lp.height
-        isCollapsed = true
-        lp.width = dp(BTN_DP)
-        lp.height = dp(BTN_DP)
-        contentView?.visibility = View.GONE
-        floatButton?.visibility = View.VISIBLE
+        lp.x += delta.x.roundToInt()
+        lp.y += delta.y.roundToInt()
+        clampToScreen(lp)
+        runCatching { root?.let { wm.updateViewLayout(it, lp) } }
+    }
+
+    /**
+     * Отпустили кнопку: прижимаем панель к краю и запоминаем место.
+     *
+     * Раньше кнопка оставалась там, где палец оторвался, и её легко было
+     * не заметить или задеть.
+     */
+    private fun settlePanel() {
+        val lp = params ?: return
         clampToScreen(lp)
         snapToCorner(lp)
-        root?.let { runCatching { wm.updateViewLayout(it, lp) } }
+        savePanelPosition(lp)
+        runCatching { root?.let { wm.updateViewLayout(it, lp) } }
     }
 
-    private fun expandNow() {
-        val lp = params ?: return
-        if (!isCollapsed) return
-        isCollapsed = false
-        lp.width = expandedW.coerceAtLeast(dp(BASE_W_DP))
-        lp.height = expandedH.coerceAtLeast(dp(BASE_H_DP))
-        contentView?.visibility = View.VISIBLE
-        floatButton?.visibility = View.GONE
-        clampToScreen(lp)
-        snapToCorner(lp)
-        root?.let { runCatching { wm.updateViewLayout(it, lp) } }
+    private fun savePanelPosition(lp: WindowManager.LayoutParams) {
+        getSharedPreferences(POSITION_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(KEY_POS_X, lp.x)
+            .putInt(KEY_POS_Y, lp.y)
+            .apply()
     }
+
 
     /**
      * Прижать к краю экрана — как кнопка в углу у читалки.
@@ -1223,6 +1296,20 @@ class OcrOverlayService : Service() {
         runCatching { root?.let { wm.updateViewLayout(it, lp) } }
     }
 
+    /**
+     * Окну нужно фокусируемое состояние только пока в фокусе поле ввода:
+     * иначе поле не раскроет клавиатуру. Пересоздавать флаги на каждый
+     * щелчок нельзя — система зря дёргает окно.
+     */
+    private fun setWindowFocusable(value: Boolean) {
+        if (windowFocusable == value) return
+        windowFocusable = value
+        makeFocusable(value)
+    }
+
+    private var windowFocusable = false
+
+
     private fun clampToScreen(lp: WindowManager.LayoutParams) {
         val dm = resources.displayMetrics
         lp.x = lp.x.coerceIn(0, (dm.widthPixels - lp.width).coerceAtLeast(0))
@@ -1238,7 +1325,11 @@ class OcrOverlayService : Service() {
         // Цикл чтения живёт в serviceScope: без отмены задача продолжала бы
         // держать сервис и захват после его смерти.
         serviceScope.cancel()
-        foregroundHandler.removeCallbacks(foregroundCheck)
+        (applicationContext as? Application)?.unregisterActivityLifecycleCallbacks(ownActivityWatcher)
+        // Композиция панели держит ViewTreeLifecycleOwner: без перевода
+        // жизненного цикла в DESTROYED она не освободится.
+        runCatching { panelLifecycleOwner.registry.currentState = Lifecycle.State.DESTROYED }
+        panelViewModelOwner.viewModelStore.clear()
         runCatching { stt?.destroy() }
         stt = null
         runCatching { readEngine.stop() }

@@ -5,9 +5,6 @@ import android.media.ToneGenerator
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.IconButton
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
@@ -17,13 +14,14 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -31,25 +29,18 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.AutoMode
 import androidx.compose.material.icons.outlined.CameraAlt
-import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.GraphicEq
-import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.RecordVoiceOver
 import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
-import androidx.compose.material.icons.outlined.RecordVoiceOver
 import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.TouchApp
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
-import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -61,7 +52,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.style.TextOverflow
 import eu.kanade.tachiyomi.util.system.toast
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -130,6 +121,56 @@ fun ReaderFloatingControls(
     fun beepOpen() = runCatching { tone?.startTone(ToneGenerator.TONE_PROP_BEEP, 60) }
     fun beepAction() = runCatching { tone?.startTone(ToneGenerator.TONE_PROP_ACK, 70) }
 
+    // Скрытые в конструкторе модули отсеиваем при сборке списка: сами строки
+    // каждый раз заново создаются, но это просто data-классы, так что дёшево.
+    fun rowUnlessHidden(module: String, row: OcrMenuRow): OcrMenuRow? =
+        if (hiddenM.contains(module)) null else row
+
+    // Пресет типа контента задаёт и порядок чтения — подпись строки меню.
+    val presetTitle = when (contentPreset) {
+        "manga" -> "Манга"
+        "manhwa" -> "Манхва"
+        "manhua" -> "Маньхуа"
+        "comic" -> "Комикс"
+        else -> "Сбаланс."
+    }
+    val presetOrder = when (contentPreset) {
+        "manga" -> "← Справа налево"
+        "manhwa", "manhua" -> "↓ Сверху вниз"
+        "comic" -> "→ Слева направо"
+        else -> when (readingOrder) {
+            "ltr" -> "→ Слева направо"
+            "vertical" -> "↓ Сверху вниз"
+            else -> "← Справа налево"
+        }
+    }
+
+    // Пункты меню как данные: вид и раскладку рисует общий
+    // OcrControlMenuCard — здесь только подписи, действия и состояние.
+    //
+    // Слайдер скорости виден только при активной автопрокрутке и вставлен
+    // сразу под свою строку: в общем хвосте карточки до него пришлось бы
+    // доезжать скроллом.
+    val speedBlock: (@Composable ColumnScope.() -> Unit)? = if (isAutoscrollActive) {
+        {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.Speed, contentDescription = null)
+                Slider(
+                    value = autoscrollSpeed,
+                    onValueChange = {
+                        autoscrollSpeed = it
+                        onAutoscrollToggle(true, autoscrollSpeed)
+                    },
+                    valueRange = 1f..10f,
+                    modifier = Modifier.width(140.dp),
+                )
+                Text("×${autoscrollSpeed.roundToInt()}")
+            }
+        }
+    } else {
+        null
+    }
+
     Box(
         modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.BottomEnd,
@@ -165,89 +206,64 @@ fun ReaderFloatingControls(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                // Раскрывающееся меню (SAO): столбец пунктов над кнопкой
+                // Раскрывающееся меню (SAO): столбец пунктов над кнопкой.
+                // Вид и раскладку рисует общий OcrControlMenuCard — здесь
+                // только данные: подписи, действия и состояние.
                 AnimatedVisibility(
                     visible = menuOpen,
                     enter = fadeIn() + scaleIn(initialScale = 0.8f),
                     exit = fadeOut() + scaleOut(targetScale = 0.8f),
                 ) {
-                    Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.96f),
-                        ),
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .verticalScroll(rememberScrollState())
-                                .heightIn(max = 480.dp)
-                                .padding(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                            horizontalAlignment = Alignment.End,
-                        ) {
-                                if (!hiddenM.contains("r_scan")) {
-
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("OCR скан  ", style = MaterialTheme.typography.labelMedium)
-                                    SmallFloatingActionButton(onClick = {
-                                        beepAction()
-                                        // Сразу режим выделения области: промежуточные
-                                        // кнопки «100%/верх/низ» убраны как лишние — область
-                                        // пользователь выбирает перетаскиванием.
-                                        onTriggerOcr()
-                                    }) {
-                                        Icon(Icons.Outlined.DocumentScanner, contentDescription = "OCR")
-                                    }
-                                }
-
-                                }
-                                if (!hiddenM.contains("r_autoscroll")) {
-
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        if (isAutoscrollActive) "Стоп прокрутки  " else "Автопрокрутка  ",
-                                        style = MaterialTheme.typography.labelMedium,
-                                    )
-                                    SmallFloatingActionButton(onClick = {
-                                        beepAction()
-                                        isAutoscrollActive = !isAutoscrollActive
-                                        onAutoscrollToggle(isAutoscrollActive, autoscrollSpeed)
-                                    }) {
-                                        Icon(
-                                            if (isAutoscrollActive) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                                            contentDescription = "Автопрокрутка",
-                                            tint = if (isAutoscrollActive) {
-                                                MaterialTheme.colorScheme.primary
-                                            } else {
-                                                MaterialTheme.colorScheme.onSurface
-                                            },
-                                        )
-                                    }
-                                }
-
-                                }
-                                if (isAutoscrollActive) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Outlined.Speed, contentDescription = null)
-                                        Slider(
-                                            value = autoscrollSpeed,
-                                            onValueChange = {
-                                                autoscrollSpeed = it
-                                                onAutoscrollToggle(true, autoscrollSpeed)
-                                            },
-                                            valueRange = 1f..10f,
-                                            modifier = Modifier.width(140.dp),
-                                        )
-                                        Text("×${autoscrollSpeed.roundToInt()}")
-                                    }
-                                }
-                                if (!hiddenM.contains("r_autoread")) {
-
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        if (readingActive) "Чтение: идёт…  " else "Прочитать страницу  ",
-                                        style = MaterialTheme.typography.labelMedium,
-                                    )
-                                    SmallFloatingActionButton(
+                    OcrControlMenuCard(
+                        rows = listOfNotNull(
+                            rowUnlessHidden(
+                                "r_scan",
+                                OcrMenuRow(
+                                    label = "OCR скан",
+                                    action = OcrMenuAction(
+                                        icon = Icons.Outlined.DocumentScanner,
+                                        onClick = {
+                                            beepAction()
+                                            // Сразу режим выделения области: промежуточные
+                                            // кнопки «100%/верх/низ» убраны как лишние — область
+                                            // пользователь выбирает перетаскиванием.
+                                            onTriggerOcr()
+                                        },
+                                        contentDescription = "OCR",
+                                    ),
+                                ),
+                            ),
+                            rowUnlessHidden(
+                                "r_autoscroll",
+                                OcrMenuRow(
+                                    label = if (isAutoscrollActive) "Стоп прокрутки" else "Автопрокрутка",
+                                    action = OcrMenuAction(
+                                        icon = if (isAutoscrollActive) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                                        onClick = {
+                                            beepAction()
+                                            isAutoscrollActive = !isAutoscrollActive
+                                            onAutoscrollToggle(isAutoscrollActive, autoscrollSpeed)
+                                        },
+                                        // Подсветки фона тут нет, меняется только иконка —
+                                        // так владелец сразу видит, что автопрокрутка идёт.
+                                        contentColor = if (isAutoscrollActive) {
+                                            MaterialTheme.colorScheme.primary
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                        contentDescription = "Автопрокрутка",
+                                    ),
+                                    // Слайдер идёт сразу за своей строкой, а не
+                                    // в хвосте extraContent.
+                                    below = speedBlock,
+                                ),
+                            ),
+                            rowUnlessHidden(
+                                "r_autoread",
+                                OcrMenuRow(
+                                    label = if (readingActive) "Чтение: идёт…" else "Прочитать страницу",
+                                    action = OcrMenuAction(
+                                        icon = if (readingActive) Icons.Outlined.GraphicEq else Icons.Outlined.PlayArrow,
                                         onClick = {
                                             beepAction()
                                             menuOpen = false
@@ -258,274 +274,260 @@ fun ReaderFloatingControls(
                                         } else {
                                             MaterialTheme.colorScheme.secondaryContainer
                                         },
-                                    ) {
-                                        Icon(
-                                            if (readingActive) Icons.Outlined.GraphicEq else Icons.Outlined.PlayArrow,
-                                            contentDescription = "Прочитать страницу",
-                                            tint = if (readingActive) {
-                                                MaterialTheme.colorScheme.onTertiaryContainer
-                                            } else {
-                                                MaterialTheme.colorScheme.onSecondaryContainer
-                                            },
-                                        )
-                                    }
-                                }
-
-                                }
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Стоп чтения  ", style = MaterialTheme.typography.labelMedium)
-                                    SmallFloatingActionButton(
+                                        contentColor = if (readingActive) {
+                                            MaterialTheme.colorScheme.onTertiaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.onSecondaryContainer
+                                        },
+                                        contentDescription = "Прочитать страницу",
+                                    ),
+                                ),
+                            ),
+                            OcrMenuRow(
+                                label = "Стоп чтения",
+                                action = OcrMenuAction(
+                                    icon = if (readingActive) Icons.Outlined.StopCircle else Icons.Outlined.Pause,
+                                    onClick = {
+                                        beepAction()
+                                        onStopSpeak()
+                                    },
+                                    containerColor = if (readingActive) {
+                                        MaterialTheme.colorScheme.errorContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceContainerHigh
+                                    },
+                                    contentColor = if (readingActive) {
+                                        MaterialTheme.colorScheme.onErrorContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                    contentDescription = "Стоп чтения",
+                                ),
+                            ),
+                            rowUnlessHidden(
+                                "r_instant_sc",
+                                OcrMenuRow(
+                                    label = "Скриншот сейчас",
+                                    action = OcrMenuAction(
+                                        icon = Icons.Outlined.CameraAlt,
                                         onClick = {
                                             beepAction()
-                                            onStopSpeak()
+                                            onInstantScreenshot()
                                         },
-                                        containerColor = if (readingActive) {
-                                            MaterialTheme.colorScheme.errorContainer
+                                        contentDescription = "Скриншот сейчас",
+                                    ),
+                                ),
+                            ),
+                            rowUnlessHidden(
+                                "r_voiceicons",
+                                OcrMenuRow(
+                                    label = if (voiceIconsEnabled) "Значки озвучки: вкл" else "Значки озвучки: выкл",
+                                    action = OcrMenuAction(
+                                        icon = Icons.Outlined.RecordVoiceOver,
+                                        onClick = {
+                                            beepAction()
+                                            onVoiceIconsToggle(!voiceIconsEnabled)
+                                        },
+                                        contentColor = if (voiceIconsEnabled) {
+                                            MaterialTheme.colorScheme.primary
                                         } else {
-                                            MaterialTheme.colorScheme.surfaceVariant
+                                            MaterialTheme.colorScheme.onSurfaceVariant
                                         },
-                                    ) {
-                                        Icon(
-                                            if (readingActive) Icons.Outlined.StopCircle else Icons.Outlined.Pause,
-                                            contentDescription = "Стоп чтения",
-                                            tint = if (readingActive) {
-                                                MaterialTheme.colorScheme.onErrorContainer
-                                            } else {
-                                                MaterialTheme.colorScheme.onSurfaceVariant
-                                            },
-                                        )
-                                    }
-                                }
-                                if (!hiddenM.contains("r_instant_sc")) {
-
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Скриншот сейчас  ", style = MaterialTheme.typography.labelMedium)
-                                    SmallFloatingActionButton(onClick = {
-                                        beepAction()
-                                        onInstantScreenshot()
-                                    }) {
-                                        Icon(Icons.Outlined.CameraAlt, contentDescription = "Скриншот сейчас")
-                                    }
-                                }
-
-                                }
-                                if (!hiddenM.contains("r_voiceicons")) {
-
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        if (voiceIconsEnabled) "Значки озвучки: вкл  " else "Значки озвучки: выкл  ",
-                                        style = MaterialTheme.typography.labelMedium,
-                                    )
-                                    SmallFloatingActionButton(onClick = {
-                                        beepAction()
-                                        onVoiceIconsToggle(!voiceIconsEnabled)
-                                    }) {
-                                        Icon(
-                                            Icons.Outlined.RecordVoiceOver,
-                                            contentDescription = "Значки озвучки",
-                                            tint = if (voiceIconsEnabled) {
-                                                MaterialTheme.colorScheme.primary
-                                            } else {
-                                                MaterialTheme.colorScheme.onSurface
-                                            },
-                                        )
-                                    }
-                                }
-
-                                }
-                                if (!hiddenM.contains("r_order")) {
-
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    val presetTitle = when (contentPreset) {
-                                        "manga" -> "Манга"
-                                        "manhwa" -> "Манхва"
-                                        "manhua" -> "Маньхуа"
-                                        "comic" -> "Комикс"
-                                        else -> "Сбаланс."
-                                    }
-                                    val presetOrder = when (contentPreset) {
-                                        "manga" -> "← Справа налево"
-                                        "manhwa", "manhua" -> "↓ Сверху вниз"
-                                        "comic" -> "→ Слева направо"
-                                        else -> when (readingOrder) {
-                                            "ltr" -> "→ Слева направо"
-                                            "vertical" -> "↓ Сверху вниз"
-                                            else -> "← Справа налево"
-                                        }
-                                    }
-                                    Text("$presetTitle · $presetOrder  ", style = MaterialTheme.typography.labelMedium)
-                                    SmallFloatingActionButton(onClick = {
-                                        beepAction()
-                                        onContentPresetChange(
-                                            when (contentPreset) {
-                                                "manga" -> "manhwa"
-                                                "manhwa" -> "manhua"
-                                                "manhua" -> "comic"
-                                                "comic" -> "manga"
-                                                else -> "manga"
-                                            },
-                                        )
-                                    }) {
-                                        Icon(Icons.Outlined.DocumentScanner, contentDescription = "Режим чтения: $presetTitle")
-                                    }
-                                }
-
-                                }
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("AI-чат  ", style = MaterialTheme.typography.labelMedium)
-                                    SmallFloatingActionButton(onClick = {
+                                        contentDescription = "Значки озвучки",
+                                    ),
+                                ),
+                            ),
+                            rowUnlessHidden(
+                                "r_order",
+                                OcrMenuRow(
+                                    label = "$presetTitle · $presetOrder",
+                                    action = OcrMenuAction(
+                                        icon = Icons.Outlined.DocumentScanner,
+                                        onClick = {
+                                            beepAction()
+                                            onContentPresetChange(
+                                                when (contentPreset) {
+                                                    "manga" -> "manhwa"
+                                                    "manhwa" -> "manhua"
+                                                    "manhua" -> "comic"
+                                                    "comic" -> "manga"
+                                                    else -> "manga"
+                                                },
+                                            )
+                                        },
+                                        contentDescription = "Режим чтения: $presetTitle",
+                                    ),
+                                ),
+                            ),
+                            OcrMenuRow(
+                                label = "AI-чат",
+                                action = OcrMenuAction(
+                                    icon = Icons.Outlined.SmartToy,
+                                    onClick = {
                                         beepAction()
                                         menuOpen = false
                                         onOpenAiChat()
-                                    }) {
-                                        Icon(Icons.Outlined.SmartToy, contentDescription = "AI-чат")
-                                    }
-                                }
-
-                                // Голос: режим (авто/ручной) и, в ручном,
-                                // выбор пола. Две кнопки рядом — чтобы не
-                                // уходить в настройки посреди главы.
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        if (manualVoice) "Голос: вручную  " else "Голос: авто  ",
-                                        style = MaterialTheme.typography.labelMedium,
-                                    )
-                                    SmallFloatingActionButton(onClick = {
+                                    },
+                                    contentDescription = "AI-чат",
+                                ),
+                            ),
+                            // Голос: режим (авто/ручной) и, в ручном, выбор пола. Две кнопки
+                            // рядом — чтобы не уходить в настройки посреди главы.
+                            OcrMenuRow(
+                                label = if (manualVoice) "Голос: вручную" else "Голос: авто",
+                                action = OcrMenuAction(
+                                    icon = if (manualVoice) Icons.Outlined.TouchApp else Icons.Outlined.AutoMode,
+                                    onClick = {
                                         beepAction()
                                         manualVoice = !manualVoice
                                         onVoiceModeChange(manualVoice)
-                                    }) {
-                                        Icon(
-                                            if (manualVoice) Icons.Outlined.TouchApp else Icons.Outlined.AutoMode,
-                                            contentDescription = "Режим выбора голоса",
-                                        )
-                                    }
-
-                                    Spacer(Modifier.width(8.dp))
-
-                                    SmallFloatingActionButton(
+                                    },
+                                    contentDescription = "Режим выбора голоса",
+                                ),
+                                secondary = OcrMenuAction(
+                                    glyph = if (voiceGender == "male") "♂" else "♀",
+                                    onClick = {
+                                        if (!manualVoice) return@OcrMenuAction
+                                        beepAction()
+                                        voiceGender = if (voiceGender == "male") "female" else "male"
+                                        onVoiceGenderChange(voiceGender)
+                                    },
+                                    // В ручном режиме кнопка подсвечена: в авто пол выбирать
+                                    // нечем, и тап остаётся вхолостую (см. onClick выше).
+                                    active = manualVoice,
+                                    contentDescription = "Голос: ${if (voiceGender == "male") "мужской" else "женский"}",
+                                ),
+                            ),
+                            rowUnlessHidden(
+                                "r_tts",
+                                OcrMenuRow(
+                                    label = "Озвучка (TTS)",
+                                    action = OcrMenuAction(
+                                        icon = Icons.Outlined.RecordVoiceOver,
                                         onClick = {
-                                            if (!manualVoice) return@SmallFloatingActionButton
                                             beepAction()
-                                            voiceGender = if (voiceGender == "male") "female" else "male"
-                                            onVoiceGenderChange(voiceGender)
+                                            menuOpen = false
+                                            onOpenOcrSettings()
                                         },
-                                        containerColor = if (manualVoice) {
-                                            MaterialTheme.colorScheme.primaryContainer
-                                        } else {
-                                            MaterialTheme.colorScheme.surfaceVariant
+                                        contentDescription = "Озвучка",
+                                    ),
+                                ),
+                            ),
+                            rowUnlessHidden(
+                                "r_ocr_bubbles",
+                                OcrMenuRow(
+                                    label = "Настройки OCR (баблы)",
+                                    action = OcrMenuAction(
+                                        icon = Icons.Outlined.Tune,
+                                        onClick = {
+                                            beepAction()
+                                            menuOpen = false
+                                            onOpenFullOcrSettings()
                                         },
-                                    ) {
-                                        Text(if (voiceGender == "male") "♂" else "♀")
-                                    }
-                                }
-
-                                if (!hiddenM.contains("r_tts")) {
-
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Озвучка (TTS)  ", style = MaterialTheme.typography.labelMedium)
-                                    SmallFloatingActionButton(onClick = {
-                                        beepAction()
-                                        menuOpen = false
-                                        onOpenOcrSettings()
-                                    }) {
-                                        Icon(Icons.Outlined.RecordVoiceOver, contentDescription = "Озвучка")
-                                    }
-                                }
-
-                                }
-                                if (!hiddenM.contains("r_ocr_bubbles")) {
-
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Настройки OCR (баблы)  ", style = MaterialTheme.typography.labelMedium)
-                                    SmallFloatingActionButton(onClick = {
-                                        beepAction()
-                                        menuOpen = false
-                                        onOpenFullOcrSettings()
-                                    }) {
-                                        Icon(Icons.Outlined.Tune, contentDescription = "Настройки OCR")
-                                    }
-                                }
-
-                                }
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Мужской голос  ", style = MaterialTheme.typography.labelMedium)
-                                    SmallFloatingActionButton(onClick = {
+                                        contentDescription = "Настройки OCR",
+                                    ),
+                                ),
+                            ),
+                            OcrMenuRow(
+                                label = "Мужской голос",
+                                action = OcrMenuAction(
+                                    icon = Icons.Outlined.RecordVoiceOver,
+                                    onClick = {
                                         Injekt.get<mihon.domain.ocr.service.OcrPreferences>().voicePresetGender().set("male")
                                         ctorContext.toast("Мужской голос по умолчанию")
-                                    }) {
-                                        Icon(Icons.Outlined.RecordVoiceOver, contentDescription = "Мужской голос")
-                                    }
-                                }
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Женский голос  ", style = MaterialTheme.typography.labelMedium)
-                                    SmallFloatingActionButton(onClick = {
+                                    },
+                                    contentDescription = "Мужской голос",
+                                ),
+                            ),
+                            OcrMenuRow(
+                                label = "Женский голос",
+                                action = OcrMenuAction(
+                                    icon = Icons.Outlined.RecordVoiceOver,
+                                    onClick = {
                                         Injekt.get<mihon.domain.ocr.service.OcrPreferences>().voicePresetGender().set("female")
                                         ctorContext.toast("Женский голос по умолчанию")
+                                    },
+                                    contentDescription = "Женский голос",
+                                ),
+                            ),
+                        ),
+                        maxHeight = 480.dp,
+                        footer = "yomikai " + eu.kanade.tachiyomi.AppInfo.getVersionName(),
+                        // Кнопки конструктора: список пользовательских действий
+                        // известен только в рантайме, в модель строк он не ложится.
+                        extraContent = {
+                            if (userActs.isNotEmpty()) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        text = "Кнопки конструктора",
+                                        modifier = Modifier.weight(1f),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    IconButton(onClick = {
+                                        ctorExpanded = !ctorExpanded
+                                        ctorUiPrefs.edit().putBoolean("menu_ctor_expanded", ctorExpanded).apply()
                                     }) {
-                                        Icon(Icons.Outlined.RecordVoiceOver, contentDescription = "Женский голос")
+                                        Icon(
+                                            if (ctorExpanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                                            contentDescription = "Скрыть или показать кнопки конструктора",
+                                        )
                                     }
                                 }
-                                if (userActs.isNotEmpty()) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text("Кнопки конструктора  ", style = MaterialTheme.typography.labelMedium)
-                                        IconButton(onClick = {
-                                            ctorExpanded = !ctorExpanded
-                                            ctorUiPrefs.edit().putBoolean("menu_ctor_expanded", ctorExpanded).apply()
-                                        }) {
-                                            Icon(if (ctorExpanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown, contentDescription = "Скрыть или показать кнопки конструктора")
-                                        }
-                                    }
-                                    if (ctorExpanded) {
-                                        userActs.filterNot { it.title.startsWith("Пресет") }.forEach { act ->
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Text(act.title + "  ", style = MaterialTheme.typography.labelMedium)
-                                                SmallFloatingActionButton(onClick = {
-                                                    ctorContext.toast(eu.kanade.tachiyomi.data.ui.UiActionRegistry.apply(ctorContext, act))
-                                                }) {
-                                                    Icon(Icons.Outlined.Tune, contentDescription = act.title)
-                                                }
-                                            }
+                                if (ctorExpanded) {
+                                    userActs.filterNot { it.title.startsWith("Пресет") }.forEach { act ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Text(
+                                                text = act.title,
+                                                modifier = Modifier.weight(1f),
+                                                style = MaterialTheme.typography.labelMedium,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                            Spacer(Modifier.width(8.dp))
+                                            OcrMenuActionButton(
+                                                OcrMenuAction(
+                                                    icon = Icons.Outlined.Tune,
+                                                    onClick = {
+                                                        ctorContext.toast(eu.kanade.tachiyomi.data.ui.UiActionRegistry.apply(ctorContext, act))
+                                                    },
+                                                    contentDescription = act.title,
+                                                ),
+                                            )
                                         }
                                     }
                                 }
-                                Text(
-                                    "yomikai " + eu.kanade.tachiyomi.AppInfo.getVersionName(),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
-                                )
                             }
-                        }
-                    }
+                        },
+                    )
                 }
 
-                // Главная кнопка: тап — меню; перетаскивание — отдельная
-                // обёртка Box поверх FAB, чтобы клик и drag не конфликтовали.
-                Box(
-                    modifier = Modifier.pointerInput(Unit) {
-                        detectDragGestures { change, dragAmount ->
-                            change.consume()
-                            offsetX = (offsetX + dragAmount.x).coerceIn(-4000f, 0f)
-                            offsetY = (offsetY + dragAmount.y).coerceIn(-4000f, 400f)
-                        }
+                // Главная кнопка: тап — меню; перетаскивание разведено
+                // отдельной обёрткой Box внутри компонента, чтобы клик и drag
+                // не конфликтовали. Позицию держит вызывающий.
+                OcrControlFab(
+                    expanded = menuOpen,
+                    onToggle = {
+                        beepOpen()
+                        menuOpen = !menuOpen
                     },
-                ) {
-                    FloatingActionButton(
-                        onClick = {
-                            beepOpen()
-                            menuOpen = !menuOpen
-                        },
-                        containerColor = MaterialTheme.colorScheme.primary,
-                    ) {
-                        Icon(
-                            if (menuOpen) Icons.Outlined.Close else Icons.Outlined.Menu,
-                            contentDescription = "Меню читалки",
-                        )
-                    }
-                }
+                    onDrag = { delta ->
+                        offsetX = (offsetX + delta.x).coerceIn(-4000f, 0f)
+                        offsetY = (offsetY + delta.y).coerceIn(-4000f, 400f)
+                    },
+                    contentDescription = if (menuOpen) "Закрыть меню" else "Меню читалки",
+                )
             }
         }
     }
+}
 
 /**
  * Маленькие «часики» статуса OCR, изолированные от родителя: переворот
