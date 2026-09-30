@@ -59,7 +59,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.navigator.LocalNavigator
-import cafe.adriel.voyager.navigator.currentOrNull
+import cafe.adriel.voyager.navigator.current
 import eu.kanade.presentation.more.settings.screen.SettingsAdvancedScreen
 import eu.kanade.presentation.more.settings.screen.SettingsAiScreen
 import eu.kanade.presentation.more.settings.screen.SettingsBrowseScreen
@@ -132,7 +132,7 @@ object SettingsHubScreen : Screen() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsHubContent(modifier: Modifier = Modifier) {
-    val navigator = LocalNavigator.currentOrNull
+    val navigator = LocalNavigator.current
     val backPress = LocalBackPress.current
 
     // Открыт ровно один раздел, у него выбрана одна вкладка. Индексы вкладок
@@ -328,7 +328,7 @@ private val HUB_SECTIONS: List<HubSection> = listOf(
 @Composable
 private fun SoundVoiceTab() {
     val prefs = remember { Injekt.get<OcrPreferences>() }
-    val navigator = LocalNavigator.currentOrNull
+    val navigator = LocalNavigator.current
     val engine by prefs.voiceEngine().changes().collectAsState(initial = prefs.voiceEngine().get())
     val rate by prefs.speechRate().changes().collectAsState(initial = prefs.speechRate().get())
     val pitch by prefs.speechPitch().changes().collectAsState(initial = prefs.speechPitch().get())
@@ -486,7 +486,7 @@ private fun SoundVoiceTab() {
 @Composable
 private fun SoundRolesTab() {
     val prefs = remember { Injekt.get<OcrPreferences>() }
-    val navigator = LocalNavigator.currentOrNull
+    val navigator = LocalNavigator.current
     val mode by prefs.voiceMode().changes().collectAsState(initial = prefs.voiceMode().get())
     val narrator by prefs.narratorGender().changes()
         .collectAsState(initial = prefs.narratorGender().get())
@@ -817,7 +817,7 @@ private fun SoundHighlightTab() {
 @Composable
 private fun OcrPresetsTab() {
     val prefs = remember { Injekt.get<OcrPreferences>() }
-    val navigator = LocalNavigator.currentOrNull
+    val navigator = LocalNavigator.current
     val contentType by prefs.contentType().changes().collectAsState(initial = prefs.contentType().get())
     val autoPreset by prefs.autoPreset().changes().collectAsState(initial = prefs.autoPreset().get())
     val localMode by prefs.localMode().changes().collectAsState(initial = prefs.localMode().get())
@@ -933,7 +933,7 @@ private fun OcrRegionTab() {
     val shape by prefs.scanShape().changes().collectAsState(initial = prefs.scanShape().get())
     val remembered by prefs.rememberedScanRegion().changes()
         .collectAsState(initial = prefs.rememberedScanRegion().get())
-    val navigator = LocalNavigator.currentOrNull
+    val navigator = LocalNavigator.current
     var showBubbles by remember { mutableStateOf(false) }
 
     HubOptions(
@@ -1101,7 +1101,7 @@ private fun OcrLanguageTab() {
         .collectAsState(initial = prefs.keepOfflinePacks().get())
     val zenFree by prefs.zenFreeEnabled().changes()
         .collectAsState(initial = prefs.zenFreeEnabled().get())
-    val navigator = LocalNavigator.currentOrNull
+    val navigator = LocalNavigator.current
 
     HubOptions(
         title = "Язык Google Lens",
@@ -1235,7 +1235,7 @@ private fun BooksFormatTab() {
 @Composable
 private fun BooksPageTab() {
     val prefs = remember { Injekt.get<OcrPreferences>() }
-    val navigator = LocalNavigator.currentOrNull
+    val navigator = LocalNavigator.current
     val pageOcr by prefs.bookPageOcr().changes().collectAsState(initial = prefs.bookPageOcr().get())
     val fullscreen by prefs.bookFullscreen().changes()
         .collectAsState(initial = prefs.bookFullscreen().get())
@@ -1282,7 +1282,7 @@ private fun BooksPageTab() {
 @Composable
 private fun BooksVoiceTab() {
     val prefs = remember { Injekt.get<OcrPreferences>() }
-    val navigator = LocalNavigator.currentOrNull
+    val navigator = LocalNavigator.current
     val engine by prefs.bookTtsEngine().changes().collectAsState(initial = prefs.bookTtsEngine().get())
     val rate by prefs.bookSpeechRate().changes()
         .collectAsState(initial = prefs.bookSpeechRate().get())
@@ -1400,7 +1400,7 @@ private fun BooksVoiceTab() {
 @Composable
 private fun OtherOverlayTab() {
     val prefs = remember { Injekt.get<OcrPreferences>() }
-    val navigator = LocalNavigator.currentOrNull
+    val navigator = LocalNavigator.current
     val mode by prefs.overlayRegionMode().changes()
         .collectAsState(initial = prefs.overlayRegionMode().get())
     val showFrame by prefs.overlayShowFrame().changes()
@@ -1484,7 +1484,7 @@ private fun OtherOverlayTab() {
 @Composable
 private fun OtherAgentsTab() {
     val prefs = remember { Injekt.get<OcrPreferences>() }
-    val navigator = LocalNavigator.currentOrNull
+    val navigator = LocalNavigator.current
     val backend by prefs.aiBackend().changes().collectAsState(initial = prefs.aiBackend().get())
     val provider by prefs.aiProvider().changes().collectAsState(initial = prefs.aiProvider().get())
     val orchestrator by prefs.aiOrchestratorBackend().changes()
@@ -1597,7 +1597,7 @@ private fun OtherAgentsTab() {
 @Composable
 private fun OtherExperimentalTab() {
     val prefs = remember { Injekt.get<OcrPreferences>() }
-    val navigator = LocalNavigator.currentOrNull
+    val navigator = LocalNavigator.current
     val textOverlay by prefs.ocrPageTextOverlay().changes()
         .collectAsState(initial = prefs.ocrPageTextOverlay().get())
     val toNotification by prefs.ocrToNotification().changes()
@@ -1685,7 +1685,7 @@ private fun OtherExperimentalTab() {
 /** Конструктор интерфейса. */
 @Composable
 private fun OtherConstructorTab() {
-    val navigator = LocalNavigator.currentOrNull
+    val navigator = LocalNavigator.current
     HubNote(
         "Конструктор собирает вид приложения: вкладки нижней панели, модули " +
             "панели читалки и браузера, собственные кнопки действий. Значения " +
@@ -1708,7 +1708,7 @@ private fun OtherConstructorTab() {
 /** Источники и расширения. */
 @Composable
 private fun OtherSourcesTab() {
-    val navigator = LocalNavigator.currentOrNull
+    val navigator = LocalNavigator.current
     HubNote(
         "Источники и расширения настраиваются в своём разделе: там же обновление " +
             "и удаление репозиториев. В читалке их настройки не дублируются.",
