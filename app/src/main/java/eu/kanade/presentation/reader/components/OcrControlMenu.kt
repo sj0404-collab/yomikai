@@ -205,22 +205,27 @@ fun OcrMenuActionButton(
     action: OcrMenuAction,
     modifier: Modifier = Modifier,
 ) {
+    // У SmallFloatingActionButton в Material3 нет параметра enabled, поэтому
+    // заблокированное состояние рисуем сами: приглушённые цвета плюс защита
+    // в обработчике. Иначе кнопка выглядела бы живой, но ничего не делала.
+    val enabled = action.enabled
     // Контейнер по умолчанию — тот же surfaceContainerHigh, что у фона карточки:
     // кнопка должна читаться как элемент панели, а не как пятно на её фоне.
     val container = when {
+        !enabled -> MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.45f)
         action.containerColor != null -> action.containerColor
         action.active -> MaterialTheme.colorScheme.primaryContainer
         else -> MaterialTheme.colorScheme.surfaceContainerHigh
     }
     val content = when {
+        !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
         action.contentColor != null -> action.contentColor
         action.active && action.containerColor == null -> MaterialTheme.colorScheme.onPrimaryContainer
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
     val description = action.contentDescription
     SmallFloatingActionButton(
-        onClick = action.onClick,
-        enabled = action.enabled,
+        onClick = { if (enabled) action.onClick() },
         modifier = modifier.then(
             // Описание вешаем на саму кнопку, а не на иконку: у глифа-текста
             // иконки нет вообще, и TalkBack молчал бы.
