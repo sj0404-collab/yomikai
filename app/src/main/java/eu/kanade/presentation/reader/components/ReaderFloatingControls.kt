@@ -72,6 +72,14 @@ fun ReaderFloatingControls(
     onOpenOcrSettings: () -> Unit,
     /** Отдельная кнопка полной настройки «как читать баблы» (OCR). */
     onOpenFullOcrSettings: () -> Unit = {},
+    /**
+     * Единый хаб настроек: звук, распознавание, книги, прочее.
+     *
+     * Отдельные пункты «Озвучка» и «Настройки OCR» из меню убраны — читатель
+     * жаловался, что настроек «везде, а толку ноль». Всё это теперь в одном
+     * месте, а меню отвечает только за действия.
+     */
+    onOpenSettingsHub: () -> Unit = {},
     onOpenAiChat: () -> Unit = {},
     onScanRegionChange: (ScanRegion) -> Unit,
     onAutoscrollToggle: (Boolean, Float) -> Unit,
@@ -398,34 +406,16 @@ fun ReaderFloatingControls(
                                     contentDescription = "Голос: ${if (voiceGender == "male") "мужской" else "женский"}",
                                 ),
                             ),
-                            rowUnlessHidden(
-                                "r_tts",
-                                OcrMenuRow(
-                                    label = "Озвучка (TTS)",
-                                    action = OcrMenuAction(
-                                        icon = Icons.Outlined.RecordVoiceOver,
-                                        onClick = {
-                                            beepAction()
-                                            menuOpen = false
-                                            onOpenOcrSettings()
-                                        },
-                                        contentDescription = "Озвучка",
-                                    ),
-                                ),
-                            ),
-                            rowUnlessHidden(
-                                "r_ocr_bubbles",
-                                OcrMenuRow(
-                                    label = "Настройки OCR (баблы)",
-                                    action = OcrMenuAction(
-                                        icon = Icons.Outlined.Tune,
-                                        onClick = {
-                                            beepAction()
-                                            menuOpen = false
-                                            onOpenFullOcrSettings()
-                                        },
-                                        contentDescription = "Настройки OCR",
-                                    ),
+                            OcrMenuRow(
+                                label = "Все настройки",
+                                action = OcrMenuAction(
+                                    icon = Icons.Outlined.Tune,
+                                    onClick = {
+                                        beepAction()
+                                        menuOpen = false
+                                        onOpenSettingsHub()
+                                    },
+                                    contentDescription = "Все настройки: звук, распознавание, книги",
                                 ),
                             ),
                             OcrMenuRow(
