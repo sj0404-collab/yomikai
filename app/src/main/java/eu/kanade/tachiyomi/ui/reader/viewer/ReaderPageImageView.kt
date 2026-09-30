@@ -42,6 +42,7 @@ import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView.SCALE_TYPE_
 import com.github.chrisbanes.photoview.PhotoView
 import com.google.android.material.color.MaterialColors
 import eu.kanade.domain.base.BasePreferences
+import eu.kanade.presentation.reader.components.OcrPageMarksSettings
 import eu.kanade.tachiyomi.data.coil.cropBorders
 import eu.kanade.tachiyomi.data.coil.customDecoder
 import eu.kanade.tachiyomi.data.ocr.OcrPageInput
@@ -50,6 +51,8 @@ import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonSubsamplingImageView
 import eu.kanade.tachiyomi.util.system.animatorDurationScale
 import eu.kanade.tachiyomi.util.view.isVisibleOnScreen
 import logcat.LogPriority
+import mihon.data.ocr.OcrScreenshotBuffer
+import mihon.data.ocr.OcrScreenshotEntry
 import mihon.domain.ocr.model.OcrBoundingBox
 import mihon.domain.ocr.model.OcrPageResult
 import mihon.domain.ocr.model.flattenOcrTextForQuery
@@ -99,8 +102,23 @@ open class ReaderPageImageView @JvmOverloads constructor(
     private var ocrPageIdentity: ReaderOcrPageIdentity? = null
     private var activeOcrOverlay: ReaderActiveOcrOverlay? = null
     private var activeOverlayLayout: ReaderOcrOverlayLayout? = null
+    private var ocrPageMarksCache: OcrPageMarksCache? = null
     private var pendingOnPageReadyDirection: Boolean? = null
     private var loadedPageInput: OcrPageInput? = null
+
+    private val ocrMarksBoxPaints = OcrPageMarksSettings.palette.map { color ->
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = color
+            style = Paint.Style.STROKE
+            strokeWidth = resources.displayMetrics.density * 1.5f
+        }
+    }
+    private val ocrMarksNumberPaint =
+        TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            textAlign = Paint.Align.LEFT
+        }
+    private val ocrMarksNumberBackgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     private val ocrOverlayBackgroundPaint =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -738,8 +756,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
                 queryText = flattenOcrTextForQuery(region.text),
                 boundingBox = region.boundingBox,
                 textOrientation = region.textOrientation,
-                anchorRectOnScreen = boundingBoxToScreenRect(region.boundingBox, result),
-                initialSelectionOffset = resolveInitialSelectionOffset(region, displayText, result, localX, localY),
+                anchorRectOnScreen = boundingBoxToScreenRect(region.boundingBox),
+                initialSelectionOffset = resolveInitialSelectionOffset(region, displayText, localX, localY),
             ),
         )
         return true
@@ -762,7 +780,119 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     override fun dispatchDraw(canvas: Canvas) {
         super.dispatchDraw(canvas)
+        drawOcrPageMarks(canvas)
         drawActiveOcrOverlay(canvas)
+    }
+
+    /**
+     * Пометки порядка чтения из буфера скриншотов — те же разноцветные рамки с
+     * номерами, что во вкладке «Скриншоты», но на самой странице.
+     *
+     * Рисуем здесь, а не оверлеем Compose, потому что координаты регионов
+     * лежат в пикселях страницы, а не окна: страница не занимает всю область
+     * (поля у манги, длинная лента вебтуна), и карта с экрана на страницу
+     * теряется на полях. [SubsamplingScaleImageView.fileToViewRect] делает
+     * правильную проекцию сама — вместе с зумом, панорамой, поворотом на
+     * 90/180/270 и обрезкой рамок, а перерисовку при всех этих изменениях уже
+     * дают слушатели состояния SSIV.
+     *
+     * Записи без геометрии (старый JSON, выделенная область, кадр из нескольких
+     * страниц) пропускаются: по ним нарисовать можно только заведомо неверные
+     * рамки. Анимированные страницы (GIF/WebP) рисуются через ImageView без
+     * файловой геометрии — там пометок тоже нет.
+     */
+    private fun drawOcrPageMarks(canvas: Canvas) {
+        if (!OcrPageMarksSettings.isEnabled()) return
+        val pageView = pageView as? SubsamplingScaleImageView ?: return
+        if (!pageView.isReady) return
+        val marks = currentOcrPageMarks() ?: return
+
+        val density = resources.displayMetrics.density
+        val viewWidth = width.toFloat()
+        val viewHeight = height.toFloat()
+        val numberTextPaint = ocrMarksNumberPaint
+        numberTextPaint.textSize = density * 10f
+
+        // Записей на странице может быть много (вебтун: снимок на каждый экран
+        // прокрутки), поэтому рисуем последние: они относятся к тому, что
+        // читатель видит сейчас, а совсем старые только наслаивались бы.
+        val visibleMarks = marks.takeLast(MAX_OCR_MARKS_ENTRIES)
+        for (entryIndex in visibleMarks.indices) {
+            val entry = visibleMarks[entryIndex]
+            // Свежая запись — ярче: она про порядок чтения именно этого кадра.
+            val baseColor = OcrPageMarksSettings.palette[
+                entryIndex % OcrPageMarksSettings.palette.size
+            ]
+            val entryAlpha = 0.4f + 0.6f * (entryIndex + 1f) / visibleMarks.size
+            val markColor = baseColor.withAlpha(Color.alpha(baseColor) * entryAlpha)
+            val boxPaint = ocrMarksBoxPaints[entryIndex % ocrMarksBoxPaints.size]
+            boxPaint.color = markColor
+            for (regionIndex in entry.regions.indices) {
+                val region = entry.regions[regionIndex]
+                val fileBox = entry.regionFileBoundingBox(region) ?: continue
+                val fileRect = RectF(
+                    fileBox.left * entry.sourceWidth,
+                    fileBox.top * entry.sourceHeight,
+                    fileBox.right * entry.sourceWidth,
+                    fileBox.bottom * entry.sourceHeight,
+                )
+                val viewRect = pageView.fileToViewRect(fileRect, fileCropRect) ?: continue
+                if (viewRect.width() <= 0f || viewRect.height() <= 0f) continue
+                // Экономия отрисовки длинной ленты вебтуна и обрезка всего,
+                // что уже уехало за край экрана.
+                if (!viewRect.intersect(0f, 0f, viewWidth, viewHeight)) continue
+
+                canvas.drawRect(viewRect, boxPaint)
+                drawOcrMarkNumber(canvas, viewRect, regionIndex + 1, markColor)
+            }
+        }
+    }
+
+    /** Кружок с номером порядка чтения в левом верхнем углу рамки региона. */
+    private fun drawOcrMarkNumber(
+        canvas: Canvas,
+        regionRect: RectF,
+        order: Int,
+        color: Int,
+    ) {
+        val density = resources.displayMetrics.density
+        val radius = density * 9f
+        val centerX = regionRect.left + radius
+        val centerY = regionRect.top + radius
+        val label = order.toString()
+        val textPaint = ocrMarksNumberPaint
+        val labelBackgroundPaint = ocrMarksNumberBackgroundPaint
+        labelBackgroundPaint.color = color
+        canvas.drawCircle(centerX, centerY, radius, labelBackgroundPaint)
+        canvas.drawText(
+            label,
+            centerX - textPaint.measureText(label) / 2f,
+            centerY - (textPaint.ascent() + textPaint.descent()) / 2f,
+            textPaint,
+        )
+    }
+
+    /**
+     * Записи буфера, относящиеся к ЭТОЙ странице.
+     *
+     * Страница известна по [ocrPageIdentity] — тому же хуку, по которому
+     * работает оверлей активной реплики, поэтому в пагере и в вебтуне (где
+     * страниц в ленте много одновременно) пометки ложатся именно на ту
+     * страницу, к которой относятся. Кэш по [OcrScreenshotBuffer.version]:
+     * перерисовка идёт на каждом кадре анимации, фильтровать буфер заново
+     * там незачем.
+     */
+    private fun currentOcrPageMarks(): List<OcrScreenshotEntry>? {
+        val identity = ocrPageIdentity ?: return null
+        val version = OcrScreenshotBuffer.version
+        val cache = ocrPageMarksCache
+        if (cache != null && cache.identity == identity && cache.version == version) {
+            return cache.entries
+        }
+        val entries = OcrScreenshotBuffer.forPage(identity.chapterId, identity.pageIndex)
+            .filter { it.hasSourceGeometry }
+        ocrPageMarksCache = OcrPageMarksCache(identity, version, entries)
+        return entries
     }
 
     private fun drawActiveOcrOverlay(canvas: Canvas) {
@@ -786,12 +916,11 @@ open class ReaderPageImageView @JvmOverloads constructor(
     private fun resolveInitialSelectionOffset(
         region: mihon.domain.ocr.model.OcrRegion,
         normalizedDisplayText: String,
-        pageResult: OcrPageResult,
         localX: Float,
         localY: Float,
     ): Int {
         val overlayLayout = ocrOverlayRenderer.buildLayout(
-            bubbleRect = boundingBoxToLocalRect(region.boundingBox, pageResult) ?: return 0,
+            bubbleRect = boundingBoxToLocalRect(region.boundingBox) ?: return 0,
             displayText = normalizedDisplayText,
             textOrientation = region.textOrientation,
             highlightRange = null,
@@ -807,8 +936,10 @@ open class ReaderPageImageView @JvmOverloads constructor(
         activeOverlayLayout?.let { return it }
 
         val overlay = activeOcrOverlay ?: return null
-        val result = cachedOcrResult ?: return null
-        val bubbleRect = boundingBoxToLocalRect(overlay.boundingBox, result) ?: return null
+        // Результат OCR страницы нужен как проверка, что оверлей вообще к чему
+        // привязан: без распознанной страницы показывать нечего.
+        cachedOcrResult ?: return null
+        val bubbleRect = boundingBoxToLocalRect(overlay.boundingBox) ?: return null
         return ocrOverlayRenderer.buildLayout(
             bubbleRect = bubbleRect,
             displayText = overlay.displayText,
@@ -821,9 +952,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     private fun boundingBoxToLocalRect(
         boundingBox: OcrBoundingBox,
-        pageResult: OcrPageResult,
     ): RectF? {
-        val localRect = boundingBoxToDisplayedRect(boundingBox, pageResult) ?: return null
+        val localRect = boundingBoxToDisplayedRect(boundingBox) ?: return null
         return RectF(
             localRect.left.coerceIn(0f, width.toFloat()),
             localRect.top.coerceIn(0f, height.toFloat()),
@@ -861,6 +991,29 @@ open class ReaderPageImageView @JvmOverloads constructor(
      * координаты OCR нельзя умножать на размер контейнера — рамки уезжают.
      */
     fun displayedImageRectOrNull(): RectF? = displayedImageLocalRect()
+
+    /**
+     * Размер ИСХОДНОГО изображения страницы (того же, в координатах которого
+     * работает [sourceRectForScreenRect]) — в пикселях файла.
+     *
+     * Нужен записи скриншота: без него нормализованные координаты распознанных
+     * регионов нечем перевести в пиксели страницы, и вернуть пометки на книгу
+     * невозможно. null — картинка ещё не готова.
+     */
+    fun sourceSizeOrNull(): Pair<Int, Int>? {
+        return when (val currentPageView = pageView) {
+            is SubsamplingScaleImageView ->
+                if (currentPageView.isReady && currentPageView.sWidth > 0 && currentPageView.sHeight > 0) {
+                    currentPageView.sWidth to currentPageView.sHeight
+                } else {
+                    null
+                }
+            is ImageView -> currentPageView.drawable?.let {
+                it.intrinsicWidth to it.intrinsicHeight
+            }?.takeIf { (it.first > 0 && it.second > 0) }
+            else -> null
+        }
+    }
 
     private fun displayedImageLocalRect(): RectF? {
         return when (val currentPageView = pageView) {
@@ -925,9 +1078,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     private fun boundingBoxToScreenRect(
         boundingBox: OcrBoundingBox,
-        pageResult: OcrPageResult,
     ): RectF? {
-        val localRect = boundingBoxToDisplayedRect(boundingBox, pageResult) ?: return null
+        val localRect = boundingBoxToDisplayedRect(boundingBox) ?: return null
         val location = IntArray(2)
         getLocationOnScreen(location)
         return RectF(localRect).apply { offset(location[0].toFloat(), location[1].toFloat()) }
@@ -935,13 +1087,26 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     private fun boundingBoxToDisplayedRect(
         boundingBox: OcrBoundingBox,
-        pageResult: OcrPageResult,
     ): RectF? {
         return when (val currentPageView = pageView) {
-            is SubsamplingScaleImageView -> currentPageView.fileToViewRect(
-                boundingBox.toSourceRect(pageResult),
-                fileCropRect,
-            )
+            is SubsamplingScaleImageView -> {
+                // Координаты региона нормализованы, поэтому переносим их сразу
+                // в пиксели ИСХОДНОГО изображения страницы, а не в пиксели
+                // битмапа, который видел OCR: он уменьшен и обрезан по видимой
+                // области, и от его размера зависел бы весь результат. Обрезка
+                // рамок (crop-borders) сдвигает картинку внутри файла — этот
+                // сдвиг добавляем здесь, дальше fileToViewRect развернёт его
+                // обратно вместе с поворотом и зумом.
+                val cropLeft = fileCropRect?.left ?: 0
+                val cropTop = fileCropRect?.top ?: 0
+                val sourceRect = RectF(
+                    boundingBox.left * currentPageView.sWidth + cropLeft,
+                    boundingBox.top * currentPageView.sHeight + cropTop,
+                    boundingBox.right * currentPageView.sWidth + cropLeft,
+                    boundingBox.bottom * currentPageView.sHeight + cropTop,
+                )
+                currentPageView.fileToViewRect(sourceRect, fileCropRect)
+            }
             is ImageView -> {
                 val drawable = currentPageView.drawable ?: return null
                 val sourceRect = boundingBox.toSourceRect(
@@ -980,12 +1145,21 @@ private const val MAX_ZOOM_SCALE = 5F
 private const val SKIP_ZOOM_OVERLAP_THRESHOLD = 0.85F
 private const val LOADED_READER_PAGE_INDEX = -1
 
-private fun OcrBoundingBox.toSourceRect(pageResult: OcrPageResult): RectF {
-    return toSourceRect(
-        imageWidth = pageResult.imageWidth,
-        imageHeight = pageResult.imageHeight,
-    )
-}
+/**
+ * Сколько последних снимков страницы рисуется поверх неё одновременно.
+ *
+ * Длинный вебтун даёт по снимку на каждый экран прокрутки, и без ограничения
+ * на длинной полосе оказываются десятки рамок с номерами — читать под ними
+ * текст невозможно.
+ */
+private const val MAX_OCR_MARKS_ENTRIES = 6
+
+/** Кэш пометок страницы: инвалидируется сменой страницы или версии буфера. */
+private data class OcrPageMarksCache(
+    val identity: ReaderOcrPageIdentity,
+    val version: Int,
+    val entries: List<OcrScreenshotEntry>,
+)
 
 private fun OcrBoundingBox.toSourceRect(
     imageWidth: Int,
@@ -1097,6 +1271,14 @@ private fun RectF.toRect(): Rect? {
         bottom.toInt(),
     ).takeIf { it.width() > 0 && it.height() > 0 }
 }
+
+/** Тот же цвет с другой прозрачностью: рамки пометок должны быть полупрозрачными. */
+private fun Int.withAlpha(alpha: Float): Int = Color.argb(
+    alpha.toInt().coerceIn(0, 255),
+    Color.red(this),
+    Color.green(this),
+    Color.blue(this),
+)
 
 private class PanelDebugOverlayView(
     context: Context,

@@ -8,6 +8,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import mihon.data.ocr.OcrScreenshotBuffer
+import mihon.data.ocr.SerializableNormalizedRect
 import mihon.domain.ocr.model.OcrRegion
 import mihon.domain.ocr.model.OcrTextOrientation
 import kotlinx.coroutines.Dispatchers
@@ -95,6 +96,25 @@ class AutoReadEngine(
     ) {
         enum class State { DONE, CURRENT, UPCOMING }
     }
+
+    /**
+     * Геометрия кадра, снятого читалкой: какая часть ФАЙЛА страницы попала в
+     * кадр, который пошёл в OCR.
+     *
+     * Регионы в записи скриншота нормализованы к уменьшенному и обрезанному
+     * OCR-битмапу, а не к странице, поэтому без этого описания нарисовать их
+     * в книге нельзя: любые координаты страницы съедают обрезку, даунскейл и
+     * поворот на 90/180/270.
+     *
+     * [scrollFraction] — доля высоты страницы, уже пройденная прокруткой к
+     * моменту захвата (верх окна кадра), раньше она всегда была 0f.
+     */
+    data class OcrFrameGeometry(
+        val sourceWidth: Int,
+        val sourceHeight: Int,
+        val crop: SerializableNormalizedRect,
+        val scrollFraction: Float = 0f,
+    )
 
     private val _frameRegions = MutableStateFlow<List<FrameRegion>>(emptyList())
     // v1.9.39: озвученные строки «заморожены»: после автолистания они могут
@@ -204,10 +224,11 @@ class AutoReadEngine(
     private fun speakerGenderFor(
         roleMode: VoiceModeResolver.Mode,
         detected: String?,
-    ): String = when {
+    ): String? = when {
         prefs.manualVoiceMode().get() ->
             prefs.manualVoiceGender().get().takeIf { it.isNotBlank() } ?: "female"
         roleMode == VoiceModeResolver.Mode.SINGLE -> VoiceModeResolver.narratorGender()
+        // Пол может быть и не определён: движок тогда берёт голос по умолчанию.
         else -> detected
     }
 
@@ -405,6 +426,7 @@ class AutoReadEngine(
         pageIndex: Int,
         onPageFinished: () -> Unit,
         onLineSpoken: ((OcrBoundingBox) -> Unit)? = null,
+        geometry: OcrFrameGeometry? = null,
     ) {
         job?.cancel()
         TtsSpeaker.stop()
@@ -663,12 +685,19 @@ class AutoReadEngine(
                     OcrScreenshotBuffer.add(
                         chapterId = chapterId,
                         pageIndex = pageIndex,
-                        scrollFraction = 0f,
+                        // Прокрутка реальная: сколько высоты страницы уже пройдено.
+                        scrollFraction = geometry?.scrollFraction ?: 0f,
                         regions = ocrRegions,
                         engineUsed = engineName,
                         imageWidth = result.imageWidth,
                         imageHeight = result.imageHeight,
                         imageJpeg = screenshotJpeg,
+                        // Геометрия кадра: без неё запись нельзя положить
+                        // обратно на страницу (координаты регионов нормализованы
+                        // к уменьшенному и обрезанному OCR-битмапу).
+                        sourceWidth = geometry?.sourceWidth ?: 0,
+                        sourceHeight = geometry?.sourceHeight ?: 0,
+                        scanCrop = geometry?.crop ?: SerializableNormalizedRect(),
                     )
                 }
 
@@ -929,6 +958,7 @@ class AutoReadEngine(
         chapterId: Long,
         pageIndex: Int,
         scrollFraction: Float,
+        geometry: OcrFrameGeometry? = null,
     ): ScreenshotResult {
         if (!prefs.autoScreenshotEnabled().get()) {
             return ScreenshotResult.NotSaved("автоскриншоты выключены в настройках")
@@ -951,7 +981,7 @@ class AutoReadEngine(
             // сама, а не получит его переиспользованным.
             scope.async {
                 try {
-                    saveInstantScreenshot(scaled, chapterId, pageIndex, scrollFraction)
+                    saveInstantScreenshot(scaled, chapterId, pageIndex, scrollFraction, geometry)
                 } finally {
                     // Переиспользуем только копию: кадр вызывающего остаётся его.
                     if (scaled !== bitmap && !scaled.isRecycled) scaled.recycle()
@@ -981,6 +1011,7 @@ class AutoReadEngine(
         chapterId: Long,
         pageIndex: Int,
         scrollFraction: Float,
+        geometry: OcrFrameGeometry? = null,
     ): ScreenshotResult {
         val page = try {
             withTimeout(OCR_FRAME_TIMEOUT_MS) {
@@ -1026,7 +1057,7 @@ class AutoReadEngine(
         val entry = OcrScreenshotBuffer.add(
             chapterId = chapterId,
             pageIndex = pageIndex,
-            scrollFraction = scrollFraction,
+            scrollFraction = geometry?.scrollFraction ?: scrollFraction,
             regions = ordered.mapIndexed { idx, line ->
                 OcrRegion(
                     order = idx,
@@ -1041,6 +1072,11 @@ class AutoReadEngine(
             imageWidth = width,
             imageHeight = height,
             imageJpeg = jpeg,
+            // Какая часть страницы попала в кадр: без этого координаты регионов
+            // не вернуть на страницу (в книге по ним рисуются пометки чтения).
+            sourceWidth = geometry?.sourceWidth ?: 0,
+            sourceHeight = geometry?.sourceHeight ?: 0,
+            scanCrop = geometry?.crop ?: SerializableNormalizedRect(),
         )
         if (entry.imagePath == null) {
             // JPEG не записался — записи с картинкой не будет, публиковать нечего.

@@ -67,6 +67,16 @@ object OcrScreenshotBuffer {
     private val _lastEntry = MutableStateFlow<OcrScreenshotEntry?>(null)
     val lastEntry: StateFlow<OcrScreenshotEntry?> = _lastEntry.asStateFlow()
 
+    /**
+     * Счётчик изменений буфера: вьюха страницы рисует пометки порядка чтения
+     * на каждом кадре, а фильтровать список записей заново 60 раз в секунду
+     * при прокрутке длинного вебтуна незачем. Кэш вьюхи инвалидируется этим
+     * числом, а не подпиской на поток из анимации.
+     */
+    @Volatile
+    var version: Int = 0
+        private set
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var persistFile: File? = null
     private var imagesDir: File? = null
@@ -96,6 +106,13 @@ object OcrScreenshotBuffer {
      * кадром, а кнопка «Скриншот сейчас» добавляет запись из отдельной
      * корутины. Без блокировки оба собирали список от одного и того же
      * состояния, и одна запись молча пропадала.
+     *
+     * [sourceWidth]/[sourceHeight]/[scanCrop] — геометрия того, какая часть
+     * файла страницы попала в кадр: без неё нормализованные координаты
+     * [regions] относятся к уменьшенному и обрезанному OCR-битмапу, и в книге
+     * по ним нельзя нарисовать ничего. Оставленные значения по умолчанию означают
+     * «геометрии нет»: запись читается как раньше, проекция для неё
+     * не выполняется.
      */
     @Synchronized
     fun add(
@@ -108,6 +125,9 @@ object OcrScreenshotBuffer {
         imageHeight: Int = 0,
         imageJpeg: ByteArray? = null,
         scanRegion: String = "viewport",
+        sourceWidth: Int = 0,
+        sourceHeight: Int = 0,
+        scanCrop: SerializableNormalizedRect = SerializableNormalizedRect(),
     ): OcrScreenshotEntry {
         val id = System.currentTimeMillis()
         val serializableRegions = regions.map { SerializableOcrRegion.fromOcrRegion(it) }
@@ -130,6 +150,9 @@ object OcrScreenshotBuffer {
             imageHeight = imageHeight,
             imagePath = imagePath,
             scanRegion = scanRegion,
+            sourceWidth = sourceWidth,
+            sourceHeight = sourceHeight,
+            scanCrop = scanCrop,
         )
 
         val current = _entries.value.toMutableList()
@@ -141,6 +164,7 @@ object OcrScreenshotBuffer {
         current.add(entry)
         _entries.value = current
         _lastEntry.value = entry
+        version++
         persist()
         return entry
     }
@@ -228,6 +252,7 @@ object OcrScreenshotBuffer {
         _entries.value.forEach { deleteImageFile(it) }
         _entries.value = emptyList()
         _lastEntry.value = null
+        version++
         persist()
     }
 
@@ -237,6 +262,7 @@ object OcrScreenshotBuffer {
         remove.forEach { deleteImageFile(it) }
         _entries.value = keep
         if (_lastEntry.value?.chapterId == chapterId) _lastEntry.value = null
+        version++
         persist()
     }
 
@@ -371,6 +397,7 @@ object OcrScreenshotBuffer {
             val loaded = json.decodeFromString<List<OcrScreenshotEntry>>(text)
             _entries.value = loaded
             _lastEntry.value = loaded.lastOrNull()
+            version++
         } catch (e: Exception) {
             logcat(LogPriority.WARN, e) { "OcrScreenshotBuffer: load failed" }
         }
