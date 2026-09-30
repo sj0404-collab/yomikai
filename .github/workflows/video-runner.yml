@@ -1,0 +1,177 @@
+name: Video Runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      session:
+        description: Unique session id
+        required: true
+        type: string
+      mode:
+        description: slideshow | text
+        required: true
+        type: string
+      text:
+        description: Caption / animation text
+        required: false
+        default: ''
+        type: string
+      images:
+        description: Image URLs, separated by newlines
+        required: false
+        default: ''
+        type: string
+      fps:
+        description: Frames per second
+        required: false
+        default: '3'
+        type: string
+
+run-name: "Video ${{ inputs.mode }} (${{ inputs.session }})"
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Create renderer script
+        shell: bash
+        run: |
+          mkdir -p src images frames video
+          cat > src/render.py <<'PYEOF'
+          import json, math, os
+          from PIL import Image, ImageDraw, ImageFont
+
+          W, H = 640, 360
+          MODE = os.environ.get('MODE', 'text')
+          TEXT = os.environ.get('TEXT', 'AI video').strip() or 'AI video'
+          FPS = max(1, min(24, int(os.environ.get('FPS', '3'))))
+          try:
+              IMGS = [u for u in json.loads(os.environ.get('IMAGES', '[]')) if isinstance(u, str) and u.startswith('http')]
+          except Exception:
+              IMGS = []
+
+          def font(size):
+              for p in ('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',):
+                  try:
+                      return ImageFont.truetype(p, size)
+                  except Exception:
+                      pass
+              return ImageFont.load_default()
+
+          def hsv(h, s, v):
+              c = v * s
+              x = c * (1 - abs((h / 60) % 2 - 1))
+              m = v - c
+              if h < 60: r, g, b = c, x, 0
+              elif h < 120: r, g, b = x, c, 0
+              elif h < 180: r, g, b = 0, c, x
+              elif h < 240: r, g, b = 0, x, c
+              elif h < 300: r, g, b = x, 0, c
+              else: r, g, b = c, 0, x
+              return (int((r + m) * 255), int((g + m) * 255), int((b + m) * 255))
+
+          def paste_img(base, src, zoom):
+              sw, sh = src.size
+              r = max(W / sw, H / sh) * zoom
+              nw, nh = int(sw * r), int(sh * r)
+              crop = src.resize((nw, nh), Image.LANCZOS)
+              base.paste(crop, ((W - nw) // 2, (H - nh) // 2))
+
+          def slide(img, i, total, caption):
+              t = i / max(total - 1, 1)
+              base = Image.new('RGB', (W, H), (8, 8, 14))
+              paste_img(base, img, 1.0 + 0.15 * t)
+              d = ImageDraw.Draw(base)
+              if caption:
+                  d.rectangle([0, H - 56, W, H], fill=(0, 0, 0, 140))
+                  d.text((16, H - 46), caption, fill=(255, 255, 255), font=font(26))
+              return base
+
+          def text_frame(i, total):
+              hue = (i * 360.0 / max(total, 1)) % 360
+              base = Image.new('RGB', (W, H))
+              d = ImageDraw.Draw(base)
+              for y in range(H):
+                  col = hsv((hue + y * 0.6) % 360, 0.55, 0.20)
+                  d.line([(0, y), (W, y)], fill=col)
+              # sine wave sweep
+              for x in range(0, W, 8):
+                  top = H // 2 + int(math.sin((x + i * 6) / 24.0) * 46)
+                  d.line([(x, top - 30), (x, top + 30)], fill=hsv((hue + 120) % 360, 0.7, 0.35))
+              title = font(34)
+              words = []
+              line = ''
+              for w in TEXT.split():
+                  if d.textlength(line + ' ' + w, font=title) < W - 40:
+                      line = (line + ' ' + w).strip()
+                  else:
+                      words.append(line)
+                      line = w
+              if line:
+                  words.append(line)
+              y = 90
+              for ln in words[:3]:
+                  wtw = d.textlength(ln, font=title)
+                  d.text(((W - wtw) / 2, y), ln, fill=(255, 255, 255), font=title)
+                  y += 44
+              marquee = 'AI video  •  манга и комиксы в AI-чате  •  '
+              shift = i % max(len(marquee), 1)
+              d.text((0, H - 34), marquee[shift:] + marquee[:shift], fill=(255, 255, 255), font=font(22))
+              return base
+
+          def main():
+              total = 8 * FPS
+              if MODE == 'slideshow' and IMGS:
+                  import urllib.request
+                  files = []
+                  for k, url in enumerate(IMGS[:12]):
+                      try:
+                          p = 'images/%02d.jpg' % k
+                          urllib.request.urlretrieve(url, p)
+                          files.append(Image.open(p).convert('RGB'))
+                      except Exception:
+                          pass
+              frames = files if MODE == 'slideshow' and IMGS else None
+              for i in range(total):
+                  if frames:
+                      frame = slide(frames[i % len(frames)], i, total, TEXT)
+                  else:
+                      frame = text_frame(i, total)
+                  frame.save('frames/f%04d.png' % i)
+              print('rendered %d frames' % total)
+
+          main()
+          PYEOF
+          chmod +x src/render.py
+
+      - name: Render frames
+        shell: bash
+        run: |
+          python src/render.py
+          ls frames | wc -l
+
+      - name: Encode video
+        run: |
+          ffmpeg -y -hide_banner -loglevel error \
+            -framerate "${{ inputs.fps }}" -pattern_type glob -i 'frames/*.png' \
+            -c:v libx264 -pix_fmt yuv420p -preset veryfast -crf 26 \
+            video/video.mp4
+          ls -la video
+
+      - name: Upload video
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-${{ inputs.session }}
+          path: video/*.mp4
+          if-no-files-found: error
+
+  # keep-no-files: у линукс-раннеров артефакты живут 90 дней, приложение
+  # забирает video-<session> сразу после публикации.

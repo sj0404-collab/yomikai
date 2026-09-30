@@ -1,0 +1,2464 @@
+package eu.kanade.tachiyomi.ui.reader
+
+import android.annotation.SuppressLint
+import android.app.assist.AssistContent
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.Paint
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.View
+import android.view.View.LAYER_TYPE_HARDWARE
+import android.view.WindowManager
+import android.widget.Toast
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.Canvas
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.dp
+import androidx.core.content.getSystemService
+import androidx.core.graphics.Insets
+import androidx.core.net.toUri
+import androidx.core.transition.doOnEnd
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.lifecycleScope
+import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
+import com.google.android.material.transition.platform.MaterialContainerTransform
+import com.hippo.unifile.UniFile
+import dev.icerock.moko.resources.StringResource
+import eu.kanade.core.util.ifSourcesLoaded
+import eu.kanade.domain.base.BasePreferences
+import eu.kanade.domain.dictionary.DictionaryPreferences
+import eu.kanade.domain.dictionary.OcrResultPresentation
+import eu.kanade.presentation.reader.DisplayRefreshHost
+import eu.kanade.presentation.reader.OcrLoadingIndicator
+import eu.kanade.presentation.reader.OcrResultOverlay
+import eu.kanade.presentation.reader.OcrResultPopupSettings
+import eu.kanade.presentation.reader.OcrSelectionOverlay
+import eu.kanade.presentation.reader.OrientationSelectDialog
+import eu.kanade.presentation.reader.ReaderContentOverlay
+import eu.kanade.presentation.reader.ReaderPageActionsDialog
+import eu.kanade.presentation.reader.ReaderPageIndicator
+import eu.kanade.presentation.reader.ReadingModeSelectDialog
+import eu.kanade.presentation.reader.appbars.ReaderAppBars
+import eu.kanade.presentation.reader.components.ChapterNavigatorType
+import eu.kanade.presentation.reader.settings.ReaderSettingsDialog
+import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder
+import eu.kanade.tachiyomi.data.cache.ChapterCache
+import eu.kanade.tachiyomi.data.notification.NotificationReceiver
+import eu.kanade.tachiyomi.data.notification.Notifications
+import eu.kanade.tachiyomi.data.saver.Image
+import eu.kanade.tachiyomi.data.saver.ImageSaver
+import eu.kanade.tachiyomi.databinding.ReaderActivityBinding
+import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
+import eu.kanade.tachiyomi.ui.dictionary.DictionarySearchScreenModel
+import eu.kanade.tachiyomi.ui.main.MainActivity
+import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.AddToLibraryFirst
+import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.Error
+import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.Success
+import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
+import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
+import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
+import eu.kanade.tachiyomi.ui.reader.viewer.ReaderActiveOcrOverlay
+import eu.kanade.tachiyomi.ui.reader.viewer.ReaderOcrRegionSelection
+import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
+import eu.kanade.tachiyomi.ui.reader.viewer.ReaderSelectionCapture
+import eu.kanade.tachiyomi.ui.reader.viewer.ReaderSelectionRegion
+import eu.kanade.tachiyomi.ui.reader.viewer.pager.R2LPagerViewer
+import eu.kanade.tachiyomi.ui.reader.viewer.queryRangeToDisplayRange
+import eu.kanade.tachiyomi.ui.reader.viewer.searchTextForOffset
+import eu.kanade.tachiyomi.ui.webview.WebViewActivity
+import eu.kanade.tachiyomi.util.system.isNightMode
+import eu.kanade.tachiyomi.util.system.openInBrowser
+import eu.kanade.tachiyomi.util.system.toShareIntent
+import eu.kanade.tachiyomi.util.system.toast
+import eu.kanade.tachiyomi.util.view.setComposeContent
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.sample
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import logcat.LogPriority
+import mihon.domain.dictionary.model.DictionaryTerm
+import tachiyomi.core.common.Constants
+import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.launchNonCancellable
+import tachiyomi.core.common.util.lang.withUIContext
+import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.ankidroid.service.AnkiDroidPreferences
+import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.util.collectAsState
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+import java.io.ByteArrayOutputStream
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.time.Duration.Companion.seconds
+
+class ReaderActivity : BaseActivity() {
+
+    companion object {
+        private const val READER_ACTION_PREFIX = "reader."
+
+        fun newIntent(context: Context, mangaId: Long?, chapterId: Long?): Intent {
+            return Intent(context, ReaderActivity::class.java).apply {
+                putExtra("manga", mangaId)
+                putExtra("chapter", chapterId)
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+        }
+
+        /**
+         * Читалка, которая сразу начинает авточтение (для фонового скан-чтения
+         * главы). Не зависит от сохранённой опции «автостарт чтения», чтобы
+         * сценарий «сканируй главу → открой и читай» работал предсказуемо и
+         * не менял постоянные настройки пользователя.
+         */
+        fun newAutoReadIntent(context: Context, mangaId: Long?, chapterId: Long?): Intent {
+            return newIntent(context, mangaId, chapterId).apply {
+                putExtra("autoread_start", true)
+            }
+        }
+
+        fun newIntent(context: Context, uri: android.net.Uri): Intent {
+            return Intent(context, ReaderActivity::class.java).apply {
+                data = uri
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        }
+    }
+
+    private val readerPreferences = Injekt.get<ReaderPreferences>()
+    private val preferences = Injekt.get<BasePreferences>()
+    private val dictionaryPreferences = Injekt.get<DictionaryPreferences>()
+    private val ankiDroidPreferences = Injekt.get<AnkiDroidPreferences>()
+    private val imageSaver = Injekt.get<ImageSaver>()
+    private val selectionBitmapCropper = Injekt.get<ReaderSelectionCropper>()
+    private val dictionarySearchScreenModel by lazy { DictionarySearchScreenModel() }
+
+    lateinit var binding: ReaderActivityBinding
+
+    val viewModel by viewModels<ReaderViewModel>()
+    private var assistUrl: String? = null
+
+    /**
+     * Configuration at reader level, like background color or forced orientation.
+     */
+    private var config: ReaderConfig? = null
+
+    private var menuToggleToast: Toast? = null
+
+    private var autoscrollJob: kotlinx.coroutines.Job? = null
+
+    /** Движок авточтения с историей и подсветкой. */
+    private val autoReadEngine by lazy { eu.kanade.tachiyomi.data.tts.AutoReadEngine(applicationContext) }
+    private var autoReadLoop: kotlinx.coroutines.Job? = null
+    private val autoLookedUpChapters = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
+
+    /**
+     * Показ AI-чата книги. Живёт на уровне activity, а не внутри composable:
+     * состояние должно пережить пересборку composable (поворот экрана, смена
+     * главы) и открываться из разных точек — меню и авто-действий агента.
+     */
+    private val aiChatVisible = kotlinx.coroutines.flow.MutableStateFlow(false)
+
+    /**
+     * Реальная автопрокрутка вместо прежней тост-заглушки: вебтун плавно
+     * скроллится, пейджер листает страницы с интервалом, зависящим от скорости.
+     */
+    private fun toggleAutoscroll(active: Boolean, speed: Float) {
+        autoscrollJob?.cancel()
+        autoscrollJob = null
+        if (!active) return
+        autoscrollJob = lifecycleScope.launch {
+            while (true) {
+                when (val viewer = viewModel.state.value.viewer) {
+                    is eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer -> {
+                        // ~60 Гц; скорость 1..10 → 1..10 px за кадр
+                        viewer.recycler.scrollBy(0, speed.toInt().coerceAtLeast(1))
+                        kotlinx.coroutines.delay(16)
+                    }
+                    is eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer -> {
+                        // Скорость 1..10 → пауза 11..2 сек на страницу
+                        kotlinx.coroutines.delay((12_000L - speed.toLong() * 1_000L).coerceAtLeast(2_000L))
+                        viewer.moveToNext()
+                    }
+                    else -> kotlinx.coroutines.delay(250)
+                }
+            }
+        }
+    }
+    private var readingModeToast: Toast? = null
+    private val displayRefreshHost = DisplayRefreshHost()
+
+    private val windowInsetsController by lazy { WindowInsetsControllerCompat(window, window.decorView) }
+
+    private var loadingIndicator: ReaderProgressIndicator? = null
+
+    /**
+     * The most recent touch event seen by the activity. Координаты и действие
+     * копируются сразу: хранить сам [MotionEvent] нельзя — каждый следующий
+     * тап переиспользует (recycle) предыдущий объект, и чтение потом даёт
+     * мусорные координаты (use-after-free).
+     */
+    private var lastTouch: LastTouch? = null
+
+    private data class LastTouch(
+        val rawX: Float,
+        val rawY: Float,
+        val actionMasked: Int,
+    )
+
+    private var ocrDragStart by mutableStateOf<Offset?>(null)
+    private var ocrDragEnd by mutableStateOf<Offset?>(null)
+    private var activeOcrOverlaySession by mutableStateOf<ActiveOcrOverlaySession?>(null)
+    private var selectionAction: SelectionAction = SelectionAction.ProcessOcr
+    private var isTapExitEnabled = false
+
+    private data class ActiveOcrOverlaySession(
+        val selection: ReaderOcrRegionSelection,
+        val anchorRectInDialogRoot: android.graphics.RectF,
+        val highlightRange: Pair<Int, Int>? = null,
+    ) {
+        val overlay: ReaderActiveOcrOverlay
+            get() = ReaderActiveOcrOverlay(
+                page = selection.page,
+                regionOrder = selection.regionOrder,
+                displayText = selection.displayText,
+                queryText = selection.queryText,
+                boundingBox = selection.boundingBox,
+                textOrientation = selection.textOrientation,
+                highlightRange = highlightRange,
+            )
+
+        fun matches(selection: ReaderOcrRegionSelection): Boolean {
+            return this.selection.page == selection.page &&
+                this.selection.regionOrder == selection.regionOrder
+        }
+    }
+
+    private sealed interface SelectionAction {
+        data object ProcessOcr : SelectionAction
+
+        data class ExportImageToAnki(val terms: List<DictionaryTerm>) : SelectionAction
+    }
+
+    private fun resetOcrDrag() {
+        ocrDragStart = null
+        ocrDragEnd = null
+        isTapExitEnabled = false
+    }
+
+    private fun screenRectToDialogRootRect(rect: android.graphics.RectF): android.graphics.RectF {
+        val location = IntArray(2)
+        binding.root.getLocationOnScreen(location)
+        return android.graphics.RectF(
+            rect.left - location[0],
+            rect.top - location[1],
+            rect.right - location[0],
+            rect.bottom - location[1],
+        )
+    }
+
+    private fun dialogRootRectToScreenRect(rect: android.graphics.RectF): android.graphics.RectF {
+        val location = IntArray(2)
+        binding.root.getLocationOnScreen(location)
+        return android.graphics.RectF(
+            rect.left + location[0],
+            rect.top + location[1],
+            rect.right + location[0],
+            rect.bottom + location[1],
+        )
+    }
+
+    var isScrollingThroughPages = false
+        private set
+
+    /**
+     * Called when the activity is created. Initializes the presenter and configuration.
+     */
+    override fun onCreate(savedInstanceState: Bundle?) {
+        registerSecureActivity(this)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            overrideActivityTransition(
+                OVERRIDE_TRANSITION_OPEN,
+                R.anim.shared_axis_x_push_enter,
+                R.anim.shared_axis_x_push_exit,
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            overridePendingTransition(R.anim.shared_axis_x_push_enter, R.anim.shared_axis_x_push_exit)
+        }
+
+        enableEdgeToEdge()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+        }
+        windowInsetsController.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+
+        super.onCreate(savedInstanceState)
+
+        binding = ReaderActivityBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+        registerReaderAiActions()
+        // v1.9.40: long-press на странице читалки = выбор области скана (как в вебе).
+        // v1.9.46: если включено авто-сканирование — удержание сразу выделяет,
+        // распознаёт и озвучивает область вокруг точки касания (autoclick с
+        // удержанием), запоминая её; иначе — обычный ручной выбор области.
+        binding.root.setOnLongClickListener {
+            val wantAuto = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+                .autoReadAutoStart().get()
+            if (wantAuto) {
+                val ev = lastTouch
+                if (ev == null) {
+                    runCatching { enterOcrMode() }
+                    return@setOnLongClickListener true
+                }
+                val loc = IntArray(2)
+                binding.root.getLocationOnScreen(loc)
+                val local = android.graphics.PointF(ev.rawX - loc[0], ev.rawY - loc[1])
+                captureAndSpeakRegion(holdRegionAround(local))
+                true
+            } else {
+                runCatching { enterOcrMode() }
+                true
+            }
+        }
+        binding.setComposeOverlay()
+
+        if (viewModel.needsInit()) {
+            val manga = intent.extras?.getLong("manga", -1) ?: -1L
+            val chapter = intent.extras?.getLong("chapter", -1) ?: -1L
+            if (manga == -1L || chapter == -1L) {
+                finish()
+                return
+            }
+            NotificationReceiver.dismissNotification(this, manga.hashCode(), Notifications.ID_NEW_CHAPTERS)
+
+            lifecycleScope.launchNonCancellable {
+                val initResult = viewModel.init(manga, chapter)
+                if (!initResult.getOrDefault(false)) {
+                    val exception = initResult.exceptionOrNull() ?: IllegalStateException("Unknown err")
+                    withUIContext {
+                        setInitialChapterError(exception)
+                    }
+                }
+            }
+        }
+
+        // Прогрев OCR: инициализация модели не должна попадать в тайминг
+        // первого ручного сканирования.
+        viewModel.warmupOcr()
+
+        config = ReaderConfig()
+        setMenuVisibility(viewModel.state.value.menuVisible)
+
+        // Finish when incognito mode is disabled
+        preferences.incognitoMode.changes()
+            .drop(1)
+            .onEach { if (!it) finish() }
+            .launchIn(lifecycleScope)
+
+        viewModel.state
+            .map { it.isLoadingAdjacentChapter }
+            .distinctUntilChanged()
+            .onEach(::setProgressDialog)
+            .launchIn(lifecycleScope)
+
+        viewModel.state
+            .map { it.manga }
+            .distinctUntilChanged()
+            .filterNotNull()
+            .onEach { updateViewer() }
+            .launchIn(lifecycleScope)
+
+        viewModel.state
+            .map { it.viewerChapters }
+            .distinctUntilChanged()
+            .filterNotNull()
+            .onEach(::setChapters)
+            .launchIn(lifecycleScope)
+
+        viewModel.eventFlow
+            .onEach { event ->
+                when (event) {
+                    ReaderViewModel.Event.ReloadViewerChapters -> {
+                        viewModel.state.value.viewerChapters?.let(::setChapters)
+                    }
+                    ReaderViewModel.Event.PageChanged -> {
+                        displayRefreshHost.flash()
+                    }
+                    is ReaderViewModel.Event.SetOrientation -> {
+                        setOrientation(event.orientation)
+                    }
+                    is ReaderViewModel.Event.SavedImage -> {
+                        onSaveImageResult(event.result)
+                    }
+                    is ReaderViewModel.Event.ShareImage -> {
+                        onShareImageResult(event.uri, event.page)
+                    }
+                    is ReaderViewModel.Event.CopyImage -> {
+                        onCopyImageResult(event.uri)
+                    }
+                    is ReaderViewModel.Event.SetCoverResult -> {
+                        onSetAsCoverResult(event.result)
+                    }
+                    ReaderViewModel.Event.OcrNoTextFound -> {
+                        clearActiveOcrOverlaySession()
+                        toast(MR.strings.no_results_found)
+                    }
+                    ReaderViewModel.Event.OcrResultMarked -> {
+                        // Пометка видна и во вкладке «Скриншоты», и во всплывающем
+                        // индикаторе угла — сообщаем, что результат не пропал.
+                        toast("Распознанное сохранено в «Скриншоты»")
+                    }
+                    ReaderViewModel.Event.OcrMemoryError -> {
+                        clearActiveOcrOverlaySession()
+                        toast(MR.strings.ocr_memory_error)
+                    }
+                    ReaderViewModel.Event.OcrInitializationError -> {
+                        clearActiveOcrOverlaySession()
+                        toast(MR.strings.ocr_initialization_error)
+                    }
+                    is ReaderViewModel.Event.OcrError -> {
+                        clearActiveOcrOverlaySession()
+                        // Показываем реальную причину (если есть), а не глухое
+                        // «Unknown OCR Error Occurred». Это помогает сообщить,
+                        // что именно упало в оффлайн-сканировании.
+                        val detail = event.message?.takeIf { it.isNotBlank() }
+                        if (detail != null) {
+                            logcat(LogPriority.ERROR) { "OCR error surfaced to UI: $detail" }
+                            toast("Ошибка OCR: $detail")
+                        } else {
+                            toast(MR.strings.error_unknown)
+                        }
+                    }
+                }
+            }
+            .launchIn(lifecycleScope)
+    }
+
+    private fun ReaderActivityBinding.setComposeOverlay(): Unit = composeOverlay.setComposeContent {
+        val state by viewModel.state.collectAsState()
+        val showPageNumber by readerPreferences.showPageNumber.collectAsState()
+
+        // Авто-чтение при открытии главы (опция «Автостарт чтения»). Один раз на
+        // главу: как только вьювер готов и выбран первый кадр, запускаем
+        // автопрокрутку со сканом и озвучкой. Повторно на том же кадре не
+        // стартуем (autoReadActive), чтобы не спамить озвучкой при поворотах.
+        val autoStartChapter by remember { mutableStateOf(
+            uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>().autoReadAutoStart().get() ||
+                intent.getBooleanExtra("autoread_start", false),
+        ) }
+        androidx.compose.runtime.LaunchedEffect(state.currentChapter?.chapter?.id, state.viewer) {
+            if (autoStartChapter && state.viewer != null && !autoReadActive) {
+                startAutoReadLoop()
+            }
+        }
+
+        androidx.compose.runtime.LaunchedEffect(state.currentChapter?.chapter?.id) {
+            val chapter = state.currentChapter?.chapter ?: return@LaunchedEffect
+            val manga = viewModel.manga ?: return@LaunchedEffect
+            if (!autoLookedUpChapters.add(chapter.id)) return@LaunchedEffect
+            delay(1200)
+            val root = binding.root
+            if (root.width <= 0 || root.height <= 0) return@LaunchedEffect
+            val frame = android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
+            // Фоновая задача не имеет права ронять читатель: любой сбой
+            // (страница не отрисована, сеть, разбор JSON, запись файла) гасим
+            // здесь, иначе необработанное исключение из корутины убивает процесс.
+            val bitmap = runCatching { cropCurrentSelectionBitmap(frame) }.getOrNull()
+                ?: return@LaunchedEffect
+            try {
+                val summary = runCatching {
+                    eu.kanade.tachiyomi.data.ai.ReaderBookLookup.inspect(
+                        context = this@ReaderActivity,
+                        mangaId = manga.id,
+                        mangaTitle = manga.title,
+                        chapterName = chapter.name,
+                        bitmap = bitmap,
+                    )
+                }.getOrNull()
+                if (summary != null) withUIContext { toast(summary.lineSequence().first()) }
+            } finally {
+                if (!bitmap.isRecycled) bitmap.recycle()
+            }
+        }
+
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (!state.menuVisible && showPageNumber) {
+                ReaderPageIndicator(
+                    currentPage = state.currentPage,
+                    totalPages = state.totalPages,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding(),
+                )
+            }
+
+            // ===== Индикатор скриншота в правом верхнем углу =====
+            // Пульсирующая точка + количество распознанных регионов.
+            // Показывается при каждом новом скриншоте, исчезает через 2с.
+            if (uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+                    .screenshotIndicatorEnabled().get()
+            ) {
+                val lastEntry by mihon.data.ocr.OcrScreenshotBuffer.lastEntry.collectAsState()
+                var indicatorVisible by remember { mutableStateOf(false) }
+                val regionCount = remember { mutableStateOf(0) }
+                LaunchedEffect(lastEntry) {
+                    if (lastEntry != null) {
+                        regionCount.value = lastEntry!!.regions.size
+                        indicatorVisible = true
+                        kotlinx.coroutines.delay(2000)
+                        indicatorVisible = false
+                    }
+                }
+                if (indicatorVisible) {
+                    val pulseAnim = rememberInfiniteTransition(label = "screenshot_pulse")
+                    val pulseAlpha by pulseAnim.animateFloat(
+                        initialValue = 0.6f,
+                        targetValue = 1f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(500),
+                            repeatMode = RepeatMode.Reverse,
+                        ),
+                        label = "pulse_alpha",
+                    )
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 48.dp, end = 12.dp)
+                            .background(
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.primaryContainer
+                                    .copy(alpha = 0.85f * pulseAlpha),
+                                shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                            )
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Canvas(
+                                modifier = Modifier.size(8.dp),
+                            ) {
+                                drawCircle(
+                                    color = androidx.compose.ui.graphics.Color(0xFF00E5FF),
+                                    radius = size.minDimension / 2,
+                                    alpha = pulseAlpha,
+                                )
+                            }
+                            androidx.compose.material3.Text(
+                                text = "OCR ${regionCount.value}",
+                                style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        }
+                    }
+                }
+            }
+
+            ContentOverlay(state = state)
+        }
+    }
+
+    /**
+     * Called when the activity is destroyed. Cleans up the viewer, configuration and any view.
+     */
+    override fun onDestroy() {
+        stopAutoReadLoop()
+        super.onDestroy()
+        autoscrollJob?.cancel()
+        viewModel.state.value.viewer?.destroy()
+        config = null
+        menuToggleToast?.cancel()
+        readingModeToast?.cancel()
+        eu.kanade.tachiyomi.data.ai.ReaderAiActions.unregisterAll(READER_ACTION_PREFIX)
+    }
+
+    override fun onPause() {
+        // Сворачивание/уход с экрана — голос не должен продолжать звучать
+        stopAutoReadLoop()
+        lifecycleScope.launchNonCancellable {
+            viewModel.updateHistory()
+        }
+        super.onPause()
+    }
+
+    /**
+     * Set menu visibility again on activity resume to apply immersive mode again if needed.
+     * Helps with rotations.
+     */
+    override fun onResume() {
+        super.onResume()
+        viewModel.restartReadTimer()
+        setMenuVisibility(viewModel.state.value.menuVisible)
+    }
+
+    /**
+     * Called when the window focus changes. It sets the menu visibility to the last known state
+     * to apply immersive mode again if needed.
+     */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            setMenuVisibility(viewModel.state.value.menuVisible)
+        }
+    }
+
+    override fun onProvideAssistContent(outContent: AssistContent) {
+        super.onProvideAssistContent(outContent)
+        assistUrl?.let { outContent.webUri = it.toUri() }
+    }
+
+    /**
+     * Called when the user clicks the back key or the button on the toolbar. The call is
+     * delegated to the presenter.
+     */
+    override fun finish() {
+        viewModel.onActivityFinish()
+        super.finish()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            overrideActivityTransition(
+                OVERRIDE_TRANSITION_CLOSE,
+                R.anim.shared_axis_x_pop_enter,
+                R.anim.shared_axis_x_pop_exit,
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            overridePendingTransition(R.anim.shared_axis_x_pop_enter, R.anim.shared_axis_x_pop_exit)
+        }
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_N) {
+            loadNextChapter()
+            return true
+        } else if (keyCode == KeyEvent.KEYCODE_P) {
+            loadPreviousChapter()
+            return true
+        }
+        return super.onKeyUp(keyCode, event)
+    }
+
+    /**
+     * Dispatches a key event. If the viewer doesn't handle it, call the default implementation.
+     */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val handled = viewModel.state.value.viewer?.handleKeyEvent(event) ?: false
+        return handled || super.dispatchKeyEvent(event)
+    }
+
+    /**
+     * Dispatches a generic motion event. If the viewer doesn't handle it, call the default
+     * implementation.
+     */
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        val handled = viewModel.state.value.viewer?.handleGenericMotionEvent(event) ?: false
+        return handled || super.dispatchGenericMotionEvent(event)
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        lastTouch = LastTouch(rawX = ev.rawX, rawY = ev.rawY, actionMasked = ev.actionMasked)
+
+        if (::binding.isInitialized && viewModel.state.value.ocrSelectionMode) {
+            val loc = IntArray(2)
+            binding.root.getLocationOnScreen(loc)
+            val x = ev.rawX - loc[0]
+            val y = ev.rawY - loc[1]
+
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    isTapExitEnabled = true
+                    ocrDragStart = Offset(x, y)
+                    ocrDragEnd = Offset(x, y)
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (ocrDragStart == null) {
+                        ocrDragStart = Offset(x, y)
+                    }
+                    ocrDragEnd = Offset(x, y)
+                }
+                MotionEvent.ACTION_UP -> {
+                    val start = ocrDragStart
+                    val end = ocrDragEnd ?: Offset(x, y)
+                    if (start != null) {
+                        val left = min(start.x, end.x)
+                        val top = min(start.y, end.y)
+                        val right = max(start.x, end.x)
+                        val bottom = max(start.y, end.y)
+
+                        if (abs(right - left) > 20 && abs(bottom - top) > 20) {
+                            handleSelectedRegion(
+                                rect = android.graphics.RectF(left, top, right, bottom),
+                            )
+                            resetOcrDrag()
+                            return true
+                        } else if (isTapExitEnabled) {
+                            exitOcrMode()
+                        }
+                    }
+                    resetOcrDrag()
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    resetOcrDrag()
+                    exitOcrMode()
+                }
+            }
+
+            return true
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
+    @Composable
+    private fun ContentOverlay(state: ReaderViewModel.State) {
+        run {
+            val dimOcrBackground by dictionaryPreferences.ocrResultDimBackground().collectAsState()
+            val ocrResultPresentation by dictionaryPreferences.ocrResultPresentation().collectAsState()
+            val ocrPopupWidthDp by dictionaryPreferences.ocrResultPopupWidthDp().collectAsState()
+            val ocrPopupHeightDp by dictionaryPreferences.ocrResultPopupHeightDp().collectAsState()
+            val ocrPopupScalePercent by dictionaryPreferences.ocrResultPopupScalePercent().collectAsState()
+            val settingsScreenModel = remember {
+                ReaderSettingsScreenModel(
+                    readerState = viewModel.state,
+                    onChangeReadingMode = viewModel::setMangaReadingMode,
+                    onChangeOrientation = viewModel::setMangaOrientationType,
+                )
+            }
+
+            // Initialize dictionary search model
+            LaunchedEffect(Unit) {
+                dictionarySearchScreenModel.refreshDictionaries()
+            }
+
+            LaunchedEffect(Unit) {
+                dictionarySearchScreenModel.events.collectLatest { event ->
+                    when (event) {
+                        is DictionarySearchScreenModel.Event.ShowError -> {
+                            when (val payload = event.message) {
+                                is DictionarySearchScreenModel.UiMessage.Resource -> {
+                                    toast(payload.value)
+                                }
+                                is DictionarySearchScreenModel.UiMessage.Text -> {
+                                    toast(payload.value)
+                                }
+                            }
+                        }
+                        is DictionarySearchScreenModel.Event.ShowMessage -> {
+                            when (val payload = event.message) {
+                                is DictionarySearchScreenModel.UiMessage.Resource -> {
+                                    toast(payload.value)
+                                }
+                                is DictionarySearchScreenModel.UiMessage.Text -> {
+                                    toast(payload.value)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!ifSourcesLoaded()) {
+                return@run
+            }
+
+            Box(modifier = Modifier.fillMaxSize()) {
+                val isHttpSource = viewModel.getSource() is HttpSource
+                var showTtsDialog by remember { mutableStateOf(false) }
+                // Полная настройка «как читать баблы» (OCR): отдельная кнопка в
+                // плавающем меню читалки, не уводит из главы.
+                var showOcrBubbleSettings by remember { mutableStateOf(false) }
+                // Порядок чтения реплик (флажок на кнопке в плавающем меню);
+                // объявлен выше, чтобы диалог настроек OCR мог его обновлять.
+                var readingOrderState by androidx.compose.runtime.remember {
+                    androidx.compose.runtime.mutableStateOf(
+                        uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+                            .scanReadingOrder().get(),
+                    )
+                }
+                // Пресет типа контента (манга/манхва/маньхуа/комикс) для кнопки
+                // в плавающем меню: он задаёт и порядок чтения, и параметры OCR.
+                var contentPresetId by androidx.compose.runtime.remember {
+                    androidx.compose.runtime.mutableStateOf(
+                        uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+                            .contentType().get(),
+                    )
+                }
+                // Быстрая смена AI-модели (по требованию пользователя): верхняя
+                // AI-кнопка теперь открывает «Сменить AI-модель», а из него уже
+                // можно попасть в полный диалог озвучки.
+                var showModelPicker by remember { mutableStateOf(false) }
+                val showAiChat by aiChatVisible.collectAsState()
+                if (showModelPicker) {
+                    eu.kanade.presentation.reader.AiModelPickerDialog(
+                        onDismissRequest = { showModelPicker = false },
+                        onOpenVoiceSettings = {
+                            showModelPicker = false
+                            showTtsDialog = true
+                        },
+                    )
+                }
+                // AI-чат перенесён из читалки в отдельную вкладку «AI»
+                // нижней навигации (по требованию пользователя).
+                if (showTtsDialog) {
+                    eu.kanade.presentation.reader.TtsSettingsDialog(
+                        onDismissRequest = { showTtsDialog = false },
+                        onOpenFullSettings = {
+                            showTtsDialog = false
+                            val intent = android.content.Intent(this@ReaderActivity, eu.kanade.tachiyomi.ui.main.MainActivity::class.java).apply {
+                                putExtra("open_ocr_settings", true)
+                                addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                            }
+                            startActivity(intent)
+                        },
+                    )
+                }
+                if (showOcrBubbleSettings) {
+                    eu.kanade.presentation.reader.OcrBubbleSettingsDialog(
+                        onDismissRequest = { showOcrBubbleSettings = false },
+                        onReadingOrderChange = { order -> readingOrderState = order },
+                        onOpenFullSettings = {
+                            showOcrBubbleSettings = false
+                            val intent = android.content.Intent(
+                                this@ReaderActivity,
+                                eu.kanade.tachiyomi.ui.main.MainActivity::class.java,
+                            ).apply {
+                                putExtra("open_ocr_settings", true)
+                                addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                            }
+                            startActivity(intent)
+                        },
+                    )
+                }
+                val isFullscreen by readerPreferences.fullscreen.collectAsState()
+                val flashOnPageChange by readerPreferences.flashOnPageChange.collectAsState()
+
+                val colorOverlayEnabled by readerPreferences.colorFilter.collectAsState()
+                val colorOverlay by readerPreferences.colorFilterValue.collectAsState()
+                val colorOverlayMode by readerPreferences.colorFilterMode.collectAsState()
+                val colorOverlayBlendMode = remember(colorOverlayMode) {
+                    ReaderPreferences.ColorFilterMode.getOrNull(colorOverlayMode)?.second
+                }
+
+                val cropBorderPaged by readerPreferences.cropBorders.collectAsState()
+                val cropBorderWebtoon by readerPreferences.cropBordersWebtoon.collectAsState()
+                val readingMode = ReadingMode.fromPreference(
+                    viewModel.getMangaReadingMode(resolveDefault = false),
+                )
+                val isPagerType = ReadingMode.isPagerType(readingMode.flagValue)
+                val cropEnabled = if (isPagerType) cropBorderPaged else cropBorderWebtoon
+
+                val verticalNavigator by readerPreferences.verticalNavigator.collectAsState()
+                val verticalNavigatorOnLeft by readerPreferences.verticalNavigatorOnLeft.collectAsState()
+                val rawVerticalNavigatorHeight by readerPreferences.verticalNavigatorHeight.collectAsState()
+                val verticalNavigatorHeight = remember(rawVerticalNavigatorHeight) { rawVerticalNavigatorHeight / 100f }
+
+                val chapterNavigatorType = remember(readingMode, verticalNavigator, verticalNavigatorOnLeft) {
+                    when {
+                        verticalNavigator.contains(
+                            readingMode,
+                        ) && verticalNavigatorOnLeft -> ChapterNavigatorType.VERTICAL_LEFT
+                        verticalNavigator.contains(readingMode) -> ChapterNavigatorType.VERTICAL_RIGHT
+                        readingMode == ReadingMode.RIGHT_TO_LEFT -> ChapterNavigatorType.HORIZONTAL_RTL
+                        else -> ChapterNavigatorType.HORIZONTAL_LTR
+                    }
+                }
+
+                // Контекст для авто-пресета: манга + порядок чтения уходят в
+                // data-слой через шину, без прямой зависимости читалки от OCR.
+                androidx.compose.runtime.LaunchedEffect(readingMode, state.manga?.id) {
+                    mihon.data.ocr.ReaderContextBus.set(
+                        mangaId = state.manga?.id,
+                        rtl = readingMode == ReadingMode.RIGHT_TO_LEFT,
+                        webtoon = readingMode == ReadingMode.WEBTOON ||
+                            readingMode == ReadingMode.CONTINUOUS_VERTICAL,
+                        vertical = readingMode == ReadingMode.VERTICAL,
+                    )
+                }
+
+                ReaderContentOverlay(
+                    brightness = state.brightnessOverlayValue,
+                    color = colorOverlay.takeIf { colorOverlayEnabled },
+                    colorBlendMode = colorOverlayBlendMode,
+                )
+
+                ReaderAppBars(
+                    visible = state.menuVisible,
+
+                    mangaTitle = state.manga?.title,
+                    chapterTitle = state.currentChapter?.chapter?.name,
+                    navigateUp = onBackPressedDispatcher::onBackPressed,
+                    onClickTopAppBar = ::openMangaScreen,
+                    bookmarked = state.bookmarked,
+                    onToggleBookmarked = viewModel::toggleChapterBookmark,
+                    onOpenInWebView = ::openChapterInWebView.takeIf { isHttpSource },
+                    onOpenInBrowser = ::openChapterInBrowser.takeIf { isHttpSource },
+                    onShare = ::shareChapter.takeIf { isHttpSource },
+
+                    chapterNavigatorType = chapterNavigatorType,
+                    verticalNavigatorHeight = verticalNavigatorHeight,
+                    onNextChapter = ::loadNextChapter,
+                    enabledNext = state.viewerChapters?.nextChapter != null,
+                    onPreviousChapter = ::loadPreviousChapter,
+                    enabledPrevious = state.viewerChapters?.prevChapter != null,
+                    currentPage = state.currentPage,
+                    totalPages = state.totalPages,
+                    onPageIndexChange = {
+                        isScrollingThroughPages = true
+                        moveToPageIndex(it)
+                    },
+
+                    readingMode = readingMode,
+                    onClickReadingMode = viewModel::openReadingModeSelectDialog,
+                    orientation = ReaderOrientation.fromPreference(
+                        viewModel.getMangaOrientation(resolveDefault = false),
+                    ),
+                    onClickOrientation = viewModel::openOrientationModeSelectDialog,
+                    cropEnabled = cropEnabled,
+                    onClickCropBorder = {
+                        val enabled = viewModel.toggleCropBorders()
+                        menuToggleToast?.cancel()
+                        menuToggleToast = toast(if (enabled) MR.strings.on else MR.strings.off)
+                    },
+                    onClickSettings = viewModel::openSettingsDialog,
+                    onClickOcrSettings = {
+                        // Верхняя AI-кнопка: быстрая смена модели. Полная
+                        // озвучка/голоса доступны из этого диалога одной кнопкой
+                        // («Голос и озвучка…»).
+                        showModelPicker = true
+                    },
+                    onClickOcr = ::enterOcrMode,
+                )
+
+                // Линейка авточтения: подсветка текущей читаемой реплики
+                run {
+                    val autoRegion by autoReadEngine.currentRegion.collectAsState()
+                    autoRegion?.let { region ->
+                        // Пересчитываем на каждую реплику: пользователь листает
+                        // и зумит, поэтому прямоугольник страницы меняется.
+                        // Без него подсветка считала, что страница занимает
+                        // весь экран, и рамки уезжали от текста.
+                        val pageRect = remember(region) {
+                            runCatching { viewModel.state.value.viewer?.displayedPageRect() }.getOrNull()
+                        }
+                        eu.kanade.presentation.reader.components.AutoReadHighlight(
+                            region = region,
+                            engine = autoReadEngine,
+                            imageRect = pageRect,
+                        )
+                    }
+                }
+
+                val ocrPrefsForVoice = remember { uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>() }
+                var manualVoiceMode by androidx.compose.runtime.remember {
+                    androidx.compose.runtime.mutableStateOf(ocrPrefsForVoice.manualVoiceMode().get())
+                }
+                var manualVoiceGender by androidx.compose.runtime.remember {
+                    androidx.compose.runtime.mutableStateOf(ocrPrefsForVoice.manualVoiceGender().get())
+                }
+                // Значки 🔊 на репликах: показываются по переключателю.
+                var voiceIconsEnabled by androidx.compose.runtime.remember {
+                    androidx.compose.runtime.mutableStateOf(ocrPrefsForVoice.voiceIcons().get())
+                }
+                // Рамки распознанных реплик текущего кадра (для значков).
+                val frameRegions by autoReadEngine.frameRegions.collectAsState()
+                // Идёт ли чтение/озвучка — для состояния кнопки «Стоп чтения».
+                val readingActive by autoReadEngine.isReading.collectAsState()
+                // Озвучки на устройстве нет: авточтение останавливает себя само,
+                // а экран гасит переключатель и объясняет причину. Иначе читатель
+                // видел бы «чтение включено» и ждал страниц, которых не будет.
+                val voiceBlock by autoReadEngine.voiceBlock.collectAsState()
+                androidx.compose.runtime.LaunchedEffect(voiceBlock) {
+                    val reason = voiceBlock ?: return@LaunchedEffect
+                    stopAutoReadLoop()
+                    toast(reason)
+                }
+
+                // Значки 🔊 на рамках реплик: показываются по переключателю.
+                if (voiceIconsEnabled && frameRegions.isNotEmpty()) {
+                    eu.kanade.presentation.reader.components.OcrBubbleVoiceOverlay(
+                        regions = frameRegions,
+                        onSpeakRegion = { text, _ ->
+                            autoReadEngine.speakSingle(text)
+                        },
+                        perBubble = true,
+                        draggable = true,
+                        // Единый бейдж: пока TTS озвучивает реплику — один значок.
+                        isSpeaking = readingActive,
+                    )
+                }
+
+                eu.kanade.presentation.reader.components.ReaderFloatingControls(
+                    visible = state.menuVisible && state.dialog == null,
+                    readingActive = readingActive,
+                    manualVoiceMode = manualVoiceMode,
+                    manualVoiceGender = manualVoiceGender,
+                    onVoiceModeChange = { manual ->
+                        manualVoiceMode = manual
+                        ocrPrefsForVoice.manualVoiceMode().set(manual)
+                        toast(if (manual) "Голос выбирается вручную" else "Голос определяется автоматически")
+                    },
+                    onVoiceGenderChange = { g ->
+                        manualVoiceGender = g
+                        ocrPrefsForVoice.manualVoiceGender().set(g)
+                        toast(if (g == "male") "Мужской голос" else "Женский голос")
+                    },
+                    onTriggerOcr = ::enterOcrMode,
+                    onOpenOcrSettings = {
+                        // Настройки озвучки — диалог прямо в читалке, никуда не уходим
+                        showTtsDialog = true
+                    },
+                    onOpenFullOcrSettings = {
+                        showOcrBubbleSettings = true
+                    },
+                    onOpenAiChat = {
+                        ensureBookAiSession(announce = false)
+                        aiChatVisible.value = true
+                    },
+
+                    onScanRegionChange = { region ->
+                        uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>().scanRegion().set(region)
+                        toast("Область сканирования изменена")
+                    },
+                    onAutoscrollToggle = ::toggleAutoscroll,
+                    onAutoSpeakPage = ::autoSpeakVisiblePage,
+                    onStopSpeak = {
+                        stopAutoReadLoop()
+                        viewModel.stopAutoSpeak()
+                    },
+                    onInstantScreenshot = ::captureInstantScreenshot,
+                    voiceIconsEnabled = voiceIconsEnabled,
+                    onVoiceIconsToggle = { enabled ->
+                        voiceIconsEnabled = enabled
+                        ocrPrefsForVoice.voiceIcons().set(enabled)
+                        toast(if (enabled) "Значки озвучки реплик включены" else "Значки озвучки реплик выключены")
+                    },
+                    readingOrder = readingOrderState,
+                    contentPreset = contentPresetId,
+                    onContentPresetChange = { id ->
+                        val prefs = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+                        val type = mihon.data.ocr.OcrContentType.fromId(id)
+                        prefs.contentType().set(type.id)
+                        contentPresetId = type.id
+                        mihon.data.ocr.ContentAutoPreset.rememberManual(
+                            mihon.data.ocr.ReaderContextBus.current.value?.mangaId,
+                            type.id,
+                            prefs,
+                        )
+                        val order = mihon.data.ocr.OcrTuning.preset(type).readingOrder
+                        prefs.scanReadingOrder().set(order)
+                        readingOrderState = order
+                        toast("Режим: ${type.title} — ${mihon.data.ocr.OcrRegionRules.orderTitle(order)}")
+                    },
+                )
+
+                val scanShapeId by uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+                    .scanShape().collectAsState()
+
+                // OCR selection overlay
+                if (state.ocrSelectionMode) {
+                    OcrSelectionOverlay(
+                        onCancel = ::exitOcrMode,
+                        instructionText = when (selectionAction) {
+                            SelectionAction.ProcessOcr -> AnnotatedString(stringResource(MR.strings.ocr_select_region))
+                            is SelectionAction.ExportImageToAnki -> AnnotatedString(
+                                stringResource(MR.strings.anki_select_image_region),
+                            )
+                        },
+                        startPoint = ocrDragStart,
+                        endPoint = ocrDragEnd,
+                        shape = mihon.data.ocr.ScanShape.fromId(scanShapeId),
+                    )
+                }
+
+                if (flashOnPageChange) {
+                    DisplayRefreshHost(
+                        hostState = displayRefreshHost,
+                    )
+                }
+
+                val onDismissRequest = viewModel::closeDialog
+                val onDismissOcrResult = ::dismissActiveOcrOverlaySession
+                when (val dialog = state.dialog) {
+                    is ReaderViewModel.Dialog.Loading -> {
+                        AlertDialog(
+                            onDismissRequest = {},
+                            confirmButton = {},
+                            text = {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    CircularProgressIndicator()
+                                    Text(stringResource(MR.strings.loading))
+                                }
+                            },
+                        )
+                    }
+                    is ReaderViewModel.Dialog.Settings -> {
+                        ReaderSettingsDialog(
+                            onDismissRequest = onDismissRequest,
+                            onShowMenus = { setMenuVisibility(true) },
+                            onHideMenus = { setMenuVisibility(false) },
+                            screenModel = settingsScreenModel,
+                        )
+                    }
+                    is ReaderViewModel.Dialog.ReadingModeSelect -> {
+                        ReadingModeSelectDialog(
+                            onDismissRequest = onDismissRequest,
+                            screenModel = settingsScreenModel,
+                            onChange = { stringRes ->
+                                menuToggleToast?.cancel()
+                                if (!readerPreferences.showReadingMode.get()) {
+                                    menuToggleToast = toast(stringRes)
+                                }
+                            },
+                        )
+                    }
+                    is ReaderViewModel.Dialog.OrientationModeSelect -> {
+                        OrientationSelectDialog(
+                            onDismissRequest = onDismissRequest,
+                            screenModel = settingsScreenModel,
+                            onChange = { stringRes ->
+                                menuToggleToast?.cancel()
+                                menuToggleToast = toast(stringRes)
+                            },
+                        )
+                    }
+                    is ReaderViewModel.Dialog.PageActions -> {
+                        ReaderPageActionsDialog(
+                            onDismissRequest = onDismissRequest,
+                            onSetAsCover = viewModel::setAsCover,
+                            onShare = viewModel::shareImage,
+                            onSave = viewModel::saveImage,
+                        )
+                    }
+                    is ReaderViewModel.Dialog.OcrResult -> {
+                        val searchState by dictionarySearchScreenModel.state.collectAsState()
+                        var showVoicePicker by remember { mutableStateOf(false) }
+                        LaunchedEffect(activeOcrOverlaySession?.selection, searchState.results?.highlightRange) {
+                            updateActiveOcrOverlayHighlight(
+                                activeOcrOverlaySession?.selection?.displayText?.let {
+                                    queryRangeToDisplayRange(it, searchState.results?.highlightRange)
+                                },
+                            )
+                        }
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            // Текст, над которым работают панельные действия
+                            // (озвучка, словарь, копирование). `queryText` у
+                            // результата долгого нажатия пустой — сам текст
+                            // лежит в selection, поэтому раньше кнопка Speak
+                            // в новой компактной панели молчала вслух.
+                            val ocrActionText = dialog.queryText.ifBlank {
+                                searchState.query.ifBlank {
+                                    activeOcrOverlaySession?.selection?.displayText.orEmpty()
+                                }
+                            }
+                            OcrResultOverlay(
+                            onDismissRequest = onDismissOcrResult,
+                            presentation = when (dialog.origin) {
+                                ReaderViewModel.OcrResultOrigin.CachedPageTap -> ocrResultPresentation
+                                ReaderViewModel.OcrResultOrigin.ManualSelection -> OcrResultPresentation.SHEET
+                            },
+                            popupSettings = OcrResultPopupSettings(
+                                widthDp = ocrPopupWidthDp,
+                                heightDp = ocrPopupHeightDp,
+                                contentScale = ocrPopupScalePercent / 100f,
+                            ),
+                            dimBackground = dimOcrBackground,
+                            queryText = dialog.queryText,
+                            initialSearchText = dialog.initialSearchText,
+                            source = dialog.source,
+                            anchorRect = activeOcrOverlaySession?.anchorRectInDialogRoot,
+                            onCopyText = {
+                                // Копируем РАСПОЗНАННЫЙ текст, а не строку поиска по
+                                // словарям: searchState.query пуст, пока читатель ничего
+                                // не искал, и в буфер уходила пустая строка.
+                                if (ocrActionText.isBlank()) {
+                                    toast("Нечего копировать")
+                                } else {
+                                    val clipboard = getSystemService<ClipboardManager>()
+                                    clipboard?.setPrimaryClip(
+                                        ClipData.newPlainText(null, ocrActionText),
+                                    )
+                                    toast(MR.strings.action_copy_to_clipboard)
+                                }
+                            },
+                            searchState = searchState,
+                            onQueryChange = dictionarySearchScreenModel::updateQuery,
+                            onSearch = dictionarySearchScreenModel::search,
+                            onTermGroupClick = { terms ->
+                                lifecycleScope.launchIO {
+                                    if (
+                                        ankiDroidPreferences.croppedImageExport().get() &&
+                                        viewModel.state.value.dialog is ReaderViewModel.Dialog.OcrResult
+                                    ) {
+                                        withUIContext {
+                                            dismissActiveOcrOverlaySession()
+                                            enterImageExportSelectionMode(terms)
+                                        }
+                                    } else {
+                                        val uri = viewModel.getCurrentPageUri()
+                                        dictionarySearchScreenModel.addGroupToAnki(terms, uri)
+                                    }
+                                }
+                            },
+                            onPlayAudioClick = dictionarySearchScreenModel::fetchAndPlayAudio,
+                            onSpeak = {
+                                if (ocrActionText.isBlank()) {
+                                    toast("Нечего озвучивать")
+                                } else {
+                                    eu.kanade.tachiyomi.data.tts.TtsSpeaker.speak(
+                                        this@ReaderActivity,
+                                        ocrActionText,
+                                    )
+                                }
+                            },
+                            onSpeakRole = { role ->
+                                if (ocrActionText.isBlank()) {
+                                    toast("Нечего озвучивать")
+                                } else {
+                                    eu.kanade.tachiyomi.data.tts.TtsSpeaker.speakRole(
+                                        this@ReaderActivity,
+                                        ocrActionText,
+                                        role,
+                                    )
+                                }
+                            },
+                            onChooseVoice = { showVoicePicker = true },
+                            onHidePageOverlay = ::hideActiveOcrOverlayText,
+                            onAddToDictionary = {
+                                if (ocrActionText.isBlank()) {
+                                    toast("Нечего добавлять")
+                                } else {
+                                    val added = mihon.data.ocr.OcrVocabulary.addFromText(
+                                        ocrActionText,
+                                    )
+                                    toast(
+                                        if (added > 0) "Словарь OCR: добавлено $added"
+                                        else "Словарь OCR: ничего нового",
+                                    )
+                                }
+                            },
+                            )
+                            if (showVoicePicker) {
+                                eu.kanade.presentation.reader.TtsVoicePickerDialog(
+                                    onDismissRequest = { showVoicePicker = false },
+                                    onPickSystem = { spec ->
+                                        showVoicePicker = false
+                                        eu.kanade.tachiyomi.data.tts.TtsSpeaker.speakWithVoice(
+                                            this@ReaderActivity,
+                                            ocrActionText,
+                                            spec,
+                                        )
+                                    },
+                                    onPickEdge = { voice ->
+                                        showVoicePicker = false
+                                        eu.kanade.tachiyomi.data.tts.TtsSpeaker.speakWithEdgeVoice(
+                                            this@ReaderActivity,
+                                            ocrActionText,
+                                            voice,
+                                        )
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    null -> {}
+                }
+
+                if (showAiChat) {
+                    eu.kanade.presentation.reader.components.ReaderAiChatOverlay(
+                        context = this@ReaderActivity,
+                        mangaId = state.manga?.id,
+                        mangaTitle = state.manga?.title ?: "книга",
+                        chapterTitle = state.currentChapter?.chapter?.name,
+                        onClose = { aiChatVisible.value = false },
+                        // «Стоп» в чате гасит и озвучку с авточтением: иначе
+                        // остановленный ответ оставляет читателя вслух
+                        // читающей главу, а кнопки в меню он не видит.
+                        onStopRequested = {
+                            stopAutoReadLoop()
+                            eu.kanade.tachiyomi.data.tts.TtsSpeaker.stop()
+                        },
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Sets the visibility of the menu according to [visible].
+     */
+    private fun setMenuVisibility(visible: Boolean) {
+        viewModel.showMenus(visible)
+        if (visible) {
+            windowInsetsController.show(WindowInsetsCompat.Type.systemBars())
+        } else if (readerPreferences.fullscreen.get()) {
+            windowInsetsController.hide(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+
+    /**
+     * Called from the presenter when a manga is ready. Used to instantiate the appropriate viewer.
+     */
+    private fun updateViewer() {
+        val prevViewer = viewModel.state.value.viewer
+        val newViewer = ReadingMode.toViewer(viewModel.getMangaReadingMode(), this)
+
+        if (window.sharedElementEnterTransition is MaterialContainerTransform) {
+            // Wait until transition is complete to avoid crash on API 26
+            window.sharedElementEnterTransition.doOnEnd {
+                setOrientation(viewModel.getMangaOrientation())
+            }
+        } else {
+            setOrientation(viewModel.getMangaOrientation())
+        }
+
+        // Destroy previous viewer if there was one
+        if (prevViewer != null) {
+            prevViewer.destroy()
+            binding.viewerContainer.removeAllViews()
+        }
+        viewModel.onViewerLoaded(newViewer)
+        updateViewerInset(readerPreferences.fullscreen.get(), readerPreferences.drawUnderCutout.get())
+        binding.viewerContainer.addView(newViewer.getView())
+
+        if (readerPreferences.showReadingMode.get()) {
+            showReadingModeToast(viewModel.getMangaReadingMode())
+        }
+
+        loadingIndicator = ReaderProgressIndicator(this)
+        binding.readerContainer.addView(loadingIndicator)
+
+        startPostponedEnterTransition()
+    }
+
+    private fun openMangaScreen() {
+        viewModel.manga?.id?.let { id ->
+            startActivity(
+                Intent(this, MainActivity::class.java).apply {
+                    action = Constants.SHORTCUT_MANGA
+                    putExtra(Constants.MANGA_EXTRA, id)
+                    addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                },
+            )
+        }
+    }
+
+    private fun openChapterInWebView() {
+        val manga = viewModel.manga ?: return
+        val source = viewModel.getSource() ?: return
+        assistUrl?.let {
+            val intent = WebViewActivity.newIntent(this@ReaderActivity, it, source.id, manga.title)
+            startActivity(intent)
+        }
+    }
+
+    private fun openChapterInBrowser() {
+        assistUrl?.let {
+            openInBrowser(it.toUri(), forceDefaultBrowser = false)
+        }
+    }
+
+    private fun shareChapter() {
+        assistUrl?.let {
+            val intent = it.toUri().toShareIntent(this, type = "text/plain")
+            startActivity(intent)
+        }
+    }
+
+    private fun showReadingModeToast(mode: Int) {
+        try {
+            readingModeToast?.cancel()
+            readingModeToast = toast(ReadingMode.fromPreference(mode).stringRes)
+        } catch (_: ArrayIndexOutOfBoundsException) {
+            logcat(LogPriority.ERROR) { "Unknown reading mode: $mode" }
+        }
+    }
+
+    /**
+     * Called from the presenter whenever a new [viewerChapters] have been set. It delegates the
+     * method to the current viewer, but also set the subtitle on the toolbar, and
+     * hides or disables the reader prev/next buttons if there's a prev or next chapter
+     */
+    @SuppressLint("RestrictedApi")
+    private fun setChapters(viewerChapters: ViewerChapters) {
+        binding.readerContainer.removeView(loadingIndicator)
+        viewModel.state.value.viewer?.setChapters(viewerChapters)
+
+        lifecycleScope.launchIO {
+            viewModel.getChapterUrl()?.let { url ->
+                assistUrl = url
+            }
+        }
+    }
+
+    /**
+     * Called from the presenter if the initial load couldn't load the pages of the chapter. In
+     * this case the activity is closed and a toast is shown to the user.
+     */
+    private fun setInitialChapterError(error: Throwable) {
+        logcat(LogPriority.ERROR, error)
+        finish()
+        toast(error.message)
+    }
+
+    /**
+     * Called from the presenter whenever it's loading the next or previous chapter. It shows or
+     * dismisses a non-cancellable dialog to prevent user interaction according to the value of
+     * [show]. This is only used when the next/previous buttons on the toolbar are clicked; the
+     * other cases are handled with chapter transitions on the viewers and chapter preloading.
+     */
+    private fun setProgressDialog(show: Boolean) {
+        if (show) {
+            viewModel.showLoadingDialog()
+        } else {
+            viewModel.closeDialog()
+        }
+    }
+
+    /**
+     * Moves the viewer to the given page [index]. It does nothing if the viewer is null or the
+     * page is not found.
+     */
+    private fun moveToPageIndex(index: Int) {
+        val viewer = viewModel.state.value.viewer ?: return
+        val currentChapter = viewModel.state.value.currentChapter ?: return
+        val page = currentChapter.pages?.getOrNull(index) ?: return
+        viewer.moveToPage(page)
+    }
+
+    /**
+     * Tells the presenter to load the next chapter and mark it as active. The progress dialog
+     * should be automatically shown.
+     */
+    private fun loadNextChapter() {
+        lifecycleScope.launch {
+            viewModel.loadNextChapter()
+            moveToPageIndex(0)
+        }
+    }
+
+    /**
+     * Tells the presenter to load the previous chapter and mark it as active. The progress dialog
+     * should be automatically shown.
+     */
+    private fun loadPreviousChapter() {
+        lifecycleScope.launch {
+            viewModel.loadPreviousChapter()
+            moveToPageIndex(0)
+        }
+    }
+
+    /**
+     * Called from the viewer whenever a [page] is marked as active. It updates the values of the
+     * bottom menu and delegates the change to the presenter.
+     */
+    fun onPageSelected(page: ReaderPage) {
+        val chapterId = page.chapter.chapter.id
+        if (
+            chapterId != null &&
+            activeOcrOverlaySession?.selection?.page?.let {
+                it.chapterId != chapterId || it.pageIndex != page.index
+            } == true
+        ) {
+            dismissActiveOcrOverlaySession()
+        }
+        // Страница стала активной — прочитанные позади страницы автоматически
+        // освобождаются из кеша (префетч всей главы не раздувает хранилище).
+        pruneReadPagesFromCache(page)
+        viewModel.onPageSelected(page)
+    }
+
+    /**
+     * Автоочистка кеша прочитанных страниц: онлайн-префетч подтягивает ВСЮ
+     * главу в кеш, поэтому страницы, которые пользователь уже пролистал,
+     * удаляем сами после их прочтения. Ближайшую позади страницу сохраняем —
+     * на случай возврата на шаг назад.
+     */
+    private fun pruneReadPagesFromCache(currentPage: ReaderPage) {
+        val pages = currentPage.chapter.pages ?: return
+        if (currentPage.index <= 1) return
+        val chapterCache = uy.kohesive.injekt.Injekt.get<ChapterCache>()
+        for (i in 0 until currentPage.index - 1) {
+            val imageUrl = pages[i].imageUrl ?: continue
+            runCatching {
+                if (chapterCache.isImageInCache(imageUrl)) {
+                    chapterCache.removeImageFromCache(imageUrl)
+                }
+            }
+        }
+    }
+
+    /**
+     * Called from the viewer whenever a [page] is long clicked. A bottom sheet with a list of
+     * actions to perform is shown.
+     */
+    fun onPageLongTap(page: ReaderPage) {
+        viewModel.openPageDialog(page)
+    }
+
+    private fun handleSelectedRegion(
+        rect: android.graphics.RectF,
+    ) {
+        when (val action = selectionAction) {
+            SelectionAction.ProcessOcr -> captureRegionForOcr(rect)
+            is SelectionAction.ExportImageToAnki -> captureRegionForAnkiExport(rect, action.terms)
+        }
+    }
+
+    private fun captureRegionForAnkiExport(
+        rect: android.graphics.RectF,
+        terms: List<DictionaryTerm>,
+    ) {
+        lifecycleScope.launchIO {
+            try {
+                val croppedBitmap = requireCurrentSelectionBitmap(
+                    rect = rect,
+                    failureLogMessage = "Selected reader region unavailable for Anki export",
+                    failureMessageRes = MR.strings.error_anki_image_fail,
+                ) ?: return@launchIO
+
+                try {
+                    val uri = imageSaver.save(
+                        Image.Cover(
+                            bitmap = croppedBitmap,
+                            name = "anki_export_${System.currentTimeMillis()}",
+                            location = eu.kanade.tachiyomi.data.saver.Location.Cache,
+                        ),
+                    )
+                    dictionarySearchScreenModel.addGroupToAnki(terms, uri)
+                } finally {
+                    if (!croppedBitmap.isRecycled) {
+                        croppedBitmap.recycle()
+                    }
+                }
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e) { "Failed to capture selected reader region for Anki export" }
+                withUIContext {
+                    exitOcrMode()
+                    toast(MR.strings.error_anki_image_fail)
+                }
+            }
+        }
+    }
+
+    /**
+     * «Прочитать страницу»: захватывает ВСЮ видимую область читалки,
+     * прогоняет OCR по выбранному движку и сразу озвучивает результат в
+     * порядке чтения (RTL/LTR/вертикально). Текст остаётся в уведомлении
+     * с кнопкой «Остановить».
+     */
+    fun autoSpeakVisiblePage() {
+        stopAutoReadLoop()
+        autoReadEngine.clearHistory()
+        readCurrentPage(thenAdvance = false)
+    }
+
+    private fun registerReaderAiActions() {
+        val actions = eu.kanade.tachiyomi.data.ai.ReaderAiActions
+        actions.unregisterAll(READER_ACTION_PREFIX)
+        actions.register("${READER_ACTION_PREFIX}speak_page") {
+            withUIContext { autoSpeakVisiblePage() }
+            "Озвучиваю текущую страницу"
+        }
+        actions.register("${READER_ACTION_PREFIX}speak_chapter") {
+            withUIContext { startAutoReadLoop() }
+            "Запустил озвучку главы: страницы будут читаться и листаться"
+        }
+        actions.register("${READER_ACTION_PREFIX}stop_speak") {
+            withUIContext { stopAutoReadLoop() }
+            "Озвучка остановлена"
+        }
+        // Листание. Без этих действий агент физически не мог вести читателя
+        // постранично: он видел только открытую страницу и вынужден был
+        // просить скриншоты по одной.
+        actions.register("${READER_ACTION_PREFIX}turn_page") { args ->
+            val target = args.optString("to").trim().lowercase()
+            withUIContext { turnPage(target) }
+        }
+        // Авточтение вкл/выкл. Агент должен уметь сам начать читать главу и
+        // сам её остановить, а не только описывать, что надо нажать.
+        actions.register("${READER_ACTION_PREFIX}auto_read") { args ->
+            // Ключ «action» уже занят селектором действия, поэтому режим
+            // берётся из «to» — иначе агент управлял бы сам собой.
+            val mode = args.optString("to").trim().lowercase()
+            withUIContext { setAutoRead(mode) }
+        }
+        actions.register("${READER_ACTION_PREFIX}page_count") {
+            val total = viewModel.state.value.totalPages
+            val page = viewModel.state.value.currentPage
+            "Страниц в главе: $total, открыта: $page"
+        }
+        actions.register("${READER_ACTION_PREFIX}page_text") {
+            val root = binding.root
+            val rect = android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
+            val bitmap = cropCurrentSelectionBitmap(rect)
+            if (bitmap == null) {
+                "Не удалось получить кадр страницы"
+            } else {
+                try {
+                    val file = java.io.File(cacheDir, "ai_page_text.jpg")
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 82, file.outputStream())
+                    eu.kanade.tachiyomi.data.ai.AiAgent.ocrAttachment(file).orEmpty().ifBlank {
+                        "На странице не распознан текст"
+                    }
+                } finally {
+                    if (!bitmap.isRecycled) bitmap.recycle()
+                }
+            }
+        }
+        // Глаза оркестратора: картинку открытой страницы описывает та же
+        // vision-модель, что выбрана для OCR, а агент продолжает свой цикл с
+        // web/file-инструментами. Вопрос обязателен — «просто посмотри» для
+        // модели не значит ничего полезного.
+        actions.register("${READER_ACTION_PREFIX}see_page") { args ->
+            val question = args.optString("question").trim()
+            if (question.isEmpty()) {
+                return@register "Нужен вопрос: {\"action\":\"see_page\",\"question\":\"...\"}"
+            }
+            val root = binding.root
+            val rect = android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
+            val bitmap = cropCurrentSelectionBitmap(rect)
+            if (bitmap == null) {
+                "Не удалось получить кадр страницы"
+            } else {
+                try {
+                    eu.kanade.tachiyomi.data.ai.AiAgent.askAboutPage(bitmap, question)
+                        ?: "Выбранная vision-модель не ответила. Спроси иначе или " +
+                        "работай по распознанному тексту (page_text)."
+                } finally {
+                    if (!bitmap.isRecycled) bitmap.recycle()
+                }
+            }
+        }
+    }
+
+    /**
+     * Полное авточтение: читать страницу → (страница стоит, пока не дочитана)
+     * → перелистнуть → читать следующую. RTL/LTR листает страницы читалки,
+     * вертикальный режим прокручивает на экран.
+     */
+    fun startAutoReadLoop() {
+        stopAutoReadLoop()
+        autoReadActive = true
+        autoReadEngine.clearHistory()
+        toast("▶ Авточтение включено")
+        ensureBookAiSession(announce = true)
+        readCurrentPage(thenAdvance = true)
+    }
+
+    /**
+     * Сессия AI этой книги. Создаётся один раз — при первом авточтении или
+     * первом входе в AI-чат — и переиспользуется при следующих главах, поэтому
+     * накопленные правила не теряются. При создании показывается короткая
+     * подсказка, но сам чат не навязывается: авточтение только что стартовало,
+     * и перекрывать кадр окном было бы неуместно.
+     */
+    private fun ensureBookAiSession(announce: Boolean) {
+        val mangaId = viewModel.manga?.id ?: return
+        lifecycleScope.launchIO {
+            val session = eu.kanade.tachiyomi.data.ai.BookKnowledge
+                .ensureSession(this@ReaderActivity, mangaId)
+            if (!announce || !session.created) return@launchIO
+            val summary = eu.kanade.tachiyomi.data.ai.BookKnowledge
+                .summaryLine(this@ReaderActivity, mangaId)
+            withUIContext { toast("AI-сессия книги создана · $summary") }
+        }
+    }
+
+    @Volatile
+    private var autoReadActive = false
+
+    fun stopAutoReadLoop() {
+        autoReadActive = false
+        autoReadLoop?.cancel()
+        autoReadLoop = null
+        autoReadEngine.stop()
+        eu.kanade.tachiyomi.data.tts.TtsReadingNotifier.dismiss(this)
+    }
+
+    /**
+     * Листание по команде агента. Возвращает честный отчёт: агент должен
+     * знать, что страница сдвинулась, иначе он будет просить скриншоты по
+     * одной и обещать «продолжить постранично», ничего не делая.
+     */
+    private fun turnPage(target: String): String {
+        val total = viewModel.state.value.totalPages
+        val current = viewModel.state.value.currentPage
+        val moveTo: Int = when (target) {
+            "", "next", "вперёд", "дальше" -> current + 1
+            "prev", "back", "назад" -> current - 1
+            "first", "начало" -> 1
+            "last", "конец" -> total
+            else -> argsInt(target)
+        }
+        if (moveTo == current && target.isNotBlank() && target.any { it.isDigit() }) {
+            return "Страница $current: прыгать на саму страницу нельзя, только вперёд, назад, в начало или в конец"
+        }
+        if (total > 0 && moveTo in 1..total) {
+            // Индекс с нуля: нумерация страниц у читателя с единицы.
+            moveToPageIndex(moveTo - 1)
+            return "Страница $moveTo из $total"
+        }
+        return "Нельзя перейти на страницу $moveTo: открыта $current из ${total.coerceAtLeast(0)}"
+    }
+
+    /** Авточтение по команде агента: on / off / status. */
+    private fun setAutoRead(action: String): String = when (action) {
+        "on", "start", "старт", "включи" -> {
+            startAutoReadLoop()
+            "Авточтение включено: читаю и листаю"
+        }
+        "off", "stop", "стоп", "выключи" -> {
+            stopAutoReadLoop()
+            "Авточтение остановлено"
+        }
+        else -> "Авточтение ${if (autoReadActive) "включено" else "выключено"}"
+    }
+
+    private fun argsInt(target: String): Int = target.filter { it.isDigit() }.toIntOrNull() ?: -1
+
+    private fun readCurrentPage(thenAdvance: Boolean) {
+        autoReadLoop?.cancel()
+        autoReadLoop = lifecycleScope.launchIO {
+            try {
+                val root = binding.root
+                val fullRect = android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
+                val bitmap = cropCurrentSelectionBitmap(fullRect) ?: run {
+                    withUIContext { toast("Не удалось захватить страницу") }
+                    return@launchIO
+                }
+                val chapterId = viewModel.getCurrentChapter()?.chapter?.id ?: -1L
+                val pageIndex = (viewModel.state.value.currentPage - 1).coerceAtLeast(0)
+
+                // Скорость автолистания вебтуна в авточтении (настройка в
+                // «Озвучка» → Авточтение): плавно пофразно / медленно / обычно /
+                // быстрее / максимально.
+                val scrollSpeed = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+                    .autoReadWebtoonSpeed().get()
+                val webtoonFraction = when (scrollSpeed) {
+                    "phrase" -> 0f // плавно: каждая реплика прокрутилась сама
+                    "slow" -> 0.15f
+                    "normal" -> 0.35f
+                    "fast" -> 0.55f
+                    "max" -> 0.8f
+                    else -> 0.35f
+                }
+
+                autoReadEngine.readFrame(
+                    bitmap = bitmap,
+                    chapterId = chapterId,
+                    pageIndex = pageIndex,
+                    onLineSpoken = if (scrollSpeed == "phrase") { box ->
+                        // Плавный ПОФРАЗНЫЙ прокрут вебтуна: реплика дочитана —
+                        // проматываю ровно на её высоту, следующая уже внизу
+                        // вьюпорта (границы кадра не перечитываются вовсе).
+                        lifecycleScope.launchIO {
+                            if (!autoReadActive) return@launchIO
+                            withUIContext {
+                                val v = viewModel.state.value.viewer
+                                if (v is eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer) {
+                                    val hF = (box.bottom - box.top).coerceAtLeast(0.03f)
+                                    val dy = (box.bottom - 0.08f).coerceAtLeast(hF + 0.05f).coerceAtMost(0.85f)
+                                    v.scrollDownByFraction(dy)
+                                }
+                            }
+                        }
+                    } else null,
+                    onPageFinished = {
+                        // Страница дочитана целиком — ТОЛЬКО теперь листаем
+                        if (thenAdvance && autoReadActive) {
+                            lifecycleScope.launchIO {
+                                kotlinx.coroutines.delay(350)
+                                if (!autoReadActive) return@launchIO
+                                withUIContext {
+                                    when (val viewer = viewModel.state.value.viewer) {
+                                        is eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer ->
+                                            // Вебтун: шаг зависит от скорости автолистания.
+                                            // Обычный шаг с перекрытием держит автопрокрутку,
+                                            // пока кадр не прочитан, и не пропускает реплики
+                                            // на границе вьюпорта (фикс «рывка»).
+                                            if (webtoonFraction > 0f) viewer.scrollDownByFraction(webtoonFraction)
+                                        is eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer ->
+                                            viewer.moveToNext() // постранично, с учётом RTL/LTR
+                                        else -> {}
+                                    }
+                                }
+                                kotlinx.coroutines.delay(900) // дать странице отрисоваться
+                                if (autoReadActive) readCurrentPage(thenAdvance = true)
+                            }
+                        }
+                    },
+                )
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e) { "readCurrentPage failed" }
+            }
+        }
+    }
+
+    private fun captureRegionForOcr(
+        rect: android.graphics.RectF,
+    ) {
+        lifecycleScope.launchIO {
+            try {
+                val croppedBitmap = requireCurrentSelectionBitmap(
+                    rect = rect,
+                    failureLogMessage = "Selected reader region unavailable for OCR",
+                    failureMessageRes = MR.strings.warn_ocr_image_decode,
+                ) ?: return@launchIO
+
+                // The ViewModel takes ownership of the bitmap for OCR processing.
+                viewModel.processOcrRegion(croppedBitmap)
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e) { "Failed to capture selected reader region for OCR" }
+                withUIContext {
+                    exitOcrMode()
+                    toast(MR.strings.error_ocr_image_fail)
+                }
+            }
+        }
+    }
+
+    /**
+     * «Автоклик с удержанием»: долгое касание по странице автоматически выделяет
+     * область вокруг точки касания, распознаёт её и сразу озвучивает, а сам
+     * прямоугольник запоминается для повторного использования. Это делает
+     * интерактивным авто-сканирование: пользователю не нужно открывать режим
+     * выделения — просто удерживает палец там, где текст.
+     */
+    private fun captureAndSpeakRegion(rect: android.graphics.RectF) {
+        lifecycleScope.launchIO {
+            try {
+                val croppedBitmap = requireCurrentSelectionBitmap(
+                    rect = rect,
+                    failureLogMessage = "Hold-to-speak region unavailable for OCR",
+                    failureMessageRes = MR.strings.warn_ocr_image_decode,
+                ) ?: return@launchIO
+                val text = try {
+                    viewModel.recognizeRegionText(croppedBitmap)
+                } finally {
+                    if (!croppedBitmap.isRecycled) croppedBitmap.recycle()
+                }.trim()
+                if (text.isBlank()) {
+                    withUIContext { toast(MR.strings.no_results_found) }
+                    return@launchIO
+                }
+                withUIContext {
+                    // Запоминаем выделенную область, чтобы повторно не выбирать.
+                    val pageRect = runCatching {
+                        viewModel.state.value.viewer?.displayedPageRect()
+                    }.getOrNull()
+                    if (pageRect != null) {
+                        viewModel.rememberOcrRegion(
+                            mihon.domain.ocr.model.OcrBoundingBox(
+                                left = (rect.left - pageRect.left) / pageRect.width().coerceAtLeast(1f),
+                                top = (rect.top - pageRect.top) / pageRect.height().coerceAtLeast(1f),
+                                right = (rect.right - pageRect.left) / pageRect.width().coerceAtLeast(1f),
+                                bottom = (rect.bottom - pageRect.top) / pageRect.height().coerceAtLeast(1f),
+                            ),
+                        )
+                    }
+                    autoReadEngine.speakSingle(text)
+                }
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e) { "Failed to capture-and-speak region" }
+                withUIContext {
+                    toast("Ошибка озвучки: ${e.message ?: "не удалось распознать область"}")
+                }
+            }
+        }
+    }
+
+    /**
+     * «Скриншот сейчас»: захватить текущий видимый кадр страницы и сохранить
+     * как скриншот в буфер «Скриншоты» (OCR выбранным движком — включая Glens).
+     * Не влияет на авточтение и озвучку.
+     */
+    private fun captureInstantScreenshot() {
+        lifecycleScope.launchIO {
+            try {
+                val root = binding.root
+                val fullRect = android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
+                val bitmap = cropCurrentSelectionBitmap(fullRect) ?: return@launchIO
+                val chapterId = viewModel.getCurrentChapter()?.chapter?.id ?: -1L
+                val pageIndex = (viewModel.state.value.currentPage - 1).coerceAtLeast(0)
+                autoReadEngine.captureInstantScreenshot(
+                    bitmap = bitmap,
+                    chapterId = chapterId,
+                    pageIndex = pageIndex,
+                    scrollFraction = 0f,
+                )
+                if (!bitmap.isRecycled) bitmap.recycle()
+                withUIContext { toast("Скриншот сохранён") }
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e) { "Failed to capture instant screenshot" }
+                withUIContext { toast("Не удалось сделать скриншот") }
+            }
+        }
+    }
+
+    /** Регион вокруг точки касания (autoclick с удержанием) по центру вьюпорта. */
+    private fun holdRegionAround(point: android.graphics.PointF): android.graphics.RectF {
+        val root = binding.root
+        val w = root.width.toFloat()
+        val h = root.height.toFloat()
+        val size = minOf(w, h) * 0.5f
+        val left = (point.x - size / 2f).coerceIn(0f, (w - size).coerceAtLeast(0f))
+        val top = (point.y - size / 2f).coerceIn(0f, (h - size).coerceAtLeast(0f))
+        return android.graphics.RectF(left, top, left + size.coerceAtMost(w), top + size.coerceAtMost(h))
+    }
+
+    private suspend fun requireCurrentSelectionBitmap(
+        rect: android.graphics.RectF,
+        failureLogMessage: String,
+        failureMessageRes: StringResource,
+    ): Bitmap? {
+        val croppedBitmap = cropCurrentSelectionBitmap(rect)
+        if (croppedBitmap != null) {
+            return croppedBitmap
+        }
+
+        logcat(LogPriority.WARN) { failureLogMessage }
+        withUIContext {
+            exitOcrMode()
+            toast(failureMessageRes)
+        }
+        return null
+    }
+
+    private suspend fun cropCurrentSelectionBitmap(
+        rect: android.graphics.RectF,
+    ): Bitmap? {
+        val captures = resolveSelectionCaptures(rect)
+        // Страница может быть ещё не отрисована (или у вебтуна нет разрешимой
+        // области выделения) — это обычное состояние, а не ошибка. Раньше здесь
+        // бросалось IllegalStateException, и авто-поиск издания при открытии главы
+        // (LaunchedEffect) ронял приложение необработанным исключением из корутины.
+        if (captures.isEmpty()) {
+            logcat(LogPriority.DEBUG) { "Selection not ready for crop, skipping" }
+            return null
+        }
+        val manga = viewModel.manga ?: throw IllegalStateException("Manga unavailable")
+        return selectionBitmapCropper.cropSelectionBitmap(
+            manga = manga,
+            captures = captures,
+            shape = mihon.data.ocr.ScanShape.fromId(
+                uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>().scanShape().get(),
+            ),
+        )
+    }
+
+    private suspend fun resolveSelectionCaptures(
+        rect: android.graphics.RectF,
+    ): List<ReaderSelectionCapture> {
+        val screenRect = dialogRootRectToScreenRect(rect)
+        val captures = withUIContext {
+            val resolvedCaptures = viewModel.state.value.viewer?.resolveSelectionCaptures(
+                ReaderSelectionRegion(screenRect = screenRect),
+            )
+            if (!resolvedCaptures.isNullOrEmpty()) {
+                exitOcrMode()
+            }
+            resolvedCaptures
+        }
+            .orEmpty()
+
+        if (captures.isNotEmpty()) {
+            logcat(LogPriority.DEBUG) {
+                "Selection resolved ${captures.size} capture(s) for screenRect=" +
+                    "${screenRect.left},${screenRect.top},${screenRect.right},${screenRect.bottom}"
+            }
+        }
+        return captures
+    }
+
+    fun showOcrResult(selection: ReaderOcrRegionSelection) {
+        if (!shouldHandleCachedOcrRegionTaps()) {
+            return
+        }
+
+        if (shouldOpenCachedOcrResultInPopup()) {
+            if (!openCachedOcrOverlaySession(selection)) {
+                return
+            }
+        } else {
+            clearActiveOcrOverlaySession()
+        }
+
+        viewModel.showOcrResult(
+            queryText = selection.queryText,
+            origin = ReaderViewModel.OcrResultOrigin.CachedPageTap,
+            initialSearchText = searchTextForOffset(selection.queryText, selection.initialSelectionOffset),
+            source = viewModel.currentOcrSource(),
+        )
+    }
+
+    private fun shouldOpenCachedOcrResultInPopup(): Boolean {
+        return dictionaryPreferences.ocrResultPresentation().get() == OcrResultPresentation.POPUP
+    }
+
+    private fun openCachedOcrOverlaySession(selection: ReaderOcrRegionSelection): Boolean {
+        val anchorRect = selection.anchorRectOnScreen?.let(::screenRectToDialogRootRect) ?: return false
+        if (activeOcrOverlaySession?.matches(selection) == true) {
+            dismissActiveOcrOverlaySession()
+            return false
+        }
+
+        activeOcrOverlaySession = ActiveOcrOverlaySession(
+            selection = selection,
+            anchorRectInDialogRoot = anchorRect,
+        )
+        return syncActiveOcrOverlay()
+    }
+
+    fun shouldHandleCachedOcrRegionTaps(): Boolean {
+        return true
+    }
+
+    fun hasActiveOcrOverlaySession(): Boolean {
+        return activeOcrOverlaySession != null
+    }
+
+    /**
+     * Убрать распознанный текст со страницы, оставив карточку результата
+     * открытой. Оверлей поверх рисунка мешает читать саму страницу, а раньше
+     * убрать его можно было только закрыв результат целиком.
+     */
+    private fun hideActiveOcrOverlayText() {
+        clearActiveOcrOverlaySession()
+    }
+
+    fun searchActiveOcrOverlay(offset: Int) {
+        val session = activeOcrOverlaySession ?: return
+        val text = session.selection.queryText
+        activeOcrOverlaySession = session.copy(highlightRange = null)
+        syncActiveOcrOverlay()
+        dictionarySearchScreenModel.updateQuery(text)
+        dictionarySearchScreenModel.search(searchTextForOffset(text, offset))
+    }
+
+    fun syncActiveOcrOverlay(): Boolean {
+        val overlay = activeOcrOverlaySession?.overlay
+        val applied = viewModel.state.value.viewer?.setActiveOcrOverlay(overlay) ?: (overlay == null)
+        if (overlay != null && !applied) {
+            dismissActiveOcrOverlaySession()
+        }
+        return applied
+    }
+
+    fun dismissActiveOcrOverlaySession() {
+        clearActiveOcrOverlaySession()
+        if (viewModel.state.value.dialog is ReaderViewModel.Dialog.OcrResult) {
+            viewModel.closeDialog()
+        }
+    }
+
+    private fun clearActiveOcrOverlaySession() {
+        activeOcrOverlaySession = null
+        viewModel.state.value.viewer?.setActiveOcrOverlay(null)
+    }
+
+    private fun updateActiveOcrOverlayHighlight(highlightRange: Pair<Int, Int>?) {
+        val session = activeOcrOverlaySession ?: return
+        if (session.highlightRange == highlightRange) return
+        activeOcrOverlaySession = session.copy(highlightRange = highlightRange)
+        syncActiveOcrOverlay()
+    }
+
+    /**
+     * Called from the viewer when the given [chapter] should be preloaded. It should be called when
+     * the viewer is reaching the beginning or end of a chapter or the transition page is active.
+     */
+    fun requestPreloadChapter(chapter: ReaderChapter) {
+        lifecycleScope.launchIO { viewModel.preload(chapter) }
+    }
+
+    /**
+     * Called from the viewer to toggle the visibility of the menu. It's implemented on the
+     * viewer because each one implements its own touch and key events.
+     */
+    fun toggleMenu() {
+        setMenuVisibility(!viewModel.state.value.menuVisible)
+    }
+
+    /**
+     * Called from the viewer to show the menu.
+     */
+    fun showMenu() {
+        if (!viewModel.state.value.menuVisible) {
+            setMenuVisibility(true)
+        }
+    }
+
+    /**
+     * Called from the viewer to hide the menu.
+     */
+    fun hideMenu() {
+        if (viewModel.state.value.menuVisible) {
+            setMenuVisibility(false)
+        }
+    }
+
+    /**
+     * Enters OCR selection with hidden system bars to prevent system gestures from interfering with region selection.
+     * Temporarily applies fullscreen insets to prevent layout shift in non-fullscreen mode.
+     */
+    fun enterOcrMode() {
+        selectionAction = SelectionAction.ProcessOcr
+        enterSelectionMode()
+    }
+
+    private fun enterImageExportSelectionMode(terms: List<DictionaryTerm>) {
+        selectionAction = SelectionAction.ExportImageToAnki(terms)
+        enterSelectionMode()
+    }
+
+    private fun enterSelectionMode() {
+        resetOcrDrag()
+        dismissActiveOcrOverlaySession()
+        if (!readerPreferences.fullscreen.get()) {
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+            updateViewerInset(fullscreen = true)
+        }
+        windowInsetsController.hide(WindowInsetsCompat.Type.systemBars())
+        windowInsetsController.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        viewModel.enterOcrMode()
+
+        val last = lastTouch
+        if (last != null && last.actionMasked != MotionEvent.ACTION_UP &&
+            last.actionMasked != MotionEvent.ACTION_CANCEL
+        ) {
+            val loc = IntArray(2)
+            binding.root.getLocationOnScreen(loc)
+            val x = last.rawX - loc[0]
+            val y = last.rawY - loc[1]
+            ocrDragStart = Offset(x, y)
+            ocrDragEnd = Offset(x, y)
+        }
+    }
+
+    /**
+     * Exits OCR selection mode and restores system bar visibility and insets.
+     */
+    fun exitOcrMode() {
+        resetOcrDrag()
+        selectionAction = SelectionAction.ProcessOcr
+        viewModel.exitOcrMode()
+        if (!readerPreferences.fullscreen.get()) {
+            WindowCompat.setDecorFitsSystemWindows(window, true)
+            updateViewerInset(fullscreen = false)
+            windowInsetsController.show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+
+    /**
+     * Called from the presenter when a page is ready to be shared. It shows Android's default
+     * sharing tool.
+     */
+    private fun onShareImageResult(uri: Uri, page: ReaderPage) {
+        val manga = viewModel.manga ?: return
+        val chapter = page.chapter.chapter
+
+        val intent = uri.toShareIntent(
+            context = applicationContext,
+            message = stringResource(MR.strings.share_page_info, manga.title, chapter.name, page.number),
+        )
+        startActivity(intent)
+    }
+
+    private fun onCopyImageResult(uri: Uri) {
+        val clipboardManager = applicationContext.getSystemService<ClipboardManager>() ?: return
+        val clipData = ClipData.newUri(applicationContext.contentResolver, "", uri)
+        clipboardManager.setPrimaryClip(clipData)
+    }
+
+    /**
+     * Called from the presenter when a page is saved or fails. It shows a message or logs the
+     * event depending on the [result].
+     */
+    private fun onSaveImageResult(result: ReaderViewModel.SaveImageResult) {
+        when (result) {
+            is ReaderViewModel.SaveImageResult.Success -> {
+                toast(MR.strings.picture_saved)
+            }
+            is ReaderViewModel.SaveImageResult.Error -> {
+                logcat(LogPriority.ERROR, result.error)
+            }
+        }
+    }
+
+    /**
+     * Called from the presenter when a page is set as cover or fails. It shows a different message
+     * depending on the [result].
+     */
+    private fun onSetAsCoverResult(result: ReaderViewModel.SetAsCoverResult) {
+        toast(
+            when (result) {
+                Success -> MR.strings.cover_updated
+                AddToLibraryFirst -> MR.strings.notification_first_add_to_library
+                Error -> MR.strings.notification_cover_update_failed
+            },
+        )
+    }
+
+    /**
+     * Forces the user preferred [orientation] on the activity.
+     */
+    private fun setOrientation(orientation: Int) {
+        val newOrientation = ReaderOrientation.fromPreference(orientation)
+        if (newOrientation.flag != requestedOrientation) {
+            requestedOrientation = newOrientation.flag
+        }
+    }
+
+    /**
+     * Updates viewer inset depending on fullscreen reader preferences.
+     */
+    private fun updateViewerInset(
+        fullscreen: Boolean = readerPreferences.fullscreen.get(),
+        drawUnderCutout: Boolean = readerPreferences.drawUnderCutout.get(),
+    ) {
+        if (!::binding.isInitialized) return
+        val view = binding.viewerContainer
+
+        view.applyInsetsPadding(ViewCompat.getRootWindowInsets(view), fullscreen, drawUnderCutout)
+        ViewCompat.setOnApplyWindowInsetsListener(view) { view, windowInsets ->
+            view.applyInsetsPadding(windowInsets, fullscreen, drawUnderCutout)
+            windowInsets
+        }
+    }
+
+    private fun View.applyInsetsPadding(
+        windowInsets: WindowInsetsCompat?,
+        fullscreen: Boolean,
+        drawUnderCutout: Boolean,
+    ) {
+        val insets = when {
+            !fullscreen -> windowInsets?.getInsets(WindowInsetsCompat.Type.systemBars())
+            !drawUnderCutout -> windowInsets?.getInsets(WindowInsetsCompat.Type.displayCutout())
+            else -> null
+        }
+            ?: Insets.NONE
+
+        setPadding(insets.left, insets.top, insets.right, insets.bottom)
+    }
+
+    /**
+     * Class that handles the user preferences of the reader.
+     */
+    private inner class ReaderConfig {
+
+        private fun getCombinedPaint(grayscale: Boolean, invertedColors: Boolean): Paint {
+            return Paint().apply {
+                colorFilter = ColorMatrixColorFilter(
+                    ColorMatrix().apply {
+                        if (grayscale) {
+                            setSaturation(0f)
+                        }
+                        if (invertedColors) {
+                            postConcat(
+                                ColorMatrix(
+                                    floatArrayOf(
+                                        -1f, 0f, 0f, 0f, 255f,
+                                        0f, -1f, 0f, 0f, 255f,
+                                        0f, 0f, -1f, 0f, 255f,
+                                        0f, 0f, 0f, 1f, 0f,
+                                    ),
+                                ),
+                            )
+                        }
+                    },
+                )
+            }
+        }
+
+        private val grayBackgroundColor = Color.rgb(0x20, 0x21, 0x25)
+
+        /*
+         * Initializes the reader subscriptions.
+         */
+        init {
+            readerPreferences.readerTheme.changes()
+                .onEach { theme ->
+                    binding.readerContainer.setBackgroundColor(
+                        when (theme) {
+                            0 -> Color.WHITE
+                            2 -> grayBackgroundColor
+                            3 -> automaticBackgroundColor()
+                            else -> Color.BLACK
+                        },
+                    )
+                }
+                .launchIn(lifecycleScope)
+
+            preferences.displayProfile.changes()
+                .onEach { setDisplayProfile(it) }
+                .launchIn(lifecycleScope)
+
+            readerPreferences.keepScreenOn.changes()
+                .onEach(::setKeepScreenOn)
+                .launchIn(lifecycleScope)
+
+            readerPreferences.customBrightness.changes()
+                .onEach(::setCustomBrightness)
+                .launchIn(lifecycleScope)
+
+            combine(
+                readerPreferences.grayscale.changes(),
+                readerPreferences.invertedColors.changes(),
+            ) { grayscale, invertedColors -> grayscale to invertedColors }
+                .onEach { (grayscale, invertedColors) ->
+                    setLayerPaint(grayscale, invertedColors)
+                }
+                .launchIn(lifecycleScope)
+
+            combine(
+                readerPreferences.fullscreen.changes(),
+                readerPreferences.drawUnderCutout.changes(),
+            ) { fullscreen, drawUnderCutout -> fullscreen to drawUnderCutout }
+                .onEach { (fullscreen, drawUnderCutout) ->
+                    updateViewerInset(fullscreen, drawUnderCutout)
+                }
+                .launchIn(lifecycleScope)
+        }
+
+        /**
+         * Picks background color for [ReaderActivity] based on light/dark theme preference
+         */
+        private fun automaticBackgroundColor(): Int {
+            return if (baseContext.isNightMode()) {
+                grayBackgroundColor
+            } else {
+                Color.WHITE
+            }
+        }
+
+        /**
+         * Sets the display profile to [path].
+         */
+        private fun setDisplayProfile(path: String) {
+            val file = UniFile.fromUri(baseContext, path.toUri())
+            if (file != null && file.exists()) {
+                val inputStream = file.openInputStream()
+                val outputStream = ByteArrayOutputStream()
+                inputStream.use { input ->
+                    outputStream.use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                val data = outputStream.toByteArray()
+                SubsamplingScaleImageView.setDisplayProfile(data)
+                TachiyomiImageDecoder.displayProfile = data
+            }
+        }
+
+        /**
+         * Sets the keep screen on mode according to [enabled].
+         */
+        private fun setKeepScreenOn(enabled: Boolean) {
+            if (enabled) {
+                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            } else {
+                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
+
+        /**
+         * Sets the custom brightness overlay according to [enabled].
+         */
+        private fun setCustomBrightness(enabled: Boolean) {
+            if (enabled) {
+                readerPreferences.customBrightnessValue.changes()
+                    .sample(0.1.seconds)
+                    .onEach(::setCustomBrightnessValue)
+                    .launchIn(lifecycleScope)
+            } else {
+                setCustomBrightnessValue(0)
+            }
+        }
+
+        /**
+         * Sets the brightness of the screen. Range is [-75, 100].
+         * From -75 to -1 a semi-transparent black view is overlaid with the minimum brightness.
+         * From 1 to 100 it sets that value as brightness.
+         * 0 sets system brightness and hides the overlay.
+         */
+        private fun setCustomBrightnessValue(value: Int) {
+            // Calculate and set reader brightness.
+            val readerBrightness = when {
+                value > 0 -> {
+                    value / 100f
+                }
+                value < 0 -> {
+                    0.01f
+                }
+                else -> WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            }
+            window.attributes = window.attributes.apply { screenBrightness = readerBrightness }
+
+            viewModel.setBrightnessOverlayValue(value)
+        }
+        private fun setLayerPaint(grayscale: Boolean, invertedColors: Boolean) {
+            val paint = if (grayscale || invertedColors) getCombinedPaint(grayscale, invertedColors) else null
+            binding.viewerContainer.setLayerType(LAYER_TYPE_HARDWARE, paint)
+        }
+    }
+}

@@ -1,0 +1,298 @@
+package mihon.data.ocr
+
+import io.kotest.matchers.collections.shouldContainExactly
+import io.kotest.matchers.shouldBe
+import mihon.domain.ocr.model.OcrModel
+import mihon.domain.ocr.service.ScanRegion
+import org.junit.jupiter.api.Test
+
+/**
+ * Реестр OCR-плагинов и пресеты типа контента.
+ *
+ * Обе сущности — чистые данные, поэтому проверяются без Android и без
+ * загрузки моделей. Значения BALANCED зафиксированы как актуальные умолчания
+ * движка: пользователь, не выбиравший пресет, получает поведение v1.9.76
+ * (фильтр водяных знаков по доле чернил, более высокие пороги уверенности).
+ */
+class OcrPluginsTest {
+
+    @Test
+    fun `balanced preset repeats the engine defaults`() {
+        val balanced = OcrTuning.preset(OcrContentType.BALANCED)
+        balanced.detectorThreshold shouldBe 0.20f
+        balanced.minComponentArea shouldBe 24
+        balanced.maxTextBoxes shouldBe 96
+        balanced.tilingMinTextBoxes shouldBe 8
+        balanced.mergeOverlapYFactor shouldBe 0.55f
+        balanced.mergeGapXFactor shouldBe 0.55f
+        balanced.splitMinWidthPx shouldBe 32
+        balanced.wordGapFactor shouldBe 1.7f
+        balanced.minWordGapPx shouldBe 5
+        balanced.contrastRetryConfidence shouldBe 0.90f
+        balanced.verifierSkipConfidence shouldBe 0.82f
+        balanced.minAcceptConfidence shouldBe 0.32f
+        balanced.shortTextMinConfidence shouldBe 0.18f
+        balanced.minCoverage shouldBe 0.12f
+        balanced.minCropInkRatio shouldBe 0.03f
+        balanced.contrastSkipInkThreshold shouldBe 0.02f
+        balanced.verifierCyrillicBonus shouldBe 0.20f
+        balanced.wholeLineBoundaryBonus shouldBe 0.08f
+        balanced.rescueMaxLines shouldBe 6
+        balanced.readingOrder shouldBe "rtl"
+        balanced.scanRegion shouldBe ScanRegion.FULL_PAGE
+    }
+
+    @Test
+    fun `tile gating follows content density`() {
+        // Тайлы 2x2 (четыре лишних прохода детектора) запускаются только когда
+        // основной проход почти ничего не нашёл.
+        OcrTuning.preset(OcrContentType.BALANCED).tilingMinTextBoxes shouldBe 8
+        // Плотная манга: основной проход и так видит реплики, тайлы почти не нужны.
+        OcrTuning.preset(OcrContentType.MANGA).tilingMinTextBoxes shouldBe 6
+        // Разреженный вебтун: тайлы добавляют мелкие облачка, пока боксов мало.
+        OcrTuning.preset(OcrContentType.MANHWA).tilingMinTextBoxes shouldBe 12
+        OcrTuning.preset(OcrContentType.MANHUA).tilingMinTextBoxes shouldBe 8
+        OcrTuning.preset(OcrContentType.COMIC).tilingMinTextBoxes shouldBe 10
+        // Верификатор v5 экономим одинаково на всех пресетах.
+        OcrTuning.preset(OcrContentType.MANGA).verifierSkipConfidence shouldBe 0.82f
+    }
+
+    @Test
+    fun `ink filters are tightened for manga and manhwa`() {
+        OcrTuning.preset(OcrContentType.MANGA).minCropInkRatio shouldBe 0.025f
+        OcrTuning.preset(OcrContentType.MANGA).contrastRetryConfidence shouldBe 0.88f
+        OcrTuning.preset(OcrContentType.MANHWA).minComponentArea shouldBe 28
+        OcrTuning.preset(OcrContentType.COMIC).minComponentArea shouldBe 26
+    }
+
+    @Test
+    fun `content presets set reading order and scan region`() {
+        OcrTuning.preset(OcrContentType.MANGA).readingOrder shouldBe "rtl"
+        OcrTuning.preset(OcrContentType.MANHWA).readingOrder shouldBe "vertical"
+        OcrTuning.preset(OcrContentType.MANHUA).readingOrder shouldBe "vertical"
+        OcrTuning.preset(OcrContentType.COMIC).readingOrder shouldBe "ltr"
+        OcrTuning.preset(OcrContentType.MANHWA, ScanRegion.TOP_HALF).scanRegion shouldBe ScanRegion.TOP_HALF
+    }
+
+    @Test
+    fun `manhua is a vertical preset between manhwa and comic`() {
+        OcrContentType.fromId("manhua") shouldBe OcrContentType.MANHUA
+        OcrContentType.MANHUA.viewer shouldBe OcrViewerHint.PAGER_RTL
+        val manhua = OcrTuning.preset(OcrContentType.MANHUA)
+        // Текст крупнее манги, но леттеринг плотнее вебтуна.
+        manhua.wordGapFactor shouldBe OcrTuning.preset(OcrContentType.MANHWA).wordGapFactor - 0.2f
+        manhua.maxTextBoxes shouldBe
+            OcrTuning.preset(OcrContentType.MANHWA).maxTextBoxes + 16
+    }
+
+    @Test
+    fun `manhwa tolerates wide gaps and manga lowers the detector threshold`() {
+        val balanced = OcrTuning.DEFAULT
+        OcrTuning.preset(OcrContentType.MANHWA).wordGapFactor shouldBe 2.0f
+        OcrTuning.preset(OcrContentType.MANHWA).wordGapFactor shouldBe balanced.wordGapFactor + 0.3f
+        OcrTuning.preset(OcrContentType.MANGA).detectorThreshold shouldBe 0.17f
+        OcrTuning.preset(OcrContentType.MANGA).detectorThreshold shouldBe balanced.detectorThreshold - 0.03f
+        // Вебтун: длинные полосы, поэтому боксов нужно меньше, а склеивать соседние
+        // строки агрессивно нельзя.
+        OcrTuning.preset(OcrContentType.MANHWA).maxTextBoxes shouldBe 64
+        OcrTuning.preset(OcrContentType.MANHWA).mergeOverlapYFactor shouldBe 0.45f
+    }
+
+    @Test
+    fun `overrides replace only the fields the user filled in`() {
+        val base = OcrTuning.preset(OcrContentType.MANGA)
+        val tuned = OcrTuningOverrides(detectorThreshold = 0.31f, rescueMaxLines = 3).applyTo(base)
+        tuned.detectorThreshold shouldBe 0.31f
+        tuned.rescueMaxLines shouldBe 3
+        // Остальное осталось пресетным.
+        tuned.minComponentArea shouldBe base.minComponentArea
+        tuned.wordGapFactor shouldBe base.wordGapFactor
+        tuned.minAcceptConfidence shouldBe base.minAcceptConfidence
+    }
+
+    @Test
+    fun `out-of-range overrides are clamped instead of breaking the detector`() {
+        val base = OcrTuning.DEFAULT
+        val tuned = OcrTuningOverrides(
+            detectorThreshold = 9f,
+            minComponentArea = -5,
+            maxTextBoxes = 0,
+            wordGapFactor = 99f,
+            minCoverage = 3f,
+            rescueMaxLines = -1,
+        ).applyTo(base)
+        tuned.detectorThreshold shouldBe 0.99f
+        tuned.minComponentArea shouldBe 1
+        tuned.maxTextBoxes shouldBe 1
+        tuned.wordGapFactor shouldBe 6.0f
+        tuned.minCoverage shouldBe 0.9f
+        tuned.rescueMaxLines shouldBe 0
+    }
+
+    @Test
+    fun `empty overrides keep the preset untouched`() {
+        val base = OcrTuning.preset(OcrContentType.COMIC)
+        OcrTuningOverrides().isEmpty shouldBe true
+        OcrTuningOverrides().applyTo(base) shouldBe base
+    }
+
+    @Test
+    fun `region profile composes preset and overrides`() {
+        val profile = OcrRegionProfile(
+            contentType = OcrContentType.MANHWA,
+            scanRegion = ScanRegion.BOTTOM_HALF,
+            overrides = OcrTuningOverrides(minAcceptConfidence = 0.4f),
+        )
+        val tuning = profile.tuning()
+        tuning.readingOrder shouldBe "vertical"
+        tuning.scanRegion shouldBe ScanRegion.BOTTOM_HALF
+        tuning.minAcceptConfidence shouldBe 0.4f
+        // Не переопределённое поле осталось из пресета манхвы.
+        tuning.wordGapFactor shouldBe OcrTuning.preset(OcrContentType.MANHWA).wordGapFactor
+    }
+
+    @Test
+    fun `unknown content type falls back to balanced`() {
+        OcrContentType.fromId("manhwa") shouldBe OcrContentType.MANHWA
+        OcrContentType.fromId("комикс") shouldBe OcrContentType.BALANCED
+        OcrContentType.fromId(null) shouldBe OcrContentType.BALANCED
+        OcrContentType.fromId("") shouldBe OcrContentType.BALANCED
+    }
+
+    @Test
+    fun `every selectable plugin has a unique id and engine type`() {
+        OcrPlugins.ALL.map { it.id }.distinct().size shouldBe OcrPlugins.ALL.size
+        OcrPlugins.ALL.map { it.engineType }.distinct().size shouldBe OcrPlugins.ALL.size
+        OcrPlugins.ALL.forEach { plugin ->
+            OcrPlugins.byId(plugin.id) shouldBe plugin
+            OcrPlugins.byEngineType(plugin.engineType) shouldBe plugin
+            OcrPlugins.byModel(plugin.model) shouldBe plugin
+        }
+    }
+
+    @Test
+    fun `legacy engine selections migrate to the cyrillic plugin`() {
+        OcrPlugins.byModel(OcrModel.LEGACY) shouldBe OcrPlugins.CYRILLIC
+        OcrPlugins.byModel(OcrModel.FAST) shouldBe OcrPlugins.CYRILLIC
+        OcrPlugins.byModel(OcrModel.TESSERACT) shouldBe OcrPlugins.CYRILLIC
+        OcrPlugins.LEGACY_ALIASES.map { it.second }.toSet() shouldContainExactly setOf(OcrPlugins.CYRILLIC.id)
+    }
+
+    @Test
+    fun `availability follows the declared requirements`() {
+        val offlineOnly = OcrPlugins.available(
+            networkAvailable = false,
+            modelsInstalled = true,
+            litertAvailable = true,
+        )
+        // Офлайн-движки с выполненными требованиями: PP-OCR (пак + LiteRT)
+        // и ML Kit (вкомпилирован, требований нет).
+        offlineOnly shouldContainExactly listOf(OcrPlugins.CYRILLIC, OcrPlugins.MLKIT)
+
+        // ML Kit не требует ни сети, ни пакета моделей, поэтому доступен всегда.
+        val nothing = OcrPlugins.available(
+            networkAvailable = false,
+            modelsInstalled = false,
+            litertAvailable = false,
+        )
+        nothing shouldContainExactly listOf(OcrPlugins.MLKIT)
+
+        val withKeys = OcrPlugins.available(
+            networkAvailable = true,
+            modelsInstalled = true,
+            litertAvailable = true,
+            hasApiKey = { true },
+            hasServerAddress = { true },
+        )
+        withKeys.size shouldBe OcrPlugins.ALL.size
+    }
+
+    @Test
+    fun `fallback chain keeps the semantics of the old presets`() {
+        val primary = OcrPlugins.CYRILLIC
+
+        OcrPlugins.fallbackChain(primary, "single", networkAvailable = true) shouldBe emptyList()
+
+        // offline: остаётся только второй локальный движок (ML Kit).
+        OcrPlugins.fallbackChain(primary, "offline", networkAvailable = true)
+            .map { it.id } shouldContainExactly listOf("mlkit")
+
+        OcrPlugins.fallbackChain(primary, "online", networkAvailable = true).map { it.id } shouldContainExactly
+            listOf("google_lens", "zen_free", "google_ai", "openrouter", "owocr")
+
+        // auto без сети не пробует онлайн-движки вовсе: локальные по приоритету.
+        OcrPlugins.fallbackChain(OcrPlugins.GLENS, "auto", networkAvailable = false).map { it.id } shouldContainExactly
+            listOf("cyrillic_ppocr", "mlkit")
+
+        // auto с сетью: сначала онлайн по приоритету, потом локальный.
+        OcrPlugins.fallbackChain(OcrPlugins.GLENS, "auto", networkAvailable = true).map { it.id } shouldContainExactly
+            listOf("zen_free", "google_ai", "openrouter", "owocr", "cyrillic_ppocr", "mlkit")
+
+        // Неизвестный пресет читается как auto: при отсутствии сети первичный
+        // Cyrillic исключён, остаётся ML Kit.
+        OcrPlugins.fallbackChain(primary, "что-то-новое", networkAvailable = false)
+            .map { it.id } shouldContainExactly listOf("mlkit")
+    }
+
+    @Test
+    fun `region-capable plugins expose their capability`() {
+        OcrPlugins.ALL.filter { it.supportsRegions }.map { it.id } shouldContainExactly
+            listOf(OcrPlugins.CYRILLIC.id, OcrPlugins.MLKIT.id, OcrPlugins.ZEN_FREE.id)
+    }
+
+    @Test
+    fun `space bunny free parses ordered regions and coordinates`() {
+        val regions = parseZenOcrRegions(
+            """{"regions":[{"text":"Первая","box":[100,200,900,260],"orientation":"horizontal"},{"text":"Вторая","box":[0.1,0.3,0.8,0.4],"orientation":"vertical"}]}""",
+        )
+
+        regions.map { it.text } shouldContainExactly listOf("Первая", "Вторая")
+        regions.map { it.order } shouldContainExactly listOf(0, 1)
+        regions[0].boundingBox shouldBe mihon.domain.ocr.model.OcrBoundingBox(0.1f, 0.2f, 0.9f, 0.26f)
+        regions[1].boundingBox shouldBe mihon.domain.ocr.model.OcrBoundingBox(0.1f, 0.3f, 0.8f, 0.4f)
+        regions[1].textOrientation shouldBe mihon.domain.ocr.model.OcrTextOrientation.Vertical
+        ZenFreeOcrEngine.MODEL shouldBe "space-bunny-free"
+    }
+
+    @Test
+    fun `space bunny free keeps plain text and drops invalid regions`() {
+        val plain = parseZenOcrRegions("Просто видимая реплика")
+        plain.single().text shouldBe "Просто видимая реплика"
+        plain.single().boundingBox shouldBe mihon.domain.ocr.model.OcrBoundingBox(0f, 0f, 1f, 1f)
+
+        val filtered = parseZenOcrResultsWithInvalidRegion()
+        filtered.map { it.text } shouldContainExactly listOf("Правильная")
+    }
+
+    private fun parseZenOcrResultsWithInvalidRegion() = parseZenOcrRegions(
+        """{"regions":[{"text":"Неверная","box":[900,200,100,260]},{"text":"Правильная","box":[100,200,900,260]}]}""",
+    )
+
+    @Test
+    fun `online flags match the fallback pools`() {
+        OcrPlugins.ALL.filter { it.online }.map { it.id } shouldContainExactly
+            listOf("google_lens", "zen_free", "google_ai", "openrouter", "owocr")
+        OcrPlugins.ALL.filterNot { it.online }.map { it.id } shouldContainExactly
+            listOf("cyrillic_ppocr", "mlkit")
+    }
+
+    @Test
+    fun `keyless online plugins are the only ones the runtime chain may try`() {
+        val withoutKeys = OcrPlugins.available(
+            networkAvailable = true,
+            modelsInstalled = true,
+            litertAvailable = true,
+        )
+        withoutKeys.filter { it.online }.map { it.id } shouldContainExactly
+            listOf("google_lens", "zen_free")
+
+        val withGoogleKey = OcrPlugins.available(
+            networkAvailable = true,
+            modelsInstalled = true,
+            litertAvailable = true,
+            hasApiKey = { it == OcrPlugins.GOOGLE_AI },
+        )
+        withGoogleKey.filter { it.online }.map { it.id } shouldContainExactly
+            listOf("google_lens", "zen_free", "google_ai")
+    }
+}

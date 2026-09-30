@@ -1,0 +1,1387 @@
+package eu.kanade.tachiyomi.data.tts
+
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.media.MediaPlayer
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import logcat.LogPriority
+import mihon.data.ocr.RuStress
+import mihon.domain.ocr.service.OcrPreferences
+import tachiyomi.core.common.util.system.isNetworkAvailable
+import tachiyomi.core.common.util.system.logcat
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
+import java.util.Locale
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+
+/**
+ * Единый TTS-движок приложения. Три источника голосов:
+ *
+ * 1. SYSTEM  — системные и локальные голоса Android TTS (Google Speech
+ *    Services, RHVoice и любые установленные движки; включая офлайн-голоса).
+ * 2. GOOGLE_WEB — озвучка с сайта Google Translate: БЕЗ API-ключа, берётся
+ *    напрямую с их публичного endpoint. Работает всегда при интернете.
+ * 3. ELEVENLABS — премиальные нейроголосые через API-ключ (elevenlabs.io).
+ *
+ * Выбор движка/голоса хранится в OcrPreferences и применяется везде:
+ * читалка, карточка перевода, диалог настроек.
+ */
+object TtsSpeaker {
+
+    /**
+     * Один кусок озвучки: текст и всё, что на него действует.
+     *
+     * Раньше куском был целое предложение. Теперь предложение распадается на
+     * куски, потому что звук из ремарки и «ааа» произносятся отдельно от
+     * остального текста. Словарь интонаций при этом остаётся привязан к
+     * предложению целиком, поэтому его множители лежат здесь, рядом с
+     * разметкой куска, а не в общем списке.
+     */
+    private class TtsUnit(
+        val delivery: SpeechCue.Delivery,
+        val intonationPitch: Float,
+        val intonationRate: Float,
+        val intonationPause: Int,
+    )
+
+    /**
+     * Предел одной utterance. TextToSpeech.getMaxSpeechInputLength() почти
+     * везде равен 4000; берём с запасом, чтобы не зависеть от прошивки.
+     */
+    private const val HARD_UTTERANCE_LIMIT = 3500
+
+    /** Сколько ждать onInit при перечислении движков. */
+    private const val ENGINE_QUERY_TIMEOUT_MS = 3000L
+
+    const val ENGINE_SYSTEM = "system_tts"
+    const val ENGINE_GOOGLE_WEB = "google_web"
+    const val ENGINE_EDGE_TTS = "edge_tts"
+    const val ENGINE_ELEVENLABS = "eleven_api"
+    const val ENGINE_REMOTE = "remote_tts"
+
+    /**
+     * Авто-режим голоса: когда есть сеть — веб-голос (Google Translate без
+     * ключа), когда сети нет — локальный системный. Полезен в веб-вкладке:
+     * пользователь просил «веб-голоса онлайн, локальные оффлайн».
+     */
+    const val ENGINE_AUTO = "auto"
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var currentJob: Job? = null
+
+    private var systemTts: TextToSpeech? = null
+    private var systemReady = false
+
+    /** Инициализация системного TTS в процессе — повторные speak() ждут listener'а. */
+    @Volatile
+    private var initInProgress = false
+    /** Фразы, заказанные ДО готовности движка: ждут listener'а, не теряются. */
+    private val pendingReady = ArrayDeque<(TextToSpeech?) -> Unit>()
+    private var mediaPlayer: MediaPlayer? = null
+
+    @Volatile
+    var isSpeaking: Boolean = false
+        private set
+
+    /**
+     * Почему последняя озвучка не состоялась.
+     *
+     * Колбэк [speakAs] различает только «началось / закончилось», поэтому отказ
+     * движка и тишина после чужой озвучки выглядели одинаково — `false`. Авточтение
+     * видело «реплика не озвучена», рапортовало в журнал и всё равно листало
+     * страницу дальше: без единого слова на экране шли страницы, подсветка
+     * реплик и «прочитано». Теперь причина отказа известна явно.
+     */
+    enum class SpeakFailure {
+        /** Озвучка идёт штатно, либо произносить было нечего. */
+        NONE,
+
+        /** На устройстве нет рабочего TTS-движка: озвучивать нечем. */
+        NO_ENGINE,
+
+        /** Движок есть, но не принял текст: нет данных для языка, отказ speak(). */
+        REJECTED,
+    }
+
+    @Volatile
+    var lastFailure: SpeakFailure = SpeakFailure.NONE
+        private set
+
+    @Volatile
+    var lastFailureDetail: String = ""
+        private set
+
+    private var onStateChange: ((Boolean) -> Unit)? = null
+
+    private fun markFailure(failure: SpeakFailure, detail: String = "") {
+        lastFailure = failure
+        lastFailureDetail = detail
+    }
+
+    private fun prefs(): OcrPreferences = Injekt.get()
+
+    /** Пакет движка, которым инициализирован systemTts (для реинита при смене). */
+    private var systemEnginePkg: String? = null
+
+    /**
+     * Ленивая инициализация системного движка. Поддерживает ВЫБОР ДВИЖКА
+     * (по запросу пользователя — как в Zueira's Voice): Google TTS,
+     * RHVoice, Acapela и любой другой установленный. Пустая настройка =
+     * движок по умолчанию системы. При смене движка — переинициализация.
+     */
+    private fun ensureSystem(context: Context, wantPkg: String? = null, onReady: (TextToSpeech?) -> Unit) {
+        val wantEngine = wantPkg ?: prefs().systemTtsEngine().get().ifBlank { null }
+        if (systemTts != null && systemEnginePkg != wantEngine) {
+            // Пользователь сменил движок — пересоздаём
+            runCatching { systemTts?.shutdown() }
+            systemTts = null
+            systemReady = false
+            initInProgress = false
+        }
+        systemTts?.let {
+            if (systemReady) { onReady(it); return }
+        }
+        if (systemTts == null) {
+            // Прошлая попытка инициализации провалилась и объект остался
+            // «вечным null» — все последующие вызовы молча получали onReady(null),
+            // и офлайн-TTS выглядел мёртвым до перезапуска приложения.
+            // Теперь упавший движок честно пересоздаётся.
+            systemEnginePkg = wantEngine
+            val listener = TextToSpeech.OnInitListener { status ->
+                systemReady = status == TextToSpeech.SUCCESS
+                initInProgress = false
+                val ready = if (systemReady) systemTts else null
+                onReady(ready)
+                // Голоса больше не «исчезают до инициализации»: всё, что было
+                // заказано во время старта движка, озвучивается сразу после него.
+                val pending = pendingReady.toList()
+                pendingReady.clear()
+                pending.forEach { it(ready) }
+            }
+            initInProgress = true
+            // Конструктор TextToSpeech может бросить исключение на невалидном/
+            // удалённом движке (например пакет перестал существовать) —
+            // глушим и честно пересоздаём; без этого падало всё приложение.
+            runCatching {
+                systemTts = if (wantEngine != null) {
+                    TextToSpeech(context.applicationContext, listener, wantEngine)
+                } else {
+                    TextToSpeech(context.applicationContext, listener)
+                }
+            }.onFailure {
+                systemTts = null
+                initInProgress = false
+                systemReady = false
+                systemEnginePkg = null
+                onReady(null)
+            }
+        } else if (!initInProgress && !systemReady) {
+            // Зависший полуинициализированный экземпляр: убираем и пробуем заново.
+            runCatching { systemTts?.shutdown() }
+            systemTts = null
+            onReady(null)
+        } else {
+            // Инициализация уже идёт — не дёргаем движок; фразу ставим в
+            // очередь и озвучиваем из listener'а (раньше она молча терялась).
+            if (pendingReady.size < 8) {
+                pendingReady.addLast(onReady)
+            } else {
+                onReady(null)
+            }
+        }
+    }
+
+    /**
+     * Установленные TTS-движки устройства: (пакет, читаемое имя).
+     *
+     * Список берётся ДВУМЯ способами и объединяется:
+     *
+     * 1. PackageManager — движки объявляют сервис с интентом
+     *    `android.intent.action.TTS_SERVICE`. Работает сразу, без ожидания.
+     * 2. TextToSpeech.engines — но только ПОСЛЕ onInit: раньше здесь стоял
+     *    мгновенный вызов, и до инициализации сервис не подключён, поэтому
+     *    сторонние движки (RHVoice, Vocalizer, Acapela) в настройки не
+     *    попадали вовсе.
+     *
+     * Метод блокирующий (до [ENGINE_QUERY_TIMEOUT_MS]), поэтому вызывать его
+     * следует вне главного потока.
+     */
+    fun installedEngines(context: Context): List<Pair<String, String>> {
+        val app = context.applicationContext
+        val found = LinkedHashMap<String, String>()
+
+        // 1) Через PackageManager — не требует инициализации движка.
+        runCatching {
+            val pm = app.packageManager
+            val intent = Intent(TextToSpeech.Engine.INTENT_ACTION_TTS_SERVICE)
+            val services = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                pm.queryIntentServices(intent, PackageManager.ResolveInfoFlags.of(0L))
+            } else {
+                @Suppress("DEPRECATION")
+                pm.queryIntentServices(intent, 0)
+            }
+            services.forEach { info ->
+                val pkg = info.serviceInfo?.packageName ?: return@forEach
+                val label = runCatching {
+                    info.serviceInfo.loadLabel(pm).toString()
+                }.getOrNull()?.takeIf { it.isNotBlank() } ?: pkg
+                found.putIfAbsent(pkg, label)
+            }
+        }.onFailure { error ->
+            logcat(LogPriority.WARN, error) { "queryIntentServices for TTS failed" }
+        }
+
+        // 2) Через сам TextToSpeech — дожидаемся onInit.
+        runCatching {
+            val ready = CountDownLatch(1)
+            var probe: TextToSpeech? = null
+            probe = TextToSpeech(app) { ready.countDown() }
+            ready.await(ENGINE_QUERY_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            probe?.engines?.forEach { engine ->
+                val label = engine.label?.takeIf { it.isNotBlank() } ?: engine.name
+                found[engine.name] = label
+            }
+            runCatching { probe?.shutdown() }
+        }.onFailure { error ->
+            logcat(LogPriority.WARN, error) { "TextToSpeech.engines failed" }
+        }
+
+        if (found.isEmpty()) {
+            logcat(LogPriority.WARN) { "No TTS engines found on this device" }
+        }
+        return found.map { it.key to it.value }
+    }
+
+    /**
+     * Голоса СИСТЕМНОГО движка (оффлайн): пары «подпись → спецификация
+     * пакет::голос». Спецификация передаётся в [speakWithVoice], чтобы
+     * озвучить текст именно этим голосом (смешивание оффлайн-голосов
+     * с онлайн-голосами Edge TTS).
+     *
+     * Движок — ВЫБРАННЫЙ пользователем (`pref_system_tts_engine`), а не
+     * системный по умолчанию: список показывал голоса Google TTS, а озвучка
+     * уходила в RHVoice, и голос из списка не звучал вообще.
+     */
+    fun systemVoiceSpecs(context: Context): List<Pair<String, String>> {
+        val app = context.applicationContext
+        val specs = mutableListOf<Pair<String, String>>()
+        val wanted = runCatching { prefs().systemTtsEngine().get() }.getOrDefault("").trim()
+        runCatching {
+            val ready = CountDownLatch(1)
+            var tts: TextToSpeech? = null
+            tts = if (wanted.isNotBlank()) {
+                TextToSpeech(app, { ready.countDown() }, wanted)
+            } else {
+                TextToSpeech(app) { ready.countDown() }
+            }
+            ready.await(ENGINE_QUERY_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            val pkg = wanted.ifBlank {
+                runCatching { tts?.defaultEngine }.getOrNull().orEmpty()
+            }
+            tts?.voices
+                ?.filter { it.name.isNotBlank() }
+                ?.forEach { v ->
+                    val locale = runCatching { v.locale?.toString().orEmpty() }.getOrDefault("")
+                    val label = if (locale.isBlank()) v.name else "${v.name} • $locale"
+                    // Без пакета спецификация остаётся «голос без движка»:
+                    // [speakWithVoice] теперь такой разбирает и берёт движок
+                    // по умолчанию, а не ищет пакет с именем голоса.
+                    specs += label to if (pkg.isBlank()) v.name else "$pkg${SPEC_SEPARATOR}${v.name}"
+                }
+            runCatching { tts?.shutdown() }
+        }.onFailure { error ->
+            logcat(LogPriority.WARN, error) { "systemVoiceSpecs failed" }
+        }
+        return specs
+    }
+
+    /**
+     * Озвучивает текст выбранным в настройках движком.
+     * [onState] — колбэк true=началось / false=закончилось|ошибка.
+     */
+    fun speak(context: Context, text: String, onState: (Boolean) -> Unit = {}) {
+        speakAs(context, text, gender = null, onState = onState)
+    }
+
+    /** v1.9.40: spec голоса роли («пакет::имя») из слотов настроек. */
+    fun slotVoiceSpec(role: String): String? = runCatching {
+        // Словарь голосовых ролей имеет приоритет над legacy-слотами:
+        // роль из {имя:Аки} или кнопки ♀/♂ может быть описана там точнее.
+        val dictVoice = VoiceRoleDictionary.load(prefs())
+            .firstOrNull { it.matchesName(role) }
+            ?.voice
+            ?.takeIf { it.isNotBlank() }
+        if (dictVoice != null) return@runCatching dictVoice
+        val arr = org.json.JSONArray(prefs().voiceSlots().get())
+        (0 until arr.length()).map { i -> arr.getJSONObject(i) }
+            .firstOrNull { it.optString("role") == role }
+            ?.optString("voice")
+            ?.takeIf { it.isNotBlank() }
+    }.getOrNull()
+
+    /**
+     * Разбор спецификации голоса «пакет::имя».
+     *
+     * Раньше [speakWithVoice] брал `substringBefore("::")`, а он для строки
+     * БЕЗ разделителя возвращает строку целиком. Локальный голос (`ru-ru-x-dfc-local`)
+     * в итоге уезжал в `TextToSpeech(app, …, "ru-ru-x-dfc-local")` — пакета с
+     * таким именем нет, движок не поднимался, и голос молча не звучал.
+     * Теперь пустой пакет означает «движок по умолчанию», и это единственный
+     * способ отличить локальный голос от сетевого.
+     */
+    fun parseVoiceSpec(voiceSpec: String?): Pair<String, String> {
+        val raw = voiceSpec?.trim().orEmpty()
+        if (raw.isEmpty()) return "" to ""
+        val sep = raw.indexOf(SPEC_SEPARATOR)
+        if (sep <= 0) return "" to raw
+        return raw.substring(0, sep).trim() to raw.substring(sep + SPEC_SEPARATOR.length).trim()
+    }
+
+    private const val SPEC_SEPARATOR = "::"
+
+    /** Голос Edge TTS по имени, если это точно сетевой голос. */
+    private fun isEdgeVoiceName(name: String): Boolean =
+        name.endsWith("Neural", ignoreCase = true) ||
+            name.startsWith("ru-", ignoreCase = true) ||
+            name.startsWith("en-", ignoreCase = true)
+
+    /**
+     * v1.9.40: озвучка КОНКРЕТНЫМ голосом («пакет::имя») в обход ролей и ручного
+     * режима: кнопки «Проба» у слотов и ♀/♂/🎙 на карточке распознанного текста.
+     * spec пуст = обычный основной голос.
+     */
+    fun speakWithVoice(
+        context: Context,
+        text: String,
+        voiceSpec: String?,
+        onState: (Boolean) -> Unit = {},
+    ) {
+        if (voiceSpec.isNullOrBlank()) {
+            speak(context, text, onState)
+            return
+        }
+        stop()
+        onStateChange = onState
+        val spoken = SpeechMarkup.forSpeech(SpeechMarkup.strip(text))
+        if (spoken.isBlank()) {
+            markFailure(SpeakFailure.NONE)
+            setSpeaking(false)
+            return
+        }
+        markFailure(SpeakFailure.NONE)
+        // Голос роли может быть онлайн-голосом Edge TTS (в т.ч. в смешанном
+        // словаре «онлайн+оффлайн»): маршрутизируем в Edge, а не в системный.
+        val (forcedPkg, voiceName) = parseVoiceSpec(voiceSpec)
+        if (voiceName.isEmpty()) {
+            markFailure(SpeakFailure.REJECTED, "Голос не указан: $voiceSpec")
+            setSpeaking(false)
+            return
+        }
+        val enginePref = prefs().voiceEngine().get()
+        val phoneOnly = runCatching { prefs().voicePhoneOnly().get() }.getOrDefault(true)
+        val edgePkg = forcedPkg.startsWith("edge", ignoreCase = true)
+        val wantEdge = when {
+            // Пакет в спецификации голоса — это осознанный выбор конкретного
+            // движка («edge::…», «com.github…::…»): телефонный режим его не
+            // отменяет, иначе проба звучала бы не тем голосом, что и чтение.
+            forcedPkg.isNotBlank() -> edgePkg
+            // Явно выбранный сетевой движок — тоже осознанный выбор. Имя вида
+            // «ru-ru-…» без пакета — это ЛОКАЛЬНЫЙ голос Google TTS, уводить
+            // его в сеть нельзя.
+            eu.kanade.tachiyomi.data.voice.VoicePlugins.isOnlineEngineId(enginePref) ->
+                enginePref == ENGINE_EDGE_TTS
+            // Телефонный режим гасит автоподстановку сетевого голоса.
+            phoneOnly -> false
+            // Голос без пакета и с явно сетевым режимом: решает движок, а не
+            // догадка по имени.
+            else -> isEdgeVoiceName(voiceName) &&
+                !prefs().systemTtsEngine().get().isNullOrBlank()
+        }
+        if (wantEdge) {
+            speakWithEdgeVoice(context, text, voiceName, onState)
+            return
+        }
+        ensureSystem(context, forcedPkg.ifBlank { null }) { engine ->
+            if (engine == null) {
+                markFailure(
+                    SpeakFailure.NO_ENGINE,
+                    "TTS-движок не инициализирован: ${forcedPkg.ifBlank { systemEnginePkg ?: "по умолчанию" }}",
+                )
+                setSpeaking(false)
+                return@ensureSystem
+            }
+            runCatching {
+                val p = prefs()
+                engine.setSpeechRate(p.speechRate().get().coerceIn(0.5f, 2f))
+                engine.setPitch(p.speechPitch().get().coerceIn(0.5f, 2f))
+                val picked = engine.voices?.firstOrNull { it.name == voiceName }
+                if (picked != null) {
+                    engine.voice = picked
+                    // Язык — из самого голоса, а не из жёсткого «ru»: локальный
+                    // голос en-us с русским текстом speak() отклоняет.
+                    runCatching {
+                        engine.language = picked.locale ?: engine.defaultVoice?.locale
+                    }
+                } else {
+                    markFailure(
+                        SpeakFailure.REJECTED,
+                        "Голоса «$voiceName» нет в движке ${systemEnginePkg ?: "по умолчанию"}",
+                    )
+                }
+                val maxLen = HARD_UTTERANCE_LIMIT
+                val parts = spoken.chunked(maxLen)
+                val lastId = "ywv_" + (parts.size - 1)
+                engine.setOnUtteranceProgressListener(
+                    object : UtteranceProgressListener() {
+                        override fun onStart(utteranceId: String?) {
+                            if (utteranceId == "ywv_0") setSpeaking(true)
+                        }
+
+                        override fun onDone(utteranceId: String?) {
+                            if (utteranceId == lastId) setSpeaking(false)
+                        }
+
+                        override fun onError(utteranceId: String?) = utteranceFailed("ошибка движка")
+                        override fun onError(utteranceId: String?, errorCode: Int) =
+                            utteranceFailed("движок отклонил текст ($errorCode)")
+                    },
+                )
+                var spokenAny = false
+                parts.forEachIndexed { i, part ->
+                    val ok = engine.speak(part, TextToSpeech.QUEUE_ADD, null, "ywv_$i")
+                    // speak() возвращает ERROR, а не бросает: без проверки
+                    // голос «озвучивался» в молчание.
+                    if (ok == TextToSpeech.SUCCESS) spokenAny = true
+                }
+                if (!spokenAny) {
+                    markFailure(SpeakFailure.REJECTED, "Движок не принял текст голосом «$voiceName»")
+                    setSpeaking(false)
+                }
+            }.onFailure { error ->
+                logcat(LogPriority.WARN, error) { "speakWithVoice failed for $voiceName" }
+                markFailure(SpeakFailure.REJECTED, error.message ?: error.javaClass.simpleName)
+                setSpeaking(false)
+            }
+        }
+    }
+
+    /**
+     * Озвучка текста под роль (кнопки ♀/♂/🎙 на карточке распознанного текста).
+     * Если для роли настроен голос (словарь ролей / legacy-слоты) — он
+     * используется напрямую и может быть онлайн (Edge TTS) или оффлайн
+     * (системный) — «совмещение онлайн и оффлайн голосов». Если голос не
+     * настроен — обычная озвучка с учётом пола роли (♀/♂ → разные пресеты).
+     */
+    fun speakRole(
+        context: Context,
+        text: String,
+        role: String,
+        onState: (Boolean) -> Unit = {},
+    ) {
+        val spec = slotVoiceSpec(role)
+        if (spec != null) {
+            speakWithVoice(context, text, spec, onState)
+            return
+        }
+        val gender = when (role.lowercase()) {
+            "female" -> "female"
+            "male" -> "male"
+            else -> null
+        }
+        speakAs(context, text, gender, onState = onState)
+    }
+
+    /**
+     * Проговорить текст КОНКРЕТНЫМ онлайн-голосом Edge TTS (кнопки «Выбрать
+     * голос» в списке выбора и роль-кнопки со смешанным словарём).
+     */
+    fun speakWithEdgeVoice(
+        context: Context,
+        text: String,
+        voice: String,
+        onState: (Boolean) -> Unit = {},
+    ) {
+        if (voice.isBlank()) {
+            speak(context, text, onState)
+            return
+        }
+        stop()
+        onStateChange = onState
+        val spoken = SpeechMarkup.forSpeech(SpeechMarkup.strip(text))
+        if (spoken.isBlank()) {
+            setSpeaking(false)
+            return
+        }
+        speakEdgeTts(context, spoken, voice)
+    }
+
+    /**
+     * Озвучка с учётом пола говорящего: gender = "female" | "male" | null.
+     * Для системного движка используется соответствующий голос из пресетов
+     * (Настройки озвучки → Женский голос / Мужской голос). Для веб-движка
+     * пол недоступен (у Google Translate один голос на язык).
+     */
+    @JvmOverloads
+    fun speakAs(
+        context: Context,
+        text: String,
+        gender: String?,
+        speakerSlot: Int = 0,
+        onState: (Boolean) -> Unit = {},
+    ) {
+        stop()
+        onStateChange = onState
+        // Сброс причины отказа на каждую попытку: иначе авточтение видело бы
+        // старую неудачу и останавливалось на заведомо рабочем движке.
+        markFailure(SpeakFailure.NONE)
+        // Служебная разметка ({1}{ж}, ÷) не должна попасть в синтез, даже
+        // если вызывающий код забыл её снять.
+        val spoken = SpeechMarkup.forSpeech(SpeechMarkup.strip(text))
+        if (spoken.isBlank()) {
+            setSpeaking(false)
+            return
+        }
+        // Ручной режим перекрывает и явно переданный пол, и разметку:
+        // читатель нажал кнопку и ждёт выбранный голос везде.
+        val manual = runCatching {
+            prefs().takeIf { it.manualVoiceMode().get() }
+                ?.manualVoiceGender()?.get()?.takeIf { g -> g.isNotBlank() }
+        }.getOrNull()
+        val effectiveGender = manual ?: gender ?: SpeechMarkup.genderOf(text)
+        val slot = if (speakerSlot != 0) speakerSlot else SpeechMarkup.speakerSlot(text)
+// Имя говорящего ({имя:Аки}) нужно словарю голосовых ролей, чтобы
+        // подобрать голос/питч/темп конкретного персонажа.
+        val speakerName = SpeechMarkup.speakerName(text)
+        // «Только голос телефона» (pref_voice_phone_only, по умолчанию
+        // включено) убирает АВТОМАТИЧЕСКИЙ сетевой маршрут: без явного выбора
+        // движка читаем голосом устройства. Явно выбранный читателем сетевой
+        // движок — тоже выбор, и он побеждает: иначе голос, которого нет на
+        // устройстве, пришлось бы «устанавливать», вместо того чтобы звучать.
+        val phoneOnly = runCatching { prefs().voicePhoneOnly().get() }.getOrDefault(true)
+        val online = isNetworkAvailable(context)
+        val effective = eu.kanade.tachiyomi.data.voice.VoicePlugins.resolveSpeakEngine(
+            engineId = prefs().voiceEngine().get(),
+            phoneOnly = phoneOnly,
+            online = online,
+        )
+        when (effective) {
+            ENGINE_GOOGLE_WEB -> speakGoogleWeb(context, spoken)
+            ENGINE_EDGE_TTS -> speakEdgeTts(context, spoken)
+            ENGINE_ELEVENLABS -> speakElevenLabs(context, spoken)
+            // legacy-значения pref_voice_engine со сборок с ONNX:
+            // нейроголоса теперь живут на сервере, маршрутизируем туда же.
+            ENGINE_REMOTE, "onnx_tts", "onnx" -> speakRemote(context, spoken, effectiveGender)
+            else -> speakSystem(context, spoken, effectiveGender, slot, speakerName)
+        }
+    }
+
+    fun stop() {
+        currentJob?.cancel()
+        currentJob = null
+        runCatching { systemTts?.stop() }
+        runCatching {
+            mediaPlayer?.stop()
+            mediaPlayer?.release()
+        }
+        mediaPlayer = null
+        setSpeaking(false)
+    }
+
+    private fun setSpeaking(value: Boolean) {
+        isSpeaking = value
+        onStateChange?.invoke(value)
+    }
+
+    /**
+     * Сбой utterance: помечаем причину и снимаем флаг речи. Вызывается из
+     * [android.speech.tts.UtteranceProgressListener.onError], поэтому не должен
+     * бросать — обратный вызов движка оборачивать исключения нельзя.
+     */
+    private fun utteranceFailed(detail: String) {
+        markFailure(SpeakFailure.REJECTED, detail)
+        runCatching { logcat(LogPriority.WARN) { "TTS utterance failed: $detail" } }
+        setSpeaking(false)
+    }
+
+    /**
+     * Есть ли на устройстве хоть один системный TTS-движок.
+     *
+     * Быстрая проверка через PackageManager: без защёлки на `TextToSpeech`
+     * и без блокировки, поэтому годится для предварительной проверки перед
+     * авточтением. Пустой список означает ровно одно: системным голосом
+     * озвучить нечего, и читать дальше бессмысленно.
+     */
+    fun systemEngineInstalled(context: Context): Boolean =
+        eu.kanade.tachiyomi.data.voice.VoicePlugins.installedSystemEngines(context).isNotEmpty()
+
+    // region SYSTEM
+
+    private fun speakSystem(
+        context: Context,
+        text: String,
+        gender: String? = null,
+        speakerSlot: Int = 0,
+        speakerName: String? = null,
+    ) {
+        val slotVoiceRaw = runCatching {
+            val arr = org.json.JSONArray(prefs().voiceSlots().get())
+            val roleKey = when (gender) { "male" -> "male"; "female" -> "female"; else -> "narrator" }
+            (0 until arr.length()).firstOrNull { i -> arr.getJSONObject(i).optString("role") == roleKey }
+                ?.let { i -> arr.getJSONObject(i).optString("voice") }.orEmpty()
+        }.getOrDefault("")
+        val savedRawVoice = runCatching { prefs().voiceName().get() }.getOrDefault("")
+        // Словарь голосовых ролей подбирает роль по имени говорящего
+        // ({имя:Аки}), затем по полу. Голос/питч/темп роли перекрывают
+        // слоты и пресеты пола, которые работают только по полу.
+        val role = VoiceRoleDictionary.resolve(prefs(), speakerName, gender)
+        // ВАЖНО: роль может как задать точный голос, так и только
+        // модификаторы; распознаём оба случая отдельно.
+        val rolePitch = role?.pitch?.takeIf { it > 0f && it != 1f } ?: 1f
+        val roleRate = role?.rate?.takeIf { it > 0f && it != 1f } ?: 1f
+        val roleVoice = role?.voice?.takeIf { it.isNotBlank() }
+        // v1.9.41: для обычной озвучки (без пола) ГЛАВНЫЙ голос из настроек важнее
+        // слота 🎙 — раньше слот перебивал выбор, и голос «не активировался».
+        val primaryRaw = roleVoice
+            ?: if (gender == null) {
+                savedRawVoice.ifBlank { slotVoiceRaw }
+            } else {
+                slotVoiceRaw.ifBlank { savedRawVoice }
+            }
+        val forcedPkg = (
+            roleVoice?.takeIf { it.isNotBlank() && it.contains("::") }?.substringBefore("::")
+                ?: primaryRaw.takeIf { it.isNotBlank() && it.contains("::") }?.substringBefore("::")
+                ?: slotVoiceRaw.takeIf { it.isNotBlank() && it.contains("::") }?.substringBefore("::")
+                ?: savedRawVoice.takeIf { it.contains("::") }?.substringBefore("::")
+            )?.ifBlank { null }
+        ensureSystem(context, forcedPkg) { engine ->
+            if (engine == null) {
+                // Движок не поднялся: onInit вернул не SUCCESS, конструктор
+                // бросил исключение на удалённом/невалидном пакете или движок
+                // завис в полуинициализированном состоянии. Дальше озвучивать
+                // нечем — вызывающий обязан это показать, а не листать страницы.
+                markFailure(
+                    SpeakFailure.NO_ENGINE,
+                    "TTS-движок не инициализирован: ${systemEnginePkg ?: "движок по умолчанию"}",
+                )
+                setSpeaking(false)
+                return@ensureSystem
+            }
+            val p = prefs()
+            // Пресет голоса пол/возраст: модификаторы питча и темпа.
+            val presetAge = VoicePreset.Age.fromId(p.voicePresetAge().get())
+            val presetGender = VoicePreset.Gender3.fromId(p.voicePresetGender().get())
+            engine.setSpeechRate((p.speechRate().get() * presetAge.rate).coerceIn(0.5f, 2f))
+            engine.setPitch(p.speechPitch().get().coerceIn(0.5f, 2f))
+            // Пол говорящего (логика из overlay-translator):
+            // 1) явный пресет пользователя для пола; 2) VoiceHelper.pick —
+            // автоподбор по классификации имён (Svetlana/Dmitry/детские);
+            // 3) общий голос; 4) язык ru-RU как последний рубеж.
+            // Совет локального JSON-помощника (правила пользователя/агента)
+            val advisorVoice = primaryRaw.substringAfterLast("::").ifBlank { LocalVoiceAdvisor.recommend(text, gender).voiceName }
+            val presetVoice = advisorVoice ?: when (gender) {
+                "female" -> p.voiceFemale().get()
+                "male" -> p.voiceMale().get()
+                else -> ""
+            }
+            val kind = when (gender) {
+                "male" -> VoiceKind.MALE
+                "female" -> VoiceKind.FEMALE
+                else -> when (presetGender) {
+                    VoicePreset.Gender3.MALE -> VoiceKind.MALE
+                    VoicePreset.Gender3.FEMALE -> VoiceKind.FEMALE
+                    else -> null
+                }
+            }
+            // Разные персонажи одного пола получают разные голоса: слот > 0
+            // сдвигает выбор внутри группы. Явный пресет пользователя всегда
+            // важнее автоподбора.
+            val activeEnginePackage = systemEnginePkg
+                ?: runCatching { engine.defaultEngine }.getOrNull()
+            val isRhVoice = activeEnginePackage.orEmpty().contains("rhvoice", ignoreCase = true)
+            var chosen: android.speech.tts.Voice? = when {
+                presetVoice.isNotBlank() && speakerSlot == 0 ->
+                    VoiceHelper.pick(
+                        engine,
+                        kind ?: VoiceKind.FEMALE,
+                        presetVoice,
+                        systemEnginePkg,
+                    )
+                kind != null && speakerSlot > 0 ->
+                    VoiceHelper.pickForSpeaker(
+                        engine,
+                        kind,
+                        speakerSlot,
+                        enginePackage = systemEnginePkg,
+                    ) ?: VoiceHelper.pick(engine, kind, null, systemEnginePkg)
+                kind != null -> VoiceHelper.pick(engine, kind, null, systemEnginePkg)
+                else -> {
+                    val saved = p.voiceName().get().substringAfterLast("::")
+                    // Автоподбор как в overlay-translator: если голос не выбран
+                    // или его нет в системе — берём лучший русский женский
+                    // (Svetlana и др.), затем любой русский.
+                    VoiceHelper.pick(engine, VoiceKind.FEMALE, saved, systemEnginePkg)
+                }
+            }
+            // RHVoice на части прошивок отдаёт пустой getVoices(): клиент «не
+            // видит» установленные голоса, pick() соскальзывал на дефолт движка
+            // (почти всегда женский), и все роли звучали одним голосом. Сам же
+            // сервис RHVoice принимает точное имя и через setVoice(), и через
+            // параметр "voiceName" в speak() — поэтому Voice создаётся руками
+            // и выбор пользователя больше не теряется.
+            if (isRhVoice && presetVoice.isNotBlank() && speakerSlot == 0 &&
+                (chosen == null || chosen.name != presetVoice)
+            ) {
+                chosen = runCatching {
+                    android.speech.tts.Voice(
+                        presetVoice,
+                        Locale("ru", "RU"),
+                        android.speech.tts.Voice.QUALITY_NORMAL,
+                        0,
+                        false,
+                        null,
+                    )
+                }.getOrNull() ?: chosen
+            }
+            val v = chosen
+            val forcedVoiceName = when {
+                isRhVoice && presetVoice.isNotBlank() && speakerSlot == 0 -> presetVoice
+                isRhVoice -> v?.name
+                else -> null
+            }
+            if (v != null) {
+                val res = engine.setVoice(v)
+                if (res != TextToSpeech.SUCCESS) {
+                    // Some OEM clients reject a manually-created RHVoice Voice
+                    // before the engine sees it. speak() below also sends the
+                    // exact name in KEY_PARAM_VOICE_NAME, bypassing that bug.
+                    logcat(LogPriority.WARN) { "Voice ${v.name} rejected by TextToSpeech client" }
+                    engine.language = v.locale ?: Locale("ru", "RU")
+                }
+            } else {
+                // Язык движка по умолчанию, а не жёсткий ru: иначе локальный
+                // en-us голос получает русский текст и speak() отклоняет его.
+                engine.language = engine.defaultVoice?.locale ?: Locale("ru", "RU")
+            }
+            // v1.9.44: hidden-параметр «voiceName» убран: движки (RHVoice на
+            // устройстве) ОТКЛОНЯЮТ speak() с таким Bundle — пресеты Ж/М/нарратор
+            // звучали тишиной. Голос уже поставлен через setVoice() выше.
+            val voiceParams: android.os.Bundle? = null
+            // Пунктуация → реальные паузы и интонация: текст режется на
+            // предложения, каждое говорится отдельной utterance, между ними
+            // тишина (250мс после точки, 420мс после !/?, 160мс после запятой).
+            // Вопросительные получают лёгкий подъём питча, восклицательные —
+            // чуть быстрее и выше.
+            // Ударения для локальных голосов: RHVoice понимает «+» после
+            // ударного гласного; прочие движки получают исходный текст.
+            val spokenText = if (isRhVoice && prefs().ruStress().get() == "on") {
+                RuStress.mark(text)
+            } else {
+                text
+            }
+            val sentences = splitSentences(spokenText)
+            if (sentences.isEmpty()) { setSpeaking(false); return@ensureSystem }
+            // Предложение может распасться на несколько кусков: звук из
+            // ремарки и «ааа» произносятся отдельно от остального текста, со
+            // своей подачей. Плоский список нужен ещё и для того, чтобы
+            // `lastId` указывал на последний utterance, а не на последнее
+            // предложение.
+            val units = mutableListOf<TtsUnit>()
+            for (sentence in sentences) {
+                val trimmed = sentence.trim()
+                if (trimmed.isEmpty()) continue
+                // Словарь интонаций: узор фразы → пауза/питч/темп. Правило
+                // ищется по всему предложению и умножается на все его куски,
+                // иначе «Ааа! Прости...» не нашло бы узор по целой фразе.
+                val intonation = VoiceIntonationDictionary.matchRule(p, trimmed)
+                val intonationPitch = intonation?.pitch?.takeIf { it > 0f && it != 1f } ?: 1f
+                val intonationRate = intonation?.rate?.takeIf { it > 0f && it != 1f } ?: 1f
+                val intonationPause = intonation?.pauseMs?.takeIf { it > 0 } ?: 0
+                for (d in SpeechCue.deliveries(trimmed)) {
+                    units += TtsUnit(d, intonationPitch, intonationRate, intonationPause)
+                }
+            }
+            if (units.isEmpty()) { setSpeaking(false); return@ensureSystem }
+            val lastId = "yk_${units.size - 1}"
+            engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) {
+                    if (utteranceId == "yk_0") setSpeaking(true)
+                }
+                override fun onDone(utteranceId: String?) {
+                    if (utteranceId == lastId) setSpeaking(false)
+                }
+                // onError идёт в том же Boolean-колбэке, что и onDone, поэтому
+                // сбой посреди фразы выглядел как успех: в журнал попадало
+                // «озвучено», а голоса не было. Причину отказа помечаем явно.
+                @Deprecated("Deprecated in Java")
+                override fun onError(utteranceId: String?) = utteranceFailed("движок прервал озвучку")
+                override fun onError(utteranceId: String?, errorCode: Int) =
+                    utteranceFailed("движок вернул ошибку $errorCode")
+            })
+            val baseRate = (p.speechRate().get() * presetAge.rate * roleRate).coerceIn(0.5f, 2f)
+            // Тон по полу: если для пола не нашлось ОТДЕЛЬНОГО голоса,
+            // различаем персонажей питчем — мужчины ниже, женщины выше.
+            // С отдельными голосами модификатор не нужен (=1.0). Роль из
+            // словаря добавляет свой pitch/rate поверх всех пресетов.
+            val voiceMatchesGender = v != null && when (gender) {
+                "male" -> VoiceHelper.classify(v) == VoiceKind.MALE
+                "female" -> VoiceHelper.classify(v) == VoiceKind.FEMALE
+                else -> true
+            }
+            val genderPitchMod = when {
+                voiceMatchesGender -> 1.0f
+                gender == "male" -> 0.78f
+                gender == "female" -> 1.18f
+                else -> 1.0f
+            }
+            val basePitch = (p.speechPitch().get() * genderPitchMod *
+                presetGender.pitch * presetAge.pitch * rolePitch).coerceIn(0.5f, 2f)
+            var queued = false
+            units.forEachIndexed { i, unit ->
+                val trimmed = unit.delivery.text.trim()
+                if (trimmed.isEmpty()) return@forEachIndexed
+                val cue = unit.delivery
+                when {
+                    // Звук из ремарки или междометие: подача уже задана, знаки
+                    // препинания поверх неё не добавляются — иначе «Ааа!»
+                    // получил бы крик дважды.
+                    cue.fromCue || unit.intonationPitch != 1f || unit.intonationRate != 1f -> {
+                        engine.setPitch((basePitch * unit.intonationPitch * cue.pitch).coerceIn(0.5f, 2f))
+                        engine.setSpeechRate((baseRate * unit.intonationRate * cue.rate).coerceIn(0.5f, 2f))
+                    }
+                    trimmed.endsWith("?") || trimmed.endsWith("?!") || trimmed.endsWith("⁇") -> {
+                        engine.setPitch((basePitch * 1.12f).coerceAtMost(2f))
+                        engine.setSpeechRate(baseRate * 0.95f)
+                    }
+                    trimmed.endsWith("!") || trimmed.endsWith("‼") -> {
+                        engine.setPitch((basePitch * 1.07f).coerceAtMost(2f))
+                        engine.setSpeechRate((baseRate * 1.05f).coerceAtMost(2f))
+                    }
+                    else -> {
+                        // Состояние из ремарки (шёпот, бег, слабость) — это
+                        // множитель всей реплики, а не отдельного слова.
+                        engine.setPitch((basePitch * cue.pitch).coerceIn(0.5f, 2f))
+                        engine.setSpeechRate((baseRate * cue.rate).coerceIn(0.5f, 2f))
+                    }
+                }
+                val mode = if (queued) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH
+                val r = try {
+                    engine.speak(trimmed, mode, voiceParams, "yk_$i")
+                } catch (e: Exception) {
+                    logcat(LogPriority.WARN, e) { "speak() rejected an utterance" }
+                    TextToSpeech.ERROR
+                }
+                if (r == TextToSpeech.SUCCESS) queued = true
+                val pauseMs = when {
+                    // Сначала словарь интонаций, затем ремарка: её пауза
+                    // относится к конкретному куску, а не ко всей фразе.
+                    unit.intonationPause > 0 -> unit.intonationPause.toLong()
+                    cue.pauseAfterMs > 0 -> cue.pauseAfterMs.toLong()
+                    trimmed.endsWith("!") || trimmed.endsWith("?") ||
+                        trimmed.endsWith("‼") || trimmed.endsWith("⁇") -> 420L
+                    trimmed.endsWith(",") || trimmed.endsWith(";") -> 160L
+                    else -> 260L
+                }
+                runCatching {
+                    engine.playSilentUtterance(pauseMs, TextToSpeech.QUEUE_ADD, "yk_p$i")
+                }
+            }
+            if (!queued) {
+                markFailure(SpeakFailure.REJECTED, "движок не принял ни одной фразы")
+                setSpeaking(false)
+            }
+        }
+    }
+
+    // endregion
+
+    /**
+     * ПРОБА КОНКРЕТНЫМ системным голосом (кнопка «Проба» в списке голосов).
+     * Раньше проба звала speak() с текущими настройками — пользователь жал
+     * кнопку у мужского голоса и слышал дефолтный женский: казалось, что
+     * «все голоса одинаковые». Здесь имя голоса передаётся напрямую.
+     */
+    fun speakSystemVoiceTest(context: Context, voiceName: String) {
+        stop()
+        currentJob = scope.launch {
+            setSpeaking(true)
+            try {
+                withContext(Dispatchers.Main) {
+                    ensureSystem(context) { engine ->
+                        if (engine == null) {
+                            setSpeaking(false)
+                            return@ensureSystem
+                        }
+                        engine.setOnUtteranceProgressListener(
+                            object : android.speech.tts.UtteranceProgressListener() {
+                                override fun onStart(utteranceId: String?) = setSpeaking(true)
+                                override fun onDone(utteranceId: String?) = setSpeaking(false)
+                                @Deprecated("Deprecated in Java")
+                                override fun onError(utteranceId: String?) = setSpeaking(false)
+                                override fun onError(utteranceId: String?, errorCode: Int) = setSpeaking(false)
+                            },
+                        )
+                        engine.setSpeechRate(prefs().speechRate().get().coerceIn(0.5f, 2f))
+                        val known = runCatching { engine.voices?.firstOrNull { it.name == voiceName } }.getOrNull()
+                        if (known != null) {
+                            engine.setVoice(known)
+                        } else {
+                            engine.language = Locale("ru", "RU")
+                        }
+                        // v1.9.44: hidden-параметр «voiceName» ломает speak() на RHVoice
+                        // (голос уже задан через setVoice() выше) — Bundle не шлём.
+                        val r = runCatching {
+                            engine.speak(
+                                "Привет! Это тест голоса $voiceName.",
+                                TextToSpeech.QUEUE_FLUSH,
+                                null,
+                                "yk_vtest",
+                            )
+                        }.getOrDefault(TextToSpeech.ERROR)
+                        if (r != TextToSpeech.SUCCESS) setSpeaking(false)
+                    }
+                }
+            } catch (e: Exception) {
+                logcat(LogPriority.WARN, e) { "voice test failed" }
+                setSpeaking(false)
+            }
+        }
+    }
+
+    // region REMOTE (нейроголоса на сервере ПК/ранера)
+
+    /**
+     * УДАЛЁННЫЙ НЕЙРОГОЛОС: sherpa-onnx/Piper больше не живёт в APK (R8, ABI и
+     * память устройства ломали синтез). Синтез крутится на ПК пользователя или
+     * сервере (tools/remote_tts_server.py): приложение шлёт предложение и
+     * проигрывает готовый wav. Нет адреса или сервер молчит — дочитываем
+     * системным голосом (принцип AlReader: текст всегда озвучен).
+     */
+    private fun speakRemote(context: Context, text: String, gender: String?) {
+        val p = prefs()
+        currentJob = scope.launch {
+            setSpeaking(true)
+            val url = p.remoteTtsUrl().get().trim()
+            // Предложения разворачиваются в куски с подачей, чтобы «ааа» и
+            // вздох из ремарки ушли отдельным запросом со своим темпом.
+            val sentences = splitSentences(text).flatMap { splitForRemote(it) }
+            if (url.isBlank()) {
+                withContext(Dispatchers.Main) { speakSystem(context, text, gender) }
+                return@launch
+            }
+            var doneUpTo = 0
+            var failed = false
+            try {
+                for (sentence in sentences) {
+                    if (currentJob?.isActive != true) break
+                    val trimmed = sentence.text.trim()
+                    val wav = synthesizeRemote(context, url, trimmed, gender, sentence.rate)
+                    if (wav == null) {
+                        failed = true
+                        break
+                    }
+                    playFileBlocking(wav)
+                    doneUpTo++
+                    kotlinx.coroutines.delay(180L)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                setSpeaking(false)
+                throw e
+            } catch (e: Exception) {
+                logcat(LogPriority.WARN, e) { "remote TTS failed" }
+                failed = true
+            }
+            if (failed && doneUpTo < sentences.size && currentJob?.isActive == true) {
+                val rest = sentences.drop(doneUpTo).joinToString(" ") { it.text }
+                logcat(LogPriority.WARN) { "remote TTS fallback to system from sentence $doneUpTo" }
+                withContext(Dispatchers.Main) { speakSystem(context, rest, gender) }
+            } else {
+                setSpeaking(false)
+            }
+        }
+    }
+
+    /** Кусок для удалённого движка: текст и множитель темпа. */
+    private class RemoteChunk(val text: String, val rate: Float)
+
+    /**
+     * Разворачивает предложение в куски для удалённого движка. Разбиение
+     * общее с системным ([SpeechCue.deliveries]), но темп передаётся в
+     * параметре `speed` запроса, потому что у сервера нет сетевого тона.
+     */
+    private fun splitForRemote(sentence: String): List<RemoteChunk> {
+        val trimmed = sentence.trim()
+        if (trimmed.isEmpty()) return emptyList()
+        return SpeechCue.deliveries(trimmed).map { RemoteChunk(it.text, it.rate) }
+    }
+
+    /** POST {text, voice, speed} на /tts сервера; ответ — wav-байты. */
+    private suspend fun synthesizeRemote(
+        context: Context,
+        url: String,
+        text: String,
+        gender: String?,
+        rateFactor: Float = 1f,
+    ): File? = withContext(Dispatchers.IO) {
+        runCatching {
+            val conn = java.net.URL(url.trimEnd('/') + "/tts").openConnection()
+                as java.net.HttpURLConnection
+            conn.connectTimeout = 5_000
+            conn.readTimeout = 90_000
+            conn.requestMethod = "POST"
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json")
+            val speed = (prefs().speechRate().get() * rateFactor).coerceIn(0.5f, 2f)
+            val body = "{\"text\":${jsonQuote(text)},\"voice\":${jsonQuote(gender ?: "auto")},\"speed\":$speed}"
+            conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+            if (conn.responseCode != 200) {
+                logcat(LogPriority.WARN) { "remote TTS HTTP ${conn.responseCode}" }
+                return@runCatching null
+            }
+            val dir = File(context.cacheDir, "remote_tts").apply { mkdirs() }
+            val f = File(dir, "seg_${System.currentTimeMillis()}.wav")
+            conn.inputStream.use { input -> f.outputStream().use { input.copyTo(it) } }
+            if (f.length() < 1024) {
+                f.delete()
+                null
+            } else {
+                f
+            }
+        }.getOrNull()
+    }
+
+    // endregion
+
+    // region GOOGLE WEB (без API-ключа)
+
+    private fun speakGoogleWeb(context: Context, text: String) {
+        val lang = prefs().ttsWebLanguage().get().ifBlank { "ru" }
+        currentJob = scope.launch {
+            setSpeaking(true)
+            try {
+                // Endpoint сайта Google Translate ограничен ~200 симв. — бьём на куски
+                val chunks = splitForWeb(text, 180)
+                for (chunk in chunks) {
+                    if (currentJob?.isActive != true) break
+                    val url = "https://translate.google.com/translate_tts" +
+                        "?ie=UTF-8&client=tw-ob&tl=" + lang +
+                        "&q=" + URLEncoder.encode(chunk, "UTF-8")
+                    val file = downloadToCache(context, url) ?: continue
+                    playFileBlocking(file)
+                }
+            } catch (e: Exception) {
+                logcat(LogPriority.WARN, e) { "Google Web TTS failed" }
+            } finally {
+                setSpeaking(false)
+            }
+        }
+    }
+
+    // endregion
+
+    // region EDGE TTS (Microsoft, без ключа)
+
+    /**
+     * Озвучка онлайн-голосами Microsoft Edge (edge-tts). Бесплатно, без
+     * API-ключа, нужен интернет. Выбранный голос — pref_edge_voice; если
+     * редактором выбран мультиязычный голос, он читает любой язык.
+     * Скорость/высота берутся из обычных настроек озвучки.
+     */
+    private fun speakEdgeTts(context: Context, text: String, voiceName: String? = null) {
+        val p = prefs()
+        val voice = voiceName?.takeIf { it.isNotBlank() }
+            ?: p.edgeVoice().get().ifBlank { EdgeTts.DEFAULT_VOICE }
+        val ratePercent = ((p.speechRate().get().coerceIn(0.5f, 2f) - 1f) * 100).toInt().coerceIn(-50, 100)
+        val pitchHz = ((p.speechPitch().get().coerceIn(0.5f, 2f) - 1f) * 40).toInt().coerceIn(-50, 50)
+        currentJob = scope.launch {
+            var delegated = false
+            setSpeaking(true)
+            try {
+                val file = EdgeTts.synthesizeToFile(
+                    context = context,
+                    text = text,
+                    voice = voice,
+                    ratePercent = ratePercent,
+                    pitchHz = pitchHz,
+                    useCache = true,
+                )
+                if (file == null) {
+                    delegated = true
+                    withContext(Dispatchers.Main) { speakSystem(context, text) }
+                } else {
+                    playFileBlocking(file, deleteAfterPlayback = false)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                delegated = true
+                logcat(LogPriority.WARN, e) { "Edge TTS failed; using system voice" }
+                withContext(Dispatchers.Main) { speakSystem(context, text) }
+            } finally {
+                if (!delegated) setSpeaking(false)
+            }
+        }
+    }
+
+    /** Проба конкретного голоса Edge TTS (кнопка «Проба» в списке голосов). */
+    fun speakEdgeVoiceTest(context: Context, voice: String, onDone: () -> Unit = {}) {
+        stop()
+        currentJob = scope.launch {
+            setSpeaking(true)
+            try {
+                val p = prefs()
+                val file = EdgeTts.synthesizeToFile(
+                    context = context,
+                    text = "Привет! Это тест голоса $voice.",
+                    voice = voice.ifBlank { EdgeTts.DEFAULT_VOICE },
+                    ratePercent = ((p.speechRate().get().coerceIn(0.5f, 2f) - 1f) * 100)
+                        .toInt().coerceIn(-50, 100),
+                    pitchHz = ((p.speechPitch().get().coerceIn(0.5f, 2f) - 1f) * 40)
+                        .toInt().coerceIn(-50, 50),
+                    useCache = true,
+                )
+                if (file != null) {
+                    playFileBlocking(file, deleteAfterPlayback = false)
+                } else {
+                    setSpeaking(false)
+                }
+            } catch (e: Exception) {
+                logcat(LogPriority.WARN, e) { "Edge voice test failed" }
+                setSpeaking(false)
+            } finally {
+                onDone()
+            }
+        }
+    }
+
+    // endregion
+
+    // region ELEVENLABS (API-ключ)
+
+    private fun speakElevenLabs(context: Context, text: String) {
+        val p = prefs()
+        val apiKey = p.elevenApiKey().get()
+        if (apiKey.isBlank()) {
+            // Ключа нет — честный фолбэк на бесплатную веб-озвучку
+            speakGoogleWeb(context, text)
+            return
+        }
+        val voiceId = p.elevenVoiceId().get().ifBlank { "21m00Tcm4TlvDq8ikWAM" }
+        currentJob = scope.launch {
+            setSpeaking(true)
+            try {
+                val conn = URL("https://api.elevenlabs.io/v1/text-to-speech/$voiceId")
+                    .openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.doOutput = true
+                conn.connectTimeout = 20_000
+                conn.readTimeout = 60_000
+                conn.setRequestProperty("xi-api-key", apiKey)
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.setRequestProperty("Accept", "audio/mpeg")
+                val body = """{"text":${jsonQuote(text)},"model_id":"eleven_multilingual_v2"}"""
+                conn.outputStream.use { it.write(body.toByteArray()) }
+                if (conn.responseCode in 200..299) {
+                    val file = File(context.cacheDir, "tts_eleven.mp3")
+                    conn.inputStream.use { input -> file.outputStream().use { input.copyTo(it) } }
+                    playFileBlocking(file)
+                } else {
+                    logcat(LogPriority.WARN) { "ElevenLabs HTTP ${conn.responseCode}" }
+                    speakGoogleWebInline(context, text)
+                }
+                conn.disconnect()
+            } catch (e: Exception) {
+                logcat(LogPriority.WARN, e) { "ElevenLabs TTS failed" }
+                speakGoogleWebInline(context, text)
+            } finally {
+                setSpeaking(false)
+            }
+        }
+    }
+
+    /** Фолбэк внутри уже запущенной корутины. */
+    private suspend fun speakGoogleWebInline(context: Context, text: String) {
+        val lang = prefs().ttsWebLanguage().get().ifBlank { "ru" }
+        for (chunk in splitForWeb(text, 180)) {
+            val url = "https://translate.google.com/translate_tts" +
+                "?ie=UTF-8&client=tw-ob&tl=" + lang +
+                "&q=" + URLEncoder.encode(chunk, "UTF-8")
+            val file = downloadToCache(context, url) ?: continue
+            playFileBlocking(file)
+        }
+    }
+
+    // endregion
+
+    // region helpers
+
+    /**
+     * Реальный список голосов аккаунта ElevenLabs (GET /v1/voices по ключу).
+     * Возвращает пары (voice_id, имя + категория). Пустой список при ошибке
+     * или отсутствии ключа — никаких фейковых данных.
+     */
+    suspend fun fetchElevenVoices(apiKey: String): List<Pair<String, String>> = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) return@withContext emptyList()
+        runCatching {
+            val conn = URL("https://api.elevenlabs.io/v1/voices").openConnection() as HttpURLConnection
+            conn.connectTimeout = 15_000
+            conn.readTimeout = 30_000
+            conn.setRequestProperty("xi-api-key", apiKey)
+            if (conn.responseCode !in 200..299) {
+                logcat(LogPriority.WARN) { "ElevenLabs voices HTTP ${conn.responseCode}" }
+                conn.disconnect()
+                return@runCatching emptyList()
+            }
+            val body = conn.inputStream.bufferedReader().readText()
+            conn.disconnect()
+            val arr = org.json.JSONObject(body).optJSONArray("voices") ?: return@runCatching emptyList()
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val v = arr.optJSONObject(i) ?: continue
+                    val id = v.optString("voice_id")
+                    if (id.isBlank()) continue
+                    val name = v.optString("name").ifBlank { id }
+                    val labels = v.optJSONObject("labels")
+                    val extra = buildList {
+                        labels?.optString("gender")?.takeIf { it.isNotBlank() }?.let(::add)
+                        labels?.optString("accent")?.takeIf { it.isNotBlank() }?.let(::add)
+                        v.optString("category").takeIf { it.isNotBlank() }?.let(::add)
+                    }.joinToString(", ")
+                    add(id to if (extra.isBlank()) name else "$name ($extra)")
+                }
+            }
+        }.getOrElse {
+            logcat(LogPriority.WARN, it) { "ElevenLabs voices fetch failed" }
+            emptyList()
+        }
+    }
+
+    private fun jsonQuote(s: String): String {
+        val sb = StringBuilder("\"")
+        for (c in s) {
+            when (c) {
+                '"' -> sb.append("\\\"")
+                '\\' -> sb.append("\\\\")
+                '\n' -> sb.append("\\n")
+                '\r' -> sb.append("\\r")
+                '\t' -> sb.append("\\t")
+                else -> sb.append(c)
+            }
+        }
+        return sb.append('"').toString()
+    }
+
+    /** Делит текст на предложения по .!?…; куски без знаков — по 200 симв. */
+    fun splitSentences(text: String): List<String> {
+        val result = mutableListOf<String>()
+        val sb = StringBuilder()
+        for (ch in text) {
+            sb.append(ch)
+            if (ch == '.' || ch == '!' || ch == '?' || ch == '…' || ch == '‼' || ch == '⁇') {
+                if (sb.isNotBlank()) result += sb.toString()
+                sb.clear()
+            } else if (sb.length >= 200 && ch == ' ') {
+                result += sb.toString()
+                sb.clear()
+            }
+        }
+        if (sb.isNotBlank()) result += sb.toString()
+
+        // Страховка: TextToSpeech.speak() бросает IllegalArgumentException,
+        // если строка длиннее getMaxSpeechInputLength() (обычно 4000).
+        // Текст без знаков препинания и без пробелов не резался ничем выше.
+        return result.flatMap { it.chunked(HARD_UTTERANCE_LIMIT) }
+    }
+
+    private fun splitForWeb(text: String, max: Int): List<String> {
+        if (text.length <= max) return listOf(text)
+        val parts = mutableListOf<String>()
+        var rest = text.trim()
+        while (rest.isNotEmpty()) {
+            if (rest.length <= max) { parts += rest; break }
+            var cut = rest.lastIndexOfAny(charArrayOf('.', '!', '?', '…', ';'), max)
+            if (cut < max / 2) cut = rest.lastIndexOf(' ', max)
+            if (cut < max / 2) cut = max
+            parts += rest.substring(0, cut + 1).trim()
+            rest = rest.substring(cut + 1).trim()
+        }
+        return parts.filter { it.isNotBlank() }
+    }
+
+    private fun downloadToCache(context: Context, url: String): File? {
+        return try {
+            val conn = URL(url).openConnection() as HttpURLConnection
+            conn.connectTimeout = 15_000
+            conn.readTimeout = 30_000
+            // Без браузерного UA endpoint отдаёт 403
+            conn.setRequestProperty(
+                "User-Agent",
+                "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile Safari/537.36",
+            )
+            if (conn.responseCode !in 200..299) {
+                conn.disconnect()
+                return null
+            }
+            val file = File(context.cacheDir, "tts_web_${System.nanoTime()}.mp3")
+            conn.inputStream.use { input -> file.outputStream().use { input.copyTo(it) } }
+            conn.disconnect()
+            file
+        } catch (e: Exception) {
+            logcat(LogPriority.WARN, e) { "TTS download failed" }
+            null
+        }
+    }
+
+    private suspend fun playFileBlocking(
+        file: File,
+        deleteAfterPlayback: Boolean = true,
+    ) {
+        withContext(Dispatchers.IO) {
+            suspendCancellableCoroutine { cont ->
+                val mp = MediaPlayer()
+                mediaPlayer = mp
+                try {
+                    mp.setDataSource(file.absolutePath)
+                    mp.setOnCompletionListener {
+                        runCatching { mp.release() }
+                        if (deleteAfterPlayback) file.delete()
+                        if (cont.isActive) cont.resume(Unit)
+                    }
+                    mp.setOnErrorListener { _, _, _ ->
+                        runCatching { mp.release() }
+                        if (deleteAfterPlayback) file.delete()
+                        if (cont.isActive) cont.resume(Unit)
+                        true
+                    }
+                    mp.prepare()
+                    mp.start()
+                    cont.invokeOnCancellation {
+                        runCatching { mp.stop(); mp.release() }
+                        if (deleteAfterPlayback) file.delete()
+                    }
+                } catch (e: Exception) {
+                    runCatching { mp.release() }
+                    if (deleteAfterPlayback) file.delete()
+                    if (cont.isActive) cont.resume(Unit)
+                }
+            }
+        }
+    }
+
+    // endregion
+}

@@ -1,0 +1,1392 @@
+package eu.kanade.tachiyomi.ui.reader
+
+import android.app.Application
+import android.graphics.Bitmap
+import android.net.Uri
+import androidx.annotation.IntRange
+import androidx.compose.runtime.Immutable
+import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import eu.kanade.domain.base.BasePreferences
+import eu.kanade.domain.chapter.model.toDbChapter
+import eu.kanade.domain.manga.interactor.SetMangaViewerFlags
+import eu.kanade.domain.manga.model.readerOrientation
+import eu.kanade.domain.manga.model.readingMode
+import eu.kanade.domain.source.interactor.GetIncognitoState
+import eu.kanade.domain.track.interactor.TrackChapter
+import eu.kanade.domain.track.service.TrackPreferences
+import eu.kanade.tachiyomi.data.database.models.toDomainChapter
+import eu.kanade.tachiyomi.data.download.DownloadManager
+import eu.kanade.tachiyomi.data.download.DownloadProvider
+import eu.kanade.tachiyomi.data.download.model.Download
+import eu.kanade.tachiyomi.data.saver.Image
+import eu.kanade.tachiyomi.data.saver.ImageSaver
+import eu.kanade.tachiyomi.data.saver.Location
+import eu.kanade.tachiyomi.source.model.Page
+import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.ui.reader.loader.ChapterLoader
+import eu.kanade.tachiyomi.ui.reader.loader.DownloadPageLoader
+import eu.kanade.tachiyomi.ui.reader.model.InsertPage
+import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
+import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
+import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
+import eu.kanade.tachiyomi.util.chapter.filterDownloaded
+import eu.kanade.tachiyomi.util.chapter.removeDuplicates
+import eu.kanade.tachiyomi.util.editCover
+import eu.kanade.tachiyomi.util.lang.byteSize
+import eu.kanade.tachiyomi.util.lang.takeBytes
+import eu.kanade.tachiyomi.util.ocr.toOcrImage
+import eu.kanade.tachiyomi.util.storage.DiskUtil
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import logcat.LogPriority
+import mihon.domain.ocr.exception.OcrException
+import mihon.domain.ocr.interactor.OcrProcessor
+import mihon.domain.ocr.model.OcrBoundingBox
+import mihon.domain.ocr.model.OcrModel
+import mihon.domain.ocr.model.OcrRegion
+import mihon.domain.ocr.model.OcrTextOrientation
+import mihon.domain.ocr.model.OcrTextSource
+import mihon.domain.ocr.model.flattenOcrTextForQuery
+import mihon.domain.ocr.repository.OcrRepository
+import mihon.domain.ocr.service.OcrPreferences
+import mihon.data.ocr.OcrScreenshotBuffer
+import mihon.domain.panel.repository.PanelDetectionRepository
+import tachiyomi.core.common.preference.toggle
+import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.launchNonCancellable
+import tachiyomi.core.common.util.lang.withIOContext
+import tachiyomi.core.common.util.lang.withUIContext
+import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
+import tachiyomi.domain.chapter.interactor.UpdateChapter
+import tachiyomi.domain.chapter.model.ChapterUpdate
+import tachiyomi.domain.chapter.service.getChapterSort
+import tachiyomi.domain.download.service.DownloadPreferences
+import tachiyomi.domain.history.interactor.GetNextChapters
+import tachiyomi.domain.history.interactor.UpsertHistory
+import tachiyomi.domain.history.model.HistoryUpdate
+import tachiyomi.domain.library.service.LibraryPreferences
+import tachiyomi.domain.manga.interactor.GetManga
+import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.source.service.SourceManager
+import tachiyomi.source.local.isLocal
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+import uy.kohesive.injekt.injectLazy
+import java.time.Instant
+import java.util.Date
+
+/**
+ * Presenter used by the activity to perform background operations.
+ */
+class ReaderViewModel @JvmOverloads constructor(
+    private val scanPageOcr: mihon.domain.ocr.interactor.ScanPageOcr = Injekt.get(),
+    private val savedState: SavedStateHandle,
+    private val sourceManager: SourceManager = Injekt.get(),
+    private val downloadManager: DownloadManager = Injekt.get(),
+    private val downloadProvider: DownloadProvider = Injekt.get(),
+    private val imageSaver: ImageSaver = Injekt.get(),
+    val readerPreferences: ReaderPreferences = Injekt.get(),
+    private val basePreferences: BasePreferences = Injekt.get(),
+    private val downloadPreferences: DownloadPreferences = Injekt.get(),
+    private val trackPreferences: TrackPreferences = Injekt.get(),
+    private val trackChapter: TrackChapter = Injekt.get(),
+    private val getManga: GetManga = Injekt.get(),
+    private val getChaptersByMangaId: GetChaptersByMangaId = Injekt.get(),
+    private val getNextChapters: GetNextChapters = Injekt.get(),
+    private val upsertHistory: UpsertHistory = Injekt.get(),
+    private val updateChapter: UpdateChapter = Injekt.get(),
+    private val setMangaViewerFlags: SetMangaViewerFlags = Injekt.get(),
+    private val getIncognitoState: GetIncognitoState = Injekt.get(),
+    private val libraryPreferences: LibraryPreferences = Injekt.get(),
+    private val application: Application = Injekt.get(),
+) : ViewModel() {
+
+    private companion object {
+        /** Сторона кадра, попадающего в буфер «Скриншоты» как пометка распознавания. */
+        const val MARKED_MAX_SIDE = 1080
+        const val MARKED_JPEG_QUALITY = 70
+    }
+
+    private val mutableState = MutableStateFlow(State())
+    val state = mutableState.asStateFlow()
+
+    private val eventChannel = Channel<Event>()
+    val eventFlow = eventChannel.receiveAsFlow()
+
+    /**
+     * The manga loaded in the reader. It can be null when instantiated for a short time.
+     */
+    val manga: Manga?
+        get() = state.value.manga
+
+    /**
+     * The chapter id of the currently loaded chapter. Used to restore from process kill.
+     */
+    private var chapterId = savedState.get<Long>("chapter_id") ?: -1L
+        set(value) {
+            savedState["chapter_id"] = value
+            field = value
+        }
+
+    /**
+     * The visible page index of the currently loaded chapter. Used to restore from process kill.
+     */
+    private var chapterPageIndex = savedState.get<Int>("page_index") ?: -1
+        set(value) {
+            savedState["page_index"] = value
+            field = value
+        }
+
+    /**
+     * The chapter loader for the loaded manga. It'll be null until [manga] is set.
+     */
+    private var loader: ChapterLoader? = null
+
+    /**
+     * The time the chapter was started reading
+     */
+    private var chapterReadStartTime: Long? = null
+
+    private var chapterToDownload: Download? = null
+
+    private val ocrProcessor: OcrProcessor by injectLazy()
+
+    private val unfilteredChapterList by lazy {
+        val manga = manga!!
+        runBlocking { getChaptersByMangaId.await(manga.id, applyScanlatorFilter = false) }
+    }
+
+    /**
+     * Chapter list for the active manga. It's retrieved lazily and should be accessed for the first
+     * time in a background thread to avoid blocking the UI.
+     */
+    private val chapterList by lazy {
+        val manga = manga!!
+        val chapters = runBlocking { getChaptersByMangaId.await(manga.id, applyScanlatorFilter = true) }
+
+        val selectedChapter = chapters.find { it.id == chapterId }
+            ?: error("Requested chapter of id $chapterId not found in chapter list")
+
+        val chaptersForReader = when {
+            (readerPreferences.skipRead.get() || readerPreferences.skipFiltered.get()) -> {
+                val filteredChapters = chapters.filterNot {
+                    when {
+                        readerPreferences.skipRead.get() && it.read -> true
+                        readerPreferences.skipFiltered.get() -> {
+                            (manga.unreadFilterRaw == Manga.CHAPTER_SHOW_READ && !it.read) ||
+                                (manga.unreadFilterRaw == Manga.CHAPTER_SHOW_UNREAD && it.read) ||
+                                (
+                                    manga.downloadedFilterRaw == Manga.CHAPTER_SHOW_DOWNLOADED &&
+                                        !downloadManager.isChapterDownloaded(
+                                            it.name,
+                                            it.scanlator,
+                                            it.url,
+                                            manga.title,
+                                            manga.source,
+                                        )
+                                    ) ||
+                                (
+                                    manga.downloadedFilterRaw == Manga.CHAPTER_SHOW_NOT_DOWNLOADED &&
+                                        downloadManager.isChapterDownloaded(
+                                            it.name,
+                                            it.scanlator,
+                                            it.url,
+                                            manga.title,
+                                            manga.source,
+                                        )
+                                    ) ||
+                                (manga.bookmarkedFilterRaw == Manga.CHAPTER_SHOW_BOOKMARKED && !it.bookmark) ||
+                                (manga.bookmarkedFilterRaw == Manga.CHAPTER_SHOW_NOT_BOOKMARKED && it.bookmark)
+                        }
+                        else -> false
+                    }
+                }
+
+                if (filteredChapters.any { it.id == chapterId }) {
+                    filteredChapters
+                } else {
+                    filteredChapters + listOf(selectedChapter)
+                }
+            }
+            else -> chapters
+        }
+
+        chaptersForReader
+            .sortedWith(getChapterSort(manga, sortDescending = false))
+            .run {
+                if (readerPreferences.skipDupe.get()) {
+                    removeDuplicates(selectedChapter)
+                } else {
+                    this
+                }
+            }
+            .run {
+                if (basePreferences.downloadedOnly.get()) {
+                    filterDownloaded(manga)
+                } else {
+                    this
+                }
+            }
+            .map { it.toDbChapter() }
+            .map(::ReaderChapter)
+    }
+
+    private val incognitoMode: Boolean by lazy { getIncognitoState.await(manga?.source) }
+    private val downloadAheadAmount = downloadPreferences.autoDownloadWhileReading.get()
+
+    init {
+        // To save state
+        state.map { it.viewerChapters?.currChapter }
+            .distinctUntilChanged()
+            .filterNotNull()
+            .onEach { currentChapter ->
+                if (chapterPageIndex >= 0) {
+                    // Restore from SavedState
+                    currentChapter.requestedPage = chapterPageIndex
+                } else if (!currentChapter.chapter.read) {
+                    currentChapter.requestedPage = currentChapter.chapter.last_page_read
+                }
+                chapterId = currentChapter.chapter.id!!
+            }
+            .launchIn(viewModelScope)
+    }
+
+    override fun onCleared() {
+        val currentChapters = state.value.viewerChapters
+        if (currentChapters != null) {
+            currentChapters.unref()
+            chapterToDownload?.let {
+                downloadManager.addDownloadsToStartOfQueue(listOf(it))
+            }
+        }
+        // Already checks if resources are initialized
+        Injekt.get<OcrRepository>().cleanup()
+        Injekt.get<PanelDetectionRepository>().cleanup()
+        super.onCleared()
+    }
+
+    /**
+     * Called when the user pressed the back button and is going to leave the reader. Used to
+     * trigger deletion of the downloaded chapters.
+     */
+    fun onActivityFinish() {
+        deletePendingChapters()
+    }
+
+    /**
+     * Whether this presenter is initialized yet.
+     */
+    fun needsInit(): Boolean {
+        return manga == null
+    }
+
+    /**
+     * Initializes this presenter with the given [mangaId] and [initialChapterId]. This method will
+     * fetch the manga from the database and initialize the initial chapter.
+     */
+    suspend fun init(mangaId: Long, initialChapterId: Long): Result<Boolean> {
+        if (!needsInit()) return Result.success(true)
+        return withIOContext {
+            try {
+                val manga = getManga.await(mangaId)
+                if (manga != null) {
+                    sourceManager.isInitialized.first { it }
+                    mutableState.update { it.copy(manga = manga) }
+                    if (chapterId == -1L) chapterId = initialChapterId
+
+                    val context = Injekt.get<Application>()
+                    val source = sourceManager.getOrStub(manga.source)
+                    loader = ChapterLoader(context, downloadManager, downloadProvider, manga, source)
+
+                    loadChapter(loader!!, chapterList.first { chapterId == it.chapter.id })
+
+                    // Initialize OCR model early - avoids delay on first text-recognition
+                    ocrProcessor
+
+                    Result.success(true)
+                } else {
+                    // Unlikely but okay
+                    Result.success(false)
+                }
+            } catch (e: Throwable) {
+                if (e is CancellationException) {
+                    throw e
+                }
+                Result.failure(e)
+            }
+        }
+    }
+
+    /**
+     * Loads the given [chapter] with this [loader] and updates the currently active chapters.
+     * Callers must handle errors.
+     */
+    private suspend fun loadChapter(
+        loader: ChapterLoader,
+        chapter: ReaderChapter,
+    ): ViewerChapters {
+        loader.loadChapter(chapter)
+
+        val chapterPos = chapterList.indexOf(chapter)
+        val newChapters = ViewerChapters(
+            chapter,
+            chapterList.getOrNull(chapterPos - 1),
+            chapterList.getOrNull(chapterPos + 1),
+        )
+
+        withUIContext {
+            mutableState.update {
+                // Add new references first to avoid unnecessary recycling
+                newChapters.ref()
+                it.viewerChapters?.unref()
+
+                chapterToDownload = cancelQueuedDownloads(newChapters.currChapter)
+                it.copy(
+                    viewerChapters = newChapters,
+                    bookmarked = newChapters.currChapter.chapter.bookmark,
+                )
+            }
+        }
+        return newChapters
+    }
+
+    /**
+     * Called when the user changed to the given [chapter] when changing pages from the viewer.
+     * It's used only to set this chapter as active.
+     */
+    private fun loadNewChapter(chapter: ReaderChapter) {
+        val loader = loader ?: return
+
+        viewModelScope.launchIO {
+            logcat { "Loading ${chapter.chapter.url}" }
+
+            updateHistory()
+            restartReadTimer()
+
+            try {
+                loadChapter(loader, chapter)
+            } catch (e: Throwable) {
+                if (e is CancellationException) {
+                    throw e
+                }
+                logcat(LogPriority.ERROR, e)
+            }
+        }
+    }
+
+    /**
+     * Called when the user is going to load the prev/next chapter through the toolbar buttons.
+     */
+    private suspend fun loadAdjacent(chapter: ReaderChapter) {
+        val loader = loader ?: return
+
+        logcat { "Loading adjacent ${chapter.chapter.url}" }
+
+        mutableState.update { it.copy(isLoadingAdjacentChapter = true) }
+        try {
+            withIOContext {
+                loadChapter(loader, chapter)
+            }
+        } catch (e: Throwable) {
+            if (e is CancellationException) {
+                throw e
+            }
+            logcat(LogPriority.ERROR, e)
+        } finally {
+            mutableState.update { it.copy(isLoadingAdjacentChapter = false) }
+        }
+    }
+
+    /**
+     * Called when the viewers decide it's a good time to preload a [chapter] and improve the UX so
+     * that the user doesn't have to wait too long to continue reading.
+     */
+    suspend fun preload(chapter: ReaderChapter) {
+        if (chapter.state is ReaderChapter.State.Loaded || chapter.state == ReaderChapter.State.Loading) {
+            return
+        }
+
+        if (chapter.pageLoader?.isLocal == false) {
+            val manga = manga ?: return
+            val dbChapter = chapter.chapter
+            val isDownloaded = downloadManager.isChapterDownloaded(
+                dbChapter.name,
+                dbChapter.scanlator,
+                dbChapter.url,
+                manga.title,
+                manga.source,
+                skipCache = true,
+            )
+            if (isDownloaded) {
+                chapter.state = ReaderChapter.State.Wait
+            }
+        }
+
+        if (chapter.state != ReaderChapter.State.Wait && chapter.state !is ReaderChapter.State.Error) {
+            return
+        }
+
+        val loader = loader ?: return
+        try {
+            logcat { "Preloading ${chapter.chapter.url}" }
+            loader.loadChapter(chapter)
+        } catch (e: Throwable) {
+            if (e is CancellationException) {
+                throw e
+            }
+            return
+        }
+        eventChannel.trySend(Event.ReloadViewerChapters)
+    }
+
+    fun onViewerLoaded(viewer: Viewer?) {
+        mutableState.update {
+            it.copy(viewer = viewer)
+        }
+    }
+
+    /**
+     * Called every time a page changes on the reader. Used to mark the flag of chapters being
+     * read, update tracking services, enqueue downloaded chapter deletion, and updating the active chapter if this
+     * [page]'s chapter is different from the currently active.
+     */
+    fun onPageSelected(page: ReaderPage) {
+        // InsertPage doesn't change page progress
+        if (page is InsertPage) {
+            return
+        }
+
+        val selectedChapter = page.chapter
+        val pages = selectedChapter.pages ?: return
+
+        // Save last page read and mark as read if needed
+        viewModelScope.launchNonCancellable {
+            updateChapterProgress(selectedChapter, page)
+        }
+
+        if (selectedChapter != getCurrentChapter()) {
+            logcat { "Setting ${selectedChapter.chapter.url} as active" }
+            loadNewChapter(selectedChapter)
+        }
+
+        val inDownloadRange = page.number.toDouble() / pages.size > 0.25
+        if (inDownloadRange) {
+            downloadNextChapters()
+        }
+
+        eventChannel.trySend(Event.PageChanged)
+    }
+
+    private fun downloadNextChapters() {
+        if (downloadAheadAmount == 0) return
+        val manga = manga ?: return
+
+        // Only download ahead if current + next chapter is already downloaded too to avoid jank
+        if (getCurrentChapter()?.pageLoader !is DownloadPageLoader) return
+        val nextChapter = state.value.viewerChapters?.nextChapter?.chapter ?: return
+
+        viewModelScope.launchIO {
+            val isNextChapterDownloaded = downloadManager.isChapterDownloaded(
+                nextChapter.name,
+                nextChapter.scanlator,
+                nextChapter.url,
+                manga.title,
+                manga.source,
+            )
+            if (!isNextChapterDownloaded) return@launchIO
+
+            val chaptersToDownload = getNextChapters.await(manga.id, nextChapter.id!!).run {
+                if (readerPreferences.skipDupe.get()) {
+                    removeDuplicates(nextChapter.toDomainChapter()!!)
+                } else {
+                    this
+                }
+            }.take(downloadAheadAmount)
+
+            downloadManager.downloadChapters(
+                manga,
+                chaptersToDownload,
+            )
+        }
+    }
+
+    /**
+     * Removes [currentChapter] from download queue
+     * if setting is enabled and [currentChapter] is queued for download
+     */
+    private fun cancelQueuedDownloads(currentChapter: ReaderChapter): Download? {
+        return downloadManager.getQueuedDownloadOrNull(currentChapter.chapter.id!!)?.also {
+            downloadManager.cancelQueuedDownloads(listOf(it))
+        }
+    }
+
+    /**
+     * Determines if deleting option is enabled and nth to last chapter actually exists.
+     * If both conditions are satisfied enqueues chapter for delete
+     * @param currentChapter current chapter, which is going to be marked as read.
+     */
+    private fun deleteChapterIfNeeded(currentChapter: ReaderChapter) {
+        val removeAfterReadSlots = downloadPreferences.removeAfterReadSlots.get()
+        if (removeAfterReadSlots == -1) return
+
+        // Determine which chapter should be deleted and enqueue
+        val currentChapterPosition = chapterList.indexOf(currentChapter)
+        val chapterToDelete = chapterList.getOrNull(currentChapterPosition - removeAfterReadSlots)
+
+        // If chapter is completely read, no need to download it
+        chapterToDownload = null
+
+        if (chapterToDelete != null) {
+            enqueueDeleteReadChapters(chapterToDelete)
+        }
+    }
+
+    /**
+     * Saves the chapter progress (last read page and whether it's read)
+     * if incognito mode isn't on.
+     */
+    private suspend fun updateChapterProgress(readerChapter: ReaderChapter, page: Page) {
+        val pageIndex = page.index
+
+        mutableState.update {
+            it.copy(currentPage = pageIndex + 1)
+        }
+        readerChapter.requestedPage = pageIndex
+        chapterPageIndex = pageIndex
+
+        if (!incognitoMode && page.status !is Page.State.Error) {
+            readerChapter.chapter.last_page_read = pageIndex
+
+            if (readerChapter.pages?.lastIndex == pageIndex) {
+                updateChapterProgressOnComplete(readerChapter)
+            }
+
+            updateChapter.await(
+                ChapterUpdate(
+                    id = readerChapter.chapter.id!!,
+                    read = readerChapter.chapter.read,
+                    lastPageRead = readerChapter.chapter.last_page_read.toLong(),
+                ),
+            )
+        }
+    }
+
+    private suspend fun updateChapterProgressOnComplete(readerChapter: ReaderChapter) {
+        readerChapter.chapter.read = true
+        updateTrackChapterRead(readerChapter)
+        deleteChapterIfNeeded(readerChapter)
+
+        val markDuplicateAsRead = libraryPreferences.markDuplicateReadChapterAsRead.get()
+            .contains(LibraryPreferences.MARK_DUPLICATE_CHAPTER_READ_EXISTING)
+        if (!markDuplicateAsRead) return
+
+        val duplicateUnreadChapters = unfilteredChapterList
+            .mapNotNull { chapter ->
+                if (
+                    !chapter.read &&
+                    chapter.isRecognizedNumber &&
+                    chapter.chapterNumber.toFloat() == readerChapter.chapter.chapter_number
+                ) {
+                    ChapterUpdate(id = chapter.id, read = true)
+                } else {
+                    null
+                }
+            }
+        updateChapter.awaitAll(duplicateUnreadChapters)
+    }
+
+    fun restartReadTimer() {
+        chapterReadStartTime = Instant.now().toEpochMilli()
+    }
+
+    /**
+     * Saves the chapter last read history if incognito mode isn't on.
+     */
+    suspend fun updateHistory() {
+        getCurrentChapter()?.let { readerChapter ->
+            if (incognitoMode) return@let
+
+            val chapterId = readerChapter.chapter.id!!
+            val endTime = Date()
+            val sessionReadDuration = chapterReadStartTime?.let { endTime.time - it } ?: 0
+
+            upsertHistory.await(HistoryUpdate(chapterId, endTime, sessionReadDuration))
+            chapterReadStartTime = null
+        }
+    }
+
+    /**
+     * Called from the activity to load and set the next chapter as active.
+     */
+    suspend fun loadNextChapter() {
+        val nextChapter = state.value.viewerChapters?.nextChapter ?: return
+        loadAdjacent(nextChapter)
+    }
+
+    /**
+     * Called from the activity to load and set the previous chapter as active.
+     */
+    suspend fun loadPreviousChapter() {
+        val prevChapter = state.value.viewerChapters?.prevChapter ?: return
+        loadAdjacent(prevChapter)
+    }
+
+    /**
+     * Returns the currently active chapter.
+     */
+    fun getCurrentChapter(): ReaderChapter? {
+        return state.value.currentChapter
+    }
+
+    fun getSource() = manga?.source?.let { sourceManager.getOrStub(it) } as? HttpSource
+
+    fun getChapterUrl(): String? {
+        val sChapter = getCurrentChapter()?.chapter ?: return null
+        val source = getSource() ?: return null
+
+        return try {
+            source.getChapterUrl(sChapter)
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, e)
+            null
+        }
+    }
+
+    /**
+     * Bookmarks the currently active chapter.
+     */
+    fun toggleChapterBookmark() {
+        val chapter = getCurrentChapter()?.chapter ?: return
+        val bookmarked = !chapter.bookmark
+        chapter.bookmark = bookmarked
+
+        viewModelScope.launchNonCancellable {
+            updateChapter.await(
+                ChapterUpdate(
+                    id = chapter.id!!,
+                    bookmark = bookmarked,
+                ),
+            )
+        }
+
+        mutableState.update {
+            it.copy(
+                bookmarked = bookmarked,
+            )
+        }
+    }
+
+    /**
+     * Returns the viewer position used by this manga or the default one.
+     */
+    fun getMangaReadingMode(resolveDefault: Boolean = true): Int {
+        val default = readerPreferences.defaultReadingMode.get()
+        val readingMode = ReadingMode.fromPreference(manga?.readingMode?.toInt())
+        return when {
+            resolveDefault && readingMode == ReadingMode.DEFAULT -> default
+            else -> manga?.readingMode?.toInt() ?: default
+        }
+    }
+
+    /**
+     * Updates the viewer position for the open manga.
+     */
+    fun setMangaReadingMode(readingMode: ReadingMode) {
+        val manga = manga ?: return
+        runBlocking(Dispatchers.IO) {
+            setMangaViewerFlags.awaitSetReadingMode(manga.id, readingMode.flagValue.toLong())
+            val currChapters = state.value.viewerChapters
+            if (currChapters != null) {
+                // Save current page
+                val currChapter = currChapters.currChapter
+                currChapter.requestedPage = currChapter.chapter.last_page_read
+
+                mutableState.update {
+                    it.copy(
+                        manga = getManga.await(manga.id),
+                        viewerChapters = currChapters,
+                    )
+                }
+                eventChannel.send(Event.ReloadViewerChapters)
+            }
+        }
+    }
+
+    /**
+     * Returns the orientation type used by this manga or the default one.
+     */
+    fun getMangaOrientation(resolveDefault: Boolean = true): Int {
+        val default = readerPreferences.defaultOrientationType.get()
+        val orientation = ReaderOrientation.fromPreference(manga?.readerOrientation?.toInt())
+        return when {
+            resolveDefault && orientation == ReaderOrientation.DEFAULT -> default
+            else -> manga?.readerOrientation?.toInt() ?: default
+        }
+    }
+
+    /**
+     * Updates the orientation type for the open manga.
+     */
+    fun setMangaOrientationType(orientation: ReaderOrientation) {
+        val manga = manga ?: return
+        viewModelScope.launchIO {
+            setMangaViewerFlags.awaitSetOrientation(manga.id, orientation.flagValue.toLong())
+            val currChapters = state.value.viewerChapters
+            if (currChapters != null) {
+                // Save current page
+                val currChapter = currChapters.currChapter
+                currChapter.requestedPage = currChapter.chapter.last_page_read
+
+                mutableState.update {
+                    it.copy(
+                        manga = getManga.await(manga.id),
+                        viewerChapters = currChapters,
+                    )
+                }
+                eventChannel.send(Event.SetOrientation(getMangaOrientation()))
+                eventChannel.send(Event.ReloadViewerChapters)
+            }
+        }
+    }
+
+    fun toggleCropBorders(): Boolean {
+        val isPagerType = ReadingMode.isPagerType(getMangaReadingMode())
+        return if (isPagerType) {
+            readerPreferences.cropBorders.toggle()
+        } else {
+            readerPreferences.cropBordersWebtoon.toggle()
+        }
+    }
+
+    /**
+     * Generate a filename for the given [manga] and [page]
+     */
+    private fun generateFilename(
+        manga: Manga,
+        page: ReaderPage,
+    ): String {
+        val chapter = page.chapter.chapter
+        val filenameSuffix = " - ${page.number}"
+        return DiskUtil.buildValidFilename(
+            "${manga.title} - ${chapter.name}",
+            DiskUtil.MAX_FILE_NAME_BYTES - filenameSuffix.byteSize(),
+        ) + filenameSuffix
+    }
+
+    /**
+     * Internal helper to save a page to a specific location.
+     */
+    private fun savePage(page: ReaderPage, location: Location, customName: String? = null): Uri {
+        val manga = manga ?: throw Exception("Manga not found")
+        val filename = customName ?: generateFilename(manga, page)
+        return imageSaver.save(
+            image = Image.Page(
+                inputStream = page.stream!!,
+                name = filename,
+                location = location,
+            ),
+        )
+    }
+
+    /**
+     * Saves the current page to the cache and returns its URI.
+     */
+    fun getCurrentPageUri(): Uri? {
+        val chapter = state.value.currentChapter ?: return null
+        val pageIndex = (state.value.currentPage - 1).coerceAtLeast(0)
+        val page = chapter.pages?.getOrNull(pageIndex)
+        if (page?.status != Page.State.Ready || page.stream == null) return null
+
+        return try {
+            savePage(page, Location.Cache, "anki_export_${System.currentTimeMillis()}")
+        } catch (e: Throwable) {
+            logcat(LogPriority.ERROR, e)
+            null
+        }
+    }
+
+    fun showMenus(visible: Boolean) {
+        mutableState.update { it.copy(menuVisible = visible) }
+    }
+
+    fun showLoadingDialog() {
+        mutableState.update { it.copy(dialog = Dialog.Loading) }
+    }
+
+    fun openReadingModeSelectDialog() {
+        mutableState.update { it.copy(dialog = Dialog.ReadingModeSelect) }
+    }
+
+    fun openOrientationModeSelectDialog() {
+        mutableState.update { it.copy(dialog = Dialog.OrientationModeSelect) }
+    }
+
+    fun openPageDialog(page: ReaderPage) {
+        mutableState.update { it.copy(dialog = Dialog.PageActions(page)) }
+    }
+
+    fun openSettingsDialog() {
+        mutableState.update { it.copy(dialog = Dialog.Settings) }
+    }
+
+    fun closeDialog() {
+        mutableState.update { it.copy(dialog = null) }
+    }
+
+    fun enterOcrMode() {
+        mutableState.update { it.copy(ocrSelectionMode = true, menuVisible = false) }
+    }
+
+    fun exitOcrMode() {
+        mutableState.update { it.copy(ocrSelectionMode = false) }
+    }
+
+    /**
+     * Прогрев OCR-двика при входе в читалку: первая ручная область не
+     * должна ждать инициализацию модели («долго грузит»).
+     */
+    fun warmupOcr() {
+        viewModelScope.launchIO {
+            runCatching {
+                val dummy = android.graphics.Bitmap.createBitmap(
+                    64, 64, android.graphics.Bitmap.Config.ARGB_8888,
+                )
+                try {
+                    ocrProcessor.getText(dummy.toOcrImage())
+                } finally {
+                    dummy.recycle()
+                }
+            }
+        }
+    }
+
+    /**
+     * Распознать текст в выбранной прямоугольной области без показа
+     * результата-попапа. Нужен для «долгого касания» (autoclick с удержанием):
+     * пользователь удерживает область, она запоминается, распознаётся и тут же
+     * озвучивается. Возвращает пустую строку, если текста нет.
+     */
+    suspend fun recognizeRegionText(bitmap: Bitmap): String {
+        val work = prepareCropForOcr(bitmap)
+        return try {
+            ocrProcessor.getText(work.toOcrImage())
+        } finally {
+            if (work !== bitmap && !work.isRecycled) work.recycle()
+        }
+    }
+
+    /**
+     * Установить запомненную область сканирования (нормализованный 0..1 box).
+     * Используется в «долгом касании»: область запоминается и переиспользуется.
+     * Хранится в настройках как "left,top,right,bottom".
+     */
+    fun rememberOcrRegion(box: mihon.domain.ocr.model.OcrBoundingBox) {
+        val prefs = uy.kohesive.injekt.Injekt.get<OcrPreferences>()
+        prefs.rememberedScanRegion().set(
+            listOf(box.left, box.top, box.right, box.bottom).joinToString(","),
+        )
+    }
+
+    /**
+     * Мелкие/узкие кропы апскейлим и добавляем белые поля: детектору и
+     * распознаванию нужен масштаб и контекст вокруг надписи, иначе
+     * «нет текста» на вполне читаемом куске.
+     */
+    private fun prepareCropForOcr(src: Bitmap): Bitmap {
+        val minSide = 140
+        val targetWidth = 1200
+        val scale = when {
+            src.height < minSide || src.width < minSide ->
+                minOf(4f, minSide.toFloat() / minOf(src.height, src.width).coerceAtLeast(1))
+            src.width < targetWidth -> minOf(3f, targetWidth.toFloat() / src.width)
+            else -> 1f
+        }
+        val w = (src.width * scale).toInt().coerceAtLeast(1)
+        val h = (src.height * scale).toInt().coerceAtLeast(1)
+        val scaled = if (scale > 1f) {
+            Bitmap.createScaledBitmap(src, w, h, true)
+        } else {
+            src
+        }
+        val pad = (maxOf(w, h) * 0.06f).toInt()
+        if (pad < 4) return scaled
+        val out = Bitmap.createBitmap(w + pad * 2, h + pad * 2, Bitmap.Config.ARGB_8888)
+        out.eraseColor(android.graphics.Color.WHITE)
+        val canvas = android.graphics.Canvas(out)
+        canvas.drawBitmap(scaled, pad.toFloat(), pad.toFloat(), null)
+        if (scaled !== src) scaled.recycle()
+        return out
+    }
+
+    /**
+     * Пометить распознанную область так же, как это делает авточтение: запись
+     * в буфер «Скриншоты» с JPEG-кадром выделенной области, чтобы результат
+     * ручного распознавания не пропадал и был виден на вкладке скриншотов.
+     *
+     * Кадр уменьшается до [MARKED_MAX_SIDE] — в буфер попадают десятки
+     * записей, и полноразмерные JPEG быстро съедают место.
+     *
+     * @return true, если запись создана.
+     */
+    private fun markRecognizedRegion(bitmap: Bitmap, text: String, usedEngine: OcrModel?): Boolean {
+        val prefs = Injekt.get<OcrPreferences>()
+        if (!prefs.autoScreenshotEnabled().get()) return false
+        if (bitmap.isRecycled) return false
+        return runCatching {
+            val scaled = if (maxOf(bitmap.width, bitmap.height) <= MARKED_MAX_SIDE) {
+                bitmap
+            } else {
+                val scale = MARKED_MAX_SIDE.toFloat() / maxOf(bitmap.width, bitmap.height)
+                Bitmap.createScaledBitmap(
+                    bitmap,
+                    (bitmap.width * scale).toInt().coerceAtLeast(1),
+                    (bitmap.height * scale).toInt().coerceAtLeast(1),
+                    true,
+                )
+            }
+            try {
+                val jpeg = java.io.ByteArrayOutputStream().use { out ->
+                    if (scaled.compress(Bitmap.CompressFormat.JPEG, MARKED_JPEG_QUALITY, out)) {
+                        out.toByteArray()
+                    } else {
+                        null
+                    }
+                }
+                val chapterId = state.value.currentChapter?.chapter?.id ?: -1L
+                val pageIndex = (state.value.currentPage - 1).coerceAtLeast(0)
+                OcrScreenshotBuffer.add(
+                    chapterId = chapterId,
+                    pageIndex = pageIndex,
+                    scrollFraction = 0f,
+                    // Выделенная область — это и есть весь кадр записи, поэтому
+                    // единственный регион занимает его целиком.
+                    regions = listOf(
+                        OcrRegion(
+                            order = 0,
+                            text = text.trim(),
+                            boundingBox = OcrBoundingBox(0f, 0f, 1f, 1f),
+                            textOrientation = OcrTextOrientation.Horizontal,
+                        ),
+                    ),
+                    engineUsed = usedEngine?.name?.lowercase() ?: "unknown",
+                    imageWidth = scaled.width,
+                    imageHeight = scaled.height,
+                    imageJpeg = jpeg,
+                    scanRegion = "selection",
+                )
+                true
+            } finally {
+                if (scaled !== bitmap && !scaled.isRecycled) scaled.recycle()
+            }
+        }.getOrElse { e ->
+            logcat(LogPriority.WARN, e) { "Failed to mark recognized OCR region" }
+            false
+        }
+    }
+
+    fun processOcrRegion(bitmap: Bitmap) {
+        viewModelScope.launchIO {
+            mutableState.update { it.copy(isProcessingOcr = true, ocrSelectionMode = false) }
+            try {
+                val work = prepareCropForOcr(bitmap)
+                val text = try {
+                    ocrProcessor.getText(work.toOcrImage())
+                } finally {
+                    if (work !== bitmap) work.recycle()
+                }
+                // Читаем ПОСЛЕ распознавания: без сети онлайн-движок
+                // пропускается, и текст читает локальный. Показываем
+                // фактического исполнителя, иначе «онлайн» — враньё.
+                val usedEngine = ocrProcessor.lastUsedEngine()
+                val queryText = flattenOcrTextForQuery(text)
+                // Помечаем результат так же, как это делает авточтение: запись
+                // в буфер «Скриншоты» с кадром области. Раньше ручной выбор
+                // regions нигде не оставался — распознал, посмотрел, закрыл, и
+                // результат потерян, а вкладка «Скриншоты» показывала только
+                // кадры авточтения.
+                val marked = if (queryText.isNotBlank()) {
+                    markRecognizedRegion(bitmap, queryText, usedEngine)
+                } else {
+                    false
+                }
+                withUIContext {
+                    if (queryText.isNotBlank()) {
+                        showOcrResult(
+                            queryText = queryText,
+                            origin = OcrResultOrigin.ManualSelection,
+                            source = ocrSource(usedEngine),
+                        )
+                        mutableState.update { it.copy(isProcessingOcr = false) }
+                        if (marked) {
+                            eventChannel.send(Event.OcrResultMarked)
+                        }
+                    } else {
+                        mutableState.update { it.copy(isProcessingOcr = false) }
+                        eventChannel.send(Event.OcrNoTextFound)
+                    }
+                }
+            } catch (e: CancellationException) {
+                // Handle coroutine cancellation (e.g., user navigates away)
+                logcat(LogPriority.DEBUG) { "OCR processing cancelled" }
+                withUIContext {
+                    mutableState.update { it.copy(isProcessingOcr = false) }
+                }
+                // Re-throw to properly handle cancellation
+                throw e
+            } catch (e: OutOfMemoryError) {
+                logcat(LogPriority.ERROR, e) { "Out of memory during OCR processing" }
+                withUIContext {
+                    mutableState.update { it.copy(isProcessingOcr = false) }
+                    eventChannel.send(Event.OcrMemoryError)
+                }
+            } catch (e: OcrException.InitializationError) {
+                logcat(LogPriority.ERROR, e) { "Cannot recognize text: OCR engine failed to initialize" }
+                withUIContext {
+                    mutableState.update { it.copy(isProcessingOcr = false) }
+                    eventChannel.send(Event.OcrInitializationError)
+                }
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e) { "OCR processing failed" }
+                withUIContext {
+                    mutableState.update { it.copy(isProcessingOcr = false) }
+                    // Не отбрасываем причину: раньше здесь был Event.OcrError (data
+                    // object), и пользователь видел глухое «Unknown OCR Error
+                    // Occurred», не зная, что именно пошло не так. Передаём
+                    // реальную причину, чтобы показывать её и чинить точечно.
+                    eventChannel.send(Event.OcrError(e.message))
+                }
+            } finally {
+                if (!bitmap.isRecycled) {
+                    bitmap.recycle()
+                }
+            }
+        }
+    }
+
+    /**
+     * АВТО-РЕЖИМ: сканирует всю видимую страницу целиком и сразу озвучивает
+     * распознанный текст (регионы читаются в выбранном порядке чтения:
+     * справа-налево / слева-направо / сверху-вниз). Текст дублируется в
+     * уведомление. Управляется преференсом autoScanAndSpeak.
+     */
+    private var autoScanJob: kotlinx.coroutines.Job? = null
+
+    fun autoScanAndSpeak(context: android.content.Context, bitmap: Bitmap, chapterId: Long, pageIndex: Int) {
+        autoScanJob?.cancel()
+        autoScanJob = viewModelScope.launchIO {
+            try {
+                // Жёсткий таймаут, как в авточтении: «зависший» онлайн-движок не
+                // должен блокировать скан-и-читай вечно.
+                val result = try {
+                    withTimeout(eu.kanade.tachiyomi.data.tts.AutoReadEngine.OCR_FRAME_TIMEOUT_MS) {
+                        scanPageOcr.await(
+                            chapterId = chapterId,
+                            pageIndex = pageIndex,
+                            image = bitmap.toOcrImage(),
+                        )
+                    }
+                } catch (e: TimeoutCancellationException) {
+                    withUIContext { eventChannel.send(Event.OcrNoTextFound) }
+                    return@launchIO
+                }
+                val prefs = mihon.domain.ocr.service.OcrPreferences(
+                    tachiyomi.core.common.preference.AndroidPreferenceStore(context),
+                )
+                // Порядок берём из пресета типа контента, а сортировку — общую
+                // с авточтением: своя копия сравнивала рамки по верхнему краю и
+                // читала мангу слева направо, если баблы стояли на разной высоте.
+                val order = mihon.data.ocr.OcrRegionRules.readingOrderFor(prefs)
+                val sorted = eu.kanade.tachiyomi.data.tts.AutoReadEngine.orderRegions(
+                    result.regions.map {
+                        eu.kanade.tachiyomi.data.tts.AutoReadEngine.Line(
+                            text = it.text,
+                            boundingBox = it.boundingBox,
+                        )
+                    },
+                    order,
+                )
+                val text = sorted.joinToString(". ") {
+                    mihon.domain.ocr.model.normalizeOcrTextForDisplay(it.text)
+                }.trim()
+                if (text.isBlank()) {
+                    withUIContext { eventChannel.send(Event.OcrNoTextFound) }
+                    return@launchIO
+                }
+                withUIContext {
+                    eu.kanade.tachiyomi.data.tts.TtsSpeaker.speak(context, text)
+                    eu.kanade.tachiyomi.data.tts.TtsReadingNotifier.show(context, text)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e) { "Auto scan & speak failed" }
+            } finally {
+                if (!bitmap.isRecycled) bitmap.recycle()
+            }
+        }
+    }
+
+    fun stopAutoSpeak() {
+        autoScanJob?.cancel()
+        autoScanJob = null
+        eu.kanade.tachiyomi.data.tts.TtsSpeaker.stop()
+    }
+
+    fun showOcrResult(
+        queryText: String,
+        origin: OcrResultOrigin,
+        initialSearchText: String = queryText,
+        source: OcrTextSource? = null,
+    ) {
+        mutableState.update {
+            it.copy(dialog = Dialog.OcrResult(queryText, origin, initialSearchText, source))
+        }
+    }
+
+    /**
+     * Кто распознал текст на самом деле.
+     *
+     * Разница важна читателю: без сети онлайн-движок не отвечает, и страницу
+     * читает локальный. Именно это породило жалобу «у онлайн качество то же,
+     * что у локального» — движок был один и тот же. Поэтому в подписи стоит
+     * исполнитель, а когда он не совпадает с выбранным, это сказано прямо.
+     */
+    fun ocrSource(used: OcrModel?): OcrTextSource? {
+        if (used == null) return null
+        val selected = Injekt.get<OcrPreferences>().ocrModel().get()
+        return OcrTextSource(engine = used, usedInsteadOfSelected = used != selected)
+    }
+
+    /**
+     * Источник для тапа по уже распознанной странице: там движок тот, что
+     * отработал при сканировании, — читаем его из репозитория.
+     */
+    fun currentOcrSource(): OcrTextSource? = ocrSource(ocrProcessor.lastUsedEngine())
+
+    fun setBrightnessOverlayValue(value: Int) {
+        mutableState.update { it.copy(brightnessOverlayValue = value) }
+    }
+
+    /**
+     * Saves the image of the selected page on the pictures directory and notifies the UI of the result.
+     * There's also a notification to allow sharing the image somewhere else or deleting it.
+     */
+    fun saveImage() {
+        val page = (state.value.dialog as? Dialog.PageActions)?.page
+        if (page?.status != Page.State.Ready) return
+        val manga = manga ?: return
+
+        val context = Injekt.get<Application>()
+        val notifier = SaveImageNotifier(context)
+        notifier.onClear()
+
+        // Pictures directory.
+        val relativePath = if (readerPreferences.folderPerManga.get()) {
+            DiskUtil.buildValidFilename(
+                manga.title,
+            )
+        } else {
+            ""
+        }
+
+        // Copy file in background.
+        viewModelScope.launchNonCancellable {
+            try {
+                val uri = savePage(page, Location.Pictures.create(relativePath))
+                withUIContext {
+                    notifier.onComplete(uri)
+                    eventChannel.send(Event.SavedImage(SaveImageResult.Success(uri)))
+                }
+            } catch (e: Throwable) {
+                notifier.onError(e.message)
+                eventChannel.send(Event.SavedImage(SaveImageResult.Error(e)))
+            }
+        }
+    }
+
+    /**
+     * Shares the image of the selected page and notifies the UI with the path of the file to share.
+     * The image must be first copied to the internal partition because there are many possible
+     * formats it can come from, like a zipped chapter, in which case it's not possible to directly
+     * get a path to the file and it has to be decompressed somewhere first. Only the last shared
+     * image will be kept so it won't be taking lots of internal disk space.
+     */
+    fun shareImage(copyToClipboard: Boolean) {
+        val page = (state.value.dialog as? Dialog.PageActions)?.page
+        if (page?.status != Page.State.Ready) return
+
+        viewModelScope.launchNonCancellable {
+            try {
+                val uri = savePage(page, Location.Cache)
+                eventChannel.send(if (copyToClipboard) Event.CopyImage(uri) else Event.ShareImage(uri, page))
+            } catch (e: Throwable) {
+                logcat(LogPriority.ERROR, e)
+            }
+        }
+    }
+
+    /**
+     * Sets the image of the selected page as cover and notifies the UI of the result.
+     */
+    fun setAsCover() {
+        val page = (state.value.dialog as? Dialog.PageActions)?.page
+        if (page?.status != Page.State.Ready) return
+        val manga = manga ?: return
+        val stream = page.stream ?: return
+
+        viewModelScope.launchNonCancellable {
+            val result = try {
+                manga.editCover(Injekt.get(), stream())
+                if (manga.isLocal() || manga.favorite) {
+                    SetAsCoverResult.Success
+                } else {
+                    SetAsCoverResult.AddToLibraryFirst
+                }
+            } catch (e: Exception) {
+                SetAsCoverResult.Error
+            }
+            eventChannel.send(Event.SetCoverResult(result))
+        }
+    }
+
+    enum class SetAsCoverResult {
+        Success,
+        AddToLibraryFirst,
+        Error,
+    }
+
+    sealed interface SaveImageResult {
+        class Success(val uri: Uri) : SaveImageResult
+        class Error(val error: Throwable) : SaveImageResult
+    }
+
+    /**
+     * Starts the service that updates the last chapter read in sync services. This operation
+     * will run in a background thread and errors are ignored.
+     */
+    private fun updateTrackChapterRead(readerChapter: ReaderChapter) {
+        if (incognitoMode) return
+        if (!trackPreferences.autoUpdateTrack.get()) return
+
+        val manga = manga ?: return
+        val context = Injekt.get<Application>()
+
+        viewModelScope.launchNonCancellable {
+            trackChapter.await(context, manga.id, readerChapter.chapter.chapter_number.toDouble())
+        }
+    }
+
+    /**
+     * Enqueues this [chapter] to be deleted when [deletePendingChapters] is called. The download
+     * manager handles persisting it across process deaths.
+     */
+    private fun enqueueDeleteReadChapters(chapter: ReaderChapter) {
+        if (!chapter.chapter.read) return
+        val manga = manga ?: return
+
+        viewModelScope.launchNonCancellable {
+            downloadManager.enqueueChaptersToDelete(listOf(chapter.chapter.toDomainChapter()!!), manga)
+        }
+    }
+
+    /**
+     * Deletes all the pending chapters. This operation will run in a background thread and errors
+     * are ignored.
+     */
+    private fun deletePendingChapters() {
+        viewModelScope.launchNonCancellable {
+            downloadManager.deletePendingChapters()
+        }
+    }
+
+    @Immutable
+    data class State(
+        val manga: Manga? = null,
+        val viewerChapters: ViewerChapters? = null,
+        val bookmarked: Boolean = false,
+        val isLoadingAdjacentChapter: Boolean = false,
+        val currentPage: Int = -1,
+
+        /**
+         * Viewer used to display the pages (pager, webtoon, ...).
+         */
+        val viewer: Viewer? = null,
+        val dialog: Dialog? = null,
+        val menuVisible: Boolean = false,
+        val ocrSelectionMode: Boolean = false,
+        val isProcessingOcr: Boolean = false,
+        @IntRange(from = -100, to = 100) val brightnessOverlayValue: Int = 0,
+    ) {
+        val currentChapter: ReaderChapter?
+            get() = viewerChapters?.currChapter
+
+        val totalPages: Int
+            get() = currentChapter?.pages?.size ?: -1
+    }
+
+    sealed interface Dialog {
+        data object Loading : Dialog
+        data object Settings : Dialog
+        data object ReadingModeSelect : Dialog
+        data object OrientationModeSelect : Dialog
+        data class PageActions(val page: ReaderPage) : Dialog
+        data class OcrResult(
+            val queryText: String,
+            val origin: OcrResultOrigin,
+            val initialSearchText: String,
+            /**
+             * Кто именно распознал текст. Читатель вручную выбирает области и
+             * видит, что качество зависит от размера выделения, но не понимает,
+             * какой движок это сделал. null — источник неизвестен.
+             */
+            val source: OcrTextSource? = null,
+        ) : Dialog
+    }
+
+
+
+    enum class OcrResultOrigin {
+        CachedPageTap,
+        ManualSelection,
+    }
+
+    sealed interface Event {
+        data object ReloadViewerChapters : Event
+        data object PageChanged : Event
+        data class SetOrientation(val orientation: Int) : Event
+        data class SetCoverResult(val result: SetAsCoverResult) : Event
+
+        data class SavedImage(val result: SaveImageResult) : Event
+        data class ShareImage(val uri: Uri, val page: ReaderPage) : Event
+        data class CopyImage(val uri: Uri) : Event
+        data object OcrNoTextFound : Event
+        /** Результат ручного распознавания помечен в буфере «Скриншоты». */
+        data object OcrResultMarked : Event
+
+        data object OcrMemoryError : Event
+        data object OcrInitializationError : Event
+        /** Общая ошибка OCR. `message` — реальная причина (или null). */
+        data class OcrError(val message: String? = null) : Event
+    }
+}

@@ -1,0 +1,552 @@
+package eu.kanade.presentation.reader.components
+
+import android.media.AudioManager
+import android.media.ToneGenerator
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.IconButton
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.HourglassBottom
+import androidx.compose.material.icons.outlined.HourglassTop
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.AutoMode
+import androidx.compose.material.icons.outlined.CameraAlt
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.DocumentScanner
+import androidx.compose.material.icons.outlined.GraphicEq
+import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.RecordVoiceOver
+import androidx.compose.material.icons.outlined.StopCircle
+import androidx.compose.material.icons.outlined.Pause
+import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.RecordVoiceOver
+import androidx.compose.material.icons.outlined.SmartToy
+import androidx.compose.material.icons.outlined.Speed
+import androidx.compose.material.icons.outlined.TouchApp
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SmallFloatingActionButton
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import eu.kanade.tachiyomi.util.system.toast
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
+import mihon.domain.ocr.service.ScanRegion
+
+/**
+ * SAO-стиль: единственная перемещаемая плавающая кнопка. Тап (со звуком)
+ * раскрывает вертикальное меню со всеми действиями: OCR (с выбором области),
+ * автопрокрутка со скоростью, настройки озвучки. Кнопку можно перетащить
+ * в любое место экрана — позиция сохраняется, пока открыта читалка.
+ */
+@Composable
+fun ReaderFloatingControls(
+    visible: Boolean,
+    onTriggerOcr: () -> Unit,
+    onOpenOcrSettings: () -> Unit,
+    /** Отдельная кнопка полной настройки «как читать баблы» (OCR). */
+    onOpenFullOcrSettings: () -> Unit = {},
+    onOpenAiChat: () -> Unit = {},
+    onScanRegionChange: (ScanRegion) -> Unit,
+    onAutoscrollToggle: (Boolean, Float) -> Unit,
+    onAutoSpeakPage: () -> Unit = {},
+    onStopSpeak: () -> Unit = {},
+    /** Мгновенный скриншот текущего кадра (Glens/любой движок): OCR сейчас,
+     *  не дожидаясь авточтения, и запись в буфер «Скриншоты». */
+    onInstantScreenshot: () -> Unit = {},
+    onReadingOrderChange: (String) -> Unit = {},
+    readingOrder: String = "rtl",
+    /** Пресет типа контента (id из OcrContentType): задаёт и порядок чтения. */
+    contentPreset: String = "balanced",
+    onContentPresetChange: (String) -> Unit = {},
+    /** true — голос выбирает читатель, false — определяется автоматически. */
+    manualVoiceMode: Boolean = false,
+    /** Голос в ручном режиме: "female" | "male". */
+    manualVoiceGender: String = "female",
+    onVoiceModeChange: (Boolean) -> Unit = {},
+    onVoiceGenderChange: (String) -> Unit = {},
+    /** Значки 🔊 на каждой реплике (переключатель). */
+    voiceIconsEnabled: Boolean = false,
+    /** Включить/выключить значки озвучки реплик. */
+    onVoiceIconsToggle: (Boolean) -> Unit = {},
+    /** Идёт ли чтение (для состояний кнопки «Стоп чтения»: покой / работа). */
+    readingActive: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    var manualVoice by remember(manualVoiceMode) { mutableStateOf(manualVoiceMode) }
+    var voiceGender by remember(manualVoiceGender) { mutableStateOf(manualVoiceGender) }
+    var menuOpen by remember { mutableStateOf(false) }
+    val ctorContext = androidx.compose.ui.platform.LocalContext.current
+    val ctorVersion by eu.kanade.tachiyomi.data.ui.UiConstructorStore.version.collectAsState()
+    val ctorUiPrefs = ctorContext.getSharedPreferences("yomikai_ctor_ui", android.content.Context.MODE_PRIVATE)
+    var ctorExpanded by remember { mutableStateOf(ctorUiPrefs.getBoolean("menu_ctor_expanded", true)) }
+    val userActs = remember(ctorVersion) { eu.kanade.tachiyomi.data.ui.UiActionRegistry.forPlacement(ctorContext, mihon.data.ui.UiPlacement.FLOATING_MENU) }
+    val hiddenM = remember(ctorVersion) { eu.kanade.tachiyomi.data.ui.UiConstructorStore.moduleHidden(ctorContext) }
+    var isAutoscrollActive by remember { mutableStateOf(false) }
+    var autoscrollSpeed by remember { mutableFloatStateOf(2f) }
+    var offsetX by remember { mutableFloatStateOf(0f) }
+    var offsetY by remember { mutableFloatStateOf(0f) }
+
+    // Короткий SAO-подобный "бип" на открытие/закрытие меню и действия
+    val tone = remember { runCatching { ToneGenerator(AudioManager.STREAM_SYSTEM, 55) }.getOrNull() }
+    DisposableEffect(Unit) {
+        onDispose { runCatching { tone?.release() } }
+    }
+    fun beepOpen() = runCatching { tone?.startTone(ToneGenerator.TONE_PROP_BEEP, 60) }
+    fun beepAction() = runCatching { tone?.startTone(ToneGenerator.TONE_PROP_ACK, 70) }
+
+    Box(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.BottomEnd,
+    ) {
+    // Статус скана — БЕЗ громоздких центральных оверлеев и заметок
+    // «Текст готов»: в углу экрана маленькая песочная анимация (часики
+    // переворачиваются верх-вниз), а подробности уходят уведомлением в шторку.
+    val ocrStage by mihon.data.ocr.OcrStageBus.event.collectAsState()
+    val scanActive = ocrStage.stage == mihon.data.ocr.OcrStageBus.Stage.DETECTING ||
+        ocrStage.stage == mihon.data.ocr.OcrStageBus.Stage.RECOGNIZING
+    if (scanActive) {
+        // Часики изолированы в ОТДЕЛЬНУЮ самодельную компосабл: анимация
+        // переворота рекомпозирует только крошечную иконку, а НЕ всё плавающее
+        // меню дважды в секунду (что на слабых устройствах отъедало UI-поток
+        // и замедляло захват кадра рядом с OCR).
+        ScanHourglassStateIcon(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(10.dp),
+        )
+    }
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(),
+            exit = fadeOut(),
+        ) {
+            Column(
+                modifier = Modifier
+                    .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
+                    // Держим кнопку НАД нижней панелью читалки, чтобы не
+                    // перекрывать шестерёнку настроек и прочие кнопки меню.
+                    .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 120.dp),
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                // Раскрывающееся меню (SAO): столбец пунктов над кнопкой
+                AnimatedVisibility(
+                    visible = menuOpen,
+                    enter = fadeIn() + scaleIn(initialScale = 0.8f),
+                    exit = fadeOut() + scaleOut(targetScale = 0.8f),
+                ) {
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.96f),
+                        ),
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .verticalScroll(rememberScrollState())
+                                .heightIn(max = 480.dp)
+                                .padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            horizontalAlignment = Alignment.End,
+                        ) {
+                                if (!hiddenM.contains("r_scan")) {
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("OCR скан  ", style = MaterialTheme.typography.labelMedium)
+                                    SmallFloatingActionButton(onClick = {
+                                        beepAction()
+                                        // Сразу режим выделения области: промежуточные
+                                        // кнопки «100%/верх/низ» убраны как лишние — область
+                                        // пользователь выбирает перетаскиванием.
+                                        onTriggerOcr()
+                                    }) {
+                                        Icon(Icons.Outlined.DocumentScanner, contentDescription = "OCR")
+                                    }
+                                }
+
+                                }
+                                if (!hiddenM.contains("r_autoscroll")) {
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        if (isAutoscrollActive) "Стоп прокрутки  " else "Автопрокрутка  ",
+                                        style = MaterialTheme.typography.labelMedium,
+                                    )
+                                    SmallFloatingActionButton(onClick = {
+                                        beepAction()
+                                        isAutoscrollActive = !isAutoscrollActive
+                                        onAutoscrollToggle(isAutoscrollActive, autoscrollSpeed)
+                                    }) {
+                                        Icon(
+                                            if (isAutoscrollActive) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                                            contentDescription = "Автопрокрутка",
+                                            tint = if (isAutoscrollActive) {
+                                                MaterialTheme.colorScheme.primary
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurface
+                                            },
+                                        )
+                                    }
+                                }
+
+                                }
+                                if (isAutoscrollActive) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Outlined.Speed, contentDescription = null)
+                                        Slider(
+                                            value = autoscrollSpeed,
+                                            onValueChange = {
+                                                autoscrollSpeed = it
+                                                onAutoscrollToggle(true, autoscrollSpeed)
+                                            },
+                                            valueRange = 1f..10f,
+                                            modifier = Modifier.width(140.dp),
+                                        )
+                                        Text("×${autoscrollSpeed.roundToInt()}")
+                                    }
+                                }
+                                if (!hiddenM.contains("r_autoread")) {
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        if (readingActive) "Чтение: идёт…  " else "Прочитать страницу  ",
+                                        style = MaterialTheme.typography.labelMedium,
+                                    )
+                                    SmallFloatingActionButton(
+                                        onClick = {
+                                            beepAction()
+                                            menuOpen = false
+                                            onAutoSpeakPage()
+                                        },
+                                        containerColor = if (readingActive) {
+                                            MaterialTheme.colorScheme.tertiaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.secondaryContainer
+                                        },
+                                    ) {
+                                        Icon(
+                                            if (readingActive) Icons.Outlined.GraphicEq else Icons.Outlined.PlayArrow,
+                                            contentDescription = "Прочитать страницу",
+                                            tint = if (readingActive) {
+                                                MaterialTheme.colorScheme.onTertiaryContainer
+                                            } else {
+                                                MaterialTheme.colorScheme.onSecondaryContainer
+                                            },
+                                        )
+                                    }
+                                }
+
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Стоп чтения  ", style = MaterialTheme.typography.labelMedium)
+                                    SmallFloatingActionButton(
+                                        onClick = {
+                                            beepAction()
+                                            onStopSpeak()
+                                        },
+                                        containerColor = if (readingActive) {
+                                            MaterialTheme.colorScheme.errorContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.surfaceVariant
+                                        },
+                                    ) {
+                                        Icon(
+                                            if (readingActive) Icons.Outlined.StopCircle else Icons.Outlined.Pause,
+                                            contentDescription = "Стоп чтения",
+                                            tint = if (readingActive) {
+                                                MaterialTheme.colorScheme.onErrorContainer
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            },
+                                        )
+                                    }
+                                }
+                                if (!hiddenM.contains("r_instant_sc")) {
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Скриншот сейчас  ", style = MaterialTheme.typography.labelMedium)
+                                    SmallFloatingActionButton(onClick = {
+                                        beepAction()
+                                        onInstantScreenshot()
+                                    }) {
+                                        Icon(Icons.Outlined.CameraAlt, contentDescription = "Скриншот сейчас")
+                                    }
+                                }
+
+                                }
+                                if (!hiddenM.contains("r_voiceicons")) {
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        if (voiceIconsEnabled) "Значки озвучки: вкл  " else "Значки озвучки: выкл  ",
+                                        style = MaterialTheme.typography.labelMedium,
+                                    )
+                                    SmallFloatingActionButton(onClick = {
+                                        beepAction()
+                                        onVoiceIconsToggle(!voiceIconsEnabled)
+                                    }) {
+                                        Icon(
+                                            Icons.Outlined.RecordVoiceOver,
+                                            contentDescription = "Значки озвучки",
+                                            tint = if (voiceIconsEnabled) {
+                                                MaterialTheme.colorScheme.primary
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurface
+                                            },
+                                        )
+                                    }
+                                }
+
+                                }
+                                if (!hiddenM.contains("r_order")) {
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    val presetTitle = when (contentPreset) {
+                                        "manga" -> "Манга"
+                                        "manhwa" -> "Манхва"
+                                        "manhua" -> "Маньхуа"
+                                        "comic" -> "Комикс"
+                                        else -> "Сбаланс."
+                                    }
+                                    val presetOrder = when (contentPreset) {
+                                        "manga" -> "← Справа налево"
+                                        "manhwa", "manhua" -> "↓ Сверху вниз"
+                                        "comic" -> "→ Слева направо"
+                                        else -> when (readingOrder) {
+                                            "ltr" -> "→ Слева направо"
+                                            "vertical" -> "↓ Сверху вниз"
+                                            else -> "← Справа налево"
+                                        }
+                                    }
+                                    Text("$presetTitle · $presetOrder  ", style = MaterialTheme.typography.labelMedium)
+                                    SmallFloatingActionButton(onClick = {
+                                        beepAction()
+                                        onContentPresetChange(
+                                            when (contentPreset) {
+                                                "manga" -> "manhwa"
+                                                "manhwa" -> "manhua"
+                                                "manhua" -> "comic"
+                                                "comic" -> "manga"
+                                                else -> "manga"
+                                            },
+                                        )
+                                    }) {
+                                        Icon(Icons.Outlined.DocumentScanner, contentDescription = "Режим чтения: $presetTitle")
+                                    }
+                                }
+
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("AI-чат  ", style = MaterialTheme.typography.labelMedium)
+                                    SmallFloatingActionButton(onClick = {
+                                        beepAction()
+                                        menuOpen = false
+                                        onOpenAiChat()
+                                    }) {
+                                        Icon(Icons.Outlined.SmartToy, contentDescription = "AI-чат")
+                                    }
+                                }
+
+                                // Голос: режим (авто/ручной) и, в ручном,
+                                // выбор пола. Две кнопки рядом — чтобы не
+                                // уходить в настройки посреди главы.
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        if (manualVoice) "Голос: вручную  " else "Голос: авто  ",
+                                        style = MaterialTheme.typography.labelMedium,
+                                    )
+                                    SmallFloatingActionButton(onClick = {
+                                        beepAction()
+                                        manualVoice = !manualVoice
+                                        onVoiceModeChange(manualVoice)
+                                    }) {
+                                        Icon(
+                                            if (manualVoice) Icons.Outlined.TouchApp else Icons.Outlined.AutoMode,
+                                            contentDescription = "Режим выбора голоса",
+                                        )
+                                    }
+
+                                    Spacer(Modifier.width(8.dp))
+
+                                    SmallFloatingActionButton(
+                                        onClick = {
+                                            if (!manualVoice) return@SmallFloatingActionButton
+                                            beepAction()
+                                            voiceGender = if (voiceGender == "male") "female" else "male"
+                                            onVoiceGenderChange(voiceGender)
+                                        },
+                                        containerColor = if (manualVoice) {
+                                            MaterialTheme.colorScheme.primaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.surfaceVariant
+                                        },
+                                    ) {
+                                        Text(if (voiceGender == "male") "♂" else "♀")
+                                    }
+                                }
+
+                                if (!hiddenM.contains("r_tts")) {
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Озвучка (TTS)  ", style = MaterialTheme.typography.labelMedium)
+                                    SmallFloatingActionButton(onClick = {
+                                        beepAction()
+                                        menuOpen = false
+                                        onOpenOcrSettings()
+                                    }) {
+                                        Icon(Icons.Outlined.RecordVoiceOver, contentDescription = "Озвучка")
+                                    }
+                                }
+
+                                }
+                                if (!hiddenM.contains("r_ocr_bubbles")) {
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Настройки OCR (баблы)  ", style = MaterialTheme.typography.labelMedium)
+                                    SmallFloatingActionButton(onClick = {
+                                        beepAction()
+                                        menuOpen = false
+                                        onOpenFullOcrSettings()
+                                    }) {
+                                        Icon(Icons.Outlined.Tune, contentDescription = "Настройки OCR")
+                                    }
+                                }
+
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Мужской голос  ", style = MaterialTheme.typography.labelMedium)
+                                    SmallFloatingActionButton(onClick = {
+                                        Injekt.get<mihon.domain.ocr.service.OcrPreferences>().voicePresetGender().set("male")
+                                        ctorContext.toast("Мужской голос по умолчанию")
+                                    }) {
+                                        Icon(Icons.Outlined.RecordVoiceOver, contentDescription = "Мужской голос")
+                                    }
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Женский голос  ", style = MaterialTheme.typography.labelMedium)
+                                    SmallFloatingActionButton(onClick = {
+                                        Injekt.get<mihon.domain.ocr.service.OcrPreferences>().voicePresetGender().set("female")
+                                        ctorContext.toast("Женский голос по умолчанию")
+                                    }) {
+                                        Icon(Icons.Outlined.RecordVoiceOver, contentDescription = "Женский голос")
+                                    }
+                                }
+                                if (userActs.isNotEmpty()) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text("Кнопки конструктора  ", style = MaterialTheme.typography.labelMedium)
+                                        IconButton(onClick = {
+                                            ctorExpanded = !ctorExpanded
+                                            ctorUiPrefs.edit().putBoolean("menu_ctor_expanded", ctorExpanded).apply()
+                                        }) {
+                                            Icon(if (ctorExpanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown, contentDescription = "Скрыть или показать кнопки конструктора")
+                                        }
+                                    }
+                                    if (ctorExpanded) {
+                                        userActs.filterNot { it.title.startsWith("Пресет") }.forEach { act ->
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(act.title + "  ", style = MaterialTheme.typography.labelMedium)
+                                                SmallFloatingActionButton(onClick = {
+                                                    ctorContext.toast(eu.kanade.tachiyomi.data.ui.UiActionRegistry.apply(ctorContext, act))
+                                                }) {
+                                                    Icon(Icons.Outlined.Tune, contentDescription = act.title)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                Text(
+                                    "yomikai " + eu.kanade.tachiyomi.AppInfo.getVersionName(),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Главная кнопка: тап — меню; перетаскивание — отдельная
+                // обёртка Box поверх FAB, чтобы клик и drag не конфликтовали.
+                Box(
+                    modifier = Modifier.pointerInput(Unit) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            offsetX = (offsetX + dragAmount.x).coerceIn(-4000f, 0f)
+                            offsetY = (offsetY + dragAmount.y).coerceIn(-4000f, 400f)
+                        }
+                    },
+                ) {
+                    FloatingActionButton(
+                        onClick = {
+                            beepOpen()
+                            menuOpen = !menuOpen
+                        },
+                        containerColor = MaterialTheme.colorScheme.primary,
+                    ) {
+                        Icon(
+                            if (menuOpen) Icons.Outlined.Close else Icons.Outlined.Menu,
+                            contentDescription = "Меню читалки",
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+/**
+ * Маленькие «часики» статуса OCR, изолированные от родителя: переворот
+ * иконки дважды в секунду рекомпозирует ТОЛЬКО эту иконку, а не всё
+ * плавающее меню, поэтому onUi-поток не проседает рядом с OCR.
+ */
+@Composable
+private fun ScanHourglassStateIcon(
+    modifier: Modifier = Modifier,
+) {
+    var flip by androidx.compose.runtime.remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        while (true) {
+            flip = !flip
+            kotlinx.coroutines.delay(700)
+        }
+    }
+    Icon(
+        imageVector = if (flip) Icons.Outlined.HourglassTop else Icons.Outlined.HourglassBottom,
+        contentDescription = "Сканирование",
+        tint = MaterialTheme.colorScheme.primary,
+        modifier = modifier,
+    )
+}

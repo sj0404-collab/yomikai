@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.OverlayReader" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:colorPrimary">#1565C0</item>
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>
