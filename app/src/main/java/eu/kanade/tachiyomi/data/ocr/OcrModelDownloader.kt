@@ -1,6 +1,8 @@
 package eu.kanade.tachiyomi.data.ocr
 
 import android.content.Context
+import eu.kanade.tachiyomi.util.system.cancelNotification
+import eu.kanade.tachiyomi.util.system.notify
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -43,6 +45,19 @@ private fun formatSize(bytes: Long): String = when {
 private const val CHANNEL_ID = "model_download"
 private const val NOTIF_ID = 77001
 
+/**
+ * Свой id на каждый пак. Раньше все пакы делили один 77001, поэтому пак,
+ * который заканчивался первым, отменял чужое уведомление о прогрессе.
+ */
+private val NOTIF_IDS = mapOf(
+    "cyrillic_ocr" to 77001,
+    "manga_ocr" to 77002,
+    "manga_ocr_fast" to 77003,
+    "panel_detector" to 77004,
+)
+
+private fun notifIdFor(pack: String): Int = NOTIF_IDS[pack] ?: NOTIF_ID
+
 private fun ensureChannel(context: Context) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -64,6 +79,8 @@ private fun showNotif(
     progress: Int,
     downloadedBytes: Long = 0,
     totalBytes: Long = 0,
+    notifId: Int = NOTIF_ID,
+    ongoing: Boolean = true,
 ) {
     ensureChannel(context)
     val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -80,17 +97,23 @@ private fun showNotif(
         .setSmallIcon(android.R.drawable.stat_sys_download)
         .setContentTitle(title)
         .setContentText(contentText)
-        .setProgress(100, progress, progress < 0)
+        .setProgress(100, progress, progress < 0 && ongoing)
         .setContentIntent(pi)
-        .setOngoing(true)
+        .setOngoing(ongoing)
+        .setAutoCancel(!ongoing)
         .setSilent(true)
+        // Итоговое уведомление само исчезает: иначе оно висело бы несмахиваемым.
+        .setTimeoutAfter(if (ongoing) 0L else 5_000L)
         .build()
-    nm.notify(NOTIF_ID, notif)
+    // Обёртка проекта сама проверяет POST_NOTIFICATIONS (targetSdk 36), а
+    // вызов обёрнут: без разрешения сырой notify() бросает SecurityException,
+    // и ошибка уведомления глушила всю загрузку пака.
+    runCatching { context.notify(notifId, notif) }
+        .onFailure { it.logcat(LogPriority.WARN) { "Model download notify failed" } }
 }
 
-private fun cancelNotif(context: Context) {
-    val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-    nm?.cancel(NOTIF_ID)
+private fun cancelNotif(context: Context, notifId: Int = NOTIF_ID) {
+    runCatching { context.cancelNotification(notifId) }
 }
 
 object OcrModelDownloader {
@@ -311,6 +334,7 @@ object OcrModelDownloader {
                                     pct,
                                     downloadedBytes = totalDownloaded,
                                     totalBytes = totalPackSize.takeIf { it > 0 } ?: 0L,
+                                    notifId = notifIdFor(pack),
                                 )
                             }
                         }
@@ -330,18 +354,29 @@ object OcrModelDownloader {
             } finally {
                 downloadMutex.withLock { activePacks.remove(pack) }
                 setProgress(pack, null)
-            cancelNotif(context)
+                // Гасим уведомление ИМЕННО этого пака: общий id отменял
+                // прогресс параллельной загрузки соседнего пака.
+                cancelNotif(context, notifIdFor(pack))
             }
 
             withContext(Dispatchers.Main) {
                 if (ok) {
-                    cancelNotif(context)
                     val size = installedSize(context, pack)
                     val sizeStr = if (size > 0) " (${formatSize(size)})" else ""
-                    showNotif(context, "Модели установлены", "Локальный OCR готов$sizeStr", 100)
+                    // ongoing=false: раньше тут отменяли уведомление и тут же
+                    // публиковали НОВОЕ с setOngoing(true) под тем же id — оно
+                    // висело несмахиваемым с полосой 100% до перезапуска.
+                    showNotif(
+                        context,
+                        "Модели установлены",
+                        "Локальный OCR готов$sizeStr",
+                        100,
+                        notifId = notifIdFor(pack),
+                        ongoing = false,
+                    )
                     context.toast("Модели установлены: локальный OCR готов к работе$sizeStr")
                 } else {
-                    cancelNotif(context)
+                    cancelNotif(context, notifIdFor(pack))
                     context.toast("Не удалось скачать модели. Проверьте интернет и повторите")
                 }
                 onFinished(ok)

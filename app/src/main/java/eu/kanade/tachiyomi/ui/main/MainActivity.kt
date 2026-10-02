@@ -169,6 +169,13 @@ class MainActivity : BaseActivity() {
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 4711)
         }
 
+        // Модели OCR стартуют только после того, как разрешение на уведомления
+        // хоть раз спросили. Раньше загрузка на 21 МБ стартовала в
+        // Application.onCreate — раньше диалога разрешения, — поэтому её
+        // первые уведомления уходили в пустоту, а на Android 13+ notify()
+        // бросал SecurityException прямо в обработчик прогресса.
+        (application as? eu.kanade.tachiyomi.App)?.ensureOcrModelsInstalled()
+
         Migrator.awaitAndRelease()
 
         // Do not let the launcher create a new activity http://stackoverflow.com/questions/16283079

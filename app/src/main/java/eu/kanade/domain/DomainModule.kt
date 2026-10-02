@@ -309,14 +309,16 @@ class DomainModule : InjektModule {
         addSingletonFactory<PanelDetectionRepository> {
             PanelDetectionRepositoryImpl(
                 context = get<Application>(),
-                // Фолбэк: YOLO-модель из встроенного в APK tar.xz —
-                // детектор панелей/баллонов работает без скачивания
-                embeddedModelProvider = {
-                    // YOLO вынесен из APK (вес): при первом использовании
-                    // докачивается 6МБ пак panel_detector
-                    val app = get<Application>()
-                    eu.kanade.tachiyomi.data.ocr.OcrModelDownloader.ensurePanelDetector(app)
-                },
+                // YOLO-детектор панелей НЕ качается сам. Он нужен только для
+                // навигации по панелям и нарезки облачков авточтением; чтение
+                // текста работает на собственном детекторе PP-OCR и без него.
+                // Раньше здесь стоял ensurePanelDetector(), и 6 МБ уходили в сеть
+                // неявно — из навигации или из авточтения, без всякого согласия,
+                // причём ход озвучки стоял до конца загрузки.
+                // Теперь модель ставится только явной кнопкой в настройках, а
+                // без неё detectPanels() отдаёт PanelDetectionResult.EMPTY и
+                // распознавание деградирует до целой страницы.
+                embeddedModelProvider = { null },
             )
         }
         addFactory { DetectPanels(get()) }
