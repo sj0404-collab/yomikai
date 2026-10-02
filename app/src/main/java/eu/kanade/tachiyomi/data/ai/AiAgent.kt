@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.data.ui.UiActionRegistry
 import eu.kanade.tachiyomi.data.ui.UiTabRegistry
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.online.HttpSource
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -368,7 +369,15 @@ object AiAgent {
     ): AiAssistant.ChatReply? {
         var reply: AiAssistant.ChatReply? = null
         for (attempt in 0 until 3) {
-            reply = runCatching { chat(prompt, systemPrompt) }.getOrNull()
+            // Отмена не считается сбоем модели: иначе «Стоп» ждал бы паузу
+            // перед следующей попыткой и мог бы вернуть частичный ответ.
+            reply = try {
+                chat(prompt, systemPrompt)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            }
             if (reply != null) break
             kotlinx.coroutines.delay(800L * (attempt + 1))
         }
@@ -637,15 +646,21 @@ object AiAgent {
                 // ограничитель убивал их всегда, то есть эти инструменты не
                 // могли succeed НИКОГДА.
                 val limit = TOOL_TIMEOUT_MS[call.name] ?: DEFAULT_TOOL_TIMEOUT_MS
-                val r = runCatching {
+                // runCatching ловит и CancellationException: «Стоп» в чате лишь превращался
+                // в текст ошибки, а цикл продолжал крутить инструменты и API.
+                // Отмену пробрасываем наверх, ловим только обычные сбои.
+                val r = try {
                     withTimeoutOrNull(limit) { execute(context, call, chat, mangaId, onProgress) }
                         ?: ToolResult(
                             call.name,
                             "ОШИБКА: инструмент не ответил за ${humanMs(limit)}",
                             status = "error",
                         )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    ToolResult(call.name, "ОШИБКА: ${e.message?.take(160)}", status = "error")
                 }
-                    .getOrElse { ToolResult(call.name, "ОШИБКА: ${it.message?.take(160)}", status = "error") }
                     .copy(
                         args = call.args.toString().take(200),
                         round = round,
@@ -1302,10 +1317,15 @@ object AiAgent {
                         }
                         // Шаг за шагом: следующий может работать с файлом,
                         // который создал предыдущий, а после ошибки — уже нет.
-                        val r = runCatching { execute(context, AiSkills.toCall(step), chatFn, mangaId) }
-                            .getOrElse { e ->
-                                AiAgent.ToolResult(step.tool, "ОШИБКА: ${e.message?.take(160)}", status = "error")
-                            }
+                        // Отмену («Стоп») пробрасываем, а не прячем в текст ошибки — иначе
+                        // отменённый ход продолжал бы жечь лимиты и время.
+                        val r = try {
+                            execute(context, AiSkills.toCall(step), chatFn, mangaId)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            AiAgent.ToolResult(step.tool, "ОШИБКА: ${e.message?.take(160)}", status = "error")
+                        }
                         produced += listOfNotNull(r.fileProduced)
                         val isError = r.status == "error"
                         lines += "${index + 1}/${steps.size} ${step.tool}" +
@@ -1996,6 +2016,7 @@ object AiAgent {
     private fun checkSite(rawUrl: String): String {
         if (rawUrl.isBlank()) return "ОШИБКА: пустой URL"
         val url = if (rawUrl.startsWith("http")) rawUrl else "https://$rawUrl"
+        blockedBySsrf(url)?.let { return it }
         return runCatching {
             val started = System.currentTimeMillis()
             val conn = AiAssistant.openConnection(url)
@@ -2055,6 +2076,7 @@ object AiAgent {
         val url = rawUrl.trim()
         if (url.isBlank()) return "ОШИБКА: пустой URL"
         val normalized = if (url.startsWith("http")) url else "https://$url"
+        blockedBySsrf(normalized)?.let { return it }
         return runCatching {
             val html = fetchText(normalized, maxChars.coerceIn(500, 60_000))
             val text = stripHtml(
@@ -2088,6 +2110,7 @@ object AiAgent {
         val url = rawUrl.trim()
         if (url.isBlank()) return ToolResult("web_screenshot", "ОШИБКА: пустой URL", status = "error")
         if (!url.startsWith("http")) return ToolResult("web_screenshot", "ОШИБКА: нужен полный URL с http(s)", status = "error")
+        blockedBySsrf(url)?.let { return ToolResult("web_screenshot", it, status = "error") }
         val enc = java.net.URLEncoder.encode(url, "UTF-8")
         val services = listOf(
             "https://s.wordpress.com/mshots/v1/$enc?w=$width" to "mshots",
@@ -2167,7 +2190,41 @@ object AiAgent {
             .take(30)
             .ifBlank { "page" }
 
-    private fun fetchText(url: String, maxChars: Int): String {
+    /**
+ * Не пускает инструменты агента во внутреннюю сеть телефона.
+ *
+ * Адреса приходят из текста: из распознанной реплики на странице манги, из
+ * вложения или из ответа предыдущего `web_fetch`. Без проверки модель,
+ * подхватившая оттуда инструкцию вроде «вызови web_fetch на 192.168.1.1»,
+ * читала бы ответы и печатала их в чат — то есть съезжала по домашнему
+ * роутеру и NAS. Возвращает текст ошибки, если адрес запрещён, и null иначе.
+ */
+private fun blockedBySsrf(rawUrl: String): String? {
+    val uri = runCatching { java.net.URI(rawUrl) }.getOrNull()
+        ?: return "ОШИБКА: не разобрался адрес «$rawUrl»"
+    val scheme = uri.scheme?.lowercase()
+    if (scheme != "http" && scheme != "https") {
+        return "ОШИБКА: схема «${scheme ?: "?"}» не поддерживается, нужен http/https"
+    }
+    val host = uri.host?.trim('[', ']').orEmpty()
+    if (host.isBlank()) return "ОШИБКА: в адресе «$rawUrl» нет хоста"
+
+    val addresses = runCatching {
+        java.net.InetAddress.getAllByName(host)
+    }.getOrElse { return "ОШИБКА: не удалось разрешить «$host»" }
+    if (addresses.isEmpty()) return "ОШИБКА: не удалось разрешить «$host»"
+
+    for (address in addresses) {
+        if (address.isLoopbackAddress || address.isAnyLocalAddress || address.isLinkLocalAddress ||
+            address.isSiteLocalAddress || address.isMulticastAddress
+        ) {
+            return "ОШИБКА: «$host» — адрес внутренней сети, инструменты ходят только в интернет"
+        }
+    }
+    return null
+}
+
+private fun fetchText(url: String, maxChars: Int): String {
         val conn = AiAssistant.openConnection(url)
         conn.connectTimeout = 12_000
         conn.readTimeout = 12_000

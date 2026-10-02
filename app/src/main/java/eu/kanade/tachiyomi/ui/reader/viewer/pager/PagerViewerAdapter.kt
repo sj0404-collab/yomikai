@@ -153,6 +153,12 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
         if (currentPage !is ReaderPage) return
 
         val currentIndex = items.indexOf(currentPage)
+        if (currentIndex < 0) {
+            // Страницы нет в списке (список глав уже пересобрали). Дальше
+            // currentIndex + 1 даёт 0, а currentIndex — -1, и items[...] падал
+            // с IndexOutOfBounds прямо внутри загрузки страницы.
+            return
+        }
 
         // Put aside preprocessed pages for next chapter so they don't get removed when changing chapter
         if (currentPage.chapter.chapter.id != currentChapter?.chapter?.id) {
@@ -166,6 +172,11 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
             -> currentIndex + 1
             else -> currentIndex
         }
+
+        // Разрез не вставляется мимо списка: у последней страницы в режиме
+        // LTR/вебтун placeAtIndex равен items.size, и обращение к items[...]
+        // было IndexOutOfBoundsException.
+        if (placeAtIndex !in items.indices) return
 
         // It will enter a endless cycle of insert pages
         if (viewer is R2LPagerViewer && placeAtIndex - 1 >= 0 && items[placeAtIndex - 1] is InsertPage) {

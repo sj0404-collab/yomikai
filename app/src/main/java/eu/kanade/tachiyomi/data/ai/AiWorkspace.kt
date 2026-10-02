@@ -130,7 +130,11 @@ object AiWorkspace {
     fun resolve(context: Context, rel: String): File? = runCatching {
         val r = root(context)
         val f = File(r, rel.trim().trimStart('/'))
-        if (f.canonicalPath.startsWith(r.canonicalPath)) f else null
+        // Сравнение по префиксу без разделителя пропускало соседние каталоги:
+        // «/files/ai_workspace_backup/x» начинается с «/files/ai_workspace».
+        val rootPath = r.canonicalPath
+        val filePath = f.canonicalPath
+        if (filePath == rootPath || filePath.startsWith(rootPath + File.separator)) f else null
     }.getOrElse { e ->
         logcat(LogPriority.WARN, e) { "AiWorkspace resolve failed for '$rel'" }
         null

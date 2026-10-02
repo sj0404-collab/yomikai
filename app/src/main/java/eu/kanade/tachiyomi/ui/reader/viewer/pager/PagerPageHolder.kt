@@ -22,6 +22,7 @@ import eu.kanade.tachiyomi.util.view.isVisibleOnScreen
 import eu.kanade.tachiyomi.widget.ViewPagerAdapter
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
@@ -85,6 +86,8 @@ class PagerPageHolder(
      */
     private var loadJob: Job? = null
 
+    private var cachedOcrJob: Job? = null
+
     init {
         setOcrPageIdentity(page.chapter.chapter.id, page.index)
         onOcrRegionClicked = regionTap@{ tap ->
@@ -113,9 +116,17 @@ class PagerPageHolder(
         super.onDetachedFromWindow()
         loadJob?.cancel()
         loadJob = null
+        cachedOcrJob?.cancel()
+        cachedOcrJob = null
         clearOcrPageIdentity()
         panelDetectionJob?.cancel()
         panelDetectionJob = null
+        // ViewPagerAdapter создаёт держатель заново на каждый instantiateItem,
+        // поэтому отсоединение здесь означает, что держатель больше не нужен.
+        // Раньше его scope не отменялся: SupervisorJob жил до конца процесса, а
+        // запущенная в него подгрузка кэша OCR успевала дописать результат
+        // ЧУЖОЙ страницы в уже переиспользованное представление.
+        scope.cancel()
     }
 
     private fun initProgressIndicator() {
@@ -527,7 +538,10 @@ class PagerPageHolder(
 
     private fun loadCachedOcrResult() {
         val chapterId = page.chapter.chapter.id ?: return clearCachedOcrResult()
-        scope.launchIO {
+        // Задание запоминаем: без этого результат подгрузки прилетал после
+        // отсоединения и подсвечивал области уже другой страницы.
+        cachedOcrJob?.cancel()
+        cachedOcrJob = scope.launchIO {
             val cachedResult = ocrRepository.getCachedPage(chapterId, page.index)
             withUIContext {
                 setCachedOcrResult(cachedResult)

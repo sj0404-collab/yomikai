@@ -1,6 +1,9 @@
 package eu.kanade.tachiyomi.data.ai
 
 import android.content.Context
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -119,47 +122,59 @@ object AiHistoryManager {
      */
     private fun aiWorkspaceDir(context: Context): File = AiWorkspace.root(context)
 
-    fun load(context: Context, mangaId: Long? = null, channel: String = CHANNEL_CHAT): MutableList<Msg> {
-        val f = historyFile(context, mangaId, channel)
-        if (!f.exists()) return mutableListOf()
-        return try {
-            val raw = f.readText()
-            val list = json.decodeFromString<List<Msg>>(raw)
-            // Обрезаем до лимита при загрузке
-            val limit = prefs().aiHistoryLimit().get().coerceIn(4, 100)
-            list.takeLast(limit).toMutableList()
-        } catch (e: Exception) {
-            logcat(LogPriority.WARN, e) { "AiHistoryManager load failed" }
-            mutableListOf()
+    suspend fun load(context: Context, mangaId: Long? = null, channel: String = CHANNEL_CHAT): MutableList<Msg> =
+        withContext(Dispatchers.IO) {
+            val f = historyFile(context, mangaId, channel)
+            if (!f.exists()) return@withContext mutableListOf()
+            try {
+                val raw = f.readText()
+                val list = json.decodeFromString<List<Msg>>(raw)
+                // Обрезаем до лимита при загрузке
+                val limit = prefs().aiHistoryLimit().get().coerceIn(4, 100)
+                list.takeLast(limit).toMutableList()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logcat(LogPriority.WARN, e) { "AiHistoryManager load failed" }
+                mutableListOf()
+            }
         }
-    }
 
     private val saveLock = Any()
 
-    fun save(context: Context, history: List<Msg>, mangaId: Long? = null, channel: String = CHANNEL_CHAT) {
-        // Пишем через временный файл и переименовываем. Раньше шли три
-        // несинхронизированных writeText() на один и тот же файл (append плюс
-        // два вызова из UI), и оборванная запись оставляла битый JSON — после
-        // него load() молча отдавал пустую историю, то есть вся переписка
-        // исчезала без единого слова читателю.
-        synchronized(saveLock) {
-            try {
-                val limit = prefs().aiHistoryLimit().get().coerceIn(4, 100)
-                val toSave = history.takeLast(limit)
-                val target = historyFile(context, mangaId, channel)
-                val tmp = File(target.parentFile, target.name + ".tmp")
-                tmp.writeText(json.encodeToString(toSave))
-                if (!tmp.renameTo(target)) {
-                    target.writeText(tmp.readText())
-                    tmp.delete()
+    suspend fun save(context: Context, history: List<Msg>, mangaId: Long? = null, channel: String = CHANNEL_CHAT) =
+        withContext(Dispatchers.IO) {
+            // Пишем через временный файл и переименовываем. Раньше шли три
+            // несинхронизированных writeText() на один и тот же файл (append плюс
+            // два вызова из UI), и оборванная запись оставляла битый JSON — после
+            // него load() молча отдавал пустую историю, то есть вся переписка
+            // исчезала без единого слова читателю.
+            synchronized(saveLock) {
+                try {
+                    val limit = prefs().aiHistoryLimit().get().coerceIn(4, 100)
+                    val toSave = history.takeLast(limit)
+                    val target = historyFile(context, mangaId, channel)
+                    val tmp = File(target.parentFile, target.name + ".tmp")
+                    tmp.writeText(json.encodeToString(toSave))
+                    if (!tmp.renameTo(target)) {
+                        target.writeText(tmp.readText())
+                        tmp.delete()
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logcat(LogPriority.WARN, e) { "AiHistoryManager save failed" }
                 }
-            } catch (e: Exception) {
-                logcat(LogPriority.WARN, e) { "AiHistoryManager save failed" }
             }
         }
-    }
 
-    fun append(
+    /**
+     * Добавляет сообщение и подрезает историю. Список правится в потоке
+     * вызова (это SnapshotStateList в UI — с IO его трогать нельзя), а на
+     * диск уходит уже готовая копия, поэтому синхронный дисковый ввод-вывод
+     * больше не стоит на главном потоке.
+ */
+suspend fun append(
         context: Context,
         history: MutableList<Msg>,
         msg: Msg,
@@ -179,7 +194,7 @@ object AiHistoryManager {
             }
             history.add(0, Msg(role = "ai", text = summary, time = System.currentTimeMillis()))
         }
-        save(context, history, mangaId, channel)
+        save(context, history.toList(), mangaId, channel)
     }
 
     /**

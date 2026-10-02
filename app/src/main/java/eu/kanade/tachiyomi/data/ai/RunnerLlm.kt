@@ -653,22 +653,27 @@ object RunnerLlm {
             val answer = runCatching {
                 // Туннель cloudflared тоже может требовать прокси (как chat.try.ai).
                 val conn = AiAssistant.openConnection("$url/v1/chat/completions") as HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.doOutput = true
-                conn.connectTimeout = 20_000
-                conn.readTimeout = 180_000
-                conn.setRequestProperty("Content-Type", "application/json")
-                conn.setRequestProperty("Authorization", "Bearer $key")
-                val body = JSONObject()
-                    .put("model", session.model)
-                    .put("messages", messages)
-                    .put("max_tokens", 800)
-                conn.outputStream.use { it.write(body.toString().toByteArray()) }
-                val text = (if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream)
-                    ?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
-                conn.disconnect()
-                JSONObject(text).optJSONArray("choices")?.optJSONObject(0)
-                    ?.optJSONObject("message")?.optString("content")?.trim()
+                try {
+                    conn.requestMethod = "POST"
+                    conn.doOutput = true
+                    conn.connectTimeout = 20_000
+                    conn.readTimeout = 180_000
+                    conn.setRequestProperty("Content-Type", "application/json")
+                    conn.setRequestProperty("Authorization", "Bearer $key")
+                    val body = JSONObject()
+                        .put("model", session.model)
+                        .put("messages", messages)
+                        .put("max_tokens", 800)
+                    conn.outputStream.use { it.write(body.toString().toByteArray()) }
+                    val text = (if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream)
+                        ?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
+                    JSONObject(text).optJSONArray("choices")?.optJSONObject(0)
+                        ?.optJSONObject("message")?.optString("content")?.trim()
+                } finally {
+                    // Таймаут в 180с на мобильной сети — норма, а disconnect()
+                    // внутри блока не доходил до конца именно на ней.
+                    conn.disconnect()
+                }
             }.onFailure {
                 logcat(LogPriority.WARN, it) { "Runner LLM chat failed" }
             }.getOrNull()
@@ -687,12 +692,14 @@ object RunnerLlm {
         val url = session.url ?: return@withContext false
         runCatching {
             val conn = AiAssistant.openConnection("$url/health") as HttpURLConnection
-            conn.connectTimeout = 8_000
-            conn.readTimeout = 8_000
-            session.apiKey?.let { conn.setRequestProperty("Authorization", "Bearer $it") }
-            val ok = conn.responseCode in 200..299
-            conn.disconnect()
-            ok
+            try {
+                conn.connectTimeout = 8_000
+                conn.readTimeout = 8_000
+                session.apiKey?.let { conn.setRequestProperty("Authorization", "Bearer $it") }
+                conn.responseCode in 200..299
+            } finally {
+                conn.disconnect()
+            }
         }.getOrDefault(false)
     }
 

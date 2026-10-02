@@ -248,10 +248,9 @@ baselineProfile {
 
 dependencies {
     // Russian/Cyrillic PP-OCR models are downloaded outside the APK.
-    // ONNX-голоса: только Java-API sherpa-onnx (238КБ, из classes.jar AAR).
-    // Нативные .so (55МБ!) НЕ в APK — качаются как дополнение в рантайме
-    // (OnnxTts.downloadRuntime) и грузятся через System.load.
-    implementation(files("libs/sherpa-onnx-classes.jar"))
+    // Нейроголоса sherpa-onnx вынесены на сторону сервера пользователя: в коде
+    // не осталось ни одного импорта, поэтому локальный jar больше не нужен и
+    // отсутствие файла не должно ломать сборку.
     implementation(libs.commons.compress)
     implementation(libs.xz)
     baselineProfile(projects.baselineProfile)

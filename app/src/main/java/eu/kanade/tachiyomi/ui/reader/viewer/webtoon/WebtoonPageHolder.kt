@@ -86,6 +86,8 @@ class WebtoonPageHolder(
      */
     private var loadJob: Job? = null
 
+    private var cachedOcrJob: Job? = null
+
     init {
         refreshLayoutParams()
 
@@ -116,6 +118,7 @@ class WebtoonPageHolder(
     fun bind(page: ReaderPage) {
         this.page = page
         loadJob?.cancel()
+        cachedOcrJob?.cancel()
         frame.setOcrPageIdentity(page.chapter.chapter.id, page.index)
         frame.setFileCropRect(null)
         frame.clearCachedOcrResult()
@@ -303,7 +306,11 @@ class WebtoonPageHolder(
     private fun loadCachedOcrResult() {
         val currentPage = page ?: return frame.clearCachedOcrResult()
         val chapterId = currentPage.chapter.chapter.id ?: return frame.clearCachedOcrResult()
-        scope.launchIO {
+        // Задание запоминаем и отменяем при переиспользовании держателя:
+        // иначе результат подгрузки прилетал уже на другую страницу и
+        // подсвечивал области, которые к ней отношения не имеют.
+        cachedOcrJob?.cancel()
+        cachedOcrJob = scope.launchIO {
             val cachedResult = ocrRepository.getCachedPage(chapterId, currentPage.index)
             withUIContext {
                 frame.setCachedOcrResult(cachedResult)

@@ -43,7 +43,6 @@ import eu.kanade.tachiyomi.util.lang.takeBytes
 import eu.kanade.tachiyomi.util.ocr.toOcrImage
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -243,7 +242,20 @@ class ReaderViewModel @JvmOverloads constructor(
             }
             .run {
                 if (basePreferences.downloadedOnly.get()) {
-                    filterDownloaded(manga)
+                    // Ту же гарантию, что и выше: открытая глава обязана
+                    // остаться в списке. Иначе chapterList.first { } ниже
+                    // падал, а в loadChapter индекс становился -1 и «следующая
+                    // глава» молча превращалась в первую главу книги.
+                    val downloaded = filterDownloaded(manga)
+                    if (downloaded.any { it.id == chapterId }) {
+                        downloaded
+                    } else {
+                        // Добавленная глава встаёт в конец, поэтому порядок
+                        // приходится восстанавливать: от него зависят
+                        // «предыдущая»/«следующая» в читалке.
+                        (downloaded + selectedChapter)
+                            .sortedWith(getChapterSort(manga, sortDescending = false))
+                    }
                 } else {
                     this
                 }
@@ -349,11 +361,18 @@ class ReaderViewModel @JvmOverloads constructor(
         loader.loadChapter(chapter)
 
         val chapterPos = chapterList.indexOf(chapter)
-        val newChapters = ViewerChapters(
-            chapter,
-            chapterList.getOrNull(chapterPos - 1),
-            chapterList.getOrNull(chapterPos + 1),
-        )
+        val newChapters = if (chapterPos < 0) {
+            // Глава выпала из списка (фильтр, гонка со списком глав). Раньше
+            // индекс -1 молча давал «предыдущую = null», а «следующую =
+            // первую главу книги» — читатель терял место.
+            ViewerChapters(chapter, null, null)
+        } else {
+            ViewerChapters(
+                chapter,
+                chapterList.getOrNull(chapterPos - 1),
+                chapterList.getOrNull(chapterPos + 1),
+            )
+        }
 
         withUIContext {
             mutableState.update {
@@ -714,7 +733,10 @@ class ReaderViewModel @JvmOverloads constructor(
      */
     fun setMangaReadingMode(readingMode: ReadingMode) {
         val manga = manga ?: return
-        runBlocking(Dispatchers.IO) {
+        // Не runBlocking: eventChannel — rendezvous-канал, и его единственный
+        // получатель собирается на Main. Блокировка Main здесь делала send()
+        // невозможным — дедлок на каждой смене режима чтения.
+        viewModelScope.launchIO {
             setMangaViewerFlags.awaitSetReadingMode(manga.id, readingMode.flagValue.toLong())
             val currChapters = state.value.viewerChapters
             if (currChapters != null) {

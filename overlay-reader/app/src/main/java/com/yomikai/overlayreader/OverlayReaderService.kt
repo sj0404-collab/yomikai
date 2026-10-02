@@ -183,8 +183,8 @@ class OverlayReaderService : Service() {
 
             // Оверлей держим видимым и «прокачиваем» его перерисовку: это заставляет
             // компоновщик непрерывно выдавать кадры, и VirtualDisplay видит их
-            // даже на статичном экране. Панели оверлея в кадр не попадут
-            // (во время прокачки они не рисуются).
+            // даже на статичном экране. Область захвата лежит между панелями
+            // оверлея, поэтому в кадр они не попадают.
             val wasHidden = overlayView.visibility != View.VISIBLE
             if (wasHidden) setPassthrough(false)
             overlayView.beginCapturePump()
@@ -249,6 +249,7 @@ class OverlayReaderService : Service() {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT,
         )
@@ -282,9 +283,17 @@ class OverlayReaderService : Service() {
             }
 
             override fun onTouchEvent(event: MotionEvent): Boolean {
-                if (event.actionMasked == MotionEvent.ACTION_UP) {
-                    togglePassthrough()
-                    return true
+                // Пузырь — обычный View, он не кликабелен, и ACTION_DOWN уходил
+                // в super, который возвращает false. Дальше событие до пузыря
+                // не доходило: ACTION_UP не приходил никогда, а вместе с ним и
+                // возврат из режима пропуска касаний.
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> return true
+                    MotionEvent.ACTION_UP -> {
+                        togglePassthrough()
+                        return true
+                    }
+                    MotionEvent.ACTION_CANCEL -> return true
                 }
                 return super.onTouchEvent(event)
             }
@@ -295,7 +304,8 @@ class OverlayReaderService : Service() {
             size,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.END

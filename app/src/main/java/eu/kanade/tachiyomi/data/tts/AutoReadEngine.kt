@@ -434,6 +434,20 @@ class AutoReadEngine(
         job = scope.launch {
             _isReading.value = true
             var aiRefine: Job? = null
+            // Кадр передан сюда вызывающей стороной (полноэкранный снимок, до
+            // нескольких МБ), и освобождать его больше некому. Раньше recycle
+            // стоял только на счастливом пути, поэтому отмена чтения (пауза,
+            // уход в фон), отсутствие голоса или любая ошибка OCR оставляли
+            // битмап на сборку GC на каждом кадре.
+            val released = java.util.concurrent.atomic.AtomicBoolean(false)
+            var scanBitmap: Bitmap? = null
+            val releaseFrame = {
+                if (released.compareAndSet(false, true)) {
+                    if (!bitmap.isRecycled) bitmap.recycle()
+                    val scan = scanBitmap
+                    if (scan != null && scan !== bitmap && !scan.isRecycled) scan.recycle()
+                }
+            }
             try {
                 // Озвучивать нечем — не тратим время на распознавание кадра и
                 // не листаем страницы: читатель должен увидеть причину сразу.
@@ -445,8 +459,9 @@ class AutoReadEngine(
                 // (детектор движка всё равно жмёт всё до ~736px). Так конвертация
                 // пикселей и онлайн-вызовы выполняются мгновенно в фоне, а текст
                 // остаётся читаемым.
-                val scanBitmap = downscaleForScan(bitmap)
-                val ocrBitmap = scanBitmap
+                val scan = downscaleForScan(bitmap)
+                scanBitmap = scan
+                val ocrBitmap = scan
                 val pixels = IntArray(ocrBitmap.width * ocrBitmap.height)
                 ocrBitmap.getPixels(pixels, 0, ocrBitmap.width, 0, 0, ocrBitmap.width, ocrBitmap.height)
                 val image = OcrImage(ocrBitmap.width, ocrBitmap.height, pixels)
@@ -636,8 +651,9 @@ class AutoReadEngine(
                     runCatching { encodeJpeg(ocrBitmap, JPEG_QUALITY) }.getOrNull()
                 } else null
 
-                if (!bitmap.isRecycled) bitmap.recycle()
-                if (scanBitmap !== bitmap && !scanBitmap.isRecycled) scanBitmap.recycle()
+                // Пиксели больше не нужны — освобождаем сразу, не дожидаясь
+                // конца кадра (releaseFrame идемпотентен, finally его подстрахует).
+                releaseFrame()
 
                 // Локальный OCR (Cyrillic PP-OCR) отдаёт регион на КАЖДУЮ
                 // строку: реплика из двух строк распадалась на два разных
@@ -899,6 +915,10 @@ class AutoReadEngine(
                 logcat(LogPriority.ERROR, e) { "AutoRead frame failed" }
                 OcrHistoryStore.addAutoRead(false, "сбой страницы", e.message ?: e.javaClass.simpleName)
             } finally {
+                // Кадр освобождаем на ЛЮБОМ выходе, включая отмену: иначе
+                // каждый прерванный кадр авточтения оставлял после себя
+                // полноэкранный битмап.
+                releaseFrame()
                 aiRefine?.cancel()
                 _currentRegion.value = null
                 _frameRegions.value = emptyList()

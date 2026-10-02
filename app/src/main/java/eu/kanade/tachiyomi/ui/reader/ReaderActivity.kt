@@ -326,16 +326,24 @@ class ReaderActivity : BaseActivity() {
         )
     }
 
-    private fun dialogRootRectToScreenRect(rect: android.graphics.RectF): android.graphics.RectF {
-        val location = IntArray(2)
-        binding.root.getLocationOnScreen(location)
-        return android.graphics.RectF(
-            rect.left + location[0],
-            rect.top + location[1],
-            rect.right + location[0],
-            rect.bottom + location[1],
-        )
-    }
+    /**
+     * Переводит прямоугольник диалога в координаты экрана.
+     *
+     * suspend не украшение: `getLocationOnScreen` — API представления, его
+     * читают только с главного потока, а зовут эту функцию из фоновых
+     * корутин захвата (OCR области, скриншот мгновенно, ИИ `see_page`).
+     */
+    private suspend fun dialogRootRectToScreenRect(rect: android.graphics.RectF): android.graphics.RectF =
+        withUIContext {
+            val location = IntArray(2)
+            binding.root.getLocationOnScreen(location)
+            android.graphics.RectF(
+                rect.left + location[0],
+                rect.top + location[1],
+                rect.right + location[0],
+                rect.bottom + location[1],
+            )
+        }
 
     var isScrollingThroughPages = false
         private set
@@ -1868,8 +1876,12 @@ class ReaderActivity : BaseActivity() {
         autoReadLoop?.cancel()
         autoReadLoop = lifecycleScope.launchIO {
             try {
-                val root = binding.root
-                val fullRect = android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
+                // Размеры корневого представления — тоже API View: читаем
+                // их на главном потоке, иначе гонка с компоновкой.
+                val fullRect = withUIContext {
+                    val root = binding.root
+                    android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
+                }
                 val frame = cropCurrentSelectionFrame(fullRect)
                 if (frame == null) {
                     withUIContext { toast("Не удалось захватить страницу") }
@@ -2033,8 +2045,12 @@ class ReaderActivity : BaseActivity() {
     private fun captureInstantScreenshot() {
         lifecycleScope.launchIO {
             try {
-                val root = binding.root
-                val fullRect = android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
+                // Размеры корневого представления — тоже API View: читаем
+                // их на главном потоке, иначе гонка с компоновкой.
+                val fullRect = withUIContext {
+                    val root = binding.root
+                    android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
+                }
                 val frame = cropCurrentSelectionFrame(fullRect)
                 if (frame == null) {
                     withUIContext { toast("Не удалось получить кадр страницы") }

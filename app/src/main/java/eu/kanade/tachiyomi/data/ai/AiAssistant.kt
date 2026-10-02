@@ -488,6 +488,11 @@ object AiAssistant {
         maxTokens: Int = 500,
     ): Outcome {
         val startedAt = System.currentTimeMillis()
+        // Соединение живёт вне try: disconnect обязан сработать и на таймауте,
+        // и на SSL-ошибке, и на 5xx — иначе сокет и буферы висели до сборки GC.
+        // На мобильной сети это почти каждый второй запрос, а на модель
+        // делается до трёх попыток с ротацией — утечка накапливалась за ход.
+        var conn: HttpURLConnection? = null
         return try {
             // Эндпоинт и форма запроса зависят от семейства модели: Claude
             // ждёт /messages, GPT и Muse — /responses, Gemini — свой путь.
@@ -502,19 +507,19 @@ object AiAssistant {
                 url
             }
 
-            val conn = openConnection(actualUrl)
-            conn.requestMethod = "POST"
-            conn.doOutput = true
-            conn.connectTimeout = 15_000
-            conn.readTimeout = 90_000
-            conn.setRequestProperty("Content-Type", "application/json")
-            if (apiKey.isNotBlank()) conn.setRequestProperty("Authorization", "Bearer $apiKey")
+            val rawConn = openConnection(actualUrl)
+            conn = rawConn
+            rawConn.requestMethod = "POST"
+            rawConn.doOutput = true
+            rawConn.connectTimeout = 15_000
+            rawConn.readTimeout = 90_000
+            rawConn.setRequestProperty("Content-Type", "application/json")
+            if (apiKey.isNotBlank()) rawConn.setRequestProperty("Authorization", "Bearer $apiKey")
 
-            conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
-            val code = conn.responseCode
-            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
+            rawConn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            val code = rawConn.responseCode
+            val text = (if (code in 200..299) rawConn.inputStream else rawConn.errorStream)
                 ?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
-            conn.disconnect()
             if (code !in 200..299) {
                 // Отдельная судьба для «бесплатных» моделей Zen: OpenCode
                 // отдаёт их только своему же клиенту (проверка по User-Agent),
@@ -575,6 +580,8 @@ object AiAssistant {
             // Сетевые исключения (SocketTimeout, ConnectException, SSL,
             // UnknownHost, обрыв прокси) — ВРЕМЕННЫЕ: модель не виновата
             Outcome.Transient
+        } finally {
+            conn?.disconnect()
         }
     }
 

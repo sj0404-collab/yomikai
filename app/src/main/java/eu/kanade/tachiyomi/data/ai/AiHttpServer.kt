@@ -19,6 +19,9 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLDecoder
 import java.util.UUID
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -43,6 +46,13 @@ object AiHttpServer {
 
     const val PORT = 8765
 
+    /**
+     * Потолок одновременных клиентов. Сервер слушает 0.0.0.0, то есть доступен
+     * всей локальной сети, а разбор запроса идёт целиком в потоке соединения —
+     * без ограничения любой сосед исчерпывал потоки и память приложения.
+     */
+    private const val MAX_CONCURRENT_CLIENTS = 8
+
     fun tokenFor(context: Context): String {
         val prefs = Injekt.get<OcrPreferences>()
         val existing = prefs.aiHttpToken().get()
@@ -56,6 +66,11 @@ object AiHttpServer {
     @Volatile
     private var server: ServerSocket? = null
     private var thread: Thread? = null
+
+    /** Потоки запросов: потолок держит число одновременных клиентов. */
+    private val workers: ExecutorService = Executors.newFixedThreadPool(MAX_CONCURRENT_CLIENTS) { r ->
+        Thread(r, "AiHttpServer-worker").apply { isDaemon = true }
+    }
 
     val isRunning: Boolean get() = server?.isClosed == false
 
@@ -72,7 +87,16 @@ object AiHttpServer {
             while (!ss.isClosed) {
                 try {
                     val client = ss.accept()
-                    Thread { handle(appContext, client) }.start()
+                    // Пул с ограниченным размером: раньше на каждое принятое
+                    // соединение поднимался свой поток без счётчика. Любой
+                    // из той же Wi-Fi мог открыть их сколько угодно и держать
+                    // до 180 с — это ANR, а потом OOM-смерть процесса.
+                    try {
+                        workers.execute { handle(appContext, client) }
+                    } catch (e: RejectedExecutionException) {
+                        logcat(LogPriority.WARN) { "AiHttpServer busy, dropping connection" }
+                        runCatching { client.close() }
+                    }
                 } catch (e: Exception) {
                     if (!ss.isClosed) logcat(LogPriority.WARN, e) { "AiHttpServer accept failed" }
                 }
@@ -95,13 +119,32 @@ object AiHttpServer {
     private fun handle(context: Context, socket: Socket) {
         socket.use { s ->
             runCatching {
-                s.soTimeout = 180_000
                 val reader = BufferedReader(InputStreamReader(s.getInputStream(), Charsets.UTF_8))
                 val requestLine = reader.readLine() ?: return
                 val parts = requestLine.split(" ")
                 if (parts.size < 2) return
                 val method = parts[0]
                 val fullPath = parts[1]
+
+                // Ключ лежит в строке запроса, поэтому проверяем его ПЕРВЫМ
+                // делом — до чтения заголовков и, главное, тела. Раньше 401
+                // отдавался после megабайтного буфера и 180-секундного чтения,
+                // то есть любой сосед по сети мог держать поток и память.
+                val key = queryParam(fullPath.substringAfter('?', ""), "key")
+                if (key == null || key != tokenFor(context)) {
+                    s.soTimeout = 15_000
+                    val denied = s.getOutputStream()
+                    respond(
+                        denied,
+                        401,
+                        "text/plain; charset=utf-8",
+                        "401 Unauthorized\n\nОткройте ссылку с ключом из приложения:\nвкладка AI — блок «Доступ из внешнего браузера».".toByteArray(),
+                    )
+                    return
+                }
+
+                // Дальше клиент проверен — можно ждать его дольше.
+                s.soTimeout = 180_000
                 var contentLength = 0
                 while (true) {
                     val h = reader.readLine() ?: break
@@ -124,16 +167,6 @@ object AiHttpServer {
                 }
 
                 val out = s.getOutputStream()
-
-                if (queryParam(fullPath.substringAfter('?', ""), "key") != tokenFor(context)) {
-                    respond(
-                        out,
-                        401,
-                        "text/plain; charset=utf-8",
-                        "401 Unauthorized\n\nОткройте ссылку с ключом из приложения:\nвкладка AI — блок «Доступ из внешнего браузера».".toByteArray(),
-                    )
-                    return
-                }
 
                 val path = fullPath.substringBefore('?')
                 val query = fullPath.substringAfter('?', "")

@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.Handler
@@ -51,12 +52,27 @@ class OverlayView(
     // Публичное состояние, управляется сервисом.
     var scanning: Boolean = false
     var statusText: String = ""
+
+    /**
+     * Распознанный текст. Панель результата держится высотой в одну строку статуса,
+     * пока текста нет, и разворачивается на полную высоту вместе с текстом — при
+     * запуске оверлей не занимает низ экрана впустую.
+     */
     var resultText: String = ""
+        set(value) {
+            if (field == value) return
+            field = value
+            scrollLines = 0
+            scrollAccum = 0f
+            layoutPanel()
+            clampFrame()
+            invalidate()
+        }
 
     // «Прокачка» кадров на время захвата: оверлей постоянно перерисовывается,
     // поэтому дисплей (а с ним и VirtualDisplay) получает свежие кадры даже на
-    // полностью статичном экране. Панели при этом не рисуются, чтобы кадр был
-    // чистым.
+    // полностью статичном экране. Сама графика при этом не рисуется вовсе —
+    // иначе в кадр попали бы рамка и ручки, лежащие на границе области захвата.
     private var capturePumping = false
     private val pumpHandler = Handler(Looper.getMainLooper())
     private val pumpRunnable = object : Runnable {
@@ -91,7 +107,12 @@ class OverlayView(
     private var touchY = 0f
     private var startFrame = RectF()
     private var scrollLines = 0
+    private var scrollAccum = 0f
     private var lastPanelY = 0f
+    private var contentLines: List<String> = emptyList()
+    private var visibleLines = 1
+
+    private val path = Path()
 
     private val dimPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -145,10 +166,11 @@ class OverlayView(
     private fun layoutMetrics(w: Float, h: Float) {
         viewW = w
         viewH = h
-        val toolbarH = dp(44f)
-        val panelH = dp(132f)
+        // Высоты панелей ограничены долей экрана: на плотных экранах (density 3+)
+        // фиксированные dp съедали бы заметную часть дисплея.
+        val toolbarH = min(dp(44f), h * 0.07f)
         toolbarRect = RectF(0f, 0f, w, toolbarH)
-        panelRect = RectF(0f, h - panelH, w, h)
+        layoutPanel()
 
         val pref = Prefs.frame()
         frame = RectF(
@@ -170,41 +192,83 @@ class OverlayView(
         }
     }
 
+    /** Нижняя панель: строка статуса без результата, полная высота с текстом. */
+    private fun layoutPanel() {
+        if (viewH <= 0f) return
+        val collapsed = min(statusPaint.textSize * 2.2f, viewH * 0.09f)
+        val expanded = min(dp(132f), viewH * 0.30f)
+        val h = if (resultText.isBlank()) collapsed else max(collapsed, expanded)
+        panelRect = RectF(0f, viewH - h, viewW, viewH)
+    }
+
     private fun clampFrame() {
-        val minSide = dp(48f)
-        val left = max(frame.left, dp(6f))
-        val top = max(frame.top, toolbarRect.bottom + dp(6f))
-        val right = min(frame.right, viewW - dp(6f))
-        val bottom = min(frame.bottom, panelRect.top - dp(6f))
-        frame.set(left, top, max(right, left + minSide), max(bottom, top + minSide))
+        if (viewW <= 0f || viewH <= 0f) return
+        val padL = min(dp(6f), viewW * 0.02f)
+        val padT = min(dp(6f), viewH * 0.01f)
+        val boxTop = toolbarRect.bottom + padT
+        val boxBottom = panelRect.top - padT
+        val boxRight = viewW - padL
+        // Минимальная сторона не должна превышать половину доступной высоты,
+        // иначе на низких экранах рамка вылезала бы под панели.
+        val minSide = max(dp(20f), min(dp(48f), (boxBottom - boxTop) * 0.5f))
+
+        val left = frame.left.coerceIn(padL, max(padL, boxRight - minSide))
+        val top = frame.top.coerceIn(boxTop, max(boxTop, boxBottom - minSide))
+        val right = frame.right.coerceIn(left + minSide, max(left + minSide, boxRight))
+        val bottom = frame.bottom.coerceIn(top + minSide, max(top + minSide, boxBottom))
+        frame.set(left, top, right, bottom)
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+
+        // Пока идёт захват, не рисуем НИЧЕГО. Задача «прокачки» — лишь
+        // заставить компоновщик выдавать кадры, поэтому ранний выход не мешает
+        // самой прокачке. А вот область захвата совпадает с рамкой, значит в
+        // кадр попадали бы и обводка рамки, и восемь светлых ручек (они
+        // центрированы на границе и уходят внутрь на половину) — OCR читал бы
+        // эти квадраты как текст.
         if (capturePumping) return
 
         val alpha = (Prefs.overlayOpacity().coerceIn(0.1f, 0.9f) * 255).toInt()
         dimPaint.color = Color.argb(alpha, 4, 8, 20)
 
-        // Затемнение вокруг рамки.
+        // Затемнение вокруг рамки. Четыре прямоугольника идут строго встык, иначе
+        // наложение давало бы участки, затемнённые вдвое.
         canvas.drawRect(0f, 0f, viewW, toolbarRect.bottom, dimPaint)
         canvas.drawRect(0f, toolbarRect.bottom, frame.left, frame.top, dimPaint)
-        canvas.drawRect(frame.right, toolbarRect.bottom, viewW, frame.bottom, dimPaint)
+        canvas.drawRect(frame.right, toolbarRect.bottom, viewW, frame.top, dimPaint)
+        canvas.drawRect(0f, frame.top, frame.left, frame.bottom, dimPaint)
+        canvas.drawRect(frame.right, frame.top, viewW, frame.bottom, dimPaint)
         canvas.drawRect(0f, frame.bottom, viewW, viewH, dimPaint)
-        canvas.drawRect(frame.left, frame.bottom, frame.right, viewH, dimPaint)
-        canvas.drawRect(0f, toolbarRect.bottom, frame.left, viewH, dimPaint)
 
         // Рамка захвата.
         canvas.drawRoundRect(frame, dp(10f), dp(10f), borderPaint)
         drawHandles(canvas)
 
-        // Тулбар.
-        canvas.drawRoundRect(toolbarRect, dp(10f), dp(10f), toolbarPaint)
+        // Тулбар и панель результата.
+        roundRectPath(toolbarRect, 0f, 0f, dp(10f), dp(10f))
+        canvas.drawPath(path, toolbarPaint)
         drawToolbarButtons(canvas)
 
-        // Панель результата.
-        canvas.drawRoundRect(panelRect, dp(10f), dp(10f), panelPaint)
+        roundRectPath(panelRect, dp(10f), dp(10f), 0f, 0f)
+        canvas.drawPath(path, panelPaint)
         drawResultPanel(canvas)
+    }
+
+    /** Прямоугольник с независимым радиусом каждого угла (в dp-радиусах — px). */
+    private fun roundRectPath(rect: RectF, tl: Float, tr: Float, br: Float, bl: Float) {
+        path.reset()
+        path.moveTo(rect.left + tl, rect.top)
+        path.lineTo(rect.right - tr, rect.top)
+        path.quadTo(rect.right, rect.top, rect.right, rect.top + tr)
+        path.lineTo(rect.right, rect.bottom - br)
+        path.quadTo(rect.right, rect.bottom, rect.right - br, rect.bottom)
+        path.lineTo(rect.left + bl, rect.bottom)
+        path.quadTo(rect.left, rect.bottom, rect.left, rect.bottom - bl)
+        path.lineTo(rect.left, rect.top + tl)
+        path.quadTo(rect.left, rect.top, rect.left + tl, rect.top)
+        path.close()
     }
 
     private fun drawToolbarButtons(canvas: Canvas) {
@@ -241,21 +305,28 @@ class OverlayView(
     private fun drawResultPanel(canvas: Canvas) {
         val pad = dp(10f)
         statusPaint.textAlign = Paint.Align.LEFT
-        canvas.drawText(
-            if (scanning) "Распознаю текст…" else statusText.ifBlank { "Готово" },
-            pad,
-            panelRect.top + dp(18f),
-            statusPaint,
-        )
-        val maxW = (panelRect.width() - pad * 2).toInt()
+        val status = if (scanning) "Распознаю текст…" else statusText.ifBlank { "Готово" }
+        val textMetrics = statusPaint.fontMetrics
+        val statusBaseline = if (resultText.isBlank()) {
+            // Свёрнутая панель — одна строка по центру.
+            panelRect.centerY() - (textMetrics.ascent + textMetrics.descent) / 2f
+        } else {
+            panelRect.top + dp(20f)
+        }
+        canvas.drawText(status, pad, statusBaseline, statusPaint)
+
+        contentLines = emptyList()
+        visibleLines = 0
         val text = resultText
         if (text.isNotBlank()) {
+            val maxW = (panelRect.width() - pad * 2).toInt()
             val lines = wrapText(resultPaint, text, maxW)
             val lineH = resultPaint.textSize * 1.25f
             val available = panelRect.height() - dp(34f)
             val visible = (available / lineH).toInt().coerceAtLeast(1)
-            val maxScroll = max(0, lines.size - visible)
-            scrollLines = scrollLines.coerceIn(0, maxScroll)
+            contentLines = lines
+            visibleLines = visible
+            scrollLines = scrollLines.coerceIn(0, max(0, lines.size - visible))
             var y = panelRect.top + dp(34f) + lineH
             for (i in scrollLines until min(scrollLines + visible, lines.size)) {
                 canvas.drawText(lines[i], pad, y, resultPaint)
@@ -263,6 +334,8 @@ class OverlayView(
             }
         }
     }
+
+    private fun maxScroll(): Int = max(0, contentLines.size - visibleLines)
 
     private fun wrapText(paint: Paint, text: String, maxW: Int): List<String> {
         val words = text.split(" ")
@@ -293,8 +366,15 @@ class OverlayView(
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> return onDown(x, y)
             MotionEvent.ACTION_MOVE -> { onMove(x, y); return true }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+            MotionEvent.ACTION_UP -> {
                 onUp()
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                // Отмена (перехват другим окном, палец вне области) — это не
+                // нажатие: кнопку жать нельзя, рамку не надо сохранять.
+                // Раньше CANCEL шёл тем же путём, что UP, и включал скан.
+                cancelTouch()
                 return true
             }
         }
@@ -346,19 +426,18 @@ class OverlayView(
         val dy = y - touchY
         when (mode) {
             Mode.MOVE -> {
-                val newLeft = startFrame.left + dx
-                val newTop = startFrame.top + dy
-                val newRight = startFrame.right + dx
-                val newBottom = startFrame.bottom + dy
-                val shiftX = newLeft.coerceAtLeast(dp(6f)) - newLeft
-                val fixedLeft = newLeft + shiftX
-                val fixedRight = newRight + shiftX
-                frame.set(
-                    fixedLeft,
-                    newTop.coerceIn(toolbarRect.bottom + dp(6f), panelRect.top - frame.height() - dp(6f)),
-                    fixedRight,
-                    newTop.coerceIn(toolbarRect.bottom + dp(6f), panelRect.top - frame.height() - dp(6f)) + frame.height(),
-                )
+                val fw = startFrame.width()
+                val fh = startFrame.height()
+                val pad = dp(6f)
+                // Сдвиг ограничиваем по обеим осям сразу: иначе рамка не доезжала
+                // до левого/верхнего края, зато уезжала за правый/нижний.
+                val maxLeft = viewW - pad - fw
+                val newLeft = (startFrame.left + dx).coerceIn(min(pad, maxLeft), max(pad, maxLeft))
+                val minTop = toolbarRect.bottom + pad
+                val maxTop = panelRect.top - pad - fh
+                val newTop = (startFrame.top + dy).coerceIn(min(minTop, maxTop), max(minTop, maxTop))
+                frame.set(newLeft, newTop, newLeft + fw, newTop + fh)
+                clampFrame()
                 invalidate()
             }
             Mode.CORNER_RESIZE -> {
@@ -367,8 +446,16 @@ class OverlayView(
             }
             Mode.SCROLL -> {
                 val lineH = resultPaint.textSize * 1.25f
-                val delta = (y - lastPanelY) / lineH
-                scrollLines += delta.toInt()
+                // Дробный остаток копится: иначе медленное перетаскивание
+                // (меньше строки за кадр) не листало текст вовсе.
+                scrollAccum += (y - lastPanelY) / lineH
+                val whole = scrollAccum.toInt()
+                if (whole != 0) {
+                    scrollAccum -= whole
+                    val next = (scrollLines + whole).coerceIn(0, maxScroll())
+                    if (next == scrollLines) scrollAccum = 0f
+                    scrollLines = next
+                }
                 lastPanelY = y
                 invalidate()
             }
@@ -379,7 +466,7 @@ class OverlayView(
     }
 
     private fun resizeTo(dx: Float, dy: Float) {
-        val minSide = dp(48f)
+        val minSide = min(dp(48f), max(dp(20f), (panelRect.top - toolbarRect.bottom) * 0.5f))
         val l = frame.left
         val t = frame.top
         val r = frame.right
@@ -397,14 +484,21 @@ class OverlayView(
         clampFrame()
     }
 
-    private fun onUp() {
-        val btn = pressedBtn
-        if (btn != null) {
-            perform(btn)
-        }
+    private fun cancelTouch() {
         pressedBtn = null
         mode = Mode.NONE
-        callback.onFrameChanged(bean())
+        invalidate()
+    }
+
+    private fun onUp() {
+        val btn = pressedBtn
+        pressedBtn = null
+        mode = Mode.NONE
+        // Рамку сохраняем до действия: «Скан» читает Prefs.frame(), и при
+        // прежнем порядке захватывалась старая область, если рамку только что
+        // передвинули.
+        bean()?.let { callback.onFrameChanged(it) }
+        if (btn != null) perform(btn)
         invalidate()
     }
 
@@ -419,15 +513,29 @@ class OverlayView(
         }
     }
 
-    private fun bean(): RectFBean = RectFBean(
-        left = (frame.left / viewW).coerceIn(0f, 1f),
-        top = (frame.top / viewH).coerceIn(0f, 1f),
-        right = (frame.right / viewW).coerceIn(0f, 1f),
-        bottom = (frame.bottom / viewH).coerceIn(0f, 1f),
-    )
+    // Делим только на ненулевые размеры: до первой компоновки viewW/viewH
+    // равны нулю, и в bean() попадали NaN, которые coerceIn не лечит.
+    private fun bean(): RectFBean? {
+        if (viewW <= 0f || viewH <= 0f) return null
+        return RectFBean(
+            left = (frame.left / viewW).coerceIn(0f, 1f),
+            top = (frame.top / viewH).coerceIn(0f, 1f),
+            right = (frame.right / viewW).coerceIn(0f, 1f),
+            bottom = (frame.bottom / viewH).coerceIn(0f, 1f),
+        )
+    }
 
     fun resetFrame() {
-        frame.set(viewW * 0.06f, toolbarRect.bottom + dp(24f), viewW * 0.94f, viewW * 0.94f * 0.55f + toolbarRect.bottom)
+        val boxTop = toolbarRect.bottom + dp(10f)
+        val boxBottom = panelRect.top - dp(10f)
+        val boxH = max(dp(48f), boxBottom - boxTop)
+        val left = min(viewW * 0.06f, viewW - dp(6f))
+        // Высота рамки считалась от viewW, а не от viewH, — в альбомной
+        // ориентации уезжала далеко за нижнюю панель.
+        val top = min(boxTop + boxH * 0.1f, boxBottom)
+        val right = max(min(viewW * 0.94f, viewW - dp(6f)), left)
+        val bottom = max(min(top + boxH * 0.55f, boxBottom), top)
+        frame.set(left, top, right, bottom)
         clampFrame()
         invalidate()
     }

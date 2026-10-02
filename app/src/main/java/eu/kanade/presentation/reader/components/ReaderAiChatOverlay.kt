@@ -567,8 +567,15 @@ fun ReaderAiChatOverlay(
                                 }
                             },
                             onDelete = {
-                                history.remove(msg)
-                                AiHistoryManager.save(context, history, mangaId, historyChannel)
+                                // Пока идёт ход, ответ ещё будет дописан в
+                                // историю — и удалённое сообщение вернулось бы
+                                // вместе с ним.
+                                if (!loading) {
+                                    history.remove(msg)
+                                    scope.launch {
+                                        AiHistoryManager.save(context, history.toList(), mangaId, historyChannel)
+                                    }
+                                }
                             },
                             onSpeak = {
                                 TtsSpeaker.speak(context, msg.text)
@@ -691,10 +698,20 @@ fun ReaderAiChatOverlay(
             text = { Text("История этой книги будет удалена навсегда. Это действие нельзя отменить.") },
             confirmButton = {
                 Button(onClick = {
-                    history.clear()
-                    AiHistoryManager.save(context, history, mangaId, historyChannel)
-                    showClearConfirm = false
-                    showToast("История очищена")
+                    // «Удалено навсегда» должно означать навсегда: во время
+                    // хода ответ агента дописывается в тот же список и
+                    // перезаписывает файл, возвращая историю с ответом.
+                    if (loading) {
+                        showToast("Дождитесь окончания ответа")
+                        showClearConfirm = false
+                    } else {
+                        history.clear()
+                        scope.launch {
+                            AiHistoryManager.save(context, history.toList(), mangaId, historyChannel)
+                        }
+                        showClearConfirm = false
+                        showToast("История очищена")
+                    }
                 }) {
                     Text("Очистить")
                 }
@@ -726,12 +743,14 @@ private fun sendMessage(
     /** Вызывается после сохранения ответа: пора перечитать сводку сессии. */
     onDone: () -> Unit = {},
 ): kotlinx.coroutines.Job {
-    AiHistoryManager.append(context, history, Msg(role = "user", text = input), mangaId, historyChannel)
     loading(true)
     onActivity("Запрос к модели…")
     // Job возвращаем наружу, чтобы кнопка «Стоп» действительно прерывала ход:
     // раньше ссылка на него не хранилась, и `cancel()` был вызовом в пустоту.
     return scope.launch {
+        // Запись вопроса в историю — внутри корутины: файл истории на диске,
+        // а синхронный writeText на главном потоке ронял кадры на каждом ходе.
+        AiHistoryManager.append(context, history, Msg(role = "user", text = input), mangaId, historyChannel)
         val reply = try {
             chatOnce(
                 context = context,

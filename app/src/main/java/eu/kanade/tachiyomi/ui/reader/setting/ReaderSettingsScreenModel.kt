@@ -18,13 +18,19 @@ class ReaderSettingsScreenModel(
     val preferences: ReaderPreferences = Injekt.get(),
 ) : ScreenModel {
 
+    // WhileSubscribed, а не Lazily: держатель создаётся обычным remember{} и
+    // в ScreenModelStore не снимается, поэтому кэш Lazily навсегда удерживал
+    // последний Viewer — а вместе с ним Activity и всё дерево представлений
+    // после onDestroy. Окно в 5с идёт после закрытия диалога.
+    private val start = SharingStarted.WhileSubscribed(5_000)
+
     val viewerFlow = readerState
         .map { it.viewer }
         .distinctUntilChanged()
-        .stateIn(ioCoroutineScope, SharingStarted.Lazily, null)
+        .stateIn(ioCoroutineScope, start, null)
 
     val mangaFlow = readerState
         .map { it.manga }
         .distinctUntilChanged()
-        .stateIn(ioCoroutineScope, SharingStarted.Lazily, null)
+        .stateIn(ioCoroutineScope, start, null)
 }
