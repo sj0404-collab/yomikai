@@ -7,7 +7,7 @@ import uy.kohesive.injekt.api.get
 
 /**
  * Мост читалка → data-слой без прямой зависимости: ReaderActivity сообщает,
- * какую мангу и в каком порядке чтения сейчас смотрят, а ContentAutoPreset
+ * какую мангу и в каком порядке чтения сейчас смотрят, а от него
  * использует это для авто-пресета (манга/манхва/комикс) и памяти пресетов
  * по манге.
  */
@@ -26,6 +26,5 @@ object ReaderContextBus {
     fun set(mangaId: Long?, rtl: Boolean, webtoon: Boolean, vertical: Boolean) {
         val ctx = Ctx(mangaId, rtl, webtoon, vertical)
         _current.value = ctx
-        runCatching { ContentAutoPreset.onReaderContext(ctx, Injekt.get()) }
     }
 }

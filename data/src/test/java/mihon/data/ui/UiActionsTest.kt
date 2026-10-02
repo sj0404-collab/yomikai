@@ -19,10 +19,10 @@ class UiActionsTest {
 
     private val valid = UiActionSpec(
         id = "my_manhwa",
-        title = "Манхва одним тапом",
+        title = "Профиль движка одним тапом",
         placement = UiPlacement.FLOATING_MENU,
         effect = UiEffect.OCR_PRESET,
-        value = OcrContentType.MANHWA.id,
+        value = OcrContentType.BALANCED.id,
     )
 
     @Test
@@ -44,7 +44,7 @@ class UiActionsTest {
     fun `an unknown value is rejected with the list of allowed ones`() {
         val reason = UiActions.validate(valid.copy(value = "dota"))
         reason shouldContain "недопустимо"
-        reason shouldContain OcrContentType.MANHWA.id
+        reason shouldContain OcrContentType.BALANCED.id
     }
 
     @Test
@@ -56,11 +56,13 @@ class UiActionsTest {
 
     @Test
     fun `built-in action ids cannot be shadowed`() {
-        ("preset_manhwa" in UiActions.RESERVED_IDS) shouldBe true
+        ("preset_balanced" in UiActions.RESERVED_IDS) shouldBe true
         ("region_full" in UiActions.RESERVED_IDS) shouldBe true
-        UiActions.validate(valid.copy(id = "preset_manhwa")) shouldContain "занято встроенным"
+        UiActions.validate(valid.copy(id = "preset_balanced")) shouldContain "занято встроенным"
         // Встроенное объявление с таким id — это оно и есть.
-        UiActions.validate(valid.copy(id = "preset_manhwa", builtIn = true)).shouldBeNull()
+        UiActions.validate(valid.copy(id = "preset_balanced", builtIn = true)).shouldBeNull()
+        // Пресеты типа контента удалены, их ids больше не зарезервированы.
+        UiActions.RESERVED_IDS.any { it.startsWith("preset_manga") } shouldBe false
     }
 
     @Test

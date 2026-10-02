@@ -525,12 +525,6 @@ class OcrRepositoryImpl(
         return withActiveOperation {
             val regionChoice = ocrPreferences.scanRegion().get()
             val result = image.useBitmap { originalBitmap ->
-                ContentAutoPreset.maybeApply(
-                    chapterId = chapterId,
-                    pageWidth = originalBitmap.width,
-                    pageHeight = originalBitmap.height,
-                    prefs = ocrPreferences,
-                )
                 val sourceHeight = originalBitmap.height
                 val cropTop = when (regionChoice) {
                     mihon.domain.ocr.service.ScanRegion.BOTTOM_HALF -> sourceHeight / 2

@@ -78,12 +78,12 @@ class OcrRegionRulesTest {
             minCoverage = "",
             rescueMaxLines = "",
         )
-        val preset = OcrTuning.preset(OcrContentType.MANGA, ScanRegion.FULL_PAGE)
+        val preset = OcrTuning.preset(OcrContentType.BALANCED, ScanRegion.FULL_PAGE)
         val tuning = overrides.applyTo(preset)
 
         tuning.detectorThreshold shouldBe 0.19f
         tuning.maxTextBoxes shouldBe 40
-        // Незаполненные поля остались значениями пресета.
+        // Незаполненные поля остались значениями профиля.
         tuning.minComponentArea shouldBe preset.minComponentArea
         tuning.wordGapFactor shouldBe preset.wordGapFactor
         tuning.minAcceptConfidence shouldBe preset.minAcceptConfidence

@@ -4,59 +4,56 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- * Связка пресета типа контента и режима чтения.
+ * Порядок чтения и подсказка вьюера.
  *
- * Проверяется инвариант: подсказка вьюера обязана совпадать с порядком чтения,
- * который пресет задаёт для OCR. Иначе пресет «манхва» резал бы страницу
- * вертикальными полосами, а листалась бы она постранично справа налево.
+ * Раньше здесь проверялось, что подсказка вьюера совпадает с порядком чтения,
+ * который задаёт пресет типа контента («Манга» → справа налево, «Манхва» →
+ * сверху вниз). Пресеты удалены: порядок чтения выводится из настроек
+ * читалки, поэтому теперь проверяется именно это соответствие, и то, что
+ * единственный оставшийся профиль не навязывает вьюер.
  */
 class OcrViewerHintTest {
 
     @Test
-    fun `every content type declares the viewer it needs`() {
+    fun `content type no longer dictates the viewer`() {
+        // Профиль один, и он не выбирает режим чтения за читателя.
+        OcrContentType.entries shouldBe listOf(OcrContentType.BALANCED)
         OcrContentType.BALANCED.viewer shouldBe OcrViewerHint.KEEP
-        OcrContentType.MANGA.viewer shouldBe OcrViewerHint.PAGER_RTL
-        OcrContentType.MANHWA.viewer shouldBe OcrViewerHint.WEBTOON
-        OcrContentType.COMIC.viewer shouldBe OcrViewerHint.PAGER_LTR
     }
 
     @Test
-    fun `viewer hint agrees with the reading order of the preset`() {
-        listOf(OcrContentType.MANGA, OcrContentType.MANHWA, OcrContentType.COMIC).forEach { type ->
-            val tuning = OcrTuning.preset(type)
-            OcrViewerHint.forReadingOrder(tuning.readingOrder) shouldBe type.viewer
-        }
+    fun `legacy preset ids fall back to the single profile`() {
+        // У пользователей в настройках остались значения «manga»/«manhwa»/
+        // «manhwa»/«comic»: они обязаны разбираться, а не ломать разбор.
+        listOf("manga", "manhwa", "manhua", "comic", "balanced", "", null, "что-то")
+            .forEach { id -> OcrContentType.fromId(id) shouldBe OcrContentType.BALANCED }
     }
 
     @Test
-    fun `manhua is paged rtl although its text is vertical`() {
-        // Маньхуа — исключение из правила выше: текст в колонках читается
-        // сверху вниз, но страницы листаются справа налево, как в манге.
-        val manhua = OcrContentType.MANHUA
-        OcrTuning.preset(manhua).readingOrder shouldBe "vertical"
-        manhua.viewer shouldBe OcrViewerHint.PAGER_RTL
+    fun `reading order follows reader settings`() {
+        // Вертикальная читалка читается сверху вниз, RTL — справа налево,
+        // всё остальное — слева направо. Именно это заменило пресеты.
+        OcrTuning.readingOrderFor(vertical = true, rtl = true) shouldBe "vertical"
+        OcrTuning.readingOrderFor(vertical = true, rtl = false) shouldBe "vertical"
+        OcrTuning.readingOrderFor(vertical = false, rtl = true) shouldBe "rtl"
+        OcrTuning.readingOrderFor(vertical = false, rtl = false) shouldBe "ltr"
     }
 
     @Test
-    fun `every reading order used by presets has a matching hint`() {
-        // READING_ORDERS — источник допустимых значений порядка чтения: ни одно
-        // из них не должно теряться в KEEP, и для каждого обязан находиться
-        // пресет, у которого подсказка вьюера совпадает с порядком.
+    fun `every reading order has a matching viewer hint`() {
         OcrTuning.READING_ORDERS.forEach { order ->
-            val hint = OcrViewerHint.forReadingOrder(order)
-            (hint != OcrViewerHint.KEEP) shouldBe true
-            OcrContentType.entries.any { type ->
-                OcrTuning.preset(type).readingOrder == order && type.viewer == hint
-            } shouldBe true
+            (OcrViewerHint.forReadingOrder(order) != OcrViewerHint.KEEP) shouldBe true
         }
     }
 
     @Test
-    fun `balanced preset keeps the previous behaviour`() {
-        // BALANCED обязан повторять прежние константы движка, включая порядок
-        // чтения, и не трогать выбранный пользователем вьюер.
-        OcrTuning.preset(OcrContentType.BALANCED).readingOrder shouldBe OcrTuning.DEFAULT.readingOrder
-        OcrContentType.BALANCED.viewer shouldBe OcrViewerHint.KEEP
+    fun `preset keeps the previous default parameters`() {
+        // Профиль повторяет прежние константы движка, включая область скана,
+        // которую по-прежнему выбирает пользователь.
+        val tuning = OcrTuning.preset(OcrContentType.BALANCED)
+        tuning.detectorThreshold shouldBe OcrTuning.DEFAULT.detectorThreshold
+        tuning.minComponentArea shouldBe OcrTuning.DEFAULT.minComponentArea
+        tuning.maxTextBoxes shouldBe OcrTuning.DEFAULT.maxTextBoxes
     }
 
     @Test
@@ -72,11 +69,6 @@ class OcrViewerHintTest {
 
     @Test
     fun `every hint has a user-facing title`() {
-        OcrViewerHint.entries.forEach { hint ->
-            hint.title.isNotBlank() shouldBe true
-            OcrContentType.entries.forEach { type ->
-                if (type.viewer == hint) type.hint.isNotBlank() shouldBe true
-            }
-        }
+        OcrViewerHint.entries.forEach { hint -> hint.title.isNotBlank() shouldBe true }
     }
 }

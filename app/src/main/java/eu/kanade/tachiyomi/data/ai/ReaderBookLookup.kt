@@ -4,7 +4,6 @@ import android.content.Context
 import android.graphics.Bitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import mihon.data.ocr.ContentAutoPreset
 import mihon.data.ocr.OcrContentType
 import mihon.data.ocr.OcrRegionRules
 import mihon.data.ocr.OcrTuning
@@ -138,30 +137,20 @@ object ReaderBookLookup {
             )
         }.getOrNull() ?: return null
         val text = reply?.content.orEmpty().uppercase()
-        val type = when {
-            text.contains("MANHWA") -> OcrContentType.MANHWA
-            text.contains("MANHUA") -> OcrContentType.MANHUA
-            text.contains("COMIC") -> OcrContentType.COMIC
-            text.contains("MANGA") -> OcrContentType.MANGA
-            else -> return null
-        }
+        // Тип контента больше не хранится: пресеты удалены, порядок чтения
+        // выводится из настроек читалки. Из ответа модели берём только
+        // направление, и то лишь когда оно названо явно.
         val order = when {
             text.contains("VERTICAL") -> "vertical"
             text.contains("LTR") -> "ltr"
             text.contains("RTL") -> "rtl"
-            else -> OcrTuning.preset(type).readingOrder
+            else -> return null
         }
-        return Verdict(type = type, readingOrder = order)
+        return Verdict(type = OcrContentType.BALANCED, readingOrder = order)
     }
 
     private fun applyVerdict(prefs: OcrPreferences, mangaId: Long, verdict: Verdict) {
-        val type = verdict.type
-        if (type == OcrContentType.BALANCED) return
-        val current = prefs.contentType().get()
-        if (current != "balanced" && current != type.id) return
-        prefs.contentType().set(type.id)
         prefs.scanReadingOrder().set(verdict.readingOrder)
-        ContentAutoPreset.rememberManual(mangaId, type.id, prefs)
     }
 
     private suspend fun research(

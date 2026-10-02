@@ -24,7 +24,7 @@ class OcrLocalModeTest {
 
     @Test
     fun `fast mode drops the expensive passes only`() {
-        val base = OcrTuning.preset(OcrContentType.MANGA, ScanRegion.FULL_PAGE)
+        val base = OcrTuning.preset(OcrContentType.BALANCED, ScanRegion.FULL_PAGE)
         val fast = base.withLocalMode(OcrLocalMode.FAST)
         fast.verifierEnabled shouldBe false
         fast.contrastRetryEnabled shouldBe false
@@ -45,15 +45,15 @@ class OcrLocalModeTest {
     }
 
     @Test
-    fun `profile applies mode over the content preset`() {
+    fun `profile applies mode over the base profile`() {
         val profile = OcrRegionProfile(
-            contentType = OcrContentType.MANGA,
+            contentType = OcrContentType.BALANCED,
             localMode = OcrLocalMode.FAST,
         )
         val tuning = profile.tuning()
         tuning.verifierEnabled shouldBe false
-        // Пресет типа контента при этом сохраняется.
-        tuning.detectorThreshold shouldBe OcrTuning.preset(OcrContentType.MANGA).detectorThreshold
+        // Параметры детектора при этом сохраняются.
+        tuning.detectorThreshold shouldBe OcrTuning.preset(OcrContentType.BALANCED).detectorThreshold
     }
 
     @Test

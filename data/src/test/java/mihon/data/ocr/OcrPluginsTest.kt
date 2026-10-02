@@ -43,68 +43,26 @@ class OcrPluginsTest {
     }
 
     @Test
-    fun `tile gating follows content density`() {
-        // Тайлы 2x2 (четыре лишних прохода детектора) запускаются только когда
-        // основной проход почти ничего не нашёл.
-        OcrTuning.preset(OcrContentType.BALANCED).tilingMinTextBoxes shouldBe 8
-        // Плотная манга: основной проход и так видит реплики, тайлы почти не нужны.
-        OcrTuning.preset(OcrContentType.MANGA).tilingMinTextBoxes shouldBe 6
-        // Разреженный вебтун: тайлы добавляют мелкие облачка, пока боксов мало.
-        OcrTuning.preset(OcrContentType.MANHWA).tilingMinTextBoxes shouldBe 12
-        OcrTuning.preset(OcrContentType.MANHUA).tilingMinTextBoxes shouldBe 8
-        OcrTuning.preset(OcrContentType.COMIC).tilingMinTextBoxes shouldBe 10
-        // Верификатор v5 экономим одинаково на всех пресетах.
-        OcrTuning.preset(OcrContentType.MANGA).verifierSkipConfidence shouldBe 0.82f
-    }
-
-    @Test
-    fun `ink filters are tightened for manga and manhwa`() {
-        OcrTuning.preset(OcrContentType.MANGA).minCropInkRatio shouldBe 0.025f
-        OcrTuning.preset(OcrContentType.MANGA).contrastRetryConfidence shouldBe 0.88f
-        OcrTuning.preset(OcrContentType.MANHWA).minComponentArea shouldBe 28
-        OcrTuning.preset(OcrContentType.COMIC).minComponentArea shouldBe 26
-    }
-
-    @Test
-    fun `content presets set reading order and scan region`() {
-        OcrTuning.preset(OcrContentType.MANGA).readingOrder shouldBe "rtl"
-        OcrTuning.preset(OcrContentType.MANHWA).readingOrder shouldBe "vertical"
-        OcrTuning.preset(OcrContentType.MANHUA).readingOrder shouldBe "vertical"
-        OcrTuning.preset(OcrContentType.COMIC).readingOrder shouldBe "ltr"
-        OcrTuning.preset(OcrContentType.MANHWA, ScanRegion.TOP_HALF).scanRegion shouldBe ScanRegion.TOP_HALF
-    }
-
-    @Test
-    fun `manhua is a vertical preset between manhwa and comic`() {
-        OcrContentType.fromId("manhua") shouldBe OcrContentType.MANHUA
-        OcrContentType.MANHUA.viewer shouldBe OcrViewerHint.PAGER_RTL
-        val manhua = OcrTuning.preset(OcrContentType.MANHUA)
-        // Текст крупнее манги, но леттеринг плотнее вебтуна.
-        manhua.wordGapFactor shouldBe OcrTuning.preset(OcrContentType.MANHWA).wordGapFactor - 0.2f
-        manhua.maxTextBoxes shouldBe
-            OcrTuning.preset(OcrContentType.MANHWA).maxTextBoxes + 16
-    }
-
-    @Test
-    fun `manhwa tolerates wide gaps and manga lowers the detector threshold`() {
-        val balanced = OcrTuning.DEFAULT
-        OcrTuning.preset(OcrContentType.MANHWA).wordGapFactor shouldBe 2.0f
-        OcrTuning.preset(OcrContentType.MANHWA).wordGapFactor shouldBe balanced.wordGapFactor + 0.3f
-        OcrTuning.preset(OcrContentType.MANGA).detectorThreshold shouldBe 0.17f
-        OcrTuning.preset(OcrContentType.MANGA).detectorThreshold shouldBe balanced.detectorThreshold - 0.03f
-        // Вебтун: длинные полосы, поэтому боксов нужно меньше, а склеивать соседние
-        // строки агрессивно нельзя.
-        OcrTuning.preset(OcrContentType.MANHWA).maxTextBoxes shouldBe 64
-        OcrTuning.preset(OcrContentType.MANHWA).mergeOverlapYFactor shouldBe 0.45f
+    fun `single profile repeats the engine defaults`() {
+        // Пресетов типа контента больше нет, поэтому тайлинг, фильтры чернил и
+        // пороги одинаковы для всех книг — и проверяются на DEFAULT.
+        OcrTuning.preset(OcrContentType.BALANCED).tilingMinTextBoxes shouldBe
+            OcrTuning.DEFAULT.tilingMinTextBoxes
+        OcrTuning.preset(OcrContentType.BALANCED).verifierSkipConfidence shouldBe
+            OcrTuning.DEFAULT.verifierSkipConfidence
+        OcrTuning.preset(OcrContentType.BALANCED).minCropInkRatio shouldBe
+            OcrTuning.DEFAULT.minCropInkRatio
+        OcrTuning.preset(OcrContentType.BALANCED).minComponentArea shouldBe
+            OcrTuning.DEFAULT.minComponentArea
     }
 
     @Test
     fun `overrides replace only the fields the user filled in`() {
-        val base = OcrTuning.preset(OcrContentType.MANGA)
+        val base = OcrTuning.preset(OcrContentType.BALANCED)
         val tuned = OcrTuningOverrides(detectorThreshold = 0.31f, rescueMaxLines = 3).applyTo(base)
         tuned.detectorThreshold shouldBe 0.31f
         tuned.rescueMaxLines shouldBe 3
-        // Остальное осталось пресетным.
+        // Остальные поля не тронуты.
         tuned.minComponentArea shouldBe base.minComponentArea
         tuned.wordGapFactor shouldBe base.wordGapFactor
         tuned.minAcceptConfidence shouldBe base.minAcceptConfidence
@@ -131,7 +89,7 @@ class OcrPluginsTest {
 
     @Test
     fun `empty overrides keep the preset untouched`() {
-        val base = OcrTuning.preset(OcrContentType.COMIC)
+        val base = OcrTuning.preset(OcrContentType.BALANCED)
         OcrTuningOverrides().isEmpty shouldBe true
         OcrTuningOverrides().applyTo(base) shouldBe base
     }
@@ -139,22 +97,23 @@ class OcrPluginsTest {
     @Test
     fun `region profile composes preset and overrides`() {
         val profile = OcrRegionProfile(
-            contentType = OcrContentType.MANHWA,
+            contentType = OcrContentType.BALANCED,
             scanRegion = ScanRegion.BOTTOM_HALF,
             overrides = OcrTuningOverrides(minAcceptConfidence = 0.4f),
         )
         val tuning = profile.tuning()
-        tuning.readingOrder shouldBe "vertical"
         tuning.scanRegion shouldBe ScanRegion.BOTTOM_HALF
         tuning.minAcceptConfidence shouldBe 0.4f
-        // Не переопределённое поле осталось из пресета манхвы.
-        tuning.wordGapFactor shouldBe OcrTuning.preset(OcrContentType.MANHWA).wordGapFactor
+        // Не переопределённое поле осталось прежним.
+        tuning.wordGapFactor shouldBe OcrTuning.DEFAULT.wordGapFactor
     }
 
     @Test
     fun `unknown content type falls back to balanced`() {
-        OcrContentType.fromId("manhwa") shouldBe OcrContentType.MANHWA
-        OcrContentType.fromId("комикс") shouldBe OcrContentType.BALANCED
+        // Прежние значения пресетов у пользователей остаются в настройках:
+        // они обязаны разбираться и сводиться к единственному профилю.
+        listOf("manhwa", "комикс", "manga", "manhua", "comic")
+            .forEach { OcrContentType.fromId(it) shouldBe OcrContentType.BALANCED }
         OcrContentType.fromId(null) shouldBe OcrContentType.BALANCED
         OcrContentType.fromId("") shouldBe OcrContentType.BALANCED
     }
