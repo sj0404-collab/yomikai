@@ -704,7 +704,12 @@ class ReaderActivity : BaseActivity() {
     }
 
     override fun onPause() {
-        // Сворачивание/уход с экрана — голос не должен продолжать звучать
+        // Сворачивание/уход с экрана — голос не должен продолжать звучать.
+        // Запоминаем, что авточтение было включено САМИМ читателем: после
+        // возврата его надо продолжить. Раньше оно глухлось навсегда, а
+        // LaunchedEffect автостарта не перезапускался — ключи (глава, вьювер)
+        // не менялись, поэтому опция «Автостарт чтения» работала один раз.
+        resumeAutoReadOnResume = autoReadActive
         stopAutoReadLoop()
         lifecycleScope.launchNonCancellable {
             viewModel.updateHistory()
@@ -720,6 +725,12 @@ class ReaderActivity : BaseActivity() {
         super.onResume()
         viewModel.restartReadTimer()
         setMenuVisibility(viewModel.state.value.menuVisible)
+        if (resumeAutoReadOnResume) {
+            resumeAutoReadOnResume = false
+            if (viewModel.state.value.viewer != null) {
+                startAutoReadLoop()
+            }
+        }
     }
 
     /**
@@ -1210,7 +1221,6 @@ class ReaderActivity : BaseActivity() {
                 // OCR selection overlay
                 if (state.ocrSelectionMode) {
                     OcrSelectionOverlay(
-                        onCancel = ::exitOcrMode,
                         instructionText = when (selectionAction) {
                             SelectionAction.ProcessOcr -> AnnotatedString(stringResource(MR.strings.ocr_select_region))
                             is SelectionAction.ExportImageToAnki -> AnnotatedString(
@@ -1822,6 +1832,10 @@ class ReaderActivity : BaseActivity() {
 
     @Volatile
     private var autoReadActive = false
+
+    /** Авточтение было включено читателем до ухода со screen — вернуть его в onResume. */
+    @Volatile
+    private var resumeAutoReadOnResume = false
 
     fun stopAutoReadLoop() {
         autoReadActive = false

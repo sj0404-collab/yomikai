@@ -15,8 +15,10 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.suspendCancellableCoroutine
+import logcat.LogPriority
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withIOContext
+import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.concurrent.PriorityBlockingQueue
@@ -131,20 +133,24 @@ internal class HttpPageLoader(
 
     override fun recycle() {
         super.recycle()
+
+        // Списком страниц делимся до отмены scope: дальше этот список уже никто
+        // не переживёт вместе с загрузчиком.
+        val pagesToSave = chapter.pages?.map { Page(it.index, it.url, it.imageUrl) }
+
         scope.cancel()
         queue.clear()
 
-        // Cache current page list progress for online chapters to allow a faster reopen
-        chapter.pages?.let { pages ->
+        // Cache current page list progress for online chapters to allow a faster reopen.
+        // Запись уходит в GlobalScope (top-level launchIO), иначе scope уже отменён.
+        pagesToSave?.let { pages ->
             launchIO {
                 try {
-                    // Convert to pages without reader information
-                    val pagesToSave = pages.map { Page(it.index, it.url, it.imageUrl) }
-                    chapterCache.putPageListToCache(chapter.chapter.toDomainChapter()!!, pagesToSave)
-                } catch (e: Throwable) {
-                    if (e is CancellationException) {
-                        throw e
-                    }
+                    chapterCache.putPageListToCache(chapter.chapter.toDomainChapter()!!, pages)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logcat(LogPriority.WARN, e) { "HttpPageLoader failed to cache page list" }
                 }
             }
         }

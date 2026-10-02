@@ -2,7 +2,6 @@ package eu.kanade.presentation.reader
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -16,15 +15,23 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asComposePath
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 import kotlin.math.min
 
 @Composable
+/**
+ * Рамка выделения области для OCR.
+ *
+ * Параметра «отмена» здесь нет намеренно: касания в режиме выделения
+ * перехватывает `ReaderActivity.dispatchTouchEvent` — он возвращает true, не
+ * вызывая `super`, поэтому до Compose они не доходят. Рамку рисует и
+ * отменяет по тапу сам Activity (ветка `isTapExitEnabled`). Раньше здесь стоял
+ * `detectTapGestures(onTap = onCancel)`, который был недостижим: две
+ * независимые ветки владения жестом, из которых работала одна.
+ */
 fun OcrSelectionOverlay(
-    onCancel: () -> Unit,
     instructionText: AnnotatedString,
     startPoint: Offset?,
     endPoint: Offset?,
@@ -34,12 +41,7 @@ fun OcrSelectionOverlay(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.5f))
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onTap = { onCancel() },
-                )
-            },
+            .background(Color.Black.copy(alpha = 0.5f)),
     ) {
         // Draw the selection rectangle
         if (startPoint != null && endPoint != null) {

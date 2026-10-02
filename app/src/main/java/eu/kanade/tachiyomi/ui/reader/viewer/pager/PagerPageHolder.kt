@@ -282,7 +282,17 @@ class PagerPageHolder(
             return
         }
 
-        panelDetectionJob = scope.launchIO {
+        // Битмап отдаётся сюда из loadResult, и освобождать его больше некому.
+        // try/finally внутри launch не спасает: если задание отменили ДО старта
+        // тела корутины, оно не выполняется вовсе, и нативный битмап утекал на
+        // каждое такое событие. Поэтому освобождение вешаем на завершение задания.
+        val released = java.util.concurrent.atomic.AtomicBoolean(false)
+        val releaseBitmap = {
+            if (released.compareAndSet(false, true) && !decoded.bitmap.isRecycled) {
+                decoded.bitmap.recycle()
+            }
+        }
+        val job = scope.launchIO {
             val result = try {
                 detectPanels.await(
                     cacheKey = cacheKey,
@@ -292,7 +302,7 @@ class PagerPageHolder(
                     direction = readingDirection(),
                 )
             } finally {
-                decoded.bitmap.recycle()
+                releaseBitmap()
             }
 
             withUIContext {
@@ -317,6 +327,9 @@ class PagerPageHolder(
                 }
             }
         }
+        panelDetectionJob = job
+        // Страховка на отмену до старта тела корутины: finally тогда не выполняется.
+        job.invokeOnCompletion { releaseBitmap() }
     }
 
     private fun decodePanelBitmap(source: BufferedSource): DecodedPanelBitmap? {
