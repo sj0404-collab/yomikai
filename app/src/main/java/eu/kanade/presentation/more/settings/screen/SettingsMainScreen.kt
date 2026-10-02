@@ -195,24 +195,6 @@ object SettingsMainScreen : Screen() {
             screen = SettingsLibraryScreen,
         ),
         Item(
-            titleRes = MR.strings.pref_category_reader,
-            subtitleRes = MR.strings.pref_reader_summary,
-            icon = Icons.AutoMirrored.Outlined.ChromeReaderMode,
-            screen = SettingsReaderScreen,
-        ),
-        Item(
-            titleRes = MR.strings.pref_category_ocr,
-            subtitleRes = MR.strings.pref_ocr_plugins_summary,
-            icon = Icons.Outlined.Translate,
-            screen = SettingsOcrScreen,
-        ),
-        Item(
-            titleRes = MR.strings.pref_category_voice,
-            subtitleRes = MR.strings.pref_voice_plugins_group,
-            icon = Icons.Outlined.RecordVoiceOver,
-            screen = SettingsVoicePluginsScreen,
-        ),
-        Item(
             titleRes = MR.strings.pref_category_ai,
             subtitleRes = MR.strings.pref_ai_backends_group,
             icon = Icons.Outlined.SmartToy,

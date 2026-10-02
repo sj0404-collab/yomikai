@@ -9,8 +9,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.GTranslate
-import androidx.compose.material.icons.outlined.Layers
-import androidx.compose.material.icons.outlined.RecordVoiceOver
 import androidx.compose.material.icons.outlined.SportsEsports
 import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material.icons.outlined.Tune
@@ -38,7 +36,6 @@ import eu.kanade.presentation.more.settings.screen.SettingsDictionaryScreen
 import eu.kanade.presentation.more.settings.screen.SettingsOcrPluginsScreen
 import eu.kanade.presentation.more.settings.screen.SettingsOcrScreen
 import eu.kanade.presentation.reader.OcrBubbleSettingsDialog
-import eu.kanade.tachiyomi.ui.overlay.OcrOverlaySettingsScreen
 
 /**
  * Раздел «Настройки» внутри локальной библиотеки: у каждого пункта свой
@@ -77,20 +74,6 @@ object LocalSettingsScreen : Screen {
                 }
                 item {
                     SettingsItem(
-                        icon = Icons.Outlined.DocumentScanner,
-                        title = "Область и порядок",
-                        subtitle = "Часть страницы и направление чтения",
-                    ) { navigator.push(LocalOcrRegionScreen) }
-                }
-                item {
-                    SettingsItem(
-                        icon = Icons.Outlined.Tune,
-                        title = "Точная настройка",
-                        subtitle = "Пороги и лимиты детектора — слайдеры с цифрами",
-                    ) { navigator.push(LocalOcrTuningScreen) }
-                }
-                item {
-                    SettingsItem(
                         icon = Icons.Outlined.GTranslate,
                         title = "Движки распознавания",
                         subtitle = "Плагины, цепочки, языки Glens",
@@ -102,22 +85,6 @@ object LocalSettingsScreen : Screen {
                         title = "Полные настройки OCR",
                         subtitle = "Всё остальное одним списком",
                     ) { navigator.push(SettingsOcrScreen) }
-                }
-
-                item { SettingsHeader("Озвучка и голоса") }
-                item {
-                    SettingsItem(
-                        icon = Icons.Outlined.RecordVoiceOver,
-                        title = "Голоса и озвучка",
-                        subtitle = "Движок TTS, скорость и высота — слайдеры",
-                    ) { navigator.push(LocalVoiceScreen) }
-                }
-                item {
-                    SettingsItem(
-                        icon = Icons.Outlined.RecordVoiceOver,
-                        title = "Озвучка книг",
-                        subtitle = "Свои скорость, высота и технология для книг",
-                    ) { navigator.push(LocalBookVoiceScreen) }
                 }
 
                 item { SettingsHeader("Словари") }
@@ -150,15 +117,6 @@ object LocalSettingsScreen : Screen {
                         title = "Игры и STT",
                         subtitle = "Речь → текст → русские голоса, своя технология",
                     ) { navigator.push(LocalGameSttScreen) }
-                }
-
-                item { SettingsHeader("Приложения") }
-                item {
-                    SettingsItem(
-                        icon = Icons.Outlined.Layers,
-                        title = "Оверлей поверх экрана",
-                        subtitle = "Плавающая кнопка, область, своя технология",
-                    ) { navigator.push(OcrOverlaySettingsScreen) }
                 }
             }
         }
