@@ -1822,6 +1822,9 @@ class ReaderActivity : BaseActivity() {
         stopAutoReadLoop()
         autoReadActive = true
         autoReadEngine.clearHistory()
+        // Пересказ новой главы начинается с нуля: иначе вкладка «Сюжет» показывала
+        // пересказ прошлой книги, пока новая ещё не прозвучала.
+        eu.kanade.tachiyomi.data.ai.ReadingPlotAgentHolder.agent.reset()
         toast("▶ Авточтение включено")
         ensureBookAiSession(announce = true)
         readCurrentPage(thenAdvance = true)

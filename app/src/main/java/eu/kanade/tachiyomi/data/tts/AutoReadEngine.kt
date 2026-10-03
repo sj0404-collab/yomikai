@@ -1602,6 +1602,14 @@ class AutoReadEngine(
         // журнал и таймаут разумно класть то, что реально произносится.
         val spoken = SpeechMarkup.strip(text).ifBlank { text }
         lastSpokenLine = spoken
+        // Сюжет по мере чтения: суб-агент копит услышанное и пишет пересказ
+        // пока читатель слушает. Отдельный агент, а не поле в движке: у него
+        // своё состояние и своя частота запросов, иначе текст пересказа
+        // обновлялся бы на каждую реплику.
+        runCatching {
+            eu.kanade.tachiyomi.data.ai.ReadingPlotAgentHolder.agent
+                .onSpoken(spoken, mihon.data.ocr.ReaderContextBus.current.value?.mangaId)
+        }.onFailure { logcat(LogPriority.WARN, it) { "Reading plot agent failed" } }
         // Оба флага — MutableStateFlow: onState приходит из потока TTS, а читается
         // из этой корутины (диспетчер IO). Обычный var здесь означает гонку — цикл
         // ожидания мог бы не увидеть `started = true` и сочти фразу неозвученной.

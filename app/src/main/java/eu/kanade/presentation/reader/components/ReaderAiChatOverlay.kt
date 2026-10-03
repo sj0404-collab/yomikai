@@ -432,6 +432,18 @@ fun ReaderAiChatOverlay(
                         label = { Text("Файлы") },
                         modifier = Modifier.height(30.dp),
                     )
+                    // Сюжет: пересказ того, что уже прозвучало при чтении.
+                    // Отдельная вкладка, потому что это не диалог с агентом, а
+                    // его наблюдение: текст пишется сам по мере чтения.
+                    FilterChip(
+                        selected = tab == 2,
+                        onClick = { tab = 2 },
+                        label = { Text("Сюжет") },
+                        modifier = Modifier.height(30.dp),
+                    )
+                }
+                if (tab == 2) {
+                    ReadingPlotPanel(mangaId = mangaId, showToast = showToast)
                 }
                 if (tab == 1) {
                     WorkspaceFilesPanel(
