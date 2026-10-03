@@ -339,7 +339,7 @@ object TtsSpeaker {
     fun slotVoiceSpec(role: String, text: String? = null): String? = runCatching {
         // Словарь голосовых ролей имеет приоритет над legacy-слотами:
         // роль из {имя:Аки} или кнопки ♀/♂ может быть описана там точнее.
-        val dictVoice = VoiceRoleDictionary.load(prefs())
+        val dictVoice = currentBookRoles()
             .firstOrNull { it.matchesName(role) || (!text.isNullOrBlank() && it.mentionedIn(text)) }
             ?.voice
             ?.takeIf { it.isNotBlank() }
@@ -606,7 +606,7 @@ object TtsSpeaker {
         // одним голосом. Текст реплики нужен потому, что на OCR-чтении имени в
         // разметке нет — роль опознаётся по упоминанию имени в тексте.
         val resolvedRole = runCatching {
-            VoiceRoleDictionary.resolve(prefs(), speakerName, effectiveGender, spoken)
+            VoiceRoleDictionary.resolve(currentBookRoles(), speakerName, effectiveGender, spoken)
         }.getOrNull()
         // Ручной режим — выбор читателя, и словарь ролей его не перебивает:
         // голос и тон из роли на сетевых движках раньше не применялись, и
@@ -701,6 +701,25 @@ object TtsSpeaker {
 
     // region SYSTEM
 
+    /**
+     * Роли голосов с учётом текущей книги.
+     *
+     * Книжные роли лежат ПОВЕРХ общих: голос, назначенный персонажу в одной
+     * книге, не должен перехватывать такую же подпись в другой. Поэтому
+     * озвучка спрашивает словарь книги, а не глобальный. Вне читалки книги
+     * нет — возвращаются общие роли, поведение прежнее.
+     */
+    private fun currentBookRoles(): List<VoiceRole> = runCatching {
+        VoiceRoleDictionary.loadForBook(prefs(), currentBookId())
+    }.getOrElse {
+        VoiceRoleDictionary.load(prefs())
+    }
+
+    /** id манги, которую сейчас читают (null вне читалки). */
+    private fun currentBookId(): Long? = runCatching {
+        mihon.data.ocr.ReaderContextBus.current.value?.mangaId
+    }.getOrNull()
+
     private fun speakSystem(
         context: Context,
         text: String,
@@ -724,7 +743,7 @@ object TtsSpeaker {
         // ({имя:Аки}), затем по имени/метке, упомянутым в самой реплике
         // (на OCR-чтении разметки нет), затем по полу. Голос/питч/темп роли
         // перекрывают слоты и пресеты пола, которые работают только по полу.
-        val role = resolvedRole ?: VoiceRoleDictionary.resolve(prefs(), speakerName, gender, text)
+        val role = resolvedRole ?: VoiceRoleDictionary.resolve(currentBookRoles(), speakerName, gender, text)
         // ВАЖНО: роль может как задать точный голос, так и только
         // модификаторы; распознаём оба случая отдельно.
         val rolePitch = role?.pitch?.takeIf { it > 0f && it != 1f } ?: 1f

@@ -156,6 +156,46 @@ object VoiceRoleDictionary {
     }
 
     /**
+     * Роли текущей книги поверх глобальных.
+     *
+     * Книжные идут ПЕРВЫМИ: под «АКИ» в «Миэруко-тян» назначен один голос, и
+     * такой же персонаж в другой книге не должен его перехватывать. Общие
+     * роли остаются в хвосте и работают там, где книжной нет.
+     */
+    fun loadForBook(prefs: OcrPreferences, bookId: Long?): List<VoiceRole> {
+        val global = load(prefs)
+        if (bookId == null || bookId <= 0L) return global
+        return parseBookRoles(prefs.voiceRolesByBook().get(), bookId) + global
+    }
+
+    /**
+     * Разбор объекта `{ "<id>": [ роли ] }` и выбор ролей одной книги.
+     *
+     * Свой парсер, как и в [parse]: org.json в юнит-тестах app-модуля не
+     * замокан. Любой мусор в JSON не должен ронять озвучку — при негодном
+     * разборе возвращается пустой список и работают общие роли.
+     */
+    fun parseBookRoles(json: String, bookId: Long): List<VoiceRole> {
+        val trimmed = json.trim()
+        if (trimmed.isEmpty()) return emptyList()
+        val array = VoiceJson.extractArray(trimmed, bookId.toString()) ?: return emptyList()
+        return parse(array)
+    }
+
+    /**
+     * Сохранить роли книги, не трогая роли остальных книг.
+     *
+     * Запись идёт целиком по ключу книги: чужие книги остаются как были, и
+     * глобальный словарь не переписывается.
+     */
+    fun saveForBook(prefs: OcrPreferences, bookId: Long, roles: List<VoiceRole>) {
+        if (bookId <= 0L) return
+        val current = prefs.voiceRolesByBook().get()
+        val updated = VoiceJson.withArray(current, bookId.toString(), toJson(roles))
+        prefs.voiceRolesByBook().set(updated)
+    }
+
+    /**
      * Находит роль для реплики. [speakerName] — из `{имя:…}` (приоритет),
      * [gender] — явный пол (`{ж}/{м}`, кнопки карточки, ручной режим),
      * [text] — сама реплика: на OCR-чтении разметки с именем нет, поэтому роль

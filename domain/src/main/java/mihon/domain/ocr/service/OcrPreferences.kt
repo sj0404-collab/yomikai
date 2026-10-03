@@ -140,6 +140,18 @@ class OcrPreferences(
     fun voiceRoles() = preferenceStore.getString("voice_role_dict", "[]")
     fun voiceIntonations() = preferenceStore.getString("voice_intonation_dict", "[]")
 
+    /**
+     * Роли голосов, привязанные к конкретной книге: JSON-объект
+     * `{ "<mangaId>": [ роли ], … }`.
+     *
+     * Глобальный [voiceRoles] один на всё приложение, и это было проблемой:
+     * голос, назначенный Аки в «Миэруко-тян», тут же перехватывал такую же
+     * подпись в любой другой книге. Книжный словарь лежит поверх и имеет
+     * приоритет, поэтому озвучка персонажа работает только там, где её
+     * назначили, а общие правила продолжают применяться везде.
+     */
+    fun voiceRolesByBook() = preferenceStore.getString("voice_role_dict_by_book", "{}")
+
     fun speechRate() = preferenceStore.getFloat("pref_speech_rate", 1.0f)
     fun speechPitch() = preferenceStore.getFloat("pref_speech_pitch", 1.0f)
     fun ttsWebLanguage() = preferenceStore.getString("pref_tts_web_lang", "ru")

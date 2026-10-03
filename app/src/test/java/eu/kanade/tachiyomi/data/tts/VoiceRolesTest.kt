@@ -73,4 +73,71 @@ class VoiceRolesTest {
         val auto = roles + VoiceRole(id = "n", name = "Нейтрал", gender = "auto")
         VoiceRoleDictionary.resolve(auto, speakerName = null, gender = "male")?.name shouldBe "Старик"
     }
+
+    // --- Роли, привязанные к книге ---------------------------------------
+    //
+    // Глобальный словарь один на всё приложение, и это было проблемой: голос,
+    // назначенный Аки в «Миэруко-тян», тут же перехватывал такую же подпись в
+    // любой другой книге. Книжный словарь лежит поверх и имеет приоритет.
+
+    @Test
+    fun `book roles are read from a map keyed by manga id`() {
+        val json = """{"12":[{"name":"Аки","voice":"book-a","markers":["Аки"]}]}"""
+        val parsed = VoiceRoleDictionary.parseBookRoles(json, bookId = 12L)
+        parsed.map { it.name } shouldBe listOf("Аки")
+        parsed.first().voice shouldBe "book-a"
+    }
+
+    @Test
+    fun `book roles of another book are invisible`() {
+        val json = """{"12":[{"name":"Аки","voice":"book-a"}]}"""
+        // Ключа книги 34 нет — роли чужих книг не применяются.
+        VoiceRoleDictionary.parseBookRoles(json, bookId = 34L) shouldBe emptyList()
+    }
+
+    @Test
+    fun `broken book json does not throw`() {
+        // Мусор в настройках не должен ронять озвучку: возвращается пусто,
+        // дальше работают общие роли.
+        VoiceRoleDictionary.parseBookRoles("", bookId = 1L) shouldBe emptyList()
+        VoiceRoleDictionary.parseBookRoles("не json", bookId = 1L) shouldBe emptyList()
+        VoiceRoleDictionary.parseBookRoles("""{"1": }""", bookId = 1L) shouldBe emptyList()
+    }
+
+    @Test
+    fun `book role wins over a global one with the same name`() {
+        val json = """{"12":[{"name":"Аки","voice":"book-a","markers":["Аки"]}]}"""
+        val book = VoiceRoleDictionary.parseBookRoles(json, bookId = 12L)
+        // Книжные идут первыми — resolve находит именно их.
+        val merged = book + roles
+        VoiceRoleDictionary.resolve(merged, speakerName = "Аки", gender = null)?.voice shouldBe "book-a"
+    }
+
+    @Test
+    fun `rewriting one book keeps the others`() {
+        // Ключевая гарантия: перезапись ролей книги не трогает остальные книги
+        // и не ломает формат словаря.
+        val start = """{"12":[{"name":"Аки","voice":"book-a"}]}"""
+        val updated = VoiceJson.withArray(start, key = "34", value = """[{"name":"Бо","voice":"book-b"}]""")
+
+        VoiceRoleDictionary.parseBookRoles(updated, bookId = 12L).first().voice shouldBe "book-a"
+        VoiceRoleDictionary.parseBookRoles(updated, bookId = 34L).first().voice shouldBe "book-b"
+        // Чужая книга добавилась — прежние не пропали, порядок не важен.
+        VoiceRoleDictionary.parseBookRoles(updated, bookId = 12L).map { it.name } shouldBe listOf("Аки")
+    }
+
+    @Test
+    fun `rewriting a book replaces only its own entry`() {
+        val start = """{"12":[{"name":"Аки","voice":"old-a"}],"34":[{"name":"Бо","voice":"old-b"}]}"""
+        val updated = VoiceJson.withArray(start, key = "12", value = """[{"name":"Аки","voice":"new-a"}]""")
+
+        VoiceRoleDictionary.parseBookRoles(updated, bookId = 12L).first().voice shouldBe "new-a"
+        VoiceRoleDictionary.parseBookRoles(updated, bookId = 34L).first().voice shouldBe "old-b"
+    }
+
+    @Test
+    fun `empty store becomes a valid single entry`() {
+        VoiceJson.withArray("", key = "7", value = """[{"name":"X"}]""")
+            .let { VoiceRoleDictionary.parseBookRoles(it, bookId = 7L).map { r -> r.name } } shouldBe listOf("X")
+    }
 }
