@@ -298,6 +298,16 @@ class MangaScreen(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Text(autoReadState.title.ifBlank { "Сканирование…" })
+                            // «Терминал»: что делает скан прямо сейчас. Без этой
+                            // строки запрос к модели на каждую страницу выглядел
+                            // как зависание — а ИИ-проверка идёт между OCR-страницами,
+                            // и прогресс-бар этого не показывает.
+                            if (autoReadState.stage.isNotBlank()) {
+                                Text(
+                                    "> ${autoReadState.stage}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
                             if (autoReadState.total > 0) {
                                 Text("Страница ${autoReadState.processed} из ${autoReadState.total}")
                             } else {

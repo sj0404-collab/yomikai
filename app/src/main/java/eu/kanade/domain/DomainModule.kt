@@ -28,6 +28,7 @@ import eu.kanade.domain.track.interactor.SyncChapterProgressWithTrack
 import eu.kanade.domain.track.interactor.TrackChapter
 import eu.kanade.tachiyomi.data.dictionary.audio.DictionaryAudioPlayerImpl
 import eu.kanade.tachiyomi.data.dictionary.audio.DictionaryAudioRepositoryImpl
+import eu.kanade.tachiyomi.data.ocr.OcrChapterAiVerifier
 import eu.kanade.tachiyomi.data.ocr.OcrChapterScanner
 import eu.kanade.tachiyomi.data.ocr.OcrPageSourceGateway
 import eu.kanade.tachiyomi.data.ocr.OcrPageSourceGatewayImpl
@@ -295,6 +296,7 @@ class DomainModule : InjektModule {
         addSingletonFactory { ReaderSelectionCropper(get()) }
         addSingletonFactory { OcrScanNotifier(get<Application>()) }
         addSingletonFactory { OcrChapterScanner(get<Application>(), get(), get(), get(), get(), get(), get(), get()) }
+        addFactory { OcrChapterAiVerifier(get()) }
         addSingletonFactory { OcrScanManager(get<Application>(), get(), get(), get()) }
         addFactory { OcrQueueActions(get(), get()) }
         addFactory { OcrProcessor(get()) }

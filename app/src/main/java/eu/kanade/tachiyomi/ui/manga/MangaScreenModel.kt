@@ -32,6 +32,7 @@ import eu.kanade.presentation.util.formattedMessage
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.model.Download
+import eu.kanade.tachiyomi.data.ocr.OcrChapterAiVerifier
 import eu.kanade.tachiyomi.data.ocr.OcrChapterScanner
 import eu.kanade.tachiyomi.data.ocr.OcrPageSourceResolver
 import eu.kanade.tachiyomi.data.ocr.OcrScanFailure
@@ -786,8 +787,27 @@ class MangaScreenModel(
             return
         }
         screenModelScope.launchIO {
-            _chapterAutoRead.value = ChapterAutoReadState(running = true, title = chapter.name, total = 0)
+            _chapterAutoRead.value = ChapterAutoReadState(
+                running = true,
+                title = chapter.name,
+                total = 0,
+                stage = "Подготовка…",
+            )
             try {
+                // Проверка картинки моделью включается только когда ключ есть:
+                // без него каждый кадр ждал бы сетевого таймаута впустую, и
+                // скан выглядел бы зависшим на минуты.
+                val aiReady = ocrPreferences.googleApiKey().get().isNotBlank()
+                val verifier = if (aiReady) {
+                    OcrChapterAiVerifier(ocrPreferences)
+                } else {
+                    null
+                }
+                if (!aiReady) {
+                    _chapterAutoRead.value = _chapterAutoRead.value.copy(
+                        stage = "ИИ-проверка выключена: нет ключа Google AI",
+                    )
+                }
                 val ok = ocrChapterScanner.scanChapter(
                     chapterId = chapter.id,
                     onProgress = { p ->
@@ -796,8 +816,15 @@ class MangaScreenModel(
                             processed = p.processedPages,
                             total = p.totalPages,
                             title = p.chapterName,
+                            stage = if (aiReady) "OCR страницы ${p.processedPages} из ${p.totalPages}" else _chapterAutoRead.value.stage,
+                            stagePercent = if (p.totalPages > 0) {
+                                (p.processedPages * 100 / p.totalPages).coerceIn(0, 100)
+                            } else {
+                                0
+                            },
                         )
                     },
+                    aiVerifier = verifier,
                     onComplete = { p ->
                         _chapterAutoRead.value = _chapterAutoRead.value.copy(
                             running = true,
@@ -817,6 +844,17 @@ class MangaScreenModel(
                         )
                     },
                 )
+                if (ok && verifier != null) {
+                    // Роли пишутся в словарь ЭТОЙ книги: голос персонажа
+                    // работает здесь и не утекает в другие издания.
+                    val summary = verifier.commit(chapter.mangaId)
+                    _chapterAutoRead.value = _chapterAutoRead.value.copy(
+                        stage = "ИИ закончил: персонажей ${summary.rolesFound}" +
+                            if (summary.rolesFound == 0) " (ключ есть, но ролей не найдено)" else "",
+                        stagePercent = 100,
+                        aiChecking = false,
+                    )
+                }
                 if (ok) {
                     val file = buildChapterTranscript(manga, chapter)
                     _chapterAutoRead.value = _chapterAutoRead.value.copy(
@@ -1378,6 +1416,12 @@ data class ChapterAutoReadState(
     val error: String? = null,
     val exportFile: String? = null,
     val openChapterId: Long? = null,
+    /** Идёт ли проверка страниц моделью (вторая стадия скана). */
+    val aiChecking: Boolean = false,
+    /** Что именно делает скан прямо сейчас — для «терминала» в диалоге. */
+    val stage: String = "",
+    /** Проценты по текущей стадии, 0..100. */
+    val stagePercent: Int = 0,
 )
 
 /** Три предлагаемых OCR-движка для скан-чтения. */

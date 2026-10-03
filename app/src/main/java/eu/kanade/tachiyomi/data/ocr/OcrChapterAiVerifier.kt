@@ -1,0 +1,174 @@
+package eu.kanade.tachiyomi.data.ocr
+
+import android.graphics.Bitmap
+import eu.kanade.tachiyomi.data.tts.PageRoleVerifier
+import eu.kanade.tachiyomi.data.tts.VoiceRole
+import eu.kanade.tachiyomi.data.tts.VoiceRoleDictionary
+import logcat.LogPriority
+import mihon.domain.ocr.service.OcrPreferences
+import tachiyomi.core.common.util.system.logcat
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+import java.io.ByteArrayOutputStream
+
+/**
+ * Проверка страниц главы моделью с картинкой — вне читалки, где время не
+ * ограничено.
+ *
+ * Внутри читалки важнее скорость, поэтому там атрибуция остаётся локальной.
+ * Здесь, при подготовке главы, для каждой страницы выполняется один запрос к
+ * модели: кто говорит, что пропущено, где OCR ошибся. Результат — словарь
+ * ролей **этой книги**: голос персонажа работает в ней и не утекает в другие.
+ *
+ * Прогресс честный: [onStage] сообщает, что именно происходит сейчас
+ * (OCR или ИИ), потому что запрос к модели на страницу занимает секунды и
+ * без индикации выглядит как зависание.
+ */
+class OcrChapterAiVerifier(
+    private val prefs: OcrPreferences,
+) {
+
+    /** Что сейчас делает скан — для индикации в диалоге. */
+    data class Stage(
+        val pageIndex: Int,
+        val totalPages: Int,
+        val phase: Phase,
+        val detail: String,
+    )
+
+    enum class Phase {
+        /** Идёт распознавание страницы локально. */
+        OCR,
+
+        /** Модель смотрит на страницу. */
+        AI,
+
+        /** Скан завершён, роли записаны. */
+        DONE,
+    }
+
+    /** Счётчик страниц, на которых ИИ что-то изменил. */
+    data class Summary(
+        val pagesChecked: Int,
+        val pagesChanged: Int,
+        val rolesFound: Int,
+        val skippedReason: String?,
+    )
+
+    suspend fun verifyPage(
+        chapterId: Long,
+        pageIndex: Int,
+        pageName: String,
+        bitmap: Bitmap,
+        lines: List<String>,
+        onStage: (Phase, String) -> Unit = { _, _ -> },
+    ): PageRoleVerifier.PageCheck? {
+        val draft = lines.map { it.trim() }.filter { it.isNotEmpty() }
+        if (draft.isEmpty()) return null
+        val jpeg = encodeJpeg(bitmap) ?: return null
+        return PageRoleVerifier.verify(jpeg, pageName, draft, prefs).also { check ->
+            if (check.checked) collectRoles(check, draft, pageIndex, onStage)
+        }
+    }
+
+    /**
+     * Накопитель ролей главы.
+     *
+     * Имена собираются по страницам и пишутся в словарь книги один раз в
+     * конце: переписывать словарь на каждой странице означало бы N записей в
+     * настройки и риск потерять предыдущие страницы при обрыве связи.
+     */
+    private val collected = LinkedHashMap<String, RoleDraft>()
+
+    private fun collectRoles(
+        check: PageRoleVerifier.PageCheck,
+        draft: List<String>,
+        pageIndex: Int,
+        onStage: (Phase, String) -> Unit,
+    ) {
+        check.lines.forEach { line ->
+            if (!line.kept) return@forEach
+            val role = line.role.trim()
+            // "?" — модель не смогла определить говорящего, а "narrator" —
+            // внеэкранный текст: у narrator нет голоса персонажа.
+            if (role.isEmpty() || role == PageRoleVerifier.UNKNOWN_ROLE || role.equals("narrator", true)) {
+                return@forEach
+            }
+            val key = role.lowercase()
+            val draftEntry = collected.getOrPut(key) { RoleDraft(role) }
+            draftEntry.pages++
+            if (draftEntry.text.isBlank()) draftEntry.text = line.text
+        }
+        onStage(Phase.AI, "страница ${pageIndex + 1}: найдено персонажей ${collected.size}")
+    }
+
+    private data class RoleDraft(val name: String) {
+        var pages: Int = 0
+        var text: String = ""
+    }
+
+    /**
+     * Записать собранные роли в словарь книги.
+     *
+     * Голос НЕ назначается здесь: системный TTS не умеет создавать голоса, и
+     * без проверки доступности движок молча ушёл бы на другой. Имя и пол —
+     * это то, что реально можно записать; конкретный голос выбирается движком
+     * по полу через VoicePlugins.planAiVoice либо вручную.
+     */
+    fun commit(bookId: Long): Summary {
+        if (bookId <= 0L || collected.isEmpty()) {
+            return Summary(0, 0, collected.size, "ролей не найдено")
+        }
+        val existing = VoiceRoleDictionary.parseBookRoles(
+            prefs.voiceRolesByBook().get(),
+            bookId,
+        )
+        val roles = collected.values.map { draft ->
+            VoiceRole(
+                id = draft.name.lowercase(),
+                name = draft.name,
+                // Пол модели здесь не приходит: определение пола по лицу
+                // делает SpeakerGenderService, и без него честнее "auto",
+                // чем выдуманное значение.
+                gender = VoiceRole.GENDER_AUTO,
+                age = "adult",
+                voice = "",
+                pitch = 1.0f,
+                rate = 1.0f,
+                markers = listOf(draft.name),
+            )
+        }
+        // Книжные роли не затирают то, что читатель настроил руками.
+        val manual = existing.filter { role -> roles.none { it.name.equals(role.name, true) } }
+        VoiceRoleDictionary.saveForBook(prefs, bookId, manual + roles)
+        return Summary(
+            pagesChecked = collected.size,
+            pagesChanged = 0,
+            rolesFound = roles.size,
+            skippedReason = null,
+        )
+    }
+
+    fun reset() = collected.clear()
+
+    private fun encodeJpeg(bitmap: Bitmap): ByteArray? = runCatching {
+        if (bitmap.isRecycled) return null
+        val out = ByteArrayOutputStream()
+        // Модели достаточно уменьшенного кадра: она ищет форму облачков, а не
+        // буквы, поэтому полный размер только тратит трафик и время.
+        val scaled = if (bitmap.width > MAX_JPEG_EDGE) {
+            val h = bitmap.height * MAX_JPEG_EDGE / bitmap.width
+            Bitmap.createScaledBitmap(bitmap, MAX_JPEG_EDGE, h, true)
+        } else {
+            bitmap
+        }
+        scaled.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
+        if (scaled !== bitmap && !scaled.isRecycled) scaled.recycle()
+        out.toByteArray().takeIf { it.isNotEmpty() }
+    }.onFailure { logcat(LogPriority.WARN, it) { "Chapter AI jpeg encode failed" } }.getOrNull()
+
+    companion object {
+        private const val MAX_JPEG_EDGE = 1024
+        private const val JPEG_QUALITY = 80
+    }
+}

@@ -32,6 +32,7 @@ internal class OcrChapterScanner(
         onComplete: (OcrChapterScanProgress) -> Unit,
         onError: (OcrChapterScanError) -> Unit,
         onCacheStateChanged: (chapterId: Long, hasResults: Boolean) -> Unit = { _, _ -> },
+        aiVerifier: OcrChapterAiVerifier? = null,
     ): Boolean {
         val chapter = getChapter.await(chapterId)
         if (chapter == null) {
@@ -113,7 +114,21 @@ internal class OcrChapterScanner(
 
                                 val bitmap = page.openBitmap() ?: error("Unable to decode page ${page.pageIndex + 1}")
                                 try {
-                                    scanPageOcr.await(chapterId, page.pageIndex, bitmap.toOcrImage())
+                                    val ocr = scanPageOcr.await(chapterId, page.pageIndex, bitmap.toOcrImage())
+                                    // Проверка картинки моделью идёт ПОСЛЕ OCR и до
+                                    // recycle битмапа: JPEG нужен модели, а реплики —
+                                    // только что распознанным черновиком. Кадр
+                                    // гасится флагом scanChapter(aiVerifier = null),
+                                    // поэтому часовой оффлайн-скан остаётся как был.
+                                    if (aiVerifier != null) {
+                                        aiVerifier.verifyPage(
+                                            chapterId = chapterId,
+                                            pageIndex = page.pageIndex,
+                                            pageName = "${chapter.name} #${index + 1}",
+                                            bitmap = bitmap,
+                                            lines = ocr.regions.map { it.text },
+                                        )
+                                    }
                                 } finally {
                                     if (!bitmap.isRecycled) {
                                         bitmap.recycle()
