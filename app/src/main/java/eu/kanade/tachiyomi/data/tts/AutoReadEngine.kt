@@ -611,7 +611,7 @@ class AutoReadEngine(
                     lines = if (usableWhole && !bubblesFirst) {
                         splitWholePageToLines(lines.first())
                     } else {
-                        val bubbleLines = runCatching { readBubbles(ocrBitmap, chapterId, pageIndex, order) }
+                        val bubbleLines = runCatching { readBubbles(ocrBitmap, chapterId, pageIndex, order, geometry) }
                             .onFailure {
                                 logcat(LogPriority.WARN, it) { "Bubble detection failed" }
                                 OcrHistoryStore.addAutoRead(false, "детектор облачков", it.message ?: it.javaClass.simpleName)
@@ -634,7 +634,7 @@ class AutoReadEngine(
                     lines.count { it.text.count(Char::isLetter) >= 3 } < SUPPLEMENT_BUBBLES_MIN &&
                     !ocrBitmap.isRecycled
                 ) {
-                    val extra = runCatching { readBubbles(ocrBitmap, chapterId, pageIndex, order) }
+                    val extra = runCatching { readBubbles(ocrBitmap, chapterId, pageIndex, order, geometry) }
                         .onFailure {
                             logcat(LogPriority.WARN, it) { "Bubble supplement failed" }
                             OcrHistoryStore.addAutoRead(false, "добор баллонов", it.message ?: it.javaClass.simpleName)
@@ -800,16 +800,44 @@ class AutoReadEngine(
                     FrameRegion(r.boundingBox, speakable.size + j + 1, FrameRegion.State.DONE, r.text)
                 }
 
-                // 4) реплика за репликой: подсветка -> озвучка -> ждём конца
-                for ((i, region) in speakable.withIndex()) {
+                // 4) реплика за репликой: подсветка -> озвучка -> ждём конца.
+                //
+                // Идём по ordered, а не по speakable, и ведём СЧЁТЧИК сам.
+                // Переводы, пола и подготовилка ассистента заполнены по
+                // индексам ordered, а speakable — подпоследовательность
+                // ordered: после потокового прохода его позиция уезжает на
+                // число уже озвученных реплик. По speakable реплика получала
+                // бы чужой перевод и чужой пол, а `prep.speak = false` выкидывал
+                // бы не ту реплику целиком.
+                var speakIndex = 0
+                for ((orderedIndex, region) in ordered.withIndex()) {
+                    // Уже прозвучало потоковым проходом: в speakable её нет.
+                    if (lineKey(region.text) in spokenLines) continue
+                    val i = speakIndex++
                     if (job?.isActive != true) break
 
                     // Ответ ассистента подхватывается на лету (если уже
                     // пришёл): скип дублей, чистый текст, пол. Если ещё не
                     // пришёл — читаем немедленно локальным конвейером.
-                    val prep = preparedRef.get()?.getOrNull(i)
-                    if (prep != null && !prep.speak) continue
-                    if (prep?.gender != null && genders.get(i) == null) genders.set(i, prep.gender)
+                    val prep = preparedRef.get()?.getOrNull(orderedIndex)
+                    if (prep != null && !prep.speak) {
+                        // Пропущенная реплика всё равно занимает место в
+                        // speakable, но оставаться «следующей» она не должна:
+                        // иначе значок на ней мигает до конца главы.
+                        val skipped = i
+                        _frameRegions.value = speakable.mapIndexed { j, r ->
+                            FrameRegion(
+                                r.boundingBox,
+                                j + 1,
+                                if (j <= skipped) FrameRegion.State.DONE else FrameRegion.State.UPCOMING,
+                                r.text,
+                            )
+                        }
+                        continue
+                    }
+                    if (prep?.gender != null && genders.get(orderedIndex) == null) {
+                        genders.set(orderedIndex, prep.gender)
+                    }
 
                     // Обновляем статусы: до i — прочитано, i — читается, после — предстоит
                     _frameRegions.value = speakable.mapIndexed { j, r ->
@@ -825,7 +853,7 @@ class AutoReadEngine(
                         )
                     }
 
-                    val translatedText = translations.getOrNull(i)?.takeIf { it.isNotBlank() }
+                    val translatedText = translations.getOrNull(orderedIndex)?.takeIf { it.isNotBlank() }
                     val speakTextRaw = if (translate && language != target) {
                         translatedText ?: region.text
                     } else {
@@ -843,7 +871,7 @@ class AutoReadEngine(
                     val roleMode = VoiceModeResolver.currentMode()
                     val gender = speakerGenderFor(
                         roleMode,
-                        genders.get(i), // мог дозаполниться AI пока читали предыдущие
+                        genders.get(orderedIndex), // мог дозаполниться AI пока читали предыдущие
                     )
 
                     // Имя персонажа: разметка `{имя:…}` (если пришла извне) либо
@@ -925,14 +953,21 @@ class AutoReadEngine(
                 // полноэкранный битмап.
                 releaseFrame()
                 aiRefine?.cancel()
-                _currentRegion.value = null
-                _frameRegions.value = emptyList()
-                streamedRegionCount.set(0)
-                _isReading.value = false
-                // Колбэк только для АКТУАЛЬНОГО запуска: после stop() старый
-                // цикл не имеет права листать дальше или перезапускать чтение
-                if (myGen == generation && job?.isCancelled != true) {
-                    onPageFinished()
+                // Общее состояние кадра — только для СВОЕГО кадра. Job.cancel()
+                // лишь помечает задачу, она завершается на следующей точке
+                // suspend, а к тому моменту новый кадр уже опубликовал свои
+                // регионы. Без проверки поколения отменённый кадр стирал их и
+                // возвращал кнопке «Стоп» состояние «старт» посреди чтения.
+                if (myGen == generation) {
+                    _currentRegion.value = null
+                    _frameRegions.value = emptyList()
+                    streamedRegionCount.set(0)
+                    _isReading.value = false
+                    // Колбэк только для АКТУАЛЬНОГО запуска: после stop() старый
+                    // цикл не имеет права листать дальше или перезапускать чтение
+                    if (job?.isCancelled != true) {
+                        onPageFinished()
+                    }
                 }
             }
         }
@@ -1456,11 +1491,26 @@ class AutoReadEngine(
      * баллон становится отдельной репликой со своей рамкой. После разовой
      * загрузки моделей весь конвейер работает полностью офлайн.
      */
+    /**
+     * Короткая метка положения кадра на странице для ключа кэша.
+     *
+     * Шаг в 1/64 страницы: различает соседние кадры автоскролла и не плодит
+     * ключи на каждый пиксель. Область скана входит в метку отдельно, потому
+     * что кадр, взятый с полей и по центру, — разные картинки одной страницы.
+     */
+    private fun frameTag(geometry: OcrFrameGeometry?): String {
+        if (geometry == null) return "full"
+        val scroll = (geometry.scrollFraction * 64).toInt().coerceIn(0, 64)
+        val top = geometry.crop?.let { (it.top * 64).toInt().coerceIn(0, 64) } ?: -1
+        return "s${scroll}c$top"
+    }
+
     private suspend fun readBubbles(
         bitmap: Bitmap,
         chapterId: Long,
         pageIndex: Int,
         order: String,
+        geometry: OcrFrameGeometry? = null,
     ): List<Line> {
         val direction = when (order) {
             "ltr" -> tachiyomi.core.common.util.system.ReadingDirection.LTR
@@ -1468,7 +1518,12 @@ class AutoReadEngine(
             else -> tachiyomi.core.common.util.system.ReadingDirection.RTL
         }
         val det = detectPanels.await(
-            cacheKey = "autoread_${chapterId}_$pageIndex",
+            // Ключ обязан различать КАДР, а не только страницу: у вебтуна
+            // pageIndex при прокрутке не меняется, и после первого шага
+            // автоскролла кэш отдавал бы рамки баллонов, найденные на прошлом
+            // окне, — OCR резал бы по чужим координатам, и реплики дублировались
+            // или терялись. Хвост ключа — доля кадра по странице.
+            cacheKey = "autoread_${chapterId}_${pageIndex}_${frameTag(geometry)}",
             image = bitmap,
             originalWidth = bitmap.width,
             originalHeight = bitmap.height,

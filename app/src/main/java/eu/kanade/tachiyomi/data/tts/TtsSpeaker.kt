@@ -1051,6 +1051,10 @@ object TtsSpeaker {
     ) {
         val p = prefs()
         currentJob = scope.launch {
+            // СВОЙ Job, а не поле: тело задачи стартует на другом потоке и
+            // может выполниться ДО присваивания currentJob, увидев там null, —
+            // и оборвать озвучку на первой же проверке.
+            val my = coroutineContext[Job]
             setSpeaking(true)
             val url = p.remoteTtsUrl().get().trim()
             // Голос: id модели из роли, иначе пол. Сервер для неизвестного
@@ -1074,7 +1078,7 @@ object TtsSpeaker {
             var failed = false
             try {
                 for (sentence in sentences) {
-                    if (currentJob?.isActive != true) break
+                    if (my?.isActive != true) break
                     val trimmed = sentence.text.trim()
                     // Словарь интонаций доступен и сетевому движку: сервер
                     // принимает темп (`speed`) и паузу между кусками, поэтому
@@ -1102,7 +1106,7 @@ object TtsSpeaker {
                 logcat(LogPriority.WARN, e) { "remote TTS failed" }
                 failed = true
             }
-            if (failed && doneUpTo < sentences.size && currentJob?.isActive == true) {
+            if (failed && doneUpTo < sentences.size && my?.isActive == true) {
                 val rest = sentences.drop(doneUpTo).joinToString(" ") { it.text }
                 logcat(LogPriority.WARN) { "remote TTS fallback to system from sentence $doneUpTo" }
                 withContext(Dispatchers.Main) {
@@ -1183,12 +1187,16 @@ object TtsSpeaker {
     private fun speakGoogleWeb(context: Context, text: String) {
         val lang = prefs().ttsWebLanguage().get().ifBlank { "ru" }
         currentJob = scope.launch {
+            // СВОЙ Job, а не поле: тело задачи стартует на другом потоке и
+            // может выполниться ДО присваивания currentJob, увидев там null, —
+            // и оборвать озвучку на первой же проверке.
+            val my = coroutineContext[Job]
             setSpeaking(true)
             try {
-                // Endpoint сайта Google Translate ограничен ~200 симв. — бьём на куски
+                // Endpoint сайта Google Translate ограничен ~200 симв. — бьём на кучки
                 val chunks = splitForWeb(text, 180)
                 for (chunk in chunks) {
-                    if (currentJob?.isActive != true) break
+                    if (my?.isActive != true) break
                     val url = "https://translate.google.com/translate_tts" +
                         "?ie=UTF-8&client=tw-ob&tl=" + lang +
                         "&q=" + URLEncoder.encode(chunk, "UTF-8")
