@@ -623,10 +623,6 @@ private fun SoundRolesTab() {
 @Composable
 private fun SoundAutoReadTab() {
     val prefs = remember { Injekt.get<OcrPreferences>() }
-    val music by prefs.autoReadMusicEnabled().changes()
-        .collectAsState(initial = prefs.autoReadMusicEnabled().get())
-    val musicVolume by prefs.autoReadMusicVolume().changes()
-        .collectAsState(initial = prefs.autoReadMusicVolume().get())
     val speed by prefs.autoReadWebtoonSpeed().changes()
         .collectAsState(initial = prefs.autoReadWebtoonSpeed().get())
     val autoStart by prefs.autoReadAutoStart().changes()
@@ -643,19 +639,10 @@ private fun SoundAutoReadTab() {
     val target by prefs.translateTarget().changes()
         .collectAsState(initial = prefs.translateTarget().get())
 
-    HubSwitchRow(
-        title = "Фоновая музыка",
-        subtitle = "Процедурные петли под настроение сцены; на время речи приглушаются",
-        checked = music,
-    ) { prefs.autoReadMusicEnabled().set(it) }
-    if (music) {
-        HubPercentSlider(
-            label = "Громкость музыки",
-            value = musicVolume,
-            percentRange = 4..80,
-            text = { "%.0f%%".format(it) },
-        ) { prefs.autoReadMusicVolume().set(it / 100f) }
-    }
+    // «Фоновая музыка» убрана из настроек: её преференцы остались в базе, но
+    // проигрывателя в приложении нет (AutoReadMusic не существует), и тумблер
+    // обещал музыку, которой не было. Если понадобится — это отдельная
+    // фича с выбором треков, а не переключатель в пустоту.
 
     HubOptions(
         title = "Скорость автолистания",

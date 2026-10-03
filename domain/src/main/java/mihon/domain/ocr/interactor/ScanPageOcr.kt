@@ -12,13 +12,17 @@ class ScanPageOcr(
      * [onPartial] — области по мере их распознавания, см.
      * [OcrRepository.scanPage]. Позволяет озвучивать первые реплики страницы,
      * пока движок ещё читает последние.
+     *
+     * [cacheResult] = false для кадров авточтения: они не страницы (см.
+     * [OcrRepository.scanPage]).
      */
     suspend fun await(
         chapterId: Long,
         pageIndex: Int,
         image: OcrImage,
         onPartial: ((OcrRegion) -> Unit)? = null,
+        cacheResult: Boolean = true,
     ): OcrPageResult {
-        return ocrRepository.scanPage(chapterId, pageIndex, image, onPartial)
+        return ocrRepository.scanPage(chapterId, pageIndex, image, onPartial, cacheResult)
     }
 }

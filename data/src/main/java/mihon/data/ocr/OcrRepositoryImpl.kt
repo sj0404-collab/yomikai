@@ -521,6 +521,7 @@ class OcrRepositoryImpl(
         pageIndex: Int,
         image: OcrImage,
         onPartial: ((OcrRegion) -> Unit)?,
+        cacheResult: Boolean,
     ): OcrPageResult {
         return withActiveOperation {
             val regionChoice = ocrPreferences.scanRegion().get()
@@ -571,7 +572,12 @@ class OcrRepositoryImpl(
                 )
             }
 
-            cacheStore.upsert(result)
+            // Кадр авточтения — это окно вебтуна, а не страница: его рамки
+            // нормализованы к обрезанному кадру. В кэш страницы такую запись
+            // класть нельзя, иначе оверлей потом подсвечивал не там. Плюс
+            // веб-авточтение шлёт chapterId = -1 на каждую позицию прокрутки,
+            // и clearChapter такие записи не убирал.
+            if (cacheResult) cacheStore.upsert(result)
             result
         }
     }

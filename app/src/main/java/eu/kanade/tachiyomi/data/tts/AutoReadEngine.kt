@@ -164,6 +164,8 @@ class AutoReadEngine(
      *  • продолжение реплики (похожа на последнюю реплику известного
      *    персонажа — это и перекрытие вебтуна, и длинная реплика из двух
      *    облачков) → ТОТ ЖЕ слот;
+     *  • диалог без подписей → реплика продолжает ОТКРЫТОГО ГОВОРЯЩЕГО, а не
+     *    становится новым персонажем (см. [lastSpokenGender]);
      *  • иначе новая реплика = новый персонаж = следующий свободный слот
      *    ВНУТРИ своего пола (нумерация по полам, чтобы слот 0 и слот 1
      *    означали первого и второго мужчину, а не «первого и третьего»).
@@ -184,11 +186,13 @@ class AutoReadEngine(
         } else {
             null
         }
-        val known = byName ?: byText
+        val known = byName ?: byText ?: openTurnSpeaker(g, fingerprint)
         if (known != null) {
             rememberSpoken(known, fingerprint)
+            lastSpokenGender = g
             return known.slot
         }
+        lastSpokenGender = g
         val speaker = TrackedSpeaker(
             key = speakerName?.takeIf { it.isNotBlank() }?.let(::speakerKeyByName)
                 ?: "?" + trackedSpeakers.size + ":" + fingerprint.take(16),
@@ -199,6 +203,36 @@ class AutoReadEngine(
         trackedSpeakers.addLast(speaker)
         trimTrackedSpeakers()
         return speaker.slot
+    }
+
+    /**
+     * Кто продолжает говорить в сцене без подписей.
+     *
+     * Без этого каждая новая реплика считалась новым персонажем: слот
+     * рос на единицу, и голос шёл по кругу — на странице шесть баблов, и
+     * читатель слышал шесть разных голосов там, где говорили двое. Раньше
+     * это маскировалось подписью «АКИ:», а в манхвах без подписей голоса
+     * просто ездили по кругу.
+     *
+     * Правило простое и предсказуемое:
+     *  • пол сменился → говорит тот, кто последним звучал этого пола: диалог
+     *    возвращается к прежнему собеседнику (А, Б, А, Б);
+     *  • пол тот же и реплика короткая («Да!») → это тот же персонаж;
+     *  • пол тот же и реплика длинная → почти наверняка вторая реплика
+     *    другого персонажа того же пола, поэтому чередуем двух последних.
+     *
+     * Монолог (длинные реплики одного персонажа подряд без смены пола)
+     * получит чередование голоса, но короткие реплики и реплики с подписью
+     * по-прежнему держат один голос.
+     */
+    private fun openTurnSpeaker(gender: String, fingerprint: String): TrackedSpeaker? {
+        val sameGender = trackedSpeakers.filter { it.gender == gender }
+        val idx = continueSpeakerIndex(
+            sameGenderCount = sameGender.size,
+            genderJustChanged = lastSpokenGender != gender,
+            longLine = fingerprint.length >= MIN_FINGERPRINT,
+        )
+        return sameGender.getOrNull(idx)
     }
 
     /** Слот персонажа с учётом режима голоса: в обычном режиме слот не нужен. */
@@ -268,6 +302,40 @@ class AutoReadEngine(
     @Volatile
     var highlightZone: android.graphics.RectF? = null
 
+    /**
+     * Какая часть СТРАНИЦЫ попала в последний кадр авточтения.
+     *
+     * Нужна только для оверлея значков: рамки реплик приходят нормализованными
+     * к обрезанному кадру, а оверлей рисует их относительно прямоугольника
+     * страницы. Для кадра, равного странице (манга, постраничный режим), обе
+     * системы совпадают, а для вебтуна — кадр это окно ленты, и значки
+     * уезжали не на свою реплику.
+     */
+    @Volatile
+    private var frameGeometry: OcrFrameGeometry? = null
+
+    /**
+     * Рамка реплики в координатах СТРАНИЦЫ, а не кадра.
+     *
+     * [onLineSpoken] по-прежнему получает рамку в координатах кадра: по ней
+     * читалка считает, на сколько прокрутить вьюпорт. Пересчитываются только
+     * рамки в [_frameRegions], которые рисует оверлей.
+     */
+    private fun pageBox(box: OcrBoundingBox): OcrBoundingBox {
+        val crop = frameGeometry?.crop ?: return box
+        val mapped = frameBoxToPage(
+            left = box.left,
+            top = box.top,
+            right = box.right,
+            bottom = box.bottom,
+            cropLeft = crop.left,
+            cropTop = crop.top,
+            cropRight = crop.right,
+            cropBottom = crop.bottom,
+        )
+        return mapped?.let { OcrBoundingBox(it[0], it[1], it[2], it[3]) } ?: box
+    }
+
     /** Box из координат обрезанного кадра -> координаты вьюпорта. */
     fun mapToViewport(box: OcrBoundingBox): OcrBoundingBox {
         val z = highlightZone ?: return box
@@ -300,6 +368,28 @@ class AutoReadEngine(
      * устройстве нет, и авточтение обязано остановиться.
      */
     private var rejectedStreak = 0
+
+    /**
+     * Сколько подряд кадров OCR не дал результата: упал движок, истёк таймаут
+     * или вернулось пусто.
+     *
+     * Отличать «нечего читать» от «не смогли прочитать» раньше было нечем: и то
+     * и другое доходило до конвейера пустым списком регионов, он дочитывал
+     * кадр и листал дальше. Теперь серия пустых кадров останавливает
+     * авточтение с объяснением, а одиночный пропуск (первый кадр с холодной
+     * моделью) — обычное дело.
+     */
+    private var ocrFailedStreak = 0
+
+    /**
+     * Пол говорящего, который звучал последним.
+     *
+     * Нужен, чтобы отличать «диалог» от «нового персонажа»: в сцене без
+     * подписей единственный надёжный признак продолжения диалога — смена пола
+     * обратно на прежнего. Хранится отдельно от [trackedSpeakers], потому что
+     * это свойство последней ОЗВУЧЕННОЙ реплики, а не персонажа.
+     */
+    private var lastSpokenGender: String? = null
 
     /** Был ли в последнем кадре новый текст (для темпа автоскролла). */
     @Volatile
@@ -449,6 +539,10 @@ class AutoReadEngine(
                 }
             }
             try {
+                // Геометрия кадра нужна оверлею значков: рамки реплик он рисует
+                // относительно страницы, а распознавание отдаёт их в координатах
+                // кадра (у вебтуна кадр — окно ленты, а не страница).
+                frameGeometry = geometry
                 // Озвучивать нечем — не тратим время на распознавание кадра и
                 // не листаем страницы: читатель должен увидеть причину сразу.
                 if (!voicePathUsable()) {
@@ -509,6 +603,11 @@ class AutoReadEngine(
                                         pageIndex = pageIndex,
                                         image = image,
                                         onPartial = { region -> partials.trySend(region) },
+                                        // Кадр авточтения — окно вебтуна, а не
+                                        // страница: в кэш страницы такая запись
+                                        // попадала с рамками от кадра, и оверлей
+                                        // потом подсвечивал не там.
+                                        cacheResult = false,
                                     )
                                 }
                             } catch (e: TimeoutCancellationException) {
@@ -557,6 +656,9 @@ class AutoReadEngine(
                         "OCR-кадр таймаут",
                         "${OCR_FRAME_TIMEOUT_MS / 1000}с pageIndex=$pageIndex",
                     )
+                    // Таймаут — это «не смогли», а не «текста нет»: пустой кадр
+                    // дальше просто листался, и читатель терял главу без слов.
+                    if (noteOcrFailure("таймаут ${OCR_FRAME_TIMEOUT_MS / 1000}с")) return@launch
                     mihon.domain.ocr.model.OcrPageResult(
                         chapterId = chapterId,
                         pageIndex = pageIndex,
@@ -778,6 +880,16 @@ class AutoReadEngine(
                 lastFrameHadText = ordered.isNotEmpty()
                 if (ordered.isNotEmpty()) {
                     lastFrameText = ordered.joinToString("\n") { it.text }
+                    // Кадр распознан — счётчик отказов OCR сбрасываем, иначе
+                    // три случайных таймаута за главу остановили бы чтение.
+                    ocrFailedStreak = 0
+                    // Уведомление «Читается страница» с кнопкой «⏹ Остановить».
+                    // Раньше оно показывалось только из неиспользуемого пути
+                    // «сканировать страницу целиком», то есть на обычном
+                    // авточтении в шторке ничего не было — а читатель не мог
+                    // остановить чтение, не вернувшись в приложение.
+                    runCatching { TtsReadingNotifier.show(context, lastFrameText) }
+                        .onFailure { logcat(LogPriority.WARN, it) { "Reading notification failed" } }
                 }
 
                 // 3.7) перевод ВСЕЙ страницы одним запросом (раньше был
@@ -791,13 +903,16 @@ class AutoReadEngine(
                     ordered.map { it.text }
                 }
 
-                // Публикуем карту кадра: всё, что будет прочитано
+                // Публикуем карту кадра: всё, что будет прочитано.
+                // Оверлей рисует рамки относительно прямоугольника СТРАНИЦЫ,
+                // а OCR отдал их в координатах кадра, поэтому здесь они
+                // возвращаются на страницу (см. pageBox).
                 val frozenL = ordered.filter { lineKey(it.text) in spokenLines }
                 val speakable = ordered.filterNot { lineKey(it.text) in spokenLines }
                 _frameRegions.value = speakable.mapIndexed { i, r ->
-                    FrameRegion(r.boundingBox, i + 1, FrameRegion.State.UPCOMING, r.text)
+                    FrameRegion(pageBox(r.boundingBox), i + 1, FrameRegion.State.UPCOMING, r.text)
                 } + frozenL.mapIndexed { j, r ->
-                    FrameRegion(r.boundingBox, speakable.size + j + 1, FrameRegion.State.DONE, r.text)
+                    FrameRegion(pageBox(r.boundingBox), speakable.size + j + 1, FrameRegion.State.DONE, r.text)
                 }
 
                 // 4) реплика за репликой: подсветка -> озвучка -> ждём конца.
@@ -810,9 +925,49 @@ class AutoReadEngine(
                 // бы чужой перевод и чужой пол, а `prep.speak = false` выкидывал
                 // бы не ту реплику целиком.
                 var speakIndex = 0
+
+                // «Сканировать и озвучивать страницу целиком»: один снимок и одна
+                // озвучка всей страницы вместо реплики за репликой. Переключатель
+                // существовал, но `ReaderViewModel.autoScanAndSpeak` не вызывался
+                // ниоткуда, и страница всегда читалась по баблам. Здесь тот же
+                // результат получается без второго снимка: текст кадра уже есть,
+                // листание и учёт истории — те же самые.
+                val wholePageMode = prefs.autoScanAndSpeak().get() && speakable.size > 1
+                if (wholePageMode) {
+                    val joined = speakable.joinToString(". ") { it.text.trim() }
+                    val pageGender = speakerGenderFor(
+                        VoiceModeResolver.currentMode(),
+                        genders.get(ordered.indexOfFirst { it.text == speakable.first().text }),
+                    )
+                    when (speakAndAwait(SpeechMarkup.strip(joined), pageGender, 0)) {
+                        SpeakOutcome.SPOKEN, SpeakOutcome.SILENT -> {
+                            rejectedStreak = 0
+                            speakable.forEach { spokenLines.add(lineKey(it.text)) }
+                            markSpokenInFrame(speakable.first().text)
+                        }
+                        SpeakOutcome.NO_ENGINE -> {
+                            blockAutoread(NO_VOICE_MESSAGE)
+                            return@launch
+                        }
+                        SpeakOutcome.REJECTED, SpeakOutcome.STALLED -> {
+                            rejectedStreak++
+                            if (rejectedStreak >= REJECTED_STOP_AFTER) {
+                                blockAutoread(REJECTED_VOICE_MESSAGE)
+                                return@launch
+                            }
+                        }
+                    }
+                    if (onLineSpoken != null) {
+                        runCatching { onLineSpoken(speakable.last().boundingBox) }
+                            .onFailure { logcat(LogPriority.WARN, it) { "onLineSpoken failed" } }
+                    }
+                }
+
                 for ((orderedIndex, region) in ordered.withIndex()) {
                     // Уже прозвучало потоковым проходом: в speakable её нет.
                     if (lineKey(region.text) in spokenLines) continue
+                    // Режим «вся страница целиком»: всё уже прозвучало одной фразой.
+                    if (wholePageMode) break
                     val i = speakIndex++
                     if (job?.isActive != true) break
 
@@ -827,7 +982,7 @@ class AutoReadEngine(
                         val skipped = i
                         _frameRegions.value = speakable.mapIndexed { j, r ->
                             FrameRegion(
-                                r.boundingBox,
+                                pageBox(r.boundingBox),
                                 j + 1,
                                 if (j <= skipped) FrameRegion.State.DONE else FrameRegion.State.UPCOMING,
                                 r.text,
@@ -842,7 +997,7 @@ class AutoReadEngine(
                     // Обновляем статусы: до i — прочитано, i — читается, после — предстоит
                     _frameRegions.value = speakable.mapIndexed { j, r ->
                         FrameRegion(
-                            r.boundingBox,
+                            pageBox(r.boundingBox),
                             j + 1,
                             when {
                                 j < i -> FrameRegion.State.DONE
@@ -924,9 +1079,11 @@ class AutoReadEngine(
                             blockAutoread(NO_VOICE_MESSAGE)
                             return@launch
                         }
-                        SpeakOutcome.REJECTED -> {
+                        SpeakOutcome.REJECTED, SpeakOutcome.STALLED -> {
                             // Разовый отказ — обычное дело. Серия отказов означает,
-                            // что озвучки нет: дальше листать нечего.
+                            // что озвучки нет: дальше листать нечего. Голос,
+                            // замолчавший на середине фразы, — такой же отказ:
+                            // раньше он молча удерживал страницу до таймаута.
                             rejectedStreak++
                             if (rejectedStreak >= REJECTED_STOP_AFTER) {
                                 blockAutoread(REJECTED_VOICE_MESSAGE)
@@ -947,6 +1104,10 @@ class AutoReadEngine(
             } catch (e: Exception) {
                 logcat(LogPriority.ERROR, e) { "AutoRead frame failed" }
                 OcrHistoryStore.addAutoRead(false, "сбой страницы", e.message ?: e.javaClass.simpleName)
+                // Сбой кадра раньше просто дочитывался, а потом колбэк листал
+                // дальше: читатель получал молча пролистанные страницы. Серия
+                // сбоев останавливает авточтение с объяснением.
+                noteOcrFailure(e.message ?: e.javaClass.simpleName)
             } finally {
                 // Кадр освобождаем на ЛЮБОМ выходе, включая отмену: иначе
                 // каждый прерванный кадр авточтения оставлял после себя
@@ -962,6 +1123,7 @@ class AutoReadEngine(
                     _currentRegion.value = null
                     _frameRegions.value = emptyList()
                     streamedRegionCount.set(0)
+                    frameGeometry = null
                     _isReading.value = false
                     // Колбэк только для АКТУАЛЬНОГО запуска: после stop() старый
                     // цикл не имеет права листать дальше или перезапускать чтение
@@ -1182,6 +1344,27 @@ class AutoReadEngine(
     }
 
     /**
+     * Кадр не распознан: таймаут движка или его исключение.
+     *
+     * Возвращает true, когда пора остановить авточтение. Одиночный отказ
+     * пропускаем — на холодную модель первый кадр всегда дольше, — но серия
+     * означает, что листать нечего: без остановки конвейер дочитал бы пустой
+     * кадр и уводил читателя вперёд по главе без единого слова.
+     */
+    private fun noteOcrFailure(reason: String): Boolean {
+        ocrFailedStreak++
+        logcat(LogPriority.WARN) { "OCR frame failed ($ocrFailedStreak): $reason" }
+        if (ocrFailedStreak < OCR_FAILED_STOP_AFTER) return false
+        logcat(LogPriority.WARN) { "Autoread blocked: OCR failing $ocrFailedStreak frames in a row" }
+        _voiceBlock.value = OCR_FAILED_MESSAGE
+        OcrHistoryStore.addAutoRead(false, "OCR не дал результат", reason)
+        ocrFailedStreak = 0
+        generation++
+        TtsSpeaker.stop()
+        return true
+    }
+
+    /**
      * Есть ли смысл начинать чтение: выбранный движок должен уметь озвучить.
      *
      * По умолчанию читаем голосом телефона, поэтому проверяется именно он.
@@ -1221,12 +1404,16 @@ class AutoReadEngine(
         // Голоса персонажей — память сессии: новая глава начинается с нуля,
         // иначе новый персонаж продолжил бы чужую нумерацию слотов.
         trackedSpeakers.clear()
+        lastSpokenGender = null
         rejectedStreak = 0
+        ocrFailedStreak = 0
         _voiceBlock.value = null
         generation++ // инвалидируем все pending-колбэки
         job?.cancel()
         job = null
         TtsSpeaker.stop()
+        runCatching { TtsReadingNotifier.dismiss(context) }
+            .onFailure { logcat(LogPriority.WARN, it) { "Reading notification dismiss failed" } }
         _currentRegion.value = null
         _frameRegions.value = emptyList()
         streamedRegionCount.set(0)
@@ -1280,6 +1467,17 @@ class AutoReadEngine(
 
         /** Движок есть, но текст принял и не озвучил. */
         REJECTED,
+
+        /**
+         * Реплика ПОШЛА, но `onDone` так и не пришёл: движок замолчал на середине.
+         *
+         * Отдельный исход нужен, потому что раньше это молча превращалось в
+         * [SPOKEN]: страница висела до полуминуты, затем листалась, а читателю
+         * не сообщали ничего. Теперь такая реплика идёт в тот же счётчик
+         * отказов, что и [REJECTED], и серия из них останавливает авточтение
+         * с объяснением.
+         */
+        STALLED,
     }
 
     /**
@@ -1313,7 +1511,7 @@ class AutoReadEngine(
         if (lineKey(text) in spokenLines) return true
         val index = streamedRegionCount.getAndIncrement()
         _frameRegions.value = _frameRegions.value + FrameRegion(
-            region.boundingBox,
+            pageBox(region.boundingBox),
             index + 1,
             FrameRegion.State.CURRENT,
             text,
@@ -1351,7 +1549,7 @@ class AutoReadEngine(
                 blockAutoread(NO_VOICE_MESSAGE)
                 false
             }
-            SpeakOutcome.REJECTED -> {
+            SpeakOutcome.REJECTED, SpeakOutcome.STALLED -> {
                 rejectedStreak++
                 if (rejectedStreak >= REJECTED_STOP_AFTER) {
                     blockAutoread(REJECTED_VOICE_MESSAGE)
@@ -1459,6 +1657,10 @@ class AutoReadEngine(
             if (TtsSpeaker.lastFailure == TtsSpeaker.SpeakFailure.REJECTED) {
                 return SpeakOutcome.REJECTED
             }
+            // Голос замолчал, не отдав ни ошибки, ни конца фразы. Считать это
+            // успехом нельзя: иначе читатель полминуты слушал тишину, а потом
+            // страница листалась как ни в чём не бывало.
+            return SpeakOutcome.STALLED
         }
         return SpeakOutcome.SPOKEN
     }
@@ -1980,6 +2182,70 @@ class AutoReadEngine(
             started || elapsedMs >= TTS_START_GRACE_MS
 
         /**
+         * Кто из уже известных персонажей продолжает говорить в сцене без
+         * подписей. Возвращает индекс в списке персонажей этого пола
+         * (по порядку звучания), либо -1, если продолжающего нет.
+         *
+         * Вынесено отдельно от [openTurnSpeaker], потому что это решение
+         * принимается на каждый бабл, а проверяется должно без Android и без
+         * инъекций: регрессия здесь сразу слышна как «голоса по кругу».
+         *
+         * Правила:
+         *  • пол сменился → продолжает последний говоривший этого пола: диалог
+         *    возвращается к прежнему собеседнику;
+         *  • реплика короткая → тот же голос, что и предыдущая реплика того же пола;
+         *  • реплика длинная и персонажей этого пола уже двое → отвечает второй,
+         *    ведь две длинные реплики подряд обычно говорят разные люди;
+         *  • персонаж один → продолжает он.
+         */
+        internal fun continueSpeakerIndex(
+            sameGenderCount: Int,
+            genderJustChanged: Boolean,
+            longLine: Boolean,
+        ): Int = when {
+            sameGenderCount <= 0 -> -1
+            genderJustChanged || !longLine -> sameGenderCount - 1
+            sameGenderCount >= 2 -> sameGenderCount - 2
+            else -> 0
+        }
+
+        /**
+         * Рамка реплики из координат КАДРА в координаты СТРАНИЦЫ.
+         *
+         * OCR отдаёт рамки в долях кадра — того окна, что ушло в распознавание.
+         * Оверлей рисует их относительно прямоугольника страницы, а у вебтуна
+         * кадр это часть ленты, поэтому без пересчёта значки уезжали не на
+         * свою реплику. [cropLeft..cropBottom] — какая часть страницы попала в
+         * кадр, в тех же долях 0..1.
+         *
+         * null — пересчитывать нечего: геометрии кадра нет (кадр склеен из
+         * нескольких страниц) либо она вырожденная. Тогда рамка остаётся
+         * прежней, как и раньше.
+         *
+         * Возвращает [left, top, right, bottom], чтобы проверялось без Android.
+         */
+        internal fun frameBoxToPage(
+            left: Float,
+            top: Float,
+            right: Float,
+            bottom: Float,
+            cropLeft: Float,
+            cropTop: Float,
+            cropRight: Float,
+            cropBottom: Float,
+        ): FloatArray? {
+            val w = cropRight - cropLeft
+            val h = cropBottom - cropTop
+            if (w <= 0f || h <= 0f) return null
+            return floatArrayOf(
+                cropLeft + left * w,
+                cropTop + top * h,
+                cropLeft + right * w,
+                cropTop + bottom * h,
+            )
+        }
+
+        /**
          * Сколько подряд неозвученных реплик считается «озвучки нет».
          *
          * Разовый отказ ничего не значит: ремарка без звучания, пустой текст
@@ -1997,6 +2263,27 @@ class AutoReadEngine(
         internal const val REJECTED_VOICE_MESSAGE =
             "Авточтение остановлено: голос не озвучивает текст. Проверьте язык и данные " +
                 "голоса в Настройках → Озвучка."
+
+        /**
+         * Сообщение читателю, когда распознавание кадра устойчиво не удаётся.
+         *
+         * Раньше ошибка и пустой результат OCR считались «страница без текста»:
+         * конвейер дочитывал кадр и листал дальше. Читатель получал главу,
+         * пролистанную за несколько секунд, без единого слова и без причины.
+         */
+        internal const val OCR_FAILED_MESSAGE =
+            "Авточтение остановлено: не удалось распознать текст страницы. Проверьте " +
+                "OCR-движ и его языковой пакет в Настройках → Озвучка."
+
+        /**
+         * Сколько кадров подряд должно не дать результата, чтобы остановиться.
+         *
+         * Первый кадр после запуска движка может не успеть: модель локального
+         * OCR грузится на ходу и первый вызов упирается в таймаут. Поэтому
+         * одиночный отказ пропускаем, а серия из трёх — уже не совпадение,
+         * и листать дальше нечего.
+         */
+        internal const val OCR_FAILED_STOP_AFTER = 3
 
         fun ttsTimeoutMs(textLength: Int, speechRate: Float): Long {
             val rate = speechRate.takeIf { it.isFinite() && it > 0f }?.coerceIn(0.5f, 2f) ?: 1f

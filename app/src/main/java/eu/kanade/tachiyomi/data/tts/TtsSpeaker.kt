@@ -164,15 +164,25 @@ object TtsSpeaker {
             // Теперь упавший движок честно пересоздаётся.
             systemEnginePkg = wantEngine
             val listener = TextToSpeech.OnInitListener { status ->
-                systemReady = status == TextToSpeech.SUCCESS
-                initInProgress = false
-                val ready = if (systemReady) systemTts else null
-                onReady(ready)
-                // Голоса больше не «исчезают до инициализации»: всё, что было
-                // заказано во время старта движка, озвучивается сразу после него.
-                val pending = pendingReady.toList()
-                pendingReady.clear()
-                pending.forEach { it(ready) }
+                // onInit всегда приходит на ГЛАВНОМ потоке, а тело speakSystem
+                // читает voice_rules.json с /sdcard, разбирает JSON пресетов и
+                // ходит в binder за списком голосов. На главном это первые
+                // секунды после старта процесса, где система считает каждый
+                // долгий кадр зависанием интерфейса, и читатель видел
+                // «замороженную» читалку. Спускаем готовность движка сразу на
+                // рабочий поток: озвучка начинается чуть позже, но интерфейс
+                // не блокируется.
+                scope.launch {
+                    systemReady = status == TextToSpeech.SUCCESS
+                    initInProgress = false
+                    val ready = if (systemReady) systemTts else null
+                    onReady(ready)
+                    // Голоса больше не «исчезают до инициализации»: всё, что было
+                    // заказано во время старта движка, озвучивается сразу после него.
+                    val pending = pendingReady.toList()
+                    pendingReady.clear()
+                    pending.forEach { it(ready) }
+                }
             }
             initInProgress = true
             // Конструктор TextToSpeech может бросить исключение на невалидном/

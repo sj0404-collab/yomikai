@@ -4,6 +4,7 @@ import mihon.domain.ocr.model.OcrBoundingBox
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 
 /**
@@ -184,5 +185,99 @@ class AutoReadEngineCleanTest {
         // не действует, сколько бы времени она ни звучала.
         assertTrue(AutoReadEngine.ttsStartedOrGiveUp(started = true, elapsedMs = 0))
         assertTrue(AutoReadEngine.ttsStartedOrGiveUp(started = true, elapsedMs = 60_000))
+    }
+
+    @Test
+    fun `unlabeled dialogue alternates voices instead of cycling`() {
+        // Регрессия: в сцене без подписей каждая реплика считалась новым
+        // персонажем, слот рос на единицу, и голос шёл по кругу — на странице
+        // шесть баблов читало шесть разных голосов вместо двух.
+        // Пол сменился — возвращаемся к тому, кто уже звучал (А, Б, А, Б).
+        assertEquals(0, AutoReadEngine.continueSpeakerIndex(1, genderJustChanged = true, longLine = true))
+        assertEquals(1, AutoReadEngine.continueSpeakerIndex(2, genderJustChanged = true, longLine = true))
+        assertEquals(0, AutoReadEngine.continueSpeakerIndex(2, genderJustChanged = false, longLine = true))
+    }
+
+    @Test
+    fun `short reply keeps the voice of the open turn`() {
+        // Короткая реплика («Да!») — это продолжение того же голоса, даже если
+        // пол не менялся: иначе возгласы схлопывались бы в разных персонажей.
+        assertEquals(0, AutoReadEngine.continueSpeakerIndex(1, genderJustChanged = false, longLine = false))
+        assertEquals(2, AutoReadEngine.continueSpeakerIndex(3, genderJustChanged = false, longLine = false))
+    }
+
+    @Test
+    fun `a lone speaker keeps talking when nobody else is known`() {
+        // Персонаж этого пола один: длинные реплики подряд — это монолог, а не
+        // диалог, и голос не должен скакать на несуществующего собеседника.
+        assertEquals(0, AutoReadEngine.continueSpeakerIndex(1, genderJustChanged = false, longLine = true))
+        // Никого не знаем — продолжать некому.
+        assertEquals(-1, AutoReadEngine.continueSpeakerIndex(0, genderJustChanged = true, longLine = true))
+    }
+
+    @Test
+    fun `frame box maps back onto the page`() {
+        // Кадр вебтуна — окно ленты, а не страница. Реплика из середины кадра
+        // должна попасть на ту же страницу, а не на середину страницы.
+        val mapped = AutoReadEngine.frameBoxToPage(
+            left = 0.0f,
+            top = 0.0f,
+            right = 1.0f,
+            bottom = 1.0f,
+            cropLeft = 0.0f,
+            cropTop = 0.4f,
+            cropRight = 1.0f,
+            cropBottom = 0.9f,
+        )!!
+        assertEquals(0.0f, mapped[0], 1e-5f)
+        assertEquals(0.4f, mapped[1], 1e-5f)
+        assertEquals(1.0f, mapped[2], 1e-5f)
+        assertEquals(0.9f, mapped[3], 1e-5f)
+
+        // Половина кадра — это середина окна кадра на странице.
+        val half = AutoReadEngine.frameBoxToPage(
+            left = 0.0f,
+            top = 0.0f,
+            right = 0.5f,
+            bottom = 0.5f,
+            cropLeft = 0.0f,
+            cropTop = 0.4f,
+            cropRight = 1.0f,
+            cropBottom = 0.9f,
+        )!!
+        assertEquals(0.5f, half[2], 1e-5f)
+        assertEquals(0.65f, half[3], 1e-5f)
+    }
+
+    @Test
+    fun `frame box without usable geometry is left alone`() {
+        // Кадр без геометрии (склейка нескольких страниц) или вырожденная
+        // геометрия — пересчитывать нечего, рамка остаётся прежней.
+        assertNull(
+            AutoReadEngine.frameBoxToPage(0f, 0f, 1f, 1f, 0f, 0f, 0f, 1f),
+        )
+        assertNull(
+            AutoReadEngine.frameBoxToPage(0f, 0f, 1f, 1f, 0.2f, 0.2f, 0.2f, 0.8f),
+        )
+    }
+
+    @Test
+    fun `full page frame keeps boxes untouched`() {
+        // Манга, постраничный режим: кадр равен странице, пересчёт обязан быть
+        // тождественным — иначе подсветка поедет на обычных страницах.
+        val mapped = AutoReadEngine.frameBoxToPage(
+            left = 0.2f,
+            top = 0.3f,
+            right = 0.7f,
+            bottom = 0.8f,
+            cropLeft = 0.0f,
+            cropTop = 0.0f,
+            cropRight = 1.0f,
+            cropBottom = 1.0f,
+        )!!
+        assertEquals(0.2f, mapped[0], 1e-5f)
+        assertEquals(0.3f, mapped[1], 1e-5f)
+        assertEquals(0.7f, mapped[2], 1e-5f)
+        assertEquals(0.8f, mapped[3], 1e-5f)
     }
 }
