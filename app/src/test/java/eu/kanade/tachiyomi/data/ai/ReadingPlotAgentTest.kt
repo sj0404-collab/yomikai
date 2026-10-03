@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test
 class ReadingPlotAgentTest {
 
     // Ключа нет: проверяем, что агент честно отказывается, а не сочиняет.
-    private val agent = ReadingPlotAgent(aiKeyPresent = { false })
+    private val agent = ReadingPlotAgent(store = MemoryPlotStore(), aiKeyPresent = { false })
 
     private fun lines() = List(8) { "Реплика номер $it" }
 
@@ -70,5 +70,25 @@ class ReadingPlotAgentTest {
         agent.state.value.text shouldBe ""
         agent.state.value.heard shouldBe 0
         agent.state.value.thinking shouldBe false
+    }
+
+    @Test
+    fun `saved recap survives reopening the book`() {
+        // Пересказ пишется запросом к модели, и терять его при закрытии
+        // читалки обидно: вкладка при возврате должна быть не пустой, даже
+        // если ключа сейчас нет.
+        val store = MemoryPlotStore()
+        store.write(42L, "Он вошёл и всё понял.")
+        val reopened = ReadingPlotAgent(store = store, aiKeyPresent = { false })
+        reopened.loadFor(42L)
+        reopened.state.value.text shouldBe "Он вошёл и всё понял."
+    }
+
+    @Test
+    fun `missing recap leaves the state untouched`() {
+        // Книги, для которой пересказа нет, выдумывать нечего.
+        val store = MemoryPlotStore()
+        ReadingPlotAgent(store = store, aiKeyPresent = { false }).loadFor(999L)
+        store.read(999L) shouldBe ""
     }
 }

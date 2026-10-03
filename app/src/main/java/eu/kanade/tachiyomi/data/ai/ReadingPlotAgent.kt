@@ -27,6 +27,13 @@ import tachiyomi.core.common.util.system.logcat
  */
 class ReadingPlotAgent(
     /**
+     * Хранилище пересказа по книгам.
+     *
+     * Файл, а не настройка: ключ настройки должен быть известен на этапе
+     * компиляции, а книга меняется. Кэш настроек для этого не годится.
+     */
+    private val store: PlotStore,
+    /**
      * Есть ли ключ ИИ.
      *
      * Проверка ключа вне агента и через лямбду, а не прямой доступ к
@@ -84,10 +91,25 @@ class ReadingPlotAgent(
         if (snapshot().size >= MIN_LINES_FOR_RECAP) requestRecap(bookId)
     }
 
+    /**
+     * Показать сохранённый пересказ книги.
+     *
+     * Читатель возвращается к книге — и видит то, что уже было написано, а не
+     * пустую вкладку до первого запроса к модели.
+     */
+    fun loadFor(bookId: Long?) {
+        val id = bookId ?: return
+        val saved = store.read(id)
+        if (saved.isNotBlank()) {
+            _state.value = _state.value.copy(text = saved)
+        }
+    }
+
     /** Перезапуск для новой главы: пересказ старой книги не должен висеть. */
     fun reset() {
         synchronized(heard) { heard.clear() }
         requesting = false
+        currentBookId = null
         _state.value = State()
     }
 
@@ -106,7 +128,12 @@ class ReadingPlotAgent(
 
     private fun snapshot(): List<String> = synchronized(heard) { heard.toList() }
 
+    /** Книга, для которой считается пересказ (задаётся при refresh). */
+    @Volatile
+    private var currentBookId: Long? = null
+
     private fun requestRecap(bookId: Long) {
+        currentBookId = bookId
         val lines = snapshot()
         if (lines.isEmpty() || requesting) return
         if (!runCatching(aiKeyPresent).getOrDefault(false)) {
@@ -136,6 +163,10 @@ class ReadingPlotAgent(
                         },
                     )
                 } else {
+                    // Пересказ сразу пишется на диск: закрытие читалки не
+                    // должна стирать работу, за которую заплатили запросом.
+                    runCatching { store.write(currentBookId ?: 0L, text) }
+                        .onFailure { logcat(LogPriority.WARN, it) { "Plot save failed" } }
                     _state.value = _state.value.copy(
                         text = text,
                         thinking = false,

@@ -36,6 +36,12 @@ fun ReadingPlotPanel(
     val agent = ReadingPlotAgentHolder.agent
     val state by agent.state.collectAsState()
 
+    // Возврат к книге показывает уже написанный пересказ, а не пустую вкладку
+    // до первого запроса к модели.
+    androidx.compose.runtime.LaunchedEffect(mangaId) {
+        agent.loadFor(mangaId)
+    }
+
     Column(
         modifier = modifier
             .fillMaxWidth()

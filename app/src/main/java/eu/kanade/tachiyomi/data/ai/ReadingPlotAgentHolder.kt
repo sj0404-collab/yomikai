@@ -14,6 +14,7 @@ import uy.kohesive.injekt.api.get
 object ReadingPlotAgentHolder {
     val agent: ReadingPlotAgent by lazy {
         ReadingPlotAgent(
+            store = FilePlotStore(Injekt.get<android.content.Context>().filesDir),
             aiKeyPresent = {
                 val prefs = Injekt.get<OcrPreferences>()
                 val p = prefs.aiProvider().get()
