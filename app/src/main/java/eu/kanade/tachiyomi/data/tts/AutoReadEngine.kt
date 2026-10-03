@@ -538,7 +538,7 @@ class AutoReadEngine(
                                     scan.cancel()
                                     break
                                 }
-                                if (!speakStreamingRegion(region, prefs.autoReadLanguage().get())) {
+                                if (!speakStreamingRegion(region, prefs.autoReadLanguage().get(), onLineSpoken)) {
                                     // Озвучки нет: дочитывать страницу незачем.
                                     scan.cancel()
                                     break
@@ -1247,15 +1247,18 @@ class AutoReadEngine(
         // авточтении: одиночный бабл, нажатый значком 🔊, тоже должен уметь
         // попасть под словарь ролей.
         val spoken = SpeechMarkup.withSpeakerName(clean, SpeechMarkup.speakerNameOrGuess(text))
-        if (_isReading.value) TtsSpeaker.stop()
-        job?.cancel()
         val myGen = ++generation
+        val prevJob = job
         job = scope.launch {
-            _isReading.value = true
+            // Отменяем предыдущую работу автопрохода кадра, но не сбрасываем
+            // флаги авточтения и не вызываем onPageFinished. Это ручной тап.
+            prevJob?.cancel()
             try {
                 speakAndAwait(spoken, gender, speakerSlot)
             } finally {
-                if (generation == myGen) _isReading.value = false
+                if (generation == myGen) {
+                    _isReading.value = false
+                }
             }
         }
     }
@@ -1301,6 +1304,7 @@ class AutoReadEngine(
     private suspend fun speakStreamingRegion(
         region: OcrRegion,
         language: String,
+        onLineSpoken: ((mihon.domain.ocr.model.OcrBoundingBox) -> Unit)? = null,
     ): Boolean {
         val text = normalizeOcrTextForDisplay(
             CyrillicTranslitFixer.autoFixCyrillic(region.text),
@@ -1328,10 +1332,18 @@ class AutoReadEngine(
             SpeakOutcome.SPOKEN -> {
                 spokenLines += lineKey(text)
                 markSpokenInFrame(text)
+                if (onLineSpoken != null) {
+                    runCatching { onLineSpoken(region.boundingBox) }
+                        .onFailure { logcat(LogPriority.WARN, it) { "onLineSpoken failed" } }
+                }
                 rejectedStreak = 0
                 true
             }
             SpeakOutcome.SILENT -> {
+                if (onLineSpoken != null) {
+                    runCatching { onLineSpoken(region.boundingBox) }
+                        .onFailure { logcat(LogPriority.WARN, it) { "onLineSpoken failed" } }
+                }
                 rejectedStreak = 0
                 true
             }
