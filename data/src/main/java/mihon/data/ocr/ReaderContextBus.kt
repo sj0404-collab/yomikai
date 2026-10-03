@@ -2,14 +2,10 @@ package mihon.data.ocr
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
 /**
  * Мост читалка → data-слой без прямой зависимости: ReaderActivity сообщает,
- * какую мангу и в каком порядке чтения сейчас смотрят, а ContentAutoPreset
- * использует это для авто-пресета (манга/манхва/комикс) и памяти пресетов
- * по манге.
+ * какую мангу и в каком порядке чтения сейчас смотрят.
  */
 object ReaderContextBus {
 
@@ -26,6 +22,5 @@ object ReaderContextBus {
     fun set(mangaId: Long?, rtl: Boolean, webtoon: Boolean, vertical: Boolean) {
         val ctx = Ctx(mangaId, rtl, webtoon, vertical)
         _current.value = ctx
-        runCatching { ContentAutoPreset.onReaderContext(ctx, Injekt.get()) }
     }
 }

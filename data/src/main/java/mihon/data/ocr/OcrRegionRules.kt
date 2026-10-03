@@ -120,19 +120,23 @@ object OcrRegionRules {
     }
 
     /**
-     * Порядок чтения, который должен применяться к кадру авточтения.
+     * Порядок чтения со страницы — из настроек читалки.
      *
-     * Раньше читалка брала `pref_scan_reading_order` (по умолчанию «rtl»)
-     * напрямую, и на манхве/вебтуне текст шёл справа налево, хотя пресет
-     * контента задаёт «vertical». Теперь явный пресет контента определяет
-     * порядок: манга → rtl, манхва/вебтун → vertical, комикс → ltr.
-     * `pref_scan_reading_order` остаётся ручным переопределением только для
-     * «Сбалансированного» пресета (у него viewer = KEEP, т.е. порядок на
-     * усмотрение пользователя).
+     * Раньше его диктовал пресет типа контента (манга → rtl, манхва →
+     * vertical, комикс → ltr), из-за чего вертикальный вебтун читался не так,
+     * как его настроили, а настройка дублировала режим чтения. Теперь приоритет
+     * такой:
+     *  1. явный выбор пользователя («Порядок чтения», pref_scan_reading_order);
+     *  2. иначе то, что реально стоит в читалке: вертикальный режим читается
+     *     сверху вниз, RTL — справа налево, иначе слева направо.
      */
     fun readingOrderFor(prefs: OcrPreferences): String {
-        val contentId = prefs.contentType().get()
-        if (contentId == "balanced") return prefs.scanReadingOrder().get()
-        return OcrTuning.preset(OcrContentType.fromId(contentId)).readingOrder
+        val manual = prefs.scanReadingOrder().get()
+        if (manual.isNotBlank() && manual != "auto") return manual
+        val ctx = ReaderContextBus.current.value
+        return OcrTuning.readingOrderFor(
+            vertical = ctx?.vertical == true,
+            rtl = ctx?.rtl != false,
+        )
     }
 }

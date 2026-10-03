@@ -27,12 +27,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
-import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.util.system.toast
-import mihon.data.ocr.ContentAutoPreset
 import mihon.data.ocr.OcrContentType
 import mihon.data.ocr.OcrRegionRules
-import mihon.data.ocr.ReaderContextBus
 import mihon.domain.ocr.service.OcrPreferences
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -74,15 +71,11 @@ fun OcrBubbleSettingsDialog(
     // Пресет типа контента меняет число (максимум) — плюс, как в настройках,
     // правит режим чтения вьюера и запоминается как ручной выбор для манги.
     fun applyContentType(type: OcrContentType) {
+        // Пресетов типа контента больше нет; оставлен единственный профиль, и
+        // порядок чтения задаёт читалка, а не эта настройка.
         contentType = type
         contentOrder = type.id
         prefs.contentType().set(type.id)
-        val mode = ReadingMode.fromOcrHint(type.viewer)
-        if (mode != null) readerPrefs.defaultReadingMode.set(mode.flagValue)
-        ContentAutoPreset.rememberManual(ReaderContextBus.current.value?.mangaId, type.id, prefs)
-        if (type.id != "balanced") {
-            context.toast("Пресет «${type.title}»: порядок чтения определяет пресет")
-        }
     }
 
     fun applyRegion(id: String) {
@@ -91,14 +84,6 @@ fun OcrBubbleSettingsDialog(
     }
 
     fun applyOrder(order: String) {
-        // Ручной порядок работает только у «Сбалансированного» пресета (увлечён
-        // правилами OcrRegionRules.readingOrderFor). Иначе молча игнорируется.
-        if (contentType.id != "balanced") {
-            contentType = OcrContentType.BALANCED
-            contentOrder = "balanced"
-            prefs.contentType().set("balanced")
-            context.toast("Пресет переведён в «Сбалансированный» — порядок чтения применяется")
-        }
         manualOrder = order
         prefs.scanReadingOrder().set(order)
         onReadingOrderChange(order)

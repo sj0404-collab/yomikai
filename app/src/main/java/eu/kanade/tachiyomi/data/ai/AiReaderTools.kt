@@ -3,9 +3,6 @@ package eu.kanade.tachiyomi.data.ai
 import android.content.Context
 import eu.kanade.tachiyomi.data.voice.VoiceBackend
 import eu.kanade.tachiyomi.data.voice.VoicePlugins
-import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
-import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
-import mihon.data.ocr.ContentAutoPreset
 import mihon.data.ocr.OcrContentType
 import mihon.data.ocr.ReaderContextBus
 import mihon.data.ocr.OcrPluginAvailability
@@ -129,41 +126,22 @@ object AiReaderTools {
         prefs: OcrPreferences = Injekt.get(),
     ): String {
         val requested = id?.trim()?.lowercase().orEmpty()
-        if (requested.isBlank()) {
-            return "ОШИБКА: укажите id пресета. Доступны: " +
-                OcrContentType.entries.joinToString(", ") { "${it.id} (${it.title})" }
-        }
-        val contentType = OcrContentType.entries.firstOrNull { it.id == requested }
-            ?: return "ОШИБКА: пресет «$requested» не найден. Доступны: " +
-                OcrContentType.entries.joinToString(", ") { it.id }
-
-        // Меняем ТОЛЬКО тип контента: область (`pref_ocr_preset_region`) и её
-        // быстрое переопределение (`pref_scan_region`) принадлежат пользователю,
-        // и пресет не имеет права их сбрасывать. Порядок чтения и параметры
-        // детектора при этом всё равно следуют за типом контента.
-        prefs.contentType().set(contentType.id)
-        // Запоминаем выбор агента для текущей манги (память авто-пресета).
-        ContentAutoPreset.rememberManual(
-            ReaderContextBus.current.value?.mangaId,
-            contentType.id,
-            prefs,
-        )
-
-        // Пресет задаёт и вьюер: порядок чтения OCR и направление листания —
-        // одна сущность. BALANCED (KEEP) выбор пользователя не трогает.
-        val viewerHint = contentType.viewer
-        val readingMode = ReadingMode.fromOcrHint(viewerHint)
-        if (readingMode != null) {
-            Injekt.get<ReaderPreferences>().defaultReadingMode.set(readingMode.flagValue)
-        }
-
+        // Пресетов типа контента («Манга», «Манхва», «Комикс») больше нет:
+        // режим и порядок чтения задаёт сама читалка. Инструмент оставлен как
+        // отчёт о текущих параметрах, чтобы старые вызовы агента не падали.
         val profile = OcrRegionRules.profileOf(prefs)
         val tuning = profile.tuning()
         return buildString {
-            appendLine("Пресет применён: ${contentType.id} (${contentType.title})")
+            appendLine("Профиль движка: ${OcrContentType.BALANCED.title}")
             appendLine("Область: ${OcrRegionRules.regionTitle(profile.scanRegion)}")
             appendLine("Порядок чтения: ${OcrRegionRules.orderTitle(tuning.readingOrder)}")
-            appendLine("Режим чтения: ${viewerHint.title}")
+            appendLine(
+                "Режим чтения: " + (
+                    ReaderContextBus.current.value?.let {
+                        if (it.webtoon) "вебтун" else if (it.vertical) "вертикальный" else "пейджинг"
+                    } ?: "неизвестно"
+                    ),
+            )
             appendLine(
                 "Параметры: порог=${tuning.detectorThreshold}, мин. площадь=${tuning.minComponentArea}, " +
                     "макс. блоков=${tuning.maxTextBoxes}, зазор слов=${tuning.wordGapFactor}, " +

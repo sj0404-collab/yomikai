@@ -3,81 +3,43 @@ package mihon.data.ocr
 import mihon.domain.ocr.service.ScanRegion
 
 /**
- * Тип контента, под который подбираются параметры детектора и распознавания.
+ * Тип контента для распознавания.
  *
- * Пресет меняет ТОЛЬКО числовые параметры и порядок чтения: он не подменяет
- * модель и не включает словарную коррекцию. Значения подобраны под форму
- * кадров, а не под конкретный тайтл.
+ * Пресетов по типу контента («Манга», «Манхва», «Маньхуа», «Комикс») больше
+ * нет: они подбирали числа детектора и заодно решали, какой режим вьювера
+ * показывать, из-за чего настройка дублировала настройки читалки и путала
+ * (вертикальный вебтун то читался как «Манхва», то как «Комикс»).
+ *
+ * Теперь параметры движка едины, а порядок чтения и ориентация берутся из
+ * настроек читалки. Тип оставлен как единственный профиль — старые значения
+ * настройки («manga», «manhwa», …) разбираются в [fromId] и молча сводятся
+ * к нему, чтобы не ломать сохранённые данные у пользователей.
  */
 enum class OcrContentType(
     val id: String,
     val title: String,
     val hint: String,
     /**
-     * Режим чтения, который соответствует пресету. Совпадает с порядком чтения
-     * OCR ([OcrTuning.readingOrder]) — связь проверяет `OcrViewerHintTest`.
+     * Режим чтения, который соответствует пресету. Всегда [OcrViewerHint.KEEP]:
+     * режим и так определяется настройками читалки (пейджинг/вебтун, RTL/LTR,
+     * вертикально).
      */
     val viewer: OcrViewerHint = OcrViewerHint.KEEP,
 ) {
     /**
-     * Универсальный профиль. В точности повторяет значения, которые раньше
-     * были зашиты константами в [CyrillicOcrEngine], поэтому поведение
-     * приложения без явного выбора пресета не меняется.
+     * Единственный профиль. Значения повторяют те, что раньше были зашиты
+     * константами в движок, поэтому поведение не меняется.
      */
     BALANCED(
         id = "balanced",
         title = "Сбалансированный",
-        hint = "Поведение по умолчанию: параметры прежних констант движка.",
-    ),
-
-    /**
-     * Японская манга: мелкие буквы, плотные баллоны, чтение справа налево,
-     * много коротких реплик на страницу.
-     */
-    MANGA(
-        id = "manga",
-        title = "Манга",
-        hint = "Мелкий плотный текст в баллонах, чтение справа налево.",
-        viewer = OcrViewerHint.PAGER_RTL,
-    ),
-
-    /**
-     * Корейская манхва/вебтун: длинные вертикальные полосы, крупные надписи,
-     * широкий межсловный пробел, много пустого фона между репликами.
-     */
-    MANHWA(
-        id = "manhwa",
-        title = "Манхва / вебтун",
-        hint = "Вертикальные полосы, крупные надписи, широкие пробелы.",
-        viewer = OcrViewerHint.WEBTOON,
-    ),
-
-    /**
-     * Китайская маньхуа: вертикальные колонки, читаются справа налево, текст
-     * крупнее корейского, но леттеринг плотный и рамки узкие.
-     */
-    MANHUA(
-        id = "manhua",
-        title = "Маньхуа",
-        hint = "Вертикальные колонки, чтение сверху вниз и справа налево.",
-        viewer = OcrViewerHint.PAGER_RTL,
-    ),
-
-    /**
-     * Западный комикс: плотный леттеринг, крупные заголовки, чтение слева
-     * направо, прямоугольные баллоны стоят близко друг к другу.
-     */
-    COMIC(
-        id = "comic",
-        title = "Комикс",
-        hint = "Плотный леттеринг и заголовки, чтение слева направо.",
-        viewer = OcrViewerHint.PAGER_LTR,
+        hint = "Параметры прежних констант движка.",
     ),
     ;
 
     companion object {
-        fun fromId(id: String?): OcrContentType =
-            entries.firstOrNull { it.id == id } ?: BALANCED
+        /** Любое прежнее значение пресета сводится к единственному профилю. */
+        fun fromId(id: String?): OcrContentType = BALANCED
     }
 }
 
@@ -285,80 +247,25 @@ data class OcrTuning(
         val DEFAULT = OcrTuning()
 
         /**
-         * Пресет типа контента.
+         * Профиль движка. Пресетов по типу контента больше нет, поэтому
+         * параметры едины, а различается только выбранная область скана.
          *
-         * Меняются только те параметры, где форма кадров действительно
-         * другая: у вебтуна длинные полосы и крупные буквы (можно реже
-         * склеивать боксы и требовать меньше строк), у манги мелкий плотный
-         * текст (нужен ниже порог детектора и больше боксов на страницу).
+         * Параметр [type] оставлен для совместимости вызовов: игнорируется.
          */
+        @Suppress("UNUSED_PARAMETER")
         fun preset(type: OcrContentType, scanRegion: ScanRegion = ScanRegion.FULL_PAGE): OcrTuning =
-            when (type) {
-                OcrContentType.BALANCED -> DEFAULT.copy(scanRegion = scanRegion)
+            DEFAULT.copy(scanRegion = scanRegion)
 
-                OcrContentType.MANGA -> DEFAULT.copy(
-                    detectorThreshold = 0.17f,
-                    minComponentArea = 18,
-                    maxTextBoxes = 128,
-                    tilingMinTextBoxes = 6,
-                    mergeOverlapYFactor = 0.60f,
-                    mergeGapXFactor = 0.45f,
-                    wordGapFactor = 1.5f,
-                    minWordGapPx = 4,
-                    contrastRetryConfidence = 0.88f,
-                    minAcceptConfidence = 0.28f,
-                    minCropInkRatio = 0.025f,
-                    rescueMaxLines = 8,
-                    readingOrder = "rtl",
-                    scanRegion = scanRegion,
-                )
-
-                OcrContentType.MANHWA -> DEFAULT.copy(
-                    detectorThreshold = 0.18f,
-                    minComponentArea = 28,
-                    maxTextBoxes = 64,
-                    tilingMinTextBoxes = 12,
-                    mergeOverlapYFactor = 0.45f,
-                    mergeGapXFactor = 0.80f,
-                    splitMinWidthPx = 40,
-                    wordGapFactor = 2.0f,
-                    minWordGapPx = 7,
-                    minAcceptConfidence = 0.34f,
-                    rescueMaxLines = 5,
-                    readingOrder = "vertical",
-                    scanRegion = scanRegion,
-                )
-
-                OcrContentType.MANHUA -> DEFAULT.copy(
-                    detectorThreshold = 0.19f,
-                    minComponentArea = 24,
-                    maxTextBoxes = 80,
-                    tilingMinTextBoxes = 8,
-                    mergeOverlapYFactor = 0.50f,
-                    mergeGapXFactor = 0.65f,
-                    splitMinWidthPx = 36,
-                    wordGapFactor = 1.8f,
-                    minWordGapPx = 6,
-                    minAcceptConfidence = 0.32f,
-                    rescueMaxLines = 6,
-                    readingOrder = "vertical",
-                    scanRegion = scanRegion,
-                )
-
-                OcrContentType.COMIC -> DEFAULT.copy(
-                    detectorThreshold = 0.22f,
-                    minComponentArea = 26,
-                    maxTextBoxes = 96,
-                    tilingMinTextBoxes = 10,
-                    mergeOverlapYFactor = 0.58f,
-                    mergeGapXFactor = 0.50f,
-                    wordGapFactor = 1.6f,
-                    minWordGapPx = 5,
-                    minAcceptConfidence = 0.30f,
-                    readingOrder = "ltr",
-                    scanRegion = scanRegion,
-                )
-            }
+        /**
+         * Порядок чтения со страницы — из настроек читалки, а не из пресета
+         * контента. Вертикальный вебтун и вертикальный пейджинг читаются
+         * сверху вниз, RTL — справа налево.
+         */
+        fun readingOrderFor(vertical: Boolean, rtl: Boolean): String = when {
+            vertical -> "vertical"
+            rtl -> "rtl"
+            else -> "ltr"
+        }
     }
 }
 

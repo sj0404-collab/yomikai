@@ -12,7 +12,6 @@ import cafe.adriel.voyager.navigator.Navigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
-import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import mihon.data.ocr.OcrContentType
 import mihon.data.ocr.OcrLocalMode
 import mihon.data.ocr.OcrPluginAvailability
@@ -195,21 +194,9 @@ object SettingsOcrScreen : SearchableSettings {
                     entries = OcrContentType.entries.associate { it.id to it.title },
                     title = stringResource(MR.strings.pref_ocr_content_type),
                     subtitleProvider = { _, _ -> current.hint },
-                    onValueChanged = { value ->
-                        // Пресет типа контента задаёт и режим чтения: порядок
-                        // распознавания и направление листания обязаны совпадать.
-                        // BALANCED (KEEP) выбор пользователя не трогает.
-                        val mode = ReadingMode.fromOcrHint(OcrContentType.fromId(value).viewer)
-                        if (mode != null) readerPrefs.defaultReadingMode.set(mode.flagValue)
-                        // Ручной выбор запоминаем для текущей манги: авто-пресет
-                        // восстановит его при следующем входе без переклассификации.
-                        mihon.data.ocr.ContentAutoPreset.rememberManual(
-                            mihon.data.ocr.ReaderContextBus.current.value?.mangaId,
-                            value,
-                            prefs,
-                        )
-                        true
-                    },
+                    // Пресетов типа контента больше нет: остаётся один профиль
+                    // движка, а порядок чтения выводится из настроек читалки.
+                    onValueChanged = { true },
                 ),
                 Preference.PreferenceItem.ListPreference(
                     preference = prefs.autoPreset(),
