@@ -582,6 +582,10 @@ class OcrRepositoryImpl(
         }
     }
 
+    override suspend fun savePage(result: OcrPageResult) {
+        cacheStore.upsert(result)
+    }
+
     override suspend fun getCachedPage(
         chapterId: Long,
         pageIndex: Int,

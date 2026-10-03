@@ -72,6 +72,16 @@ interface OcrRepository {
         pageIndex: Int,
     ): OcrPageResult?
 
+    /**
+     * Перезаписать результат страницы в кэше.
+     *
+     * Нужна после проверки моделью: локальный OCR отдаёт текст с ошибками и
+     * пропусками, а читать должен проверенный вариант. Регионы приходят уже
+     * с рамками — у строк, добавленных моделью, рамки нет, и выдумывать её
+     * значило бы подсветить текст в пустоте.
+     */
+    suspend fun savePage(result: OcrPageResult)
+
     suspend fun getCachedChapterIds(chapterIds: Collection<Long>): Set<Long>
 
     suspend fun clearCachedChapter(chapterId: Long)

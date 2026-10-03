@@ -77,6 +77,7 @@ import mihon.domain.ocr.interactor.GetCachedChapterIdsOcr
 import mihon.domain.ocr.interactor.GetCachedPageOcr
 import mihon.domain.ocr.interactor.GetOcrCacheSize
 import mihon.domain.ocr.interactor.OcrProcessor
+import mihon.domain.ocr.interactor.SaveCachedPageOcr
 import mihon.domain.ocr.interactor.ScanPageOcr
 import mihon.domain.ocr.interactor.WithOcrScanSession
 import mihon.domain.ocr.repository.OcrRepository
@@ -295,13 +296,14 @@ class DomainModule : InjektModule {
         addSingletonFactory { OcrPageSourceResolver(get(), get(), get()) }
         addSingletonFactory { ReaderSelectionCropper(get()) }
         addSingletonFactory { OcrScanNotifier(get<Application>()) }
-        addSingletonFactory { OcrChapterScanner(get<Application>(), get(), get(), get(), get(), get(), get(), get()) }
+        addSingletonFactory { OcrChapterScanner(get<Application>(), get(), get(), get(), get(), get(), get(), get(), get()) }
         addFactory { OcrChapterAiVerifier(get()) }
         addSingletonFactory { OcrScanManager(get<Application>(), get(), get(), get()) }
         addFactory { OcrQueueActions(get(), get()) }
         addFactory { OcrProcessor(get()) }
         addFactory { WithOcrScanSession(get()) }
         addFactory { ScanPageOcr(get()) }
+        addFactory { SaveCachedPageOcr(get()) }
         addFactory { GetCachedChapterIdsOcr(get()) }
         addFactory { GetCachedPageOcr(get()) }
         addFactory { ClearCachedChapterOcr(get()) }

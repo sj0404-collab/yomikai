@@ -56,21 +56,40 @@ class OcrChapterAiVerifier(
     )
 
     suspend fun verifyPage(
-        chapterId: Long,
-        pageIndex: Int,
         pageName: String,
         bitmap: Bitmap,
-        lines: List<String>,
+        regions: List<mihon.domain.ocr.model.OcrRegion>,
         onStage: (Phase, String) -> Unit = { _, _ -> },
-    ): PageRoleVerifier.PageCheck? {
-        val draft = lines.map { it.trim() }.filter { it.isNotEmpty() }
+    ): List<mihon.domain.ocr.model.OcrRegion>? {
+        val ordered = regions.sortedBy { it.order }
+        val draft = ordered.map { it.text.trim() }.filter { it.isNotEmpty() }
         if (draft.isEmpty()) return null
         val jpeg = encodeJpeg(bitmap) ?: return null
-        return PageRoleVerifier.verify(jpeg, pageName, draft, prefs).also { check ->
-            if (check.checked) collectRoles(check, draft, pageIndex, onStage)
+        val check = PageRoleVerifier.verify(jpeg, pageName, draft, prefs)
+        if (!check.checked) {
+            // Модель не ответила или ответила мусором: страница остаётся
+            // локальной. Иначе половина страницы была бы догадкой модели, а
+            // половина — распознаванием, и отладить это было бы невозможно.
+            onStage(Phase.OCR, "ИИ не ответил (${check.reason ?: "неизвестно"}) — беру локальный разбор")
+            return null
         }
+        collectRoles(check, onStage)
+        return applyToRegions(check, ordered)
     }
 
+    /**
+     * Проверенный текст возвращается в страницу.
+     *
+     * Что можно сделать честно:
+     *  • исправить текст региона, когда модель вернула строку из черновика с
+     *    другим написанием (это настоящая правка OCR);
+     *  • убрать регион, который модель признала не репликой (титул, примечание) —
+     *    читать его нечего.
+     *
+     * Чего НЕ делаем: строки, которых не было в черновике, не добавляем. У них
+     * нет рамки, а выдуманная рамка означала бы подсветку и тап в пустоте.
+     * Такие строки остаются в отчёте как dropped/uncertain.
+     */
     /**
      * Накопитель ролей главы.
      *
@@ -82,8 +101,6 @@ class OcrChapterAiVerifier(
 
     private fun collectRoles(
         check: PageRoleVerifier.PageCheck,
-        draft: List<String>,
-        pageIndex: Int,
         onStage: (Phase, String) -> Unit,
     ) {
         check.lines.forEach { line ->
@@ -99,7 +116,7 @@ class OcrChapterAiVerifier(
             draftEntry.pages++
             if (draftEntry.text.isBlank()) draftEntry.text = line.text
         }
-        onStage(Phase.AI, "страница ${pageIndex + 1}: найдено персонажей ${collected.size}")
+        onStage(Phase.AI, "найдено персонажей ${collected.size}, не-реплик ${check.dropped.size}")
     }
 
     private data class RoleDraft(val name: String) {
@@ -168,6 +185,38 @@ class OcrChapterAiVerifier(
     }.onFailure { logcat(LogPriority.WARN, it) { "Chapter AI jpeg encode failed" } }.getOrNull()
 
     companion object {
+        /**
+         * Чистая функция: проверка страницы -> новые регионы.
+         *
+         * Объект-обёртка не нужен и состояния не касается, поэтому вынесена в
+         * companion: её проверяют тесты без Android и без Injekt.
+         */
+        fun applyToRegions(
+        check: PageRoleVerifier.PageCheck,
+        ordered: List<mihon.domain.ocr.model.OcrRegion>,
+    ): List<mihon.domain.ocr.model.OcrRegion>? {
+        val byText = check.lines
+            .filter { it.kept && !it.uncertain }
+            .associateBy { normalize(it.text) }
+        val corrected = ordered.mapNotNull { region ->
+            val fixed = byText[normalize(region.text)]?.text
+            when {
+                // Модель признала это не репликой — регион уходит из чтения.
+                check.lines.any { !it.kept && normalize(it.text) == normalize(region.text) } -> null
+                fixed != null && fixed != region.text -> region.copy(text = fixed)
+                else -> region
+            }
+        }
+        if (corrected.size == ordered.size && corrected.zip(ordered).all { (a, b) -> a.text == b.text }) {
+            return null // ничего не изменилось — кэш не трогаем зря
+        }
+        return corrected.mapIndexed { i, r -> r.copy(order = i) }
+    }
+
+    private fun normalize(text: String): String =
+        text.lowercase().filter { it.isLetterOrDigit() }
+
+
         private const val MAX_JPEG_EDGE = 1024
         private const val JPEG_QUALITY = 80
     }

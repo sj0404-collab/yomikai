@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.util.system.activeNetworkState
 import kotlinx.coroutines.CancellationException
 import logcat.LogPriority
 import mihon.domain.ocr.interactor.ClearCachedChapterOcr
+import mihon.domain.ocr.interactor.SaveCachedPageOcr
 import mihon.domain.ocr.interactor.ScanPageOcr
 import mihon.domain.ocr.interactor.WithOcrScanSession
 import tachiyomi.core.common.util.system.logcat
@@ -23,6 +24,7 @@ internal class OcrChapterScanner(
     private val clearCachedChapterOcr: ClearCachedChapterOcr,
     private val withOcrScanSession: WithOcrScanSession,
     private val scanPageOcr: ScanPageOcr,
+    private val saveCachedPageOcr: SaveCachedPageOcr,
     private val pageSourceResolver: OcrPageSourceResolver,
     private val downloadPreferences: DownloadPreferences,
 ) {
@@ -120,13 +122,21 @@ internal class OcrChapterScanner(
                                     // только что распознанным черновиком. Кадр
                                     // гасится флагом scanChapter(aiVerifier = null),
                                     // поэтому часовой оффлайн-скан остаётся как был.
-                                    if (aiVerifier != null) {
-                                        aiVerifier.verifyPage(
-                                            chapterId = chapterId,
-                                            pageIndex = page.pageIndex,
-                                            pageName = "${chapter.name} #${index + 1}",
-                                            bitmap = bitmap,
-                                            lines = ocr.regions.map { it.text },
+                                    val fixed = aiVerifier?.verifyPage(
+                                        pageName = "${chapter.name} #${index + 1}",
+                                        bitmap = bitmap,
+                                        regions = ocr.regions,
+                                    )
+                                    // Проверенный текст возвращается в кэш, иначе
+                                    // читатель получил бы старый распознанный текст,
+                                    // а правка модели осталась бы в отчёте.
+                                    if (fixed != null) {
+                                        saveCachedPageOcr.await(
+                                            ocr.copy(
+                                                chapterId = chapterId,
+                                                pageIndex = page.pageIndex,
+                                                regions = fixed,
+                                            ),
                                         )
                                     }
                                 } finally {
