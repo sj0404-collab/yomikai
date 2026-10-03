@@ -169,6 +169,17 @@ class ReaderActivity : BaseActivity() {
          */
         private const val PHRASE_FINAL_STEP = 0.15f
 
+        /**
+         * Пауза на отрисовку следующей страницы перед новым кадром OCR.
+         *
+         * Раньше здесь стояли фиксированные 350 + 900 мс: между страницами
+         * всегда была пустота в полторы секунды, и чтение шло рывками. Теперь
+         * паузу между репликами задаёт ритм голоса (см.
+         * AutoReadEngine.pauseAfterLineMs), а это число оставляет только на
+         * перерисовку вьювера — она идёт параллельно, а не после озвучки.
+         */
+        private const val PAGE_SETTLE_MS = 180L
+
         fun newIntent(context: Context, mangaId: Long?, chapterId: Long?): Intent {
             return Intent(context, ReaderActivity::class.java).apply {
                 putExtra("manga", mangaId)
@@ -1963,7 +1974,15 @@ class ReaderActivity : BaseActivity() {
                             return@readFrame
                         }
                         lifecycleScope.launchIO {
-                            kotlinx.coroutines.delay(350)
+                            // Пауза «в ритм голосов»: длительность зависит от
+                            // конца последней реплики (многоточие, вопрос, точка)
+                            // и от её длины, а не от фиксированных 350 мс.
+                            kotlinx.coroutines.delay(
+                                eu.kanade.tachiyomi.data.tts.AutoReadEngine.pauseAfterLineMs(
+                                    text = autoReadEngine.lastSpokenLine,
+                                    speechRate = ocrPrefs.speechRate().get(),
+                                ),
+                            )
                             if (!autoReadActive) return@launchIO
                             withUIContext {
                                 when (val viewer = viewModel.state.value.viewer) {
@@ -1988,7 +2007,10 @@ class ReaderActivity : BaseActivity() {
                                     else -> {}
                                 }
                             }
-                            kotlinx.coroutines.delay(900) // дать странице отрисоваться
+                            // Отрисовка следующей страницы: этого ждать нужно ровно
+                            // столько, сколько занимает кадр, а не фиксированную
+                            // секунду — иначе между репликами была пустота.
+                            kotlinx.coroutines.delay(PAGE_SETTLE_MS)
                             if (autoReadActive) readCurrentPage(thenAdvance = true)
                         }
                     },

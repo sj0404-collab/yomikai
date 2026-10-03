@@ -142,7 +142,7 @@ class MangaScreen(
 
         // Настройки скан-чтения: движок и формат документа (выбор перед стартом).
         var showScanSettings by remember { mutableStateOf(false) }
-        var scanEngine by remember { mutableStateOf(AutoReadEngineChoice.OFFLINE) }
+        var scanEngine by remember { mutableStateOf(AutoReadEngineChoice.GLENS) }
         var scanFormat by remember { mutableStateOf("md") }
 
         // Открытие читалки в режиме авточтения после фонового скана главы.
@@ -207,6 +207,14 @@ class MangaScreen(
             onFilterButtonClicked = screenModel::showSettingsDialog,
             onRefresh = screenModel::fetchAllFromSource,
             onContinueReading = { continueReading(context, screenModel.getNextUnreadChapter()) },
+            // Вторая кнопка рядом с «Читать»: обложка с голосом = сканировать
+            // главу онлайн-моделью, озвучить и открыть в авточтении. Показывает-
+            // ся только когда скан ещё не идёт и глава не открыта.
+            onScanChapterClicked = {
+                showScanSettings = true
+            }.takeIf {
+                nextUnread != null && !autoReadState.running && autoReadState.openChapterId == null
+            },
             onSearch = { query, global -> scope.launch { performSearch(navigator, query, global) } },
             onCoverClicked = screenModel::showCoverDialog,
             onShareClicked = { shareManga(context, screenModel.manga, screenModel.source) }.takeIf { isHttpSource },
@@ -230,23 +238,6 @@ class MangaScreen(
             onInvertSelection = screenModel::invertSelection,
         )
 
-            // Кнопка «Скан и чтение»: фоновое авто-сканирование следующей
-            // непрочитанной главы с прогрессом, затем открытие читалки в
-            // авточтении. Размещается чуть выше основного FAB «Читать».
-            if (nextUnread != null && !autoReadState.running && autoReadState.openChapterId == null) {
-                SmallFloatingActionButton(
-                    onClick = { showScanSettings = true },
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(bottom = 96.dp, end = 16.dp),
-                    containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Autorenew,
-                        contentDescription = "Сканировать текущую главу и читать",
-                    )
-                }
-            }
         }
 
         // Выбор движка распознавания и формата документа перед стартом скана.
@@ -277,7 +268,10 @@ class MangaScreen(
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         Text("Движок распознавания", fontWeight = FontWeight.Bold)
-                        ScanEngineRow("Оффлайн", AutoReadEngineChoice.OFFLINE, scanEngine) { scanEngine = it }
+                        // Только онлайн: офлайн-движок на главе средней длины
+                        // идёт минутами, и кнопка «сканировать и читать» выглядела
+                        // зависшей. Онлайн-скан идёт в разы быстрее и даёт текст
+                        // готовым к озвучке сразу.
                         ScanEngineRow("Glens", AutoReadEngineChoice.GLENS, scanEngine) { scanEngine = it }
                         ScanEngineRow("GitHub-раннер", AutoReadEngineChoice.GITHUB_RUNNER, scanEngine) { scanEngine = it }
                         Spacer(Modifier.height(8.dp))

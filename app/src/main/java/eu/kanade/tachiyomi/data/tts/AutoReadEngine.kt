@@ -391,6 +391,17 @@ class AutoReadEngine(
      */
     private var lastSpokenGender: String? = null
 
+    /**
+     * Текст последней озвученной реплики.
+     *
+     * Читалке нужен для паузы между страницами: её длительность определяется
+     * концом фразы (многоточие, вопрос, восклицание), а не фиксированным
+     * числом миллисекунд. Отдаётся без разметки и уже сказанного имени.
+     */
+    @Volatile
+    var lastSpokenLine: String = ""
+        private set
+
     /** Был ли в последнем кадре новый текст (для темпа автоскролла). */
     @Volatile
     var lastFrameHadText: Boolean = false
@@ -1590,6 +1601,7 @@ class AutoReadEngine(
         // Реплика может прийти с меткой `{имя:…}` (её снимает сам движок), а в
         // журнал и таймаут разумно класть то, что реально произносится.
         val spoken = SpeechMarkup.strip(text).ifBlank { text }
+        lastSpokenLine = spoken
         // Оба флага — MutableStateFlow: onState приходит из потока TTS, а читается
         // из этой корутины (диспетчер IO). Обычный var здесь означает гонку — цикл
         // ожидания мог бы не увидеть `started = true` и сочти фразу неозвученной.
@@ -2284,6 +2296,39 @@ class AutoReadEngine(
          * и листать дальше нечего.
          */
         internal const val OCR_FAILED_STOP_AFTER = 3
+
+        /**
+         * Пауза после реплики перед следующей — «ритм голосов».
+         *
+         * Раньше пауза была фиксированной (350 мс + 900 мс на отрисовку) и не
+         * зависела ни от текста, ни от голоса: короткое «Да!» и длинная фраза
+         * отделялись от следующей реплики одинаково, и чтение звучало как
+         * метроном с пустым тактом. Теперь пауза вырастает там, где её делает
+         * сама речь: после многоточия, тире и вопроса пауза длиннее, после
+         * точки — короче, после восклицания — почти не нужна.
+         *
+         * Длинная реплика тоже получает чуть больше воздуха: у человека после
+         * сложной фразы пауза длиннее, чем после короткой.
+         *
+         * Диапазон намеренно узкий (120..800 мс): меньше — реплики слипаются в
+         * одну, больше — появляется провал, которого в книге не было.
+         */
+        internal fun pauseAfterLineMs(text: String, speechRate: Float): Long {
+            val rate = speechRate.takeIf { it.isFinite() && it > 0f }?.coerceIn(0.5f, 2f) ?: 1f
+            // Чем быстрее голос, тем короче пауза: иначе на быстром темпе
+            // возникает ровно тот провал, которого хотелось избежать.
+            val tail = text.trimEnd().takeLast(3)
+            val base = when {
+                tail.endsWith("…") || tail.endsWith("...") || tail.endsWith("—") || tail.endsWith("-") -> 620L
+                tail.endsWith("?") -> 480L
+                tail.endsWith("!") -> 160L
+                tail.endsWith(".") || tail.endsWith("»") || tail.endsWith(".") -> 340L
+                else -> 260L
+            }
+            val byLength = text.trim().length.coerceAtMost(240).toLong() / 4L
+            val raw = ((base + byLength) / rate).toLong()
+            return raw.coerceIn(120L, 800L)
+        }
 
         fun ttsTimeoutMs(textLength: Int, speechRate: Float): Long {
             val rate = speechRate.takeIf { it.isFinite() && it > 0f }?.coerceIn(0.5f, 2f) ?: 1f

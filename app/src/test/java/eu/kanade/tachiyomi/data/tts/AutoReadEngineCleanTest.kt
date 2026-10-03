@@ -262,6 +262,37 @@ class AutoReadEngineCleanTest {
     }
 
     @Test
+    fun `pause after a line follows the rhythm of the phrase`() {
+        // Регрессия: пауза между страницами была фиксированной (350 + 900 мс),
+        // и чтение шло рывками с пустым тактом. Теперь пауза вырастает там,
+        // где её делает сама речь.
+        val short = AutoReadEngine.pauseAfterLineMs("Да.", speechRate = 1f)
+        val thought = AutoReadEngine.pauseAfterLineMs("Я так и знал...", speechRate = 1f)
+        val question = AutoReadEngine.pauseAfterLineMs("Куда ты идёшь?", speechRate = 1f)
+        val shout = AutoReadEngine.pauseAfterLineMs("Стой!", speechRate = 1f)
+
+        assertTrue(thought > short, "многоточие должно держать паузу дольше точки")
+        assertTrue(question > short, "вопрос требует паузы")
+        assertTrue(shout < question, "после восклицания пауза почти не нужна")
+    }
+
+    @Test
+    fun `pause stays inside audible bounds`() {
+        // Слишком короткая пауза слипает реплики в одну, слишком длинная —
+        // это уже провал, которого в книге не было.
+        for (text in listOf("А.", "Я долго молчал, глядя на него и не зная, что сказать.", "...")) {
+            for (rate in listOf(0.5f, 1f, 2f)) {
+                val pause = AutoReadEngine.pauseAfterLineMs(text, rate)
+                assertTrue(pause in 120L..800L, "пауза $pause вне диапазона для '$text' @ $rate")
+            }
+        }
+        // Быстрый голос — короче пауза, иначе на высоком темпе появляется провал.
+        val slow = AutoReadEngine.pauseAfterLineMs("Хорошо.", speechRate = 0.5f)
+        val fast = AutoReadEngine.pauseAfterLineMs("Хорошо.", speechRate = 2f)
+        assertTrue(fast < slow)
+    }
+
+    @Test
     fun `full page frame keeps boxes untouched`() {
         // Манга, постраничный режим: кадр равен странице, пересчёт обязан быть
         // тождественным — иначе подсветка поедет на обычных страницах.
