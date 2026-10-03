@@ -155,9 +155,7 @@ class OcrChapterAiVerifier(
                 markers = listOf(draft.name),
             )
         }
-        // Книжные роли не затирают то, что читатель настроил руками.
-        val manual = existing.filter { role -> roles.none { it.name.equals(role.name, true) } }
-        VoiceRoleDictionary.saveForBook(prefs, bookId, manual + roles)
+        VoiceRoleDictionary.saveForBook(prefs, bookId, mergeRoles(existing, roles))
         return Summary(
             pagesChecked = collected.size,
             pagesChanged = 0,
@@ -185,6 +183,26 @@ class OcrChapterAiVerifier(
     }.onFailure { logcat(LogPriority.WARN, it) { "Chapter AI jpeg encode failed" } }.getOrNull()
 
     companion object {
+        /**
+         * Правило слияния: ручная настройка главнее модели.
+         *
+         * Раньше здесь отбрасывалась роль с тем же именем и писалась роль от
+         * модели с ПУСТЫМ voice — то есть голос, который читатель назначил
+         * руками, стирался на каждом скане главы. Теперь для имени с ручным
+         * голосом сохраняется ручная роль, а модель добавляет только новые
+         * имена.
+         */
+        fun mergeRoles(
+            existing: List<VoiceRole>,
+            fromAi: List<VoiceRole>,
+        ): List<VoiceRole> {
+            val manualNames = existing.filter { it.voice.isNotBlank() }
+                .map { it.name.lowercase() }
+                .toSet()
+            val manual = existing.filter { it.voice.isNotBlank() }
+            return manual + fromAi.filter { r -> r.name.lowercase() !in manualNames }
+        }
+
         /**
          * Чистая функция: проверка страницы -> новые регионы.
          *

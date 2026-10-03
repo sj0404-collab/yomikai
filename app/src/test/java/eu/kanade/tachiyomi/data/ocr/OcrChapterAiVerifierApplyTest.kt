@@ -1,6 +1,8 @@
 package eu.kanade.tachiyomi.data.ocr
 
 import eu.kanade.tachiyomi.data.tts.PageRoleVerifier
+import eu.kanade.tachiyomi.data.tts.VoiceRole
+import eu.kanade.tachiyomi.data.tts.VoiceRoleDictionary
 import io.kotest.matchers.shouldBe
 import mihon.domain.ocr.model.OcrBoundingBox
 import mihon.domain.ocr.model.OcrRegion
@@ -99,5 +101,35 @@ class OcrChapterAiVerifierApplyTest {
         val out = OcrChapterAiVerifier.applyToRegions(check, ordered)!!
         // Правка меняет только текст: рамки остаются исходными.
         out.map { it.boundingBox } shouldBe ordered.map { it.boundingBox }
+    }
+
+    @Test
+    fun `manual voice assignment survives a repeated ai commit`() {
+        // Книжные роли пишутся на каждом скане главы. Если бы commit()
+        // перезаписывал словарь целиком, то голос, который читатель назначил
+        // руками Аки, стирался бы при каждом повторном скане — и возвращался
+        // уже с другим. Ручная настройка должна выживать.
+        val store = """{"12":[{"name":"Аки","gender":"auto","age":"adult","voice":"ru-ru-x-dfa-network","pitch":1.0,"rate":1.0,"markers":["Аки"]}]}"""
+        val existing = VoiceRoleDictionary.parseBookRoles(store, 12L)
+        existing.single().voice shouldBe "ru-ru-x-dfa-network"
+
+        // Модель предлагает Аки роль с ПУСТЫМ голосом: ручная должна выжить.
+        val aiRole = VoiceRole(
+            id = "аки",
+            name = "Аки",
+            gender = "auto",
+            age = "adult",
+            voice = "",
+            markers = listOf("Аки"),
+        )
+        val merged = OcrChapterAiVerifier.mergeRoles(existing, listOf(aiRole))
+        merged.single { it.name == "Аки" }.voice shouldBe "ru-ru-x-dfa-network"
+
+        // Новый персонаж от модели при этом добавляется.
+        val withNew = OcrChapterAiVerifier.mergeRoles(
+            existing,
+            listOf(aiRole, VoiceRole(id = "бо", name = "Бо", gender = "auto", age = "adult", voice = "", markers = listOf("Бо"))),
+        )
+        withNew.map { it.name } shouldBe listOf("Аки", "Бо")
     }
 }
