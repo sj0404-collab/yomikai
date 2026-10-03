@@ -335,6 +335,128 @@ object VoicePlugins {
         return if (phoneOnly && !explicitOnline) TtsSpeaker.ENGINE_SYSTEM else resolved
     }
 
+    // ---- ИИ и голоса: чем закончится автонастройка ------------------------
+    //
+    // ИИ не умеет создавать голоса в системном TTS: доступные голоса задаёт
+    // то, что установлено на устройстве. Он может только ВЫБРАТЬ из имеющихся
+    // либо подобрать сетевой. Поэтому решение принимается здесь, а не после
+    // ответа модели: иначе модель писала голос, которого движок не умеет, и
+    // озвучка молча уходила в другой движок — читатель получал «не тот голос»
+    // без всякой ошибки.
+    //
+    // Правило, о котором просил пользователь:
+    //  • сетевой движок → ИИ настраивает свободно (все голоса сетевые);
+    //  • системный движок → ИИ настраивает, только если такой голос реально
+    //    установлен; если нет — уходим в сеть, а без сети берём безопасный
+    //    системный голос по полу.
+
+    /** Решение автонастройки голоса: куда писать и каким голосом читать. */
+    data class AiVoicePlan(
+        /** id движка синтеза: системный или конкретный сетевой. */
+        val engineId: String,
+        /** голос для реплики; пусто — движок подберёт сам по полу. */
+        val voiceId: String,
+        /** true — голос выбрала модель, false — подобран автоматически. */
+        val aiAuthored: Boolean,
+        /** Почему так: показывается в журнале настройки, а не теряется. */
+        val reason: VoicePlanReason,
+    )
+
+    enum class VoicePlanReason {
+        /** Сетевой движок: голоса сетевые, ИИ настраивает свободно. */
+        ONLINE_AUTHORED,
+
+        /** Системный движок, и голос, который выбрал ИИ, реально установлен. */
+        SYSTEM_AUTHORED_AVAILABLE,
+
+        /** ИИ выбрал системный голос, которого на устройстве нет → сеть. */
+        SYSTEM_MISSING_FALLBACK_ONLINE,
+
+        /** ИИ выбрал системный голос, которого нет, и сети тоже нет. */
+        SYSTEM_MISSING_NO_NETWORK,
+
+        /** Модель недоступна (нет ключа) — настройка не выполнялась. */
+        UNAVAILABLE,
+    }
+
+    /**
+     * Куда направить голос, выбранный ИИ.
+     *
+     * Чистая функция без Android и сети — чтобы правило проверялось тестами,
+     * а не догадками на устройстве.
+     *
+     * @param targetEngine движок, которым читатель собирается читать.
+     * @param aiVoice голос, предложенный моделью (может быть пустым).
+     * @param installedSystemVoices голоса, реально установленные в системном TTS.
+     * @param online доступна ли сеть.
+     * @param aiAvailable готов ли ИИ (есть ключ/провайдер).
+     */
+    fun planAiVoice(
+        targetEngine: String,
+        aiVoice: String?,
+        installedSystemVoices: Collection<String>,
+        online: Boolean,
+        aiAvailable: Boolean,
+        fallbackOnlineEngine: String = TtsSpeaker.ENGINE_EDGE_TTS,
+    ): AiVoicePlan {
+        val requested = aiVoice?.trim().orEmpty()
+        if (!aiAvailable || requested.isEmpty()) {
+            // Модель не ответила — читаем чем есть, без выдуманного голоса.
+            return AiVoicePlan(
+                engineId = TtsSpeaker.ENGINE_SYSTEM,
+                voiceId = "",
+                aiAuthored = false,
+                reason = VoicePlanReason.UNAVAILABLE,
+            )
+        }
+
+        // Сетевой движок: его голоса и есть сетевые, ограничений нет.
+        if (isOnlineEngineId(targetEngine)) {
+            if (!online) {
+                return AiVoicePlan(
+                    engineId = TtsSpeaker.ENGINE_SYSTEM,
+                    voiceId = "",
+                    aiAuthored = false,
+                    reason = VoicePlanReason.UNAVAILABLE,
+                )
+            }
+            return AiVoicePlan(
+                engineId = targetEngine,
+                voiceId = requested,
+                aiAuthored = true,
+                reason = VoicePlanReason.ONLINE_AUTHORED,
+            )
+        }
+
+        // Системный движок. Голос, предложенный моделью, годится только если он
+        // действительно установлен: иначе это будет тихий фолбэк на другой
+        // голос, и выглядело бы как «ИИ настроил, а звучит не то».
+        val installed = installedSystemVoices.any { it.equals(requested, ignoreCase = true) }
+        if (installed) {
+            return AiVoicePlan(
+                engineId = TtsSpeaker.ENGINE_SYSTEM,
+                voiceId = requested,
+                aiAuthored = true,
+                reason = VoicePlanReason.SYSTEM_AUTHORED_AVAILABLE,
+            )
+        }
+        if (online) {
+            return AiVoicePlan(
+                engineId = fallbackOnlineEngine,
+                voiceId = requested,
+                aiAuthored = true,
+                reason = VoicePlanReason.SYSTEM_MISSING_FALLBACK_ONLINE,
+            )
+        }
+        // Ни голоса, ни сети: читаем системно и подбираем голос по полу.
+        return AiVoicePlan(
+            engineId = TtsSpeaker.ENGINE_SYSTEM,
+            voiceId = "",
+            aiAuthored = false,
+            reason = VoicePlanReason.SYSTEM_MISSING_NO_NETWORK,
+        )
+    }
+
     /**
      * Сохранённые пресеты голосов. Список намеренно короткий: полный перечень
      * голосов устройства требует живой `TextToSpeech` (см. [systemVoices]), а
