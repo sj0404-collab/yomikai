@@ -16,6 +16,7 @@ import logcat.LogPriority
 import mihon.domain.ocr.exception.OcrException
 import mihon.domain.ocr.model.OcrBoundingBox
 import mihon.domain.ocr.model.OcrImage
+import eu.kanade.tachiyomi.data.ai.AiConsole
 import mihon.domain.ocr.model.OcrModel
 import mihon.domain.ocr.model.OcrPageResult
 import mihon.domain.ocr.model.OcrRegion
@@ -584,8 +585,22 @@ class OcrRepositoryImpl(
         onPartial: ((OcrRegion) -> Unit)?,
         cacheResult: Boolean,
     ): OcrPageResult {
-        return withActiveOperation {
-            val regionChoice = ocrPreferences.scanRegion().get()
+        // Живой журнал. Консоль открывают именно ради скана главы, а движки
+        // OCR ходят в сеть напрямую и минуют AiAssistant — из-за чего журнал был
+        // пуст ровно тогда, когда он нужнее всего.
+        val engineName = OcrPlugins.byModel(ocrModelPref.get()).title
+        val startedAt = android.os.SystemClock.elapsedRealtime()
+        AiConsole.ocr(
+            title = "Скан страницы ${pageIndex + 1} · $engineName",
+            detail = buildString {
+                append("chapterId=").append(chapterId)
+                append(" · ").append(image.width).append('×').append(image.height)
+                append(" · кэш: ").append(if (cacheResult) "да" else "нет")
+            },
+        )
+        return try {
+            val outcome = withActiveOperation {
+                val regionChoice = ocrPreferences.scanRegion().get()
             val result = image.useBitmap { originalBitmap ->
                 val sourceHeight = originalBitmap.height
                 val cropTop = when (regionChoice) {
@@ -638,8 +653,28 @@ class OcrRepositoryImpl(
             // класть нельзя, иначе оверлей потом подсвечивал не там. Плюс
             // веб-авточтение шлёт chapterId = -1 на каждую позицию прокрутки,
             // и clearChapter такие записи не убирал.
-            if (cacheResult) cacheStore.upsert(result)
-            result
+                if (cacheResult) cacheStore.upsert(result)
+                result
+            }
+            // Итог по странице: сколько реплик, сколько заняло, какой движок
+            // отдал текст на самом деле (не выбранный, а фактический — при
+            // фолбэке это разные движки).
+            AiConsole.ocr(
+                title = "Страница ${pageIndex + 1} · реплик: ${outcome.regions.size}",
+                detail = "движок: ${OcrPlugins.byModel(outcome.ocrModel).title} · " +
+                    "${android.os.SystemClock.elapsedRealtime() - startedAt} мс",
+                level = if (outcome.regions.isEmpty()) AiConsole.Level.WARN else AiConsole.Level.OK,
+            )
+            outcome
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AiConsole.ocr(
+                title = "Скан страницы ${pageIndex + 1} не удался · $engineName",
+                detail = e.message ?: e.javaClass.simpleName,
+                level = AiConsole.Level.ERROR,
+            )
+            throw e
         }
     }
 

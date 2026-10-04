@@ -63,6 +63,27 @@ class AiConsoleTest {
     }
 
     @Test
+    fun `a chapter scan leaves a trace the reader can watch`() {
+        // Регент на «событий: 0» при идущем скане: консоль открывают ради
+        // скана, а движки OCR ходят в сеть мимо AiAssistant, из-за чего журнал
+        // был пуст ровно тогда, когда он нужнее всего.
+        AiConsole.ocr(
+            title = "Скан главы «1. Глава 1» начат",
+            detail = "страниц 2",
+        )
+        AiConsole.ocr(title = "Скан страницы 1 · Google Lens")
+        val titles = AiConsole.entries.value.map { it.title }
+        assertTrue(
+            titles.any { it.startsWith("Скан главы") },
+            "в журнале должно быть начало скана главы, а есть только: $titles",
+        )
+        assertTrue(
+            titles.any { it.startsWith("Скан страницы") },
+            "в журнале должен быть скан страницы, а есть только: $titles",
+        )
+    }
+
+    @Test
     fun `ids are unique so the list keys do not collide after trimming`() {
         AiConsole.note("a")
         AiConsole.note("b")

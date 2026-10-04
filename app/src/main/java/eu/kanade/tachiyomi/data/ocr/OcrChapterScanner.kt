@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.data.ocr
 
 import android.content.Context
 import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.data.ai.AiConsole
 import eu.kanade.tachiyomi.util.ocr.toOcrImage
 import eu.kanade.tachiyomi.util.system.activeNetworkState
 import kotlinx.coroutines.CancellationException
@@ -97,6 +98,15 @@ internal class OcrChapterScanner(
 
                         try {
                             var chapterHasCachedResults = false
+                            AiConsole.ocr(
+                                title = "Скан главы «${chapter.name}» начат",
+                                detail = buildString {
+                                    append("страниц ").append(pages.pages.size)
+                                    append(" · глава ").append(chapter.id)
+                                    if (aiVerifier != null) append(" · ИИ-проверка включена")
+                                },
+                            )
+                            val chapterStartedAt = android.os.SystemClock.elapsedRealtime()
                             for ((index, page) in pages.pages.withIndex()) {
                                 val networkError = checkNetworkState()
                                 if (networkError != null) {
@@ -155,6 +165,12 @@ internal class OcrChapterScanner(
                             }
 
                             onComplete(lastProgress)
+                            AiConsole.ocr(
+                                title = "Скан главы «${chapter.name}» готов",
+                                detail = "страниц ${pages.pages.size} · " +
+                                    "${android.os.SystemClock.elapsedRealtime() - chapterStartedAt} мс",
+                                level = AiConsole.Level.OK,
+                            )
                             true
                         } catch (e: Throwable) {
                             handleUnexpectedFailure(
