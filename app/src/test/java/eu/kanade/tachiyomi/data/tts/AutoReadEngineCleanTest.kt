@@ -311,4 +311,58 @@ class AutoReadEngineCleanTest {
         assertEquals(0.7f, mapped[2], 1e-5f)
         assertEquals(0.8f, mapped[3], 1e-5f)
     }
+
+    // ===== Нечёткая история: бабл не должен выпадать из чтения =====
+
+    @Test
+    fun `a bubble containing an already spoken phrase is still read`() {
+        // Предыдущая страница заканчивалась на «Я не знаю», следующая
+        // начинается с «Я не знаю, что делать». Простое включение считало
+        // вторую реплику дублем, и верхний бабл страницы не читался вовсе.
+        val old = "янезнаю"
+        val new = "янезнаючтоделать"
+        assertFalse(AutoReadEngine.isSameSpokenLine(old, new))
+    }
+
+    @Test
+    fun `a bubble shorter than a spoken one is still read`() {
+        // Обратный случай: раньше прочитанная длинная фраза съедала любую
+        // новую реплику, целиком в неё вошедшую.
+        val old = "яподождуznа самомделе"
+        val new = "подожду"
+        assertFalse(AutoReadEngine.isSameSpokenLine(old, new))
+    }
+
+    @Test
+    fun `a new bubble reusing one common word is still read`() {
+        assertFalse(AutoReadEngine.isSameSpokenLine("этонеправда", "ямочуправду"))
+    }
+
+    @Test
+    fun `the same bubble with truncated edges is still a duplicate`() {
+        // Собственно ради чего история и нужна: та же реплика после прокрутки
+        // приходит обрезанной по краям — длина сопоставима, поэтому это дубль.
+        assertTrue(AutoReadEngine.isSameSpokenLine("янезнаю", "янезнаю"))
+        assertTrue(AutoReadEngine.isSameSpokenLine("этонеправда", "этонеправд"))
+    }
+
+    @Test
+    fun `ocr jitter on the same line is still a duplicate`() {
+        // Та же длина, отличаются пару букв: 3-граммы это видят.
+        assertTrue(AutoReadEngine.isSameSpokenLine("держисвет", "держисвеп"))
+        assertTrue(AutoReadEngine.isSameSpokenLine("этонеправда", "этонеправла"))
+    }
+
+    @Test
+    fun `a much longer bubble is never a re-read of a short one`() {
+        // Реплика, в которую просто добавили слова, — другой бабл, даже если
+        // короткая в неё целиком вошла.
+        assertFalse(AutoReadEngine.isSameSpokenLine("подожду", "яподождунасамомделе"))
+    }
+
+    @Test
+    fun `completely different bubbles are not duplicates`() {
+        assertFalse(AutoReadEngine.isSameSpokenLine("этодракон", "отойдемотсюда"))
+        assertFalse(AutoReadEngine.isSameSpokenLine("нельзя", "янельзявойти"))
+    }
 }

@@ -453,6 +453,18 @@ class AutoReadEngine(
     private var generation = 0
 
     /**
+     * Счётчик запущенных кадров. Растёт ТОЛЬКО в [readFrame].
+     *
+     * Нужен отдельно от [generation]: та растёт ещё и при остановке по существу
+     * (нет озвучки, OCR не отвечает), когда кадр как раз надо погасить. Кадр
+     * вправе гасить общее состояние (рамку, «идёт ли чтение») тогда и только
+     * тогда, когда более новый кадр ещё не стартовал, — это и есть
+     * `myFrame >= frameCounter`.
+     */
+    @Volatile
+    private var frameCounter = 0
+
+    /**
      * Жива ли хоть одна задача озвучки: кадр авточтения ИЛИ ручной бабл.
      *
      * Проверяется внутри [speakAndAwait], чтобы ждать окончания фразы можно
@@ -466,7 +478,9 @@ class AutoReadEngine(
      * История прочитанного с НЕЧЁТКИМ сравнением: OCR той же реплики при
      * смещённом кадре даёт слегка другой текст (обрезанные края, дрожание),
      * поэтому точный хэш пропускал дубли. Храним нормализованные строки и
-     * сравниваем по включению/похожести 3-граммами (порог 0.6).
+     * сравниваем по сходству 3-граммами (порог 0.6) и по включению — но
+     * включение считается тем же баблом только когда короткий текст это почти
+     * весь длинный, см. [isSameSpokenLine].
      *
      * Вебтун листает кадр на ~35% высоты: хвост прошлой страницы остаётся
      * вверху следующего кадра и OCR может дать его текст с искажением. Порог
@@ -484,25 +498,11 @@ class AutoReadEngine(
         // — осмысленные реплики. Раньше guard `length < 4 -> true` глушил их.
         if (norm.length < 4) return false
         for (old in spokenTexts) {
-            if (old.contains(norm) || norm.contains(old)) return true
-            if (trigramSimilarity(old, norm) >= 0.6f) return true
+            if (isSameSpokenLine(old, norm)) return true
         }
         spokenTexts.addLast(norm)
         while (spokenTexts.size > HISTORY_LIMIT) spokenTexts.removeFirst()
         return false
-    }
-
-    private fun trigramSimilarity(a: String, b: String): Float {
-        if (a.length < 3 || b.length < 3) return if (a == b) 1f else 0f
-        val ta = HashSet<String>(a.length)
-        for (i in 0..a.length - 3) ta.add(a.substring(i, i + 3))
-        var common = 0
-        var total = 0
-        for (i in 0..b.length - 3) {
-            total++
-            if (b.substring(i, i + 3) in ta) common++
-        }
-        return if (total == 0) 0f else common.toFloat() / total
     }
 
     @Synchronized
@@ -580,6 +580,7 @@ class AutoReadEngine(
         job?.cancel()
         TtsSpeaker.stop()
         val myGen = ++generation
+        val myFrame = ++frameCounter
         job = scope.launch {
             _isReading.value = true
             var aiRefine: Job? = null
@@ -1191,12 +1192,14 @@ class AutoReadEngine(
                 // полноэкранный битмап.
                 releaseFrame()
                 aiRefine?.cancel()
-                // Общее состояние кадра — только для СВОЕГО кадра. Job.cancel()
-                // лишь помечает задачу, она завершается на следующей точке
-                // suspend, а к тому моменту новый кадр уже опубликовал свои
-                // регионы. Без проверки поколения отменённый кадр стирал их и
-                // возвращал кнопке «Стоп» состояние «старт» посреди чтения.
-                if (myGen == generation) {
+                // Общее состояние кадра — только если его не перебил более новый
+                // кадр, и по frameCounter, а не по generation: остановка по
+                // существу (нет озвучки, OCR не отвечает) увеличивает generation,
+                // и старая проверка `myGen == generation` пропускала очистку —
+                // рамка с номером реплики замерзала на странице, а кнопка «Стоп»
+                // оставалась в состоянии «идёт». На этом пути кадр всегда
+                // ПОСЛЕДНИЙ, поэтому гасить ему можно и нужно.
+                if (myFrame >= frameCounter) {
                     _currentRegion.value = null
                     _frameRegions.value = emptyList()
                     streamedRegionCount.set(0)
@@ -1204,7 +1207,7 @@ class AutoReadEngine(
                     _isReading.value = false
                     // Колбэк только для АКТУАЛЬНОГО запуска: после stop() старый
                     // цикл не имеет права листать дальше или перезапускать чтение
-                    if (job?.isCancelled != true) {
+                    if (myGen == generation && job?.isCancelled != true) {
                         onPageFinished()
                     }
                 }
@@ -2156,6 +2159,16 @@ class AutoReadEngine(
 
     companion object {
         private const val HISTORY_LIMIT = 600
+
+        /**
+         * На сколько короткий текст может отличаться от длинного, чтобы считать
+         * их одним баблом при включении.
+         *
+         * Раньше порога не было вовсе, и верхний бабл страницы пропускался, если
+         * уже прочитанная реплика в него входила. 0.8 — это обрезанные края и
+         * лишняя пунктуация, а не «новая фраза со знакомым словом».
+         */
+        private const val CONTAINMENT_RATIO = 0.8f
         private const val MAX_BUBBLES_PER_FRAME = 40
 
         /**
@@ -2447,6 +2460,51 @@ class AutoReadEngine(
          *    фолбэк, где первичен верх, а не правый край.
          * Так верхние реплики всегда читаются раньше нижних в любом вложении.
          */
+        /** Доля общих 3-грамм: мера «тот же бабл, но OCR дрожит». */
+        private fun trigramSimilarity(a: String, b: String): Float {
+            if (a.length < 3 || b.length < 3) return if (a == b) 1f else 0f
+            val ta = HashSet<String>(a.length)
+            for (i in 0..a.length - 3) ta.add(a.substring(i, i + 3))
+            var common = 0
+            var total = 0
+            for (i in 0..b.length - 3) {
+                total++
+                if (b.substring(i, i + 3) in ta) common++
+            }
+            return if (total == 0) 0f else common.toFloat() / total
+        }
+
+        /**
+         * Один ли это бабл, а не просто два похожих текста.
+         *
+         * Сравнение текста, а не координат: у OCR дрожит текст, а рамка у того же
+         * бабла прыгает. Поэтому «тот же бабл» — это либо почти равный текст
+         * (3-граммы), либо случай, когда один текст это почти весь другой.
+         *
+         * Простое «один содержит другой» было неверно и стоило верхнего бабла на
+         * странице: предыдущая страница заканчивалась на «Я не знаю», следующая
+         * начиналась с «Я не знаю, что делать» — и вторая реплика молча выпадала из
+         * чтения, потому что первая в неё входила. Тот же механизм съедал любую
+         * новую реплику, внутри которой встретилась уже прочитанная короткая.
+         *
+         * @param old уже озвученная нормализованная строка;
+         * @param new новая нормализованная строка.
+         */
+        internal fun isSameSpokenLine(old: String, new: String): Boolean {
+            if (old == new) return true
+            val shorter = minOf(old.length, new.length)
+            val longer = maxOf(old.length, new.length)
+            // Разница длин — это разные реплики, и проверять их нечем.
+            // Именно этот порядок был неверным: короткая новая реплика, целиком
+            // вошедшая в длинную прочитанную, даёт 100% общих 3-грамм и
+            // считалась дублем — верхний бабл страницы молча выпадал из чтения.
+            if (shorter < CONTAINMENT_RATIO * longer) return false
+            // Сопоставимая длина: дальше решает сходство 3-грамм, а включение
+            // ловит обрезок края, который сходством иногда не берётся.
+            if (trigramSimilarity(old, new) >= 0.6f) return true
+            return if (old.length >= new.length) old.contains(new) else new.contains(old)
+        }
+
         fun orderRegions(lines: List<Line>, order: String): List<Line> {
             if (lines.size <= 1) return lines
             val direction = when (order) {
