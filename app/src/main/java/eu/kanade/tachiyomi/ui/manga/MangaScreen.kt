@@ -156,6 +156,10 @@ class MangaScreen(
         var scanTargetChapter by remember { mutableStateOf<Chapter?>(null) }
         // Список глав для пакетного скана; пустой — сканируется одна глава.
         var scanBatchTarget by remember { mutableStateOf<List<Chapter>>(emptyList()) }
+        // Консоль ИИ — на этом экране, рядом с кнопкой скана главы: скан идёт
+        // здесь же, и смотреть, чем занят ИИ, нужно тут же. В читалке её нет:
+        // обычному чтению полэкранный терминал не нужен, а место занимал.
+        var showAiConsole by remember { mutableStateOf(false) }
         // Скан занят — кнопки у глав гасим, чтобы не запустить второй поверх.
         val scanRunning = autoReadState.running || autoReadState.openChapterId != null
 
@@ -237,6 +241,7 @@ class MangaScreen(
                 nextUnread != null && !scanRunning
             },
             // Та же кнопка у каждой главы: жмёшь у нужной — сканируется она.
+            onOpenAiConsole = { showAiConsole = true },
             onScanChapterItemClicked = { chapter: Chapter ->
                 scanTargetChapter = chapter
                 showScanSettings = true
@@ -313,6 +318,9 @@ class MangaScreen(
                 },
                 title = { Text("Сканирование главы") },
                 text = {
+                    // Ссылка на консоль прямо в диалоге скана: скан идёт здесь же,
+                    // и кнопка «консоль» стоит рядом с «Сканировать и читать».
+                    TextButton(onClick = { showAiConsole = true }) { Text("Консоль ИИ") }
                     Column(
                         Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -345,6 +353,25 @@ class MangaScreen(
                         ScanFormatRow("PDF", "pdf", scanFormat) { scanFormat = it }
                         ScanFormatRow("DOCX", "docx", scanFormat) { scanFormat = it }
                     }
+                },
+            )
+        }
+
+        // Консоль ИИ на экране манги.
+        if (showAiConsole) {
+            eu.kanade.presentation.reader.components.AiConsoleDialog(
+                onClose = { showAiConsole = false },
+                onStopEverything = {
+                    // Здесь читалки нет: гасим то, что ещё могло идти —
+                    // запросы к модели и внешний HTTP-агент.
+                    runCatching {
+                        eu.kanade.tachiyomi.data.ai.AiHttpServer
+                            .abortAllRequests("кнопка «Остановить» в консоли")
+                    }
+                    eu.kanade.tachiyomi.data.ai.AiAssistant
+                        .abortActiveRequests("кнопка «Остановить» в консоли")
+                    eu.kanade.tachiyomi.data.tts.TtsSpeaker.stop()
+                    eu.kanade.tachiyomi.data.ai.AiConsole.user("Остановлено из консоли")
                 },
             )
         }

@@ -38,7 +38,6 @@ import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.Speed
-import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -83,14 +82,6 @@ fun ReaderFloatingControls(
      */
     onOpenSettingsHub: () -> Unit = {},
     onOpenAiChat: () -> Unit = {},
-    /**
-     * Консоль ИИ: живой журнал раундов, запросов к модели и чтения.
-     *
-     * Отдельный вход из меню читалки, а не только из AI-чата: половина журнала
-     * — это распознавание и озвучка, которые идут без открытого чата, и смотреть
-     * на них было негде.
-     */
-    onOpenAiConsole: () -> Unit = {},
     onScanRegionChange: (ScanRegion) -> Unit,
     onAutoscrollToggle: (Boolean, Float) -> Unit,
     onAutoSpeakPage: () -> Unit = {},
@@ -337,21 +328,6 @@ fun ReaderFloatingControls(
                                             MaterialTheme.colorScheme.onPrimaryContainer
                                         },
                                         contentDescription = "Читать главу",
-                                    ),
-                                ),
-                            ),
-                            rowUnlessHidden(
-                                "r_aiconsole",
-                                OcrMenuRow(
-                                    label = "Консоль ИИ",
-                                    action = OcrMenuAction(
-                                        icon = Icons.Outlined.Terminal,
-                                        onClick = {
-                                            beepAction()
-                                            menuOpen = false
-                                            onOpenAiConsole()
-                                        },
-                                        contentDescription = "Консоль ИИ",
                                     ),
                                 ),
                             ),

@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.di
 
 import android.app.Application
+import android.content.Context
 import androidx.core.content.ContextCompat
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import app.cash.sqldelight.db.SqlDriver
@@ -55,6 +56,15 @@ class AppModule(val app: Application) : InjektModule {
 
     override fun InjektRegistrar.registerInjectables() {
         addSingleton(app)
+
+        // Context САМ ПО СЕБЕ в реестре не значит: addSingleton(app) завёл
+        // только Application, а Kotlin-типы разные. Места, которым нужен
+        // filesDir/cacheDir без Activity, брали Injekt.get<Context>() — и падали
+        // с InjektionException «No registered instance ... for type class
+        // android.content.Context». Так упало авточтение главы:
+        // ReadingPlotAgentHolder лениво брал хранилище пересказа прямо из
+        // startAutoReadLoop, то есть кнопка «Читать главу» роняла приложение.
+        addSingletonFactory<Context> { app }
 
         addSingletonFactory<SqlDriver> {
             synchronized(lock) {

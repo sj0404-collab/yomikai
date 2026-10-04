@@ -26,6 +26,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.RecordVoiceOver
+import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SmallExtendedFloatingActionButton
@@ -106,6 +107,8 @@ fun MangaScreen(
     onRefresh: () -> Unit,
     onContinueReading: () -> Unit,
     onScanChapterClicked: (() -> Unit)? = null,
+    /** Консоль ИИ: живой журнал скана и работы агента. */
+    onOpenAiConsole: (() -> Unit)? = null,
     /** Скан конкретной главы: кнопка в строке списка. */
     onScanChapterItemClicked: ((Chapter) -> Unit)? = null,
     onSearch: (query: String, global: Boolean) -> Unit,
@@ -165,6 +168,7 @@ fun MangaScreen(
             onRefresh = onRefresh,
             onContinueReading = onContinueReading,
             onScanChapterClicked = onScanChapterClicked,
+            onOpenAiConsole = onOpenAiConsole,
             onScanChapterItemClicked = onScanChapterItemClicked,
             onSearch = onSearch,
             onCoverClicked = onCoverClicked,
@@ -205,6 +209,7 @@ fun MangaScreen(
             onRefresh = onRefresh,
             onContinueReading = onContinueReading,
             onScanChapterClicked = onScanChapterClicked,
+            onOpenAiConsole = onOpenAiConsole,
             onScanChapterItemClicked = onScanChapterItemClicked,
             onSearch = onSearch,
             onCoverClicked = onCoverClicked,
@@ -251,6 +256,8 @@ private fun MangaScreenSmallImpl(
     onRefresh: () -> Unit,
     onContinueReading: () -> Unit,
     onScanChapterClicked: (() -> Unit)? = null,
+    /** Консоль ИИ: живой журнал скана и работы агента. */
+    onOpenAiConsole: (() -> Unit)? = null,
     /** Скан конкретной главы: кнопка в строке списка. */
     onScanChapterItemClicked: ((Chapter) -> Unit)? = null,
     onSearch: (query: String, global: Boolean) -> Unit,
@@ -375,6 +382,19 @@ private fun MangaScreenSmallImpl(
                         Icon(
                             imageVector = Icons.Outlined.RecordVoiceOver,
                             contentDescription = "Сканировать главу онлайн-моделью и озвучить",
+                        )
+                    }
+                }
+                // Консоль ИИ третьей в том же ряду: скан главы запускается отсюда
+                // же, и смотреть, чем занят ИИ, нужно не заходя в читалку.
+                if (onOpenAiConsole != null) {
+                    SmallFloatingActionButton(
+                        onClick = onOpenAiConsole,
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Terminal,
+                            contentDescription = "Консоль ИИ",
                         )
                     }
                 }
@@ -521,6 +541,8 @@ fun MangaScreenLargeImpl(
     onRefresh: () -> Unit,
     onContinueReading: () -> Unit,
     onScanChapterClicked: (() -> Unit)? = null,
+    /** Консоль ИИ: живой журнал скана и работы агента. */
+    onOpenAiConsole: (() -> Unit)? = null,
     /** Скан конкретной главы: кнопка в строке списка. */
     onScanChapterItemClicked: ((Chapter) -> Unit)? = null,
     onSearch: (query: String, global: Boolean) -> Unit,
@@ -642,6 +664,19 @@ fun MangaScreenLargeImpl(
                         Icon(
                             imageVector = Icons.Outlined.RecordVoiceOver,
                             contentDescription = "Сканировать главу онлайн-моделью и озвучить",
+                        )
+                    }
+                }
+                // Консоль ИИ третьей в том же ряду: скан главы запускается отсюда
+                // же, и смотреть, чем занят ИИ, нужно не заходя в читалку.
+                if (onOpenAiConsole != null) {
+                    SmallFloatingActionButton(
+                        onClick = onOpenAiConsole,
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Terminal,
+                            contentDescription = "Консоль ИИ",
                         )
                     }
                 }

@@ -284,9 +284,6 @@ class ReaderActivity : BaseActivity() {
      */
     private val aiChatVisible = kotlinx.coroutines.flow.MutableStateFlow(false)
 
-    /** Показывается ли консоль ИИ поверх читалки. */
-    private val aiConsoleVisible = kotlinx.coroutines.flow.MutableStateFlow(false)
-
     /**
      * Реальная автопрокрутка вместо прежней тост-заглушки: вебтун плавно
      * скроллится, пейджер листает страницы с интервалом, зависящим от скорости.
@@ -1193,28 +1190,6 @@ class ReaderActivity : BaseActivity() {
                 val voiceBlock by autoReadEngine.voiceBlock.collectAsState()
                 // Идёт ли чтение главы — подпись и цвет кнопки «Читать главу».
                 val chapterReadActive by chapterReadActiveFlow.collectAsState()
-                // Консоль ИИ: вход и из меню читалки, и из AI-чата.
-                if (aiConsoleVisible.value) {
-                    eu.kanade.presentation.reader.components.AiConsoleDialog(
-                        onClose = { aiConsoleVisible.value = false },
-                        onStopEverything = {
-                            stopAutoReadLoop()
-                            eu.kanade.tachiyomi.data.tts.TtsSpeaker.stop()
-                            eu.kanade.tachiyomi.data.ai.ReadingPlotAgentHolder.agent.cancel()
-                            // Запрос из внешнего браузера — тоже работа, и он
-                            // шёл мимо всех кнопок стопа приложения. Сама
-                            // функция пустая, если таких ходов нет.
-                            runCatching {
-                                eu.kanade.tachiyomi.data.ai.AiHttpServer
-                                    .abortAllRequests("кнопка «Остановить» в консоли")
-                            }
-                            eu.kanade.tachiyomi.data.ai.AiAssistant.abortActiveRequests(
-                                "кнопка «Остановить» в консоли",
-                            )
-                            eu.kanade.tachiyomi.data.ai.AiConsole.user("Остановлено из консоли")
-                        },
-                    )
-                }
                 androidx.compose.runtime.LaunchedEffect(voiceBlock) {
                     val reason = voiceBlock ?: return@LaunchedEffect
                     stopAutoReadLoop()
@@ -1280,7 +1255,6 @@ class ReaderActivity : BaseActivity() {
                     onAutoscrollToggle = ::toggleAutoscroll,
                     onAutoSpeakPage = ::autoSpeakVisiblePage,
                     onAutoReadChapter = ::startAutoReadLoop,
-                    onOpenAiConsole = { aiConsoleVisible.value = true },
                     chapterReadActive = chapterReadActive,
                     onStopSpeak = {
                         stopAutoReadLoop()
@@ -1905,7 +1879,19 @@ class ReaderActivity : BaseActivity() {
         eu.kanade.tachiyomi.data.tts.TtsReadingNotifier.consumeStopRequest()
         // Пересказ новой главы начинается с нуля: иначе вкладка «Сюжет» показывала
         // пересказ прошлой книги, пока новая ещё не прозвучала.
-        eu.kanade.tachiyomi.data.ai.ReadingPlotAgentHolder.agent.reset()
+        // Пересказ «Сюжета» — побочная функция, а чтение главы — основная.
+        // Раньше падение любого её шага убивало и чтение: как вышло на телефоне,
+        // где в реестре не было Context — кнопка «Читать главу» роняла
+        // приложение целиком.
+        runCatching { eu.kanade.tachiyomi.data.ai.ReadingPlotAgentHolder.agent.reset() }
+            .onFailure { error ->
+                logcat(LogPriority.WARN, error) { "Plot agent reset failed" }
+                eu.kanade.tachiyomi.data.ai.AiConsole.note(
+                    title = "Сбой сброса пересказа",
+                    detail = error.message ?: error.javaClass.simpleName,
+                    level = eu.kanade.tachiyomi.data.ai.AiConsole.Level.WARN,
+                )
+            }
         eu.kanade.tachiyomi.data.ai.AiConsole.user(
             title = "Чтение главы включено",
             detail = viewModel.getCurrentChapter()?.chapter?.name,
