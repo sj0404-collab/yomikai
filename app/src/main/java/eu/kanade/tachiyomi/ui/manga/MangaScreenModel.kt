@@ -772,6 +772,25 @@ class MangaScreenModel(
     val chapterAutoRead = _chapterAutoRead.asStateFlow()
 
     /**
+     * Идущий скан главы.
+     *
+     * Держать задачу надо было, чтобы «Остановить скан» в диалоге реально
+     * останавливал: у фонового OCR-списка есть своя очередь, а здесь скан
+     * шёл отдельной корутиной без ссылки на неё, и кнопка лишь закрывала
+     * диалог, продолжая жчь трафик.
+     */
+    private var chapterScanJob: kotlinx.coroutines.Job? = null
+
+    /** Прервать идущий скан главы (кнопка в диалоге прогресса). */
+    fun cancelChapterScan() {
+        val job = chapterScanJob ?: return
+        job.cancel()
+        chapterScanJob = null
+        _chapterAutoRead.value = ChapterAutoReadState()
+        eu.kanade.tachiyomi.data.ai.AiConsole.user("Скан главы остановлен")
+    }
+
+    /**
      * Выбранный движок для скан-чтения: тот, что уже настроен в приложении.
      *
      * `val`, а не `var`: смена движка идёт через [selectAutoReadEngine], которая
@@ -857,12 +876,13 @@ class MangaScreenModel(
     fun scanAndAutoReadChapters(chapters: List<Chapter>) {
         if (_chapterAutoRead.value.running) return
         if (chapters.isEmpty()) return
+        chapterScanJob?.cancel()
         val manga = successState?.manga
         if (manga == null) {
             _chapterAutoRead.value = ChapterAutoReadState(error = "Манга не загружена")
             return
         }
-        screenModelScope.launchIO {
+        chapterScanJob = screenModelScope.launchIO {
             val queue = chapters
             _chapterAutoRead.value = ChapterAutoReadState(
                 running = true,

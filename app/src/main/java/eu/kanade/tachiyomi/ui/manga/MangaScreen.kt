@@ -84,6 +84,7 @@ import mihon.feature.migration.dialog.MigrateMangaDialog
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import eu.kanade.presentation.more.settings.screen.rememberNetworkState
+import mihon.data.ocr.OcrPlugins
 import mihon.domain.ocr.model.OcrModel
 import tachiyomi.presentation.core.components.material.DISABLED_ALPHA
 import tachiyomi.domain.chapter.model.Chapter
@@ -380,8 +381,20 @@ class MangaScreen(
         when {
             autoReadState.running -> {
                 AlertDialog(
+                    // Намеренно НЕ отменяем по нажатию снаружи или «назад»:
+                    // поверх диалога открывается консоль, и её закрытие не должно
+                    // срывать скан. Отмена — только явной кнопкой ниже.
                     onDismissRequest = {},
-                    confirmButton = {},
+                    confirmButton = {
+                        TextButton(onClick = { screenModel.cancelChapterScan() }) {
+                            Text("Остановить скан")
+                        }
+                    },
+                    dismissButton = {
+                        // Терминал прямо тут: скан уже идёт, и «что делает ИИ»
+                        // нужно видно именно сейчас, не закрывая его.
+                        TextButton(onClick = { showAiConsole = true }) { Text("Консоль ИИ") }
+                    },
                     title = { Text("Сканирование главы") },
                     text = {
                         Column(
@@ -402,7 +415,15 @@ class MangaScreen(
                             if (autoReadState.total > 0) {
                                 Text("Страница ${autoReadState.processed} из ${autoReadState.total}")
                             } else {
-                                Text("Подготовка…")
+                                // Голое «Подготовка…» висит до первой страницы, а
+                                // первая страница онлайн-движка идёт секундами: выглядит
+                                // как зависание. Поэтому сразу называем, что именно
+                                // запущено.
+                                val engine = OcrPlugins.byModel(scanEngine).title
+                                Text(
+                                    "Движок: $engine · ждём первую страницу",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
                             }
                             LinearProgressIndicator(
                                 progress = {
