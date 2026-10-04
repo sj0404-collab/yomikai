@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.AutoMode
+import androidx.compose.material.icons.outlined.AutoStories
 import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.GraphicEq
@@ -84,6 +85,16 @@ fun ReaderFloatingControls(
     onScanRegionChange: (ScanRegion) -> Unit,
     onAutoscrollToggle: (Boolean, Float) -> Unit,
     onAutoSpeakPage: () -> Unit = {},
+    /**
+     * Авточтение всей главы: страница за страницей до конца, с листанием.
+     *
+     * Раньше в меню была только кнопка «Прочитать страницу» — она озвучивала
+     * текущий кадр и останавливалась, а запустить чтение главы можно было
+     * только из плавающей кнопки на экране манги (с предварительным сканом).
+     */
+    onAutoReadChapter: () -> Unit = {},
+    /** Идёт ли чтение главы — для подписи и цвета кнопки. */
+    chapterReadActive: Boolean = false,
     onStopSpeak: () -> Unit = {},
     /** Мгновенный скриншот текущего кадра (Glens/любой движок): OCR сейчас,
      *  не дожидаясь авточтения, и запись в буфер «Скриншоты». */
@@ -288,6 +299,35 @@ fun ReaderFloatingControls(
                                             MaterialTheme.colorScheme.onSecondaryContainer
                                         },
                                         contentDescription = "Прочитать страницу",
+                                    ),
+                                ),
+                            ),
+                            rowUnlessHidden(
+                                "r_autoread_chapter",
+                                OcrMenuRow(
+                                    label = if (chapterReadActive) "Глава: читаю…" else "Читать главу",
+                                    action = OcrMenuAction(
+                                        icon = if (chapterReadActive) {
+                                            Icons.Outlined.GraphicEq
+                                        } else {
+                                            Icons.Outlined.AutoStories
+                                        },
+                                        onClick = {
+                                            beepAction()
+                                            menuOpen = false
+                                            onAutoReadChapter()
+                                        },
+                                        containerColor = if (chapterReadActive) {
+                                            MaterialTheme.colorScheme.tertiaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.primaryContainer
+                                        },
+                                        contentColor = if (chapterReadActive) {
+                                            MaterialTheme.colorScheme.onTertiaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.onPrimaryContainer
+                                        },
+                                        contentDescription = "Читать главу",
                                     ),
                                 ),
                             ),

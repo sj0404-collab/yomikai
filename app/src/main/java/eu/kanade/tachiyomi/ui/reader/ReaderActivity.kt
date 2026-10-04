@@ -1188,6 +1188,8 @@ class ReaderActivity : BaseActivity() {
                 // а экран гасит переключатель и объясняет причину. Иначе читатель
                 // видел бы «чтение включено» и ждал страниц, которых не будет.
                 val voiceBlock by autoReadEngine.voiceBlock.collectAsState()
+                // Идёт ли чтение главы — подпись и цвет кнопки «Читать главу».
+                val chapterReadActive by chapterReadActiveFlow.collectAsState()
                 androidx.compose.runtime.LaunchedEffect(voiceBlock) {
                     val reason = voiceBlock ?: return@LaunchedEffect
                     stopAutoReadLoop()
@@ -1252,6 +1254,8 @@ class ReaderActivity : BaseActivity() {
                     },
                     onAutoscrollToggle = ::toggleAutoscroll,
                     onAutoSpeakPage = ::autoSpeakVisiblePage,
+                    onAutoReadChapter = ::startAutoReadLoop,
+                    chapterReadActive = chapterReadActive,
                     onStopSpeak = {
                         stopAutoReadLoop()
                         viewModel.stopAutoSpeak()
@@ -1867,6 +1871,7 @@ class ReaderActivity : BaseActivity() {
     fun startAutoReadLoop() {
         stopAutoReadLoop()
         autoReadActive = true
+        chapterReadActiveFlow.value = true
         autoReadEngine.clearHistory()
         autoReadEngine.pageLabel = null
         // Запрос «остановить» из шторки относится к ПРЕДЫДУЩЕЙ главе: забытый,
@@ -1902,12 +1907,21 @@ class ReaderActivity : BaseActivity() {
     @Volatile
     private var autoReadActive = false
 
+    /**
+     * Авточтение главы идёт — для подписи кнопки «Читать главу».
+     *
+     * Отдельный поток, а не чтение [autoReadActive] из композиции: тот живёт
+     * на вызывающем потоке корутин, и Compose не увидел бы смену состояния.
+     */
+    private val chapterReadActiveFlow = kotlinx.coroutines.flow.MutableStateFlow(false)
+
     /** Авточтение было включено читателем до ухода со screen — вернуть его в onResume. */
     @Volatile
     private var resumeAutoReadOnResume = false
 
     fun stopAutoReadLoop() {
         autoReadActive = false
+        chapterReadActiveFlow.value = false
         autoReadLoop?.cancel()
         autoReadLoop = null
         autoReadEngine.stop()
@@ -1920,6 +1934,7 @@ class ReaderActivity : BaseActivity() {
         // задачу, а на отменённой корутине тост уже не показать. Флаг гасится
         // сразу, чтобы озвучка не досказала реплику впустую.
         autoReadActive = false
+        chapterReadActiveFlow.value = false
         withUIContext { toast(reason) }
         stopAutoReadLoop()
     }
