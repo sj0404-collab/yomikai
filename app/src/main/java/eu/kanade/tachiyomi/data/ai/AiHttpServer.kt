@@ -5,7 +5,13 @@ import eu.kanade.tachiyomi.data.books.BookParser
 import eu.kanade.tachiyomi.data.books.BooksStore
 import eu.kanade.tachiyomi.data.tts.VoiceHelper
 import eu.kanade.tachiyomi.data.tts.VoiceKind
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import java.util.concurrent.ConcurrentHashMap
 import mihon.domain.ocr.service.OcrPreferences
 import logcat.LogPriority
 import org.json.JSONArray
@@ -73,6 +79,36 @@ object AiHttpServer {
     }
 
     val isRunning: Boolean get() = server?.isClosed == false
+
+    /**
+     * Идущие ходы агента по HTTP-серверу.
+     *
+     * Раньше ход жил внутри `runBlocking` на потоке воркера, и отменить его
+     * было нечем: ни ссылки на задачу, ни обрыва сокета. Кнопка «Стоп» в
+     * приложении гасила озвучку, а запрос из внешнего браузера доходил до
+     * конца — до 180 секунд по `soTimeout`.
+     */
+    private val requestJobs = ConcurrentHashMap<Socket, Job>()
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Оборвать все ходы агента, запущенные по HTTP.
+     *
+     * Вызывается из кнопок «Стоп»: запрос из внешнего браузера — тоже работа,
+     * и читатель вправе остановить её одним движением.
+     */
+    fun abortAllRequests(reason: String) {
+        if (requestJobs.isEmpty()) {
+            AiAssistant.abortActiveRequests(reason)
+            return
+        }
+        requestJobs.keys.toList().forEach { socket ->
+            requestJobs.remove(socket)?.cancel()
+            runCatching { socket.close() }
+        }
+        AiAssistant.abortActiveRequests(reason)
+    }
 
     @Synchronized
     fun start(context: Context) {
@@ -174,11 +210,38 @@ object AiHttpServer {
                     method == "GET" && path == "/" -> respond(out, 200, "text/html; charset=utf-8", PAGE.toByteArray())
                     method == "POST" && path == "/chat" -> {
                         val text = runCatching { JSONObject(body).optString("text") }.getOrDefault("")
-                        val reply = runBlocking { AiAgent.run(context, text) }
+                        val runReply = runBlocking {
+                            // Задачу держим в карте: иначе ход нечем отменить,
+                            // а socket.close() снаружи её бы просто заблокировал.
+                            val replyRef =
+                                java.util.concurrent.atomic.AtomicReference<AiAgent.AgentReply?>()
+                            val job = scope.launch { replyRef.set(AiAgent.run(context, text)) }
+                            requestJobs[socket] = job
+                            try {
+                                job.join()
+                            } finally {
+                                requestJobs.remove(socket)
+                            }
+                            replyRef.get()
+                        }
+                        // Отменённый ход отвечает честно, а не падает на 500:
+                        // после «Стоп» клиент обязан увидеть, что его остановили.
+                        val reply = runReply
                         val json = JSONObject()
-                            .put("text", reply.text)
-                            .put("tools", JSONArray(reply.toolResults.map { "${it.name}: ${it.output}" }))
-                            .put("images", JSONArray(reply.images.map { AiWorkspace.relPath(context, it) }))
+                            .put("text", reply?.text ?: "Запрос отменён")
+                            .put(
+                                "tools",
+                                JSONArray(
+                                    reply?.toolResults?.map { "${it.name}: ${it.output}" } ?: emptyList<String>(),
+                                ),
+                            )
+                            .put(
+                                "images",
+                                JSONArray(
+                                    reply?.images?.map { AiWorkspace.relPath(context, it) }
+                                        ?: emptyList<String>(),
+                                ),
+                            )
                         respond(out, 200, "application/json; charset=utf-8", json.toString().toByteArray())
                     }
                     method == "GET" && path == "/tts/voices" -> {

@@ -1201,6 +1201,16 @@ class ReaderActivity : BaseActivity() {
                             stopAutoReadLoop()
                             eu.kanade.tachiyomi.data.tts.TtsSpeaker.stop()
                             eu.kanade.tachiyomi.data.ai.ReadingPlotAgentHolder.agent.cancel()
+                            // Запрос из внешнего браузера — тоже работа, и он
+                            // шёл мимо всех кнопок стопа приложения. Сама
+                            // функция пустая, если таких ходов нет.
+                            runCatching {
+                                eu.kanade.tachiyomi.data.ai.AiHttpServer
+                                    .abortAllRequests("кнопка «Остановить» в консоли")
+                            }
+                            eu.kanade.tachiyomi.data.ai.AiAssistant.abortActiveRequests(
+                                "кнопка «Остановить» в консоли",
+                            )
                             eu.kanade.tachiyomi.data.ai.AiConsole.user("Остановлено из консоли")
                         },
                     )
@@ -1940,6 +1950,9 @@ class ReaderActivity : BaseActivity() {
     private var resumeAutoReadOnResume = false
 
     fun stopAutoReadLoop() {
+        // Разбор кадра и определение пола голоса ходят в модель в фоне кадра:
+        // без обрыва сокета «стоп» ждал бы их в тишине.
+        eu.kanade.tachiyomi.data.ai.AiAssistant.abortActiveRequests("остановка чтения")
         if (autoReadActive) {
             eu.kanade.tachiyomi.data.ai.AiConsole.user("Чтение главы остановлено")
         }

@@ -56,6 +56,14 @@ class ReadingPlotAgent(
         val reason: String? = null,
         /** Модель, которая ответила. */
         val model: String = "",
+        /**
+         * Размышления модели, если она их вернула.
+         *
+         * Раньше поле приходило и молча выбрасывалось: читатель видел только
+         * итог и не мог понять, откуда он. Теперь оно лежит в состоянии и
+         * показывается по кнопке — тем же приёмом, что «Размышления ▸» в чате.
+         */
+        val reasoning: String = "",
     )
 
     private val _state = MutableStateFlow(State())
@@ -138,6 +146,8 @@ class ReadingPlotAgent(
         val job = recapJob
         if (job == null || !job.isActive) return false
         job.cancel()
+        // Одной отмены корутины мало: запрос висит в блокирующем сокете.
+        AiAssistant.abortActiveRequests("отмена пересказа")
         _state.value = _state.value.copy(thinking = false, reason = "Остановлено")
         AiConsole.user("Сюжет: запрос пересказа отменён")
         return true
@@ -215,6 +225,7 @@ class ReadingPlotAgent(
                         thinking = false,
                         reason = null,
                         model = reply?.model.orEmpty(),
+                        reasoning = reply?.reasoning.orEmpty(),
                     )
                     AiConsole.note(
                         title = "Сюжет: пересказ готов",

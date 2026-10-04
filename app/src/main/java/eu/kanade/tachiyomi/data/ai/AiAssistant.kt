@@ -217,6 +217,48 @@ object AiAssistant {
         modelCooldownUntil[model] = System.currentTimeMillis() + durationMs
     }
 
+    /**
+     * Соединения, сейчас висящие на ответе модели.
+     *
+     * Отмена корутины срабатывает на ближайшем `suspend`, а `HttpURLConnection`
+     * — блокирующий: без явного `disconnect()` сокет дорабатывал свои 90 секунд
+     * и запрос к модели продолжал жрать трафик уже после того, как читатель
+     * нажал «Стоп».
+     */
+    private val activeConnections: MutableSet<HttpURLConnection> =
+        java.util.Collections.synchronizedSet(mutableSetOf<HttpURLConnection>())
+
+    /**
+     * Поколение прерывания.
+     *
+     * Растёт при [abortActiveRequests]. Вызов запоминает его значение и по
+     * исключению сверяется: без этого оборванный сокет выглядел бы как обычный
+     * сетевой сбой, классифицировался бы как `Transient` и молча ушёл в
+     * повтор — «Стоп» превратился бы в ещё три попытки по 90 секунд.
+     */
+    private val abortEpoch = java.util.concurrent.atomic.AtomicLong(0)
+
+    /**
+     * Оборвать все запросы к модели, идущие сейчас.
+     *
+     * @param reason что произошло, для журнала.
+     */
+    fun abortActiveRequests(reason: String) {
+        abortEpoch.incrementAndGet()
+        val conns = synchronized(activeConnections) { activeConnections.toList() }
+        if (conns.isEmpty()) return
+        conns.forEach { conn -> runCatching { conn.disconnect() } }
+        AiConsole.user("Запросы к модели прерваны", "$reason · соединений: ${conns.size}")
+    }
+
+    /** Видно ли тестам, что прерывание было (поколение epoch). */
+    internal fun abortEpochForTest(): Long = abortEpoch.get()
+
+    /** Сколько соединений сейчас висит на ответе модели. */
+    internal fun activeConnectionCountForTest(): Int = synchronized(activeConnections) {
+        activeConnections.size
+    }
+
     /** Запись скрытого AI-чата: что спросили, что ответила модель, сколько заняло. */
     data class LogEntry(
         val time: Long,
@@ -502,6 +544,7 @@ object AiAssistant {
         maxTokens: Int = 500,
     ): Outcome {
         val startedAt = System.currentTimeMillis()
+        val myEpoch = abortEpoch.get()
         // Соединение живёт вне try: disconnect обязан сработать и на таймауте,
         // и на SSL-ошибке, и на 5xx — иначе сокет и буферы висели до сборки GC.
         // На мобильной сети это почти каждый второй запрос, а на модель
@@ -523,6 +566,7 @@ object AiAssistant {
 
             val rawConn = openConnection(actualUrl)
             conn = rawConn
+            activeConnections += rawConn
             rawConn.requestMethod = "POST"
             rawConn.doOutput = true
             rawConn.connectTimeout = 15_000
@@ -588,6 +632,11 @@ object AiAssistant {
                 )
             } ?: Outcome.Fatal
         } catch (e: Exception) {
+            // Оборванный сокет не должен выглядеть как сбой сети: иначе он
+            // ушёл бы в повтор, и «Стоп» означал бы три новых запроса.
+            if (abortEpoch.get() != myEpoch) {
+                throw kotlinx.coroutines.CancellationException("AI-запрос прерван пользователем")
+            }
             lastFailureMessage = "$model: ${e.javaClass.simpleName} — ${e.message?.take(160)}"
             addLog(LogEntry(startedAt, model, userPrompt.take(200), "ОШИБКА: ${e.message?.take(120)}", System.currentTimeMillis() - startedAt))
             logcat(LogPriority.WARN, e) { "AI assistant call failed ($model)" }
@@ -595,6 +644,7 @@ object AiAssistant {
             // UnknownHost, обрыв прокси) — ВРЕМЕННЫЕ: модель не виновата
             Outcome.Transient
         } finally {
+            conn?.let { activeConnections -= it }
             conn?.disconnect()
         }
     }

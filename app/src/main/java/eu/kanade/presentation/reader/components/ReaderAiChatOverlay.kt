@@ -294,6 +294,10 @@ fun ReaderAiChatOverlay(
         // агента и чтения его не трогала, и пересказ дописывался на живого
         // читателя уже после «Стоп».
         val plotStopped = eu.kanade.tachiyomi.data.ai.ReadingPlotAgentHolder.agent.cancel()
+        // Сокет сам по себе отмены не знает: пока он висит, модель продолжает
+        // отвечать в никуда, и «Стоп» держал бы экран занятым до 90 секунд.
+        runCatching { eu.kanade.tachiyomi.data.ai.AiHttpServer.abortAllRequests("кнопка «Стоп» в чате") }
+        eu.kanade.tachiyomi.data.ai.AiAssistant.abortActiveRequests("кнопка «Стоп» в чате")
         eu.kanade.tachiyomi.data.ai.AiConsole.user(
             title = "Остановлено",
             detail = "агент: ${if (runningJob != null) "был в работе" else "не работал"}" +
