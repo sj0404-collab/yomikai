@@ -522,6 +522,18 @@ object AiAgent {
         // телефона посреди хода давала отрицательную или завышенную длительность.
         val turnStarted = System.nanoTime()
         onProgress?.invoke("Запрос к модели…")
+        // Живой журнал: с этого момента видно, что вообще делает агент. Раньше
+        // ход был виден только внутри ответа чата — там он живёт вместе с
+        // диалогом и прокручивается, а после перезапуска экрана пропадает.
+        AiConsole.round("Ход агента начат")
+        AiConsole.note(
+            title = "Промпт собран",
+            detail = buildString {
+                append("системный: ").append(systemPromptEffective.length).append(" симв.\n")
+                append("запрос: ").append(prompt.length).append(" симв.\n")
+                append("лимит раундов: 12")
+            },
+        )
         var totalTokens = 0
         var roundsDone = 0
 
@@ -638,6 +650,26 @@ object AiAgent {
             }
             roundsDone = round
             onProgress?.invoke("Инструменты: ${calls.joinToString(", ") { it.name }}")
+            // Раунд виден отдельно от инструментов: по журналу должно быть видно
+            // и «модель позвала инструменты», и «инструментов не осталось».
+            AiConsole.round(
+                title = "Раунд $round из 12 · инструментов ${calls.size}",
+                detail = calls.joinToString("\n") { c ->
+                    // args — JSONObject: перечислим ключи, иначе длинный промпт
+                    // модели утянул бы в журнал весь аргумент целиком.
+                    val args = c.args.keys().asSequence().joinToString(", ") { key ->
+                        key + "=" + c.args.opt(key).toString().take(120)
+                    }
+                    "@" + c.name + " { " + args + " }"
+                },
+            )
+            if (skipped.isNotEmpty()) {
+                AiConsole.note(
+                    title = "Раунд $round · отклонено вызовов: ${skipped.size}",
+                    detail = skipped.joinToString("\n") { (c, reason) -> "@${c.name}: $reason" },
+                    level = AiConsole.Level.WARN,
+                )
+            }
             val outputs = calls.map { call ->
                 val t0 = System.nanoTime()
                 // Инструменты не могут зависнуть навсегда, но и не должны
@@ -686,6 +718,15 @@ object AiAgent {
                         if (finalR.status == "error") append(" · ошибка")
                     },
                 )
+                AiConsole.tool(
+                    title = "@${finalR.name}" + (
+                        finalR.fileProduced?.let { " · файл ${it.name}" } ?: ""
+                        ),
+                    detail = finalR.args.takeIf { it.isNotBlank() }?.let { "аргументы: $it\n\n" }
+                        .orEmpty() + finalR.output,
+                    ms = finalR.tookMs,
+                    level = if (finalR.status == "error") AiConsole.Level.ERROR else AiConsole.Level.OK,
+                )
                 "${finalR.name}: ${finalR.output.take(700)}"
             }
             val followUp = "Твой предыдущий ответ с вызовами:\n${answer.take(6000)}\n\n" +
@@ -701,6 +742,10 @@ object AiAgent {
                 }) +
                 "\n\nПродолжи задачу. Если всё сделано — дай полный финальный ответ без @tool."
             onProgress?.invoke("Инструменты выполнены, жду ответ модели…")
+            AiConsole.note(
+                title = "Раунд $round · результаты собраны, жду ответ модели",
+                detail = outputs.joinToString("\n").take(2000),
+            )
             val next = reliableChat(
                 chat,
                 prompt + "\n\n(вызовы выполнены приложением)\n" + followUp,
