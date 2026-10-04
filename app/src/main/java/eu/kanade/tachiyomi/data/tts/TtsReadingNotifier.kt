@@ -26,9 +26,33 @@ object TtsReadingNotifier {
 
     private var receiverRegistered = false
 
+    /**
+     * Читатель нажал «⏹ Остановить» в шторке.
+     *
+     * Кнопка раньше только глушила синтез: цикл авточтения продолжал листать
+     * главу, кадр за кадром проглатывался в тишину, и читатель получал
+     * пролистанную главу вместо остановки. Теперь запрос доходит до цикла
+     * через [consumeStopRequest].
+     */
+    @Volatile
+    private var stopRequested = false
+
+    /**
+     * Забрать запрос «остановить», если он был. Одноразово.
+     *
+     * Запрос сбрасывается чтением, а не показом уведомления: показ случается
+     * в начале каждого кадра и затер бы ответ, который читатель уже дал.
+     */
+    fun consumeStopRequest(): Boolean {
+        if (!stopRequested) return false
+        stopRequested = false
+        return true
+    }
+
     private val stopReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == ACTION_STOP) {
+                stopRequested = true
                 TtsSpeaker.stop()
                 dismiss(context)
             }
@@ -45,7 +69,14 @@ object TtsReadingNotifier {
      */
     private const val MAX_NOTIFICATION_TEXT = 800
 
-    fun show(context: Context, text: String) {
+    /**
+     * Показать уведомление о чтении.
+     *
+     * [pageLabel] — где читатель находится в главе («Страница 3 из 20»).
+     * Показывается под заголовком: авточтение читает главу, а не одну
+     * страницу, и без такой подсказки шторка выглядит как зависшая на первой.
+     */
+    fun show(context: Context, text: String, pageLabel: String? = null) {
         if (text.isBlank()) return
         val app = context.applicationContext
         val nm = app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -85,7 +116,7 @@ object TtsReadingNotifier {
         val safeText = text.take(MAX_NOTIFICATION_TEXT)
         val notification = NotificationCompat.Builder(app, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_mihon)
-            .setContentTitle("🔊 Читается страница")
+            .setContentTitle(pageLabel?.let { "🔊 Читается глава · $it" } ?: "🔊 Читается страница")
             .setContentText(safeText.take(120))
             .setStyle(NotificationCompat.BigTextStyle().bigText(safeText))
             .setOnlyAlertOnce(true)

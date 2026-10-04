@@ -19,6 +19,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import logcat.LogPriority
 import mihon.data.ocr.OcrHistoryStore
@@ -412,15 +414,53 @@ class AutoReadEngine(
     var lastFrameText: String = ""
         private set
 
+    /**
+     * Где читатель в главе — «Страница 3 из 20».
+     *
+     * Ставит вызывающая сторона (читалка знает и текущую страницу, и всего их),
+     * движок передаёт строку в уведомление о чтении. Без неё шторка пишет
+     * «Читается страница» все двадцать страниц подряд и выглядит зависшей.
+     */
+    @Volatile
+    var pageLabel: String? = null
+
     /** Реплики прошлого кадра — передаются ассистенту для дедупликации. */
     private var prevFrameLines: List<String> = emptyList()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var job: Job? = null
 
+    /**
+     * Задача ручной озвучки одного бабла ([speakSingle]).
+     *
+     * Живёт ОТДЕЛЬНО от [job] кадра авточтения. Раньше ручной тап по значку 🔊
+     * переиспользовал то же поле и увеличивал `generation`, а это ровно то,
+     * что запрещает `onPageFinished`: цикл рвался на середине страницы, а
+     * `autoReadActive` оставался включённым — читалка показывала «чтение идёт»,
+     * а листания больше не было. Теперь тап просто звучит поверх текущей
+     * реплики (их порядок задаёт [speakMutex]), а глава дочитывается целиком.
+     */
+    private var manualJob: Job? = null
+
+    /**
+     * Озвучка одна: движок синтеза общий, и две одновременные реплики
+     * (авточтение + тап по баблу) просто перебивали бы друг друга.
+     */
+    private val speakMutex = Mutex()
+
     /** Поколение запуска: stop() инвалидирует все колбэки прежних запусков. */
     @Volatile
     private var generation = 0
+
+    /**
+     * Жива ли хоть одна задача озвучки: кадр авточтения ИЛИ ручной бабл.
+     *
+     * Проверяется внутри [speakAndAwait], чтобы ждать окончания фразы можно
+     * было и кадру, и ручному тапу: у ручного тапа своё поле, и старая проверка
+     * одного [job] гасила озвучку мгновенно.
+     */
+    private fun speechAlive(): Boolean =
+        job?.isActive == true || manualJob?.isActive == true
 
     /**
      * История прочитанного с НЕЧЁТКИМ сравнением: OCR той же реплики при
@@ -516,10 +556,17 @@ class AutoReadEngine(
             mihon.data.ocr.ReaderContextBus.current.value?.mangaId,
         )
 
-    /**
+/**
      * Прочитать кадр. [onPageFinished] вызывается ПОСЛЕ озвучки всех реплик —
      * там вызывающая сторона листает/скроллит дальше. Если нового текста нет
      * (всё уже в истории) — завершится сразу.
+     *
+     * [cachedResult] — уже распознанная страница из кэша скана главы. Кадр
+     * пейджера это ровно страница, поэтому после фонового скана главы повторное
+     * распознавание каждого кадра только жгло время (и трафик, для онлайн-движка)
+     * на текст, который уже лежит в кэше. Для окна вебтуна кэш не годится: рамки
+     * в нём нормализованы к странице, а кадр — кусок ленты, поэтому вызывающая
+     * сторона его не передаёт.
      */
     fun readFrame(
         bitmap: Bitmap,
@@ -528,6 +575,7 @@ class AutoReadEngine(
         onPageFinished: () -> Unit,
         onLineSpoken: ((OcrBoundingBox) -> Unit)? = null,
         geometry: OcrFrameGeometry? = null,
+        cachedResult: mihon.domain.ocr.model.OcrPageResult? = null,
     ) {
         job?.cancel()
         TtsSpeaker.stop()
@@ -567,9 +615,16 @@ class AutoReadEngine(
                 val scan = downscaleForScan(bitmap)
                 scanBitmap = scan
                 val ocrBitmap = scan
-                val pixels = IntArray(ocrBitmap.width * ocrBitmap.height)
-                ocrBitmap.getPixels(pixels, 0, ocrBitmap.width, 0, 0, ocrBitmap.width, ocrBitmap.height)
-                val image = OcrImage(ocrBitmap.width, ocrBitmap.height, pixels)
+                // Пиксели нужны ТОЛЬКО распознаванию. Когда страница уже лежит в
+                // кэше скана, копия на несколько мегабайт и лишний проход по
+                // пикселям — пустая работа на каждой странице главы.
+                val image: OcrImage? = if (cachedResult != null) {
+                    null
+                } else {
+                    val pixels = IntArray(ocrBitmap.width * ocrBitmap.height)
+                    ocrBitmap.getPixels(pixels, 0, ocrBitmap.width, 0, 0, ocrBitmap.width, ocrBitmap.height)
+                    OcrImage(ocrBitmap.width, ocrBitmap.height, pixels)
+                }
                 // Кадр в JPEG для AI-определения пола говорящих (если включено)
                 // В ручном режиме пол задан читателем — AI Vision не нужен.
                 val genderJpeg: ByteArray? = if (prefs.aiGenderVoices().get() &&
@@ -604,7 +659,18 @@ class AutoReadEngine(
                 val streamOrder = bookReadingOrder(loadBookRules())
                 val streaming = orderAllowsStreaming(streamOrder)
                 val partials = Channel<OcrRegion>(Channel.UNLIMITED)
-                val result: mihon.domain.ocr.model.OcrPageResult = try {
+                // Скан главы уже разобрал эту страницу: повторное распознавание
+                // кадра только жгло бы время (и трафик онлайн-движка) на текст,
+                // который лежит в кэше. Потокового прохода при этом нет — реплики
+                // всё равно придут пачкой, озвучка ниже их разберёт по очереди.
+                val result: mihon.domain.ocr.model.OcrPageResult = if (cachedResult != null) {
+                    logcat(LogPriority.DEBUG) {
+                        "AutoRead frame pageIndex=$pageIndex: берём текст из кэша скана " +
+                            "(${cachedResult.regions.size} реплик)"
+                    }
+                    cachedResult
+                } else try {
+                    val pageImage = checkNotNull(image) { "Кадр авточтения без распознавания" }
                     coroutineScope {
                         val scan = async {
                             try {
@@ -612,7 +678,7 @@ class AutoReadEngine(
                                     scanPageOcr.await(
                                         chapterId = chapterId,
                                         pageIndex = pageIndex,
-                                        image = image,
+                                        image = pageImage,
                                         onPartial = { region -> partials.trySend(region) },
                                         // Кадр авточтения — окно вебтуна, а не
                                         // страница: в кэш страницы такая запись
@@ -899,7 +965,7 @@ class AutoReadEngine(
                     // «сканировать страницу целиком», то есть на обычном
                     // авточтении в шторке ничего не было — а читатель не мог
                     // остановить чтение, не вернувшись в приложение.
-                    runCatching { TtsReadingNotifier.show(context, lastFrameText) }
+                    runCatching { TtsReadingNotifier.show(context, lastFrameText, pageLabel) }
                         .onFailure { logcat(LogPriority.WARN, it) { "Reading notification failed" } }
                 }
 
@@ -1418,10 +1484,13 @@ class AutoReadEngine(
         lastSpokenGender = null
         rejectedStreak = 0
         ocrFailedStreak = 0
+        pageLabel = null
         _voiceBlock.value = null
         generation++ // инвалидируем все pending-колбэки
         job?.cancel()
         job = null
+        manualJob?.cancel()
+        manualJob = null
         TtsSpeaker.stop()
         runCatching { TtsReadingNotifier.dismiss(context) }
             .onFailure { logcat(LogPriority.WARN, it) { "Reading notification dismiss failed" } }
@@ -1435,8 +1504,12 @@ class AutoReadEngine(
      * Озвучить ОДНУ реплику (бабл), выбранную пользователем (значок 🔊,
      * перетаскивание значка или ручной бабл). В отличие от [readFrame] не
      * трогает историю кадра и не листает: просто произносит переданный текст
-     * выбранным движком/полом. Запускается в [scope], чтобы [job] был активен
-     * во время озвучки (иначе [speakAndAwait] мгновенно прерывается).
+     * выбранным движком/полом.
+     *
+     * Кадр авточтения при этом НЕ прерывается: своя задача ([manualJob]),
+     * `generation` не растёт, поэтому `onPageFinished` честно доедет и глава
+     * продолжится. Если ручных тапов подряд несколько, озвучка не накапливается,
+     * а ждёт очереди — движок синтеза один.
      */
     fun speakSingle(text: String, gender: String? = null, speakerSlot: Int = 0) {
         val clean = SpeechMarkup.strip(text).trim()
@@ -1445,18 +1518,12 @@ class AutoReadEngine(
         // авточтении: одиночный бабл, нажатый значком 🔊, тоже должен уметь
         // попасть под словарь ролей.
         val spoken = SpeechMarkup.withSpeakerName(clean, SpeechMarkup.speakerNameOrGuess(text))
-        val myGen = ++generation
-        val prevJob = job
-        job = scope.launch {
-            // Отменяем предыдущую работу автопрохода кадра, но не сбрасываем
-            // флаги авточтения и не вызываем onPageFinished. Это ручной тап.
-            prevJob?.cancel()
+        manualJob?.cancel()
+        manualJob = scope.launch {
             try {
                 speakAndAwait(spoken, gender, speakerSlot)
             } finally {
-                if (generation == myGen) {
-                    _isReading.value = false
-                }
+                if (job?.isActive != true) _isReading.value = false
             }
         }
     }
@@ -1596,8 +1663,16 @@ class AutoReadEngine(
      */
     internal fun orderAllowsStreaming(order: String): Boolean = order != "rtl"
 
-    /** Озвучка с ожиданием реального окончания фразы. */
-    private suspend fun speakAndAwait(text: String, gender: String? = null, speakerSlot: Int = 0): SpeakOutcome {
+    /**
+     * Озвучка с ожиданием реального окончания фразы.
+     *
+     * Фразы выстраиваются в очередь ([speakMutex]): движок синтеза один, и без
+     * очереди ручной тап по баблу перебивал реплику кадра на полуслове.
+     */
+    private suspend fun speakAndAwait(text: String, gender: String? = null, speakerSlot: Int = 0): SpeakOutcome =
+        speakMutex.withLock { speakAndAwaitAlone(text, gender, speakerSlot) }
+
+    private suspend fun speakAndAwaitAlone(text: String, gender: String? = null, speakerSlot: Int = 0): SpeakOutcome {
         // Реплика может прийти с меткой `{имя:…}` (её снимает сам движок), а в
         // журнал и таймаут разумно класть то, что реально произносится.
         val spoken = SpeechMarkup.strip(text).ifBlank { text }
@@ -1635,7 +1710,7 @@ class AutoReadEngine(
         // полный таймаут нельзя — на странице из одной реплики это и была
         // «остановка»: цикл молчал 8+ секунд, ничего не говоря.
         while (!ttsStartedOrGiveUp(started.value, System.currentTimeMillis() - start)) {
-            if (job?.isActive != true) {
+            if (!speechAlive()) {
                 TtsSpeaker.stop()
                 return SpeakOutcome.SILENT
             }
@@ -1660,7 +1735,7 @@ class AutoReadEngine(
         // Фаза 2: реплика пошла — ждём завершения по onState.
         val timeoutMs = ttsTimeoutMs(spoken.length, prefs.speechRate().get())
         while (!done.value && System.currentTimeMillis() - start < timeoutMs) {
-            if (job?.isActive != true) {
+            if (!speechAlive()) {
                 TtsSpeaker.stop()
                 return SpeakOutcome.SILENT
             }

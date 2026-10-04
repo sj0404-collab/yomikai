@@ -774,10 +774,15 @@ class MangaScreenModel(
     /** Формат экспортируемого транскрипта: "md" | "txt" | "pdf" | "docx". */
     private var autoReadFormat: String = "md"
 
-    /**
+/**
      * Запускает фоновый скан одной главы с прогрессом «стр. N из M» (через уже
      * существующий [OcrChapterScanner]), по завершении собирает транскрипт со
      * спикерами в документ и сигналит UI, чтобы тот открыл читалку в авточтении.
+     *
+     * Диалог не зависает «навсегда»: у сканера есть ветки, которые не зовут ни
+     * `onComplete`, ни `onError`, и раньше они оставляли `running = true` до
+     * перезапуска экрана. Теперь любой исход, кроме успеха, закрывает
+     * состояние.
      */
     fun scanAndAutoReadChapter(chapter: Chapter) {
         if (_chapterAutoRead.value.running) return
@@ -803,20 +808,23 @@ class MangaScreenModel(
                 } else {
                     null
                 }
-                if (!aiReady) {
-                    _chapterAutoRead.value = _chapterAutoRead.value.copy(
-                        stage = "ИИ-проверка выключена: нет ключа Google AI",
-                    )
-                }
                 val ok = ocrChapterScanner.scanChapter(
                     chapterId = chapter.id,
                     onProgress = { p ->
+                        // Строка прогресса обновляется ВСЕГДА, а не только при
+                        // включённой ИИ-проверке: без неё диалог показывал
+                        // «Подготовка…» все минуты скана и выглядел зависшим.
+                        val stage = if (aiReady) {
+                            "OCR страницы ${p.processedPages} из ${p.totalPages} + ИИ-проверка"
+                        } else {
+                            "OCR страницы ${p.processedPages} из ${p.totalPages}"
+                        }
                         _chapterAutoRead.value = _chapterAutoRead.value.copy(
                             running = true,
                             processed = p.processedPages,
                             total = p.totalPages,
                             title = p.chapterName,
-                            stage = if (aiReady) "OCR страницы ${p.processedPages} из ${p.totalPages}" else _chapterAutoRead.value.stage,
+                            stage = stage,
                             stagePercent = if (p.totalPages > 0) {
                                 (p.processedPages * 100 / p.totalPages).coerceIn(0, 100)
                             } else {
@@ -830,6 +838,7 @@ class MangaScreenModel(
                             running = true,
                             processed = p.processedPages,
                             total = p.totalPages,
+                            stage = "Сборка транскрипта…",
                         )
                     },
                     onError = { e ->
@@ -847,6 +856,10 @@ class MangaScreenModel(
                 if (ok && verifier != null) {
                     // Роли пишутся в словарь ЭТОЙ книги: голос персонажа
                     // работает здесь и не утекает в другие издания.
+                    _chapterAutoRead.value = _chapterAutoRead.value.copy(
+                        stage = "ИИ-проверка завершена, словарь ролей сохраняем…",
+                        aiChecking = true,
+                    )
                     val summary = verifier.commit(chapter.mangaId)
                     _chapterAutoRead.value = _chapterAutoRead.value.copy(
                         stage = "ИИ закончил: персонажей ${summary.rolesFound}" +
@@ -863,6 +876,12 @@ class MangaScreenModel(
                         error = null,
                         exportFile = file?.absolutePath,
                         openChapterId = chapter.id,
+                    )
+                } else if (_chapterAutoRead.value.running) {
+                    // Скан не отдал ни ошибки, ни успеха — диалог обязан закрыться.
+                    _chapterAutoRead.value = _chapterAutoRead.value.copy(
+                        running = false,
+                        error = "Сканирование прервано",
                     )
                 }
             } catch (e: CancellationException) {
