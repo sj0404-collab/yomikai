@@ -236,6 +236,20 @@ object AiAssistant {
     private fun addLog(e: LogEntry) {
         logBuffer.addLast(e)
         while (logBuffer.size > 40) logBuffer.removeFirst()
+        // Тот же вызов — в общую консоль. Здесь единственная воронка всех
+        // обращений к модели (успех, HTTP-ошибка, сетевое исключение), поэтому
+        // журнал полный, а не «только то, что дошло до разбора ответа».
+        //
+        // Сюда попадает и агент, и «Сюжет», и ИИ-разбор кадра, и vision по
+        // странице: в настройках озвучки этот журнал виден только при
+        // включённом aiGenderVoices, а ход агента туда не писался вовсе.
+        val failed = e.answer.startsWith("HTTP ") || e.answer.startsWith("ОШИБКА")
+        AiConsole.model(
+            title = e.model + if (failed) " · сбой" else "",
+            detail = "→ ${e.prompt}\n← ${e.answer}",
+            ms = e.tookMs,
+            level = if (failed) AiConsole.Level.ERROR else AiConsole.Level.INFO,
+        )
     }
 
     /** Живой список бесплатных моделей OpenRouter (":free"). */

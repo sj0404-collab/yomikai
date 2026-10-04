@@ -121,6 +121,7 @@ fun ReaderAiChatOverlay(
     var loading by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
     var showClearConfirm by remember { mutableStateOf(false) }
+    var showConsole by remember { mutableStateOf(false) }
     var attachedName by remember { mutableStateOf<String?>(null) }
     var attachedBytes by remember { mutableStateOf<ByteArray?>(null) }
     var activity by remember { mutableStateOf("") }
@@ -289,6 +290,15 @@ fun ReaderAiChatOverlay(
         runningJob?.cancel()
         runningJob = null
         loading = false
+        // «Сюжет» шёл своим запросом и раньше дожидался его сам: остановка
+        // агента и чтения его не трогала, и пересказ дописывался на живого
+        // читателя уже после «Стоп».
+        val plotStopped = eu.kanade.tachiyomi.data.ai.ReadingPlotAgentHolder.agent.cancel()
+        eu.kanade.tachiyomi.data.ai.AiConsole.user(
+            title = "Остановлено",
+            detail = "агент: ${if (runningJob != null) "был в работе" else "не работал"}" +
+                (if (plotStopped) " · сюжет: запрос отменён" else ""),
+        )
         onStopRequested()
         showToast("Остановлено")
     }
@@ -440,6 +450,21 @@ fun ReaderAiChatOverlay(
                         onClick = { tab = 2 },
                         label = { Text("Сюжет") },
                         modifier = Modifier.height(30.dp),
+                    )
+                    // Консоль: что ИИ делает прямо сейчас. Отдельный экран, а
+                    // не ещё одна вкладка чата: её открывают, когда ход идёт и
+                    // надо посмотреть, чем он занят.
+                    FilterChip(
+                        selected = false,
+                        onClick = { showConsole = true },
+                        label = { Text("Консоль") },
+                        modifier = Modifier.height(30.dp),
+                    )
+                }
+                if (showConsole) {
+                    AiConsoleDialog(
+                        onClose = { showConsole = false },
+                        onStopEverything = stopEverything,
                     )
                 }
                 if (tab == 2) {

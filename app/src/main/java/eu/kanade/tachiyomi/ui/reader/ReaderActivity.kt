@@ -284,6 +284,9 @@ class ReaderActivity : BaseActivity() {
      */
     private val aiChatVisible = kotlinx.coroutines.flow.MutableStateFlow(false)
 
+    /** Показывается ли консоль ИИ поверх читалки. */
+    private val aiConsoleVisible = kotlinx.coroutines.flow.MutableStateFlow(false)
+
     /**
      * Реальная автопрокрутка вместо прежней тост-заглушки: вебтун плавно
      * скроллится, пейджер листает страницы с интервалом, зависящим от скорости.
@@ -1190,6 +1193,18 @@ class ReaderActivity : BaseActivity() {
                 val voiceBlock by autoReadEngine.voiceBlock.collectAsState()
                 // Идёт ли чтение главы — подпись и цвет кнопки «Читать главу».
                 val chapterReadActive by chapterReadActiveFlow.collectAsState()
+                // Консоль ИИ: вход и из меню читалки, и из AI-чата.
+                if (aiConsoleVisible.value) {
+                    eu.kanade.presentation.reader.components.AiConsoleDialog(
+                        onClose = { aiConsoleVisible.value = false },
+                        onStopEverything = {
+                            stopAutoReadLoop()
+                            eu.kanade.tachiyomi.data.tts.TtsSpeaker.stop()
+                            eu.kanade.tachiyomi.data.ai.ReadingPlotAgentHolder.agent.cancel()
+                            eu.kanade.tachiyomi.data.ai.AiConsole.user("Остановлено из консоли")
+                        },
+                    )
+                }
                 androidx.compose.runtime.LaunchedEffect(voiceBlock) {
                     val reason = voiceBlock ?: return@LaunchedEffect
                     stopAutoReadLoop()
@@ -1255,6 +1270,7 @@ class ReaderActivity : BaseActivity() {
                     onAutoscrollToggle = ::toggleAutoscroll,
                     onAutoSpeakPage = ::autoSpeakVisiblePage,
                     onAutoReadChapter = ::startAutoReadLoop,
+                    onOpenAiConsole = { aiConsoleVisible.value = true },
                     chapterReadActive = chapterReadActive,
                     onStopSpeak = {
                         stopAutoReadLoop()
@@ -1880,6 +1896,10 @@ class ReaderActivity : BaseActivity() {
         // Пересказ новой главы начинается с нуля: иначе вкладка «Сюжет» показывала
         // пересказ прошлой книги, пока новая ещё не прозвучала.
         eu.kanade.tachiyomi.data.ai.ReadingPlotAgentHolder.agent.reset()
+        eu.kanade.tachiyomi.data.ai.AiConsole.user(
+            title = "Чтение главы включено",
+            detail = viewModel.getCurrentChapter()?.chapter?.name,
+        )
         toast("▶ Авточтение включено")
         ensureBookAiSession(announce = true)
         readCurrentPage(thenAdvance = true)
@@ -1920,6 +1940,9 @@ class ReaderActivity : BaseActivity() {
     private var resumeAutoReadOnResume = false
 
     fun stopAutoReadLoop() {
+        if (autoReadActive) {
+            eu.kanade.tachiyomi.data.ai.AiConsole.user("Чтение главы остановлено")
+        }
         autoReadActive = false
         chapterReadActiveFlow.value = false
         autoReadLoop?.cancel()
@@ -2083,6 +2106,11 @@ class ReaderActivity : BaseActivity() {
             // а результат, о котором читателю нужно сказать вслух.
             val advanced = withUIContext { advanceAutoReadViewer(webtoonFraction) }
             if (!advanced) {
+                eu.kanade.tachiyomi.data.ai.AiConsole.note(
+                    title = "Конец главы · страниц прочитано: $pagesRead",
+                    detail = "листать дальше некуда",
+                    level = eu.kanade.tachiyomi.data.ai.AiConsole.Level.OK,
+                )
                 stopAutoReadLoopWith("Глава прочитана — страниц $pagesRead")
                 return
             }

@@ -70,6 +70,16 @@ class ReadingPlotAgent(
     private var requesting = false
 
     /**
+     * Текущий запрос пересказа.
+     *
+     * Держать его надо было, чтобы «Стоп» действительно отменял запрос: у
+     * агента был только флаг `requesting`, который запрещал новый запрос, но
+     * ничего не отменял — и пересказ дописывался после остановки чтения.
+     */
+    @Volatile
+    private var recapJob: kotlinx.coroutines.Job? = null
+
+    /**
      * Учесть произнесённую реплику и, когда набралось достаточно, обновить
      * пересказ.
      *
@@ -108,9 +118,29 @@ class ReadingPlotAgent(
     /** Перезапуск для новой главы: пересказ старой книги не должен висеть. */
     fun reset() {
         synchronized(heard) { heard.clear() }
+        recapJob?.cancel()
+        recapJob = null
         requesting = false
         currentBookId = null
         _state.value = State()
+    }
+
+    /**
+     * Остановить идущий запрос пересказа.
+     *
+     * Отдельный публичный метод, а не только сброс флага: иначе «Стоп» в
+     * консоли останавливал агента и чтение, а пересказ тем временем дописывался
+     * уже после остановки — и панель «Сюжет» менялась на живого читателя.
+     *
+     * @return true, если запрос был и действительно отменён.
+     */
+    fun cancel(): Boolean {
+        val job = recapJob
+        if (job == null || !job.isActive) return false
+        job.cancel()
+        _state.value = _state.value.copy(thinking = false, reason = "Остановлено")
+        AiConsole.user("Сюжет: запрос пересказа отменён")
+        return true
     }
 
     /** Запросить пересказ принудительно (кнопка «обновить»). */
@@ -142,7 +172,11 @@ class ReadingPlotAgent(
         }
         requesting = true
         _state.value = _state.value.copy(thinking = true, reason = null)
-        scope.launch {
+        AiConsole.note(
+            title = "Сюжет: запрошен пересказ",
+            detail = "реплик в накопленном: ${lines.size} · книга $bookId",
+        )
+        recapJob = scope.launch {
             try {
                 val reply = AiAssistant.chatFull(
                     userPrompt = prompt(lines),
@@ -162,6 +196,15 @@ class ReadingPlotAgent(
                             "Модель не ответила"
                         },
                     )
+                    AiConsole.note(
+                        title = "Сюжет: пересказ не получен",
+                        detail = if (onlyReasoning) {
+                            "модель вернула только размышления, без текста"
+                        } else {
+                            "модель не ответила"
+                        },
+                        level = AiConsole.Level.WARN,
+                    )
                 } else {
                     // Пересказ сразу пишется на диск: закрытие читалки не
                     // должна стирать работу, за которую заплатили запросом.
@@ -172,6 +215,11 @@ class ReadingPlotAgent(
                         thinking = false,
                         reason = null,
                         model = reply?.model.orEmpty(),
+                    )
+                    AiConsole.note(
+                        title = "Сюжет: пересказ готов",
+                        detail = "модель ${reply?.model.orEmpty()} · символов ${text.length}",
+                        level = AiConsole.Level.OK,
                     )
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {

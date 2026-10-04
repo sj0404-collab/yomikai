@@ -580,8 +580,19 @@ class AutoReadEngine(
         job?.cancel()
         TtsSpeaker.stop()
         val myGen = ++generation
+        // Счётчик кадров нужен finally: он единственный знает, не перебил ли
+        // кадр более новый. Объявляется здесь же — в master переменная
+        // использовалась, но не была заведена, и модуль не компилировался.
         val myFrame = ++frameCounter
         job = scope.launch {
+            eu.kanade.tachiyomi.data.ai.AiConsole.ocr(
+                title = "Кадр $pageIndex · распознавание",
+                detail = buildString {
+                    append("chapterId=").append(chapterId)
+                    append(" · ").append(bitmap.width).append('×').append(bitmap.height)
+                    if (cachedResult != null) append(" · текст из кэша скана")
+                },
+            )
             _isReading.value = true
             var aiRefine: Job? = null
             // Кадр передан сюда вызывающей стороной (полноэкранный снимок, до
@@ -974,6 +985,14 @@ class AutoReadEngine(
                 // отдельный HTTP-запрос на каждую реплику — на 15 бабблах
                 // это 15 последовательных обращений между озвучками).
                 val target = prefs.translateTarget().get().ifBlank { "ru" }
+                eu.kanade.tachiyomi.data.ai.AiConsole.ocr(
+                    title = "Кадр $pageIndex · распознано реплик: ${ordered.size}",
+                    detail = buildString {
+                        append("движок ").append(result.ocrModel.name)
+                        append(" · язык ").append(language)
+                        if (translate && language != target) append(" · перевод на ").append(target)
+                    },
+                )
                 val translations: List<String> = if (translate && language != target) {
                     runCatching { MangaTranslatorService.translateAll(ordered.map { it.text }, target) }
                         .getOrElse { ordered.map { it.text } }
@@ -1416,6 +1435,11 @@ class AutoReadEngine(
      */
     private fun blockAutoread(message: String) {
         logcat(LogPriority.WARN) { "Autoread blocked: $message" }
+        eu.kanade.tachiyomi.data.ai.AiConsole.ocr(
+            title = "Чтение остановлено: $message",
+            detail = "причина: озвучка недоступна",
+            level = eu.kanade.tachiyomi.data.ai.AiConsole.Level.ERROR,
+        )
         _voiceBlock.value = message
         OcrHistoryStore.addAutoRead(false, "озвучка недоступна", message)
         rejectedStreak = 0
@@ -1434,6 +1458,10 @@ class AutoReadEngine(
     private fun noteOcrFailure(reason: String): Boolean {
         ocrFailedStreak++
         logcat(LogPriority.WARN) { "OCR frame failed ($ocrFailedStreak): $reason" }
+        eu.kanade.tachiyomi.data.ai.AiConsole.ocr(
+            title = "Кадр без текста ($ocrFailedStreak) · $reason",
+            level = eu.kanade.tachiyomi.data.ai.AiConsole.Level.WARN,
+        )
         if (ocrFailedStreak < OCR_FAILED_STOP_AFTER) return false
         logcat(LogPriority.WARN) { "Autoread blocked: OCR failing $ocrFailedStreak frames in a row" }
         _voiceBlock.value = OCR_FAILED_MESSAGE
