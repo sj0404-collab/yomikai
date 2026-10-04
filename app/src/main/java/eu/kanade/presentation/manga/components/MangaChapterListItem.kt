@@ -19,7 +19,9 @@ import androidx.compose.material.icons.outlined.Done
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.FileDownloadOff
 import androidx.compose.material.icons.outlined.RemoveDone
+import androidx.compose.material.icons.outlined.RecordVoiceOver
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProvideTextStyle
@@ -65,6 +67,15 @@ fun MangaChapterListItem(
     onLongClick: () -> Unit,
     onClick: () -> Unit,
     onDownloadClick: ((ChapterDownloadAction) -> Unit)?,
+    /**
+     * Сканировать главу и озвучить её.
+     *
+     * null — действие недоступно (идёт скан другой главы, выбрано несколько,
+     * локальная библиотека). Раньше кнопка сканирования была одна на весь экран
+     * и била по «следующей непрочитанной», поэтому выбрать главу руками было
+     * нельзя: список из 155 глав — и кнопка одна.
+     */
+    onScanClick: (() -> Unit)?,
     onChapterSwipe: (LibraryPreferences.ChapterSwipeAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -199,6 +210,22 @@ fun MangaChapterListItem(
                 downloadProgressProvider = downloadProgressProvider,
                 onClick = { onDownloadClick?.invoke(it) },
             )
+
+            // Скан той же главы: та же кнопка, что была одна на весь список,
+            // но теперь у каждой строки. Стоит слева от скачивания, потому что
+            // скачивание — действие по умолчанию, а скан — осознанное и долгое.
+            if (onScanClick != null) {
+                IconButton(
+                    onClick = onScanClick,
+                    modifier = Modifier.padding(start = 4.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.RecordVoiceOver,
+                        contentDescription = "Сканировать главу и озвучить",
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
         }
     }
 }

@@ -22,6 +22,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SmallFloatingActionButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -82,6 +83,9 @@ import mihon.feature.migration.config.MigrationConfigScreen
 import mihon.feature.migration.dialog.MigrateMangaDialog
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
+import eu.kanade.presentation.more.settings.screen.rememberNetworkState
+import mihon.domain.ocr.model.OcrModel
+import tachiyomi.presentation.core.components.material.DISABLED_ALPHA
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.presentation.core.screens.LoadingScreen
@@ -135,15 +139,23 @@ class MangaScreen(
 
         val autoReadState by screenModel.chapterAutoRead.collectAsStateWithLifecycle()
 
-        // Следующая непрочитанная глава — цель скан-чтения (кнопка и диалог).
+        // Следующая непрочитанная глава — цель скан-чтения с кнопки у «Начать».
         val nextUnread = remember(successState.manga, successState.chapters) {
             screenModel.getNextUnreadChapter()
         }
 
         // Настройки скан-чтения: движок и формат документа (выбор перед стартом).
         var showScanSettings by remember { mutableStateOf(false) }
-        var scanEngine by remember { mutableStateOf(AutoReadEngineChoice.GLENS) }
+        var scanEngine by remember { mutableStateOf(screenModel.autoReadEngine) }
         var scanFormat by remember { mutableStateOf("md") }
+        // Глава, выбранная для скана: null — ещё не выбрана, диалог закрыт.
+        // Диалог помнит именно её, поэтому «Сканировать и читать» из строки
+        // сканирует ту главу, у которой нажали кнопку, а не «следующую
+        // непрочитанную»: в списке из 155 глав одна кнопка на весь экран была
+        // единственным способом выбрать.
+        var scanTargetChapter by remember { mutableStateOf<Chapter?>(null) }
+        // Скан занят — кнопки у глав гасим, чтобы не запустить второй поверх.
+        val scanRunning = autoReadState.running || autoReadState.openChapterId != null
 
         // Открытие читалки в режиме авточтения после фонового скана главы.
         LaunchedEffect(autoReadState.openChapterId) {
@@ -211,9 +223,17 @@ class MangaScreen(
             // главу онлайн-моделью, озвучить и открыть в авточтении. Показывает-
             // ся только когда скан ещё не идёт и глава не открыта.
             onScanChapterClicked = {
+                scanTargetChapter = nextUnread
                 showScanSettings = true
             }.takeIf {
-                nextUnread != null && !autoReadState.running && autoReadState.openChapterId == null
+                nextUnread != null && !scanRunning
+            },
+            // Та же кнопка у каждой главы: жмёшь у нужной — сканируется она.
+            onScanChapterItemClicked = { chapter: Chapter ->
+                scanTargetChapter = chapter
+                showScanSettings = true
+            }.takeIf {
+                !scanRunning && !successState.source.isLocalOrStub()
             },
             onSearch = { query, global -> scope.launch { performSearch(navigator, query, global) } },
             onCoverClicked = screenModel::showCoverDialog,
@@ -241,16 +261,19 @@ class MangaScreen(
         }
 
         // Выбор движка распознавания и формата документа перед стартом скана.
-        if (showScanSettings && nextUnread != null) {
+        // Диалог работает с ТЕМ главой, у которой нажали кнопку: иначе выбор
+        // главы был невозможен вовсе — кнопка била по «следующей непрочитанной».
+        val scanTarget = scanTargetChapter
+        if (showScanSettings && scanTarget != null) {
             AlertDialog(
                 onDismissRequest = { showScanSettings = false },
                 confirmButton = {
                     TextButton(
                         onClick = {
-                            screenModel.setAutoReadEngine(scanEngine)
+                            screenModel.selectAutoReadEngine(scanEngine)
                             screenModel.setAutoReadFormat(scanFormat)
                             showScanSettings = false
-                            screenModel.scanAndAutoReadChapter(nextUnread)
+                            screenModel.scanAndAutoReadChapter(scanTarget)
                         },
                     ) {
                         Text("Сканировать и читать")
@@ -267,13 +290,17 @@ class MangaScreen(
                         Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
+                        Text(scanTarget.name, fontWeight = FontWeight.Bold)
                         Text("Движок распознавания", fontWeight = FontWeight.Bold)
-                        // Только онлайн: офлайн-движок на главе средней длины
-                        // идёт минутами, и кнопка «сканировать и читать» выглядела
-                        // зависшей. Онлайн-скан идёт в разы быстрее и даёт текст
-                        // готовым к озвучке сразу.
-                        ScanEngineRow("Glens", AutoReadEngineChoice.GLENS, scanEngine) { scanEngine = it }
-                        ScanEngineRow("GitHub-раннер", AutoReadEngineChoice.GITHUB_RUNNER, scanEngine) { scanEngine = it }
+                        // Тот же список, что и в «Плагины OCR»: сканировать можно
+                        // любой движок приложения, а не два зашитых. Недоступные
+                        // показаны с причиной и не выбираются.
+                        val engineOptions = screenModel.autoReadEngineOptions(
+                            networkAvailable = rememberNetworkState(context),
+                        )
+                        engineOptions.forEach { option ->
+                            ScanEngineRow(option, scanEngine) { model -> scanEngine = model }
+                        }
                         Spacer(Modifier.height(8.dp))
                         Text("Формат документа", fontWeight = FontWeight.Bold)
                         ScanFormatRow("Markdown (md)", "md", scanFormat) { scanFormat = it }
@@ -548,22 +575,42 @@ class MangaScreen(
     }
 }
 
-/** Строка выбора OCR-движка в диалоге скан-чтения. */
+/**
+ * Строка выбора OCR-движка в диалоге скан-чтения.
+ *
+ * Недоступный движок остаётся виден: иначе список молча выглядел бы короче
+ * настроек, и читатель гадал бы, куда делся настроенный им движок. Причина
+ * недоступности подписана, а сама строка не выбирается.
+ */
 @Composable
 private fun ScanEngineRow(
-    label: String,
-    engine: AutoReadEngineChoice,
-    current: AutoReadEngineChoice,
-    onSelect: (AutoReadEngineChoice) -> Unit,
+    option: AutoReadEngineOption,
+    current: OcrModel,
+    onSelect: (OcrModel) -> Unit,
 ) {
+    val enabled = option.available
+    val alpha = if (enabled) 1f else DISABLED_ALPHA
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable { onSelect(engine) },
+            .clickable(enabled = enabled) { onSelect(option.model) },
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        RadioButton(selected = engine == current, onClick = { onSelect(engine) })
-        Text(label)
+        RadioButton(
+            selected = option.model == current,
+            onClick = { onSelect(option.model) },
+            enabled = enabled,
+        )
+        Column {
+            Text(option.title, color = LocalContentColor.current.copy(alpha = alpha))
+            option.unavailableReason?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = LocalContentColor.current.copy(alpha = DISABLED_ALPHA),
+                )
+            }
+        }
     }
 }
 

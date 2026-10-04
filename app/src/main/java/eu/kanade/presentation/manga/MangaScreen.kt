@@ -106,6 +106,8 @@ fun MangaScreen(
     onRefresh: () -> Unit,
     onContinueReading: () -> Unit,
     onScanChapterClicked: (() -> Unit)? = null,
+    /** Скан конкретной главы: кнопка в строке списка. */
+    onScanChapterItemClicked: ((Chapter) -> Unit)? = null,
     onSearch: (query: String, global: Boolean) -> Unit,
 
     // For cover dialog
@@ -161,6 +163,7 @@ fun MangaScreen(
             onRefresh = onRefresh,
             onContinueReading = onContinueReading,
             onScanChapterClicked = onScanChapterClicked,
+            onScanChapterItemClicked = onScanChapterItemClicked,
             onSearch = onSearch,
             onCoverClicked = onCoverClicked,
             onShareClicked = onShareClicked,
@@ -199,6 +202,7 @@ fun MangaScreen(
             onRefresh = onRefresh,
             onContinueReading = onContinueReading,
             onScanChapterClicked = onScanChapterClicked,
+            onScanChapterItemClicked = onScanChapterItemClicked,
             onSearch = onSearch,
             onCoverClicked = onCoverClicked,
             onShareClicked = onShareClicked,
@@ -243,6 +247,8 @@ private fun MangaScreenSmallImpl(
     onRefresh: () -> Unit,
     onContinueReading: () -> Unit,
     onScanChapterClicked: (() -> Unit)? = null,
+    /** Скан конкретной главы: кнопка в строке списка. */
+    onScanChapterItemClicked: ((Chapter) -> Unit)? = null,
     onSearch: (query: String, global: Boolean) -> Unit,
 
     // For cover dialog
@@ -475,6 +481,7 @@ private fun MangaScreenSmallImpl(
                         chapterSwipeEndAction = chapterSwipeEndAction,
                         onChapterClicked = onChapterClicked,
                         onDownloadChapter = onDownloadChapter,
+                        onScanChapter = onScanChapterItemClicked,
                         onChapterSelected = onChapterSelected,
                         onChapterSwipe = onChapterSwipe,
                     )
@@ -507,6 +514,8 @@ fun MangaScreenLargeImpl(
     onRefresh: () -> Unit,
     onContinueReading: () -> Unit,
     onScanChapterClicked: (() -> Unit)? = null,
+    /** Скан конкретной главы: кнопка в строке списка. */
+    onScanChapterItemClicked: ((Chapter) -> Unit)? = null,
     onSearch: (query: String, global: Boolean) -> Unit,
 
     // For cover dialog
@@ -733,6 +742,7 @@ fun MangaScreenLargeImpl(
                                 chapterSwipeEndAction = chapterSwipeEndAction,
                                 onChapterClicked = onChapterClicked,
                                 onDownloadChapter = onDownloadChapter,
+                                onScanChapter = onScanChapterItemClicked,
                                 onChapterSelected = onChapterSelected,
                                 onChapterSwipe = onChapterSwipe,
                             )
@@ -799,6 +809,7 @@ private fun LazyListScope.sharedChapterItems(
     chapterSwipeEndAction: LibraryPreferences.ChapterSwipeAction,
     onChapterClicked: (Chapter) -> Unit,
     onDownloadChapter: ((List<ChapterList.Item>, ChapterDownloadAction) -> Unit)?,
+    onScanChapter: ((Chapter) -> Unit)?,
     onChapterSelected: (ChapterList.Item, Boolean, Boolean) -> Unit,
     onChapterSwipe: (ChapterList.Item, LibraryPreferences.ChapterSwipeAction) -> Unit,
 ) {
@@ -863,6 +874,12 @@ private fun LazyListScope.sharedChapterItems(
                         { onDownloadChapter(listOf(item), it) }
                     } else {
                         null
+                    },
+                    onScanClick = onScanChapter?.let { scan ->
+                        {
+                            scan(item.chapter)
+                            Unit
+                        }
                     },
                     onChapterSwipe = {
                         onChapterSwipe(item, it)

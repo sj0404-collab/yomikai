@@ -71,6 +71,9 @@ import tachiyomi.core.common.preference.mapAsCheckboxState
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.launchNonCancellable
 import tachiyomi.core.common.util.lang.withUIContext
+import mihon.data.ocr.OcrPluginAvailability
+import mihon.data.ocr.OcrPluginRequirement
+import mihon.data.ocr.OcrPlugins
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.category.interactor.SetMangaCategories
@@ -768,8 +771,61 @@ class MangaScreenModel(
     private val _chapterAutoRead = MutableStateFlow(ChapterAutoReadState())
     val chapterAutoRead = _chapterAutoRead.asStateFlow()
 
-    /** Выбранный движок для скан-чтения (по умолчанию — уже настроенный в приложении). */
-    var autoReadEngine: OcrModel = ocrPreferences.ocrModel().get()
+    /**
+     * Выбранный движок для скан-чтения: тот, что уже настроен в приложении.
+     *
+     * `val`, а не `var`: смена движка идёт через [selectAutoReadEngine], которая
+     * ещё и пишет глобальный преф. Публичный сеттер здесь означал бы ровно это
+     * же, но молча — без записи в настройки.
+     */
+    val autoReadEngine: OcrModel = ocrPreferences.ocrModel().get()
+
+    /**
+     * Все OCR-модели приложения — тот же реестр `OcrPlugins`, что и в настройках
+     * распознавания.
+     *
+     * Список из двух движков (Glens и OpenRouter) в диалоге скана означал, что
+     * модель, аккуратно настроенная в «Плагины OCR», в скан-чтение не попадала
+     * вообще. Сканировать и озвучивать можно ровно тем же, чем распознаётся
+     * обычная страница, — иначе скан и авточтение говорят разными голосами.
+     *
+     * Недоступные модели не выбрасываются: они показываются с причиной («нужен
+     * ключ», «нет пакета моделей»), иначе список молча выглядел бы короче
+     * настроек.
+     */
+    fun autoReadEngineOptions(networkAvailable: Boolean): List<AutoReadEngineOption> {
+        val availableIds = runCatching {
+            OcrPluginAvailability.availableIds(
+                context = context,
+                networkAvailable = networkAvailable,
+                hasApiKey = { plugin ->
+                    when (plugin.id) {
+                        "openrouter" -> ocrPreferences.openrouterApiKey().get().isNotBlank()
+                        "google_ai" -> ocrPreferences.googleApiKey().get().isNotBlank()
+                        else -> false
+                    }
+                },
+                hasServerAddress = { ocrPreferences.owocrAddress().get().isNotBlank() },
+            )
+        }.getOrDefault(emptySet())
+        return OcrPlugins.ALL.map { plugin ->
+            AutoReadEngineOption(
+                model = plugin.model,
+                title = plugin.title,
+                available = plugin.id in availableIds,
+                unavailableReason = OcrPluginAvailability.missingRequirement(plugin, availableIds)
+                    ?.let { requirementName(it) },
+            )
+        }
+    }
+
+    private fun requirementName(requirement: OcrPluginRequirement): String = when (requirement) {
+        OcrPluginRequirement.NETWORK -> "нужен интернет"
+        OcrPluginRequirement.MODEL_PACK -> "не скачан пакет моделей"
+        OcrPluginRequirement.LITERT -> "нет LiteRT"
+        OcrPluginRequirement.API_KEY -> "не задан API-ключ"
+        OcrPluginRequirement.SERVER_ADDRESS -> "не задан адрес сервера"
+    }
 
     /** Формат экспортируемого транскрипта: "md" | "txt" | "pdf" | "docx". */
     private var autoReadFormat: String = "md"
@@ -920,14 +976,11 @@ class MangaScreenModel(
         }
     }
 
-    /** Выбрать движок OCR для скан-чтения (offline / Glens / GitHub-раннер). */
-    fun setAutoReadEngine(engine: AutoReadEngineChoice) {
-        val model = when (engine) {
-            AutoReadEngineChoice.OFFLINE -> OcrModel.CYRILLIC
-            AutoReadEngineChoice.GLENS -> OcrModel.GLENS
-            AutoReadEngineChoice.GITHUB_RUNNER -> OcrModel.OPENROUTER
-        }
-        autoReadEngine = model
+    /** Выбрать движок OCR для скан-чтения (любой из реестра `OcrPlugins`). */
+    fun selectAutoReadEngine(model: OcrModel) {
+        // Выбор движка для скана — это и глобальный движок распознавания: иначе
+        // скан идёт одним движком, а авточтение в читалке — другим, и читатель
+        // слышит не то, что только что отсканировано.
         ocrPreferences.ocrModel().set(model)
     }
 
@@ -1443,12 +1496,16 @@ data class ChapterAutoReadState(
     val stagePercent: Int = 0,
 )
 
-/** Три предлагаемых OCR-движка для скан-чтения. */
-enum class AutoReadEngineChoice {
-    OFFLINE,
-    GLENS,
-    GITHUB_RUNNER,
-}
+/** Модель OCR для скан-чтения: любой плагин из `OcrPlugins.ALL`. */
+@Immutable
+data class AutoReadEngineOption(
+    val model: OcrModel,
+    val title: String,
+    /** Готова ли модель к работе прямо сейчас. */
+    val available: Boolean,
+    /** Почему недоступна: сеть / пакет моделей / LiteRT / ключ / адрес. */
+    val unavailableReason: String?,
+)
 
 @Immutable
 sealed class ChapterList {
