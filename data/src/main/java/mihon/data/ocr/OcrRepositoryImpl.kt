@@ -39,6 +39,22 @@ class OcrRepositoryImpl(
     private val ocrModelPref = preferenceStore.getEnum("pref_ocr_model", OcrModel.CYRILLIC)
     private val useFallbackModelsPref = preferenceStore.getBoolean("pref_use_fallback_models", true)
 
+    /**
+     * Страница без текста — это картинка, а не сбой движка.
+     *
+     * Раньше «пустой результат» считался поводом идти по всей резервной цепочке.
+     * При пресете `auto` (дефолт) она включала GLENS, ZEN_FREE и GOOGLE, то есть
+     * каждая иллюстрация, разворот и обложка уезжали тремя сетевыми запросами с
+     * загрузкой картинки, а затем прогонялись все оффлайн-движки — и всё
+     * ради вывода «текста нет». Авточтение на таком кадре стояло секунды и
+     * «очень медленно листало», а мобильный трафик уходил в сеть без спроса.
+     *
+     * Теперь пустой результат завершает цепочку: движок отработал и сказал, что
+     * текста нет. Фолбэк остаётся для настоящих отказов (исключение), где он и
+     * нужен. Выключается настройкой «Пропускать страницы без текста».
+     */
+    private val skipUntitledPagesPref = preferenceStore.getBoolean("pref_skip_untitled_pages", true)
+
     private val environmentResult by lazy {
         runCatching { Environment.create() }
             .onFailure { error ->
@@ -288,7 +304,11 @@ class OcrRepositoryImpl(
      *  single  — фолбэков нет.
      */
     private fun fallbackChain(primary: EngineType): List<EngineType> {
-        val preset = preferenceStore.getString("pref_fallback_preset", "auto").get()
+        // Дефолт — `offline`, а не `auto`. При `auto` цепочка включала онлайн-
+        // движки, и картинка страницы уходила в GLENS/ZEN_FREE/Google без
+        // явного согласия читателя. Теперь сеть в резервной цепочке появляется
+        // только если её выбрали руками.
+        val preset = preferenceStore.getString("pref_fallback_preset", "offline").get()
         val online = listOf(EngineType.GLENS, EngineType.ZEN_FREE, EngineType.GOOGLE)
             .filter { onlineEngineReady(it) }
         val chain = when (preset) {
@@ -733,6 +753,7 @@ class OcrRepositoryImpl(
         onPartial: ((OcrRegion) -> Unit)? = null,
     ): OcrPageResult {
         val fallbackEnabled = useFallbackModelsPref.get()
+        val skipUntitled = skipUntitledPagesPref.get()
         val engines = if (fallbackEnabled) listOf(primary) + fallbackChain(primary) else listOf(primary)
         var attempted = false
         var lastResult: OcrPageResult? = null
@@ -749,6 +770,24 @@ class OcrRepositoryImpl(
                 val usable = result.withoutPromotionalRegions()
                 if (usable.regions.isNotEmpty()) return usable
                 lastResult = usable
+                // Движок отработал и не нашёл текста. Правило хода цепочки —
+                // в домене ([pageScanStepAfterEngine]), здесь только вывод в
+                // консоль: читатель должен видеть, почему страница прошла мимо.
+                if (
+                    mihon.domain.ocr.interactor.pageScanStepAfterEngine(
+                        failed = false,
+                        regionCount = usable.regions.size,
+                        skipUntitledPages = skipUntitled,
+                    ) == mihon.domain.ocr.interactor.PageScanStep.STOP
+                ) {
+                    AiConsole.ocr(
+                        title = "Страница ${pageIndex + 1} · без текста",
+                        detail = "${engine.name.lowercase()} не нашёл текста — " +
+                            "цепочка фолбэка прервана, страница считается картинкой",
+                        level = AiConsole.Level.INFO,
+                    )
+                    return usable
+                }
             } catch (error: Throwable) {
                 if (error is CancellationException) throw error
                 if (!fallbackEnabled) throw error

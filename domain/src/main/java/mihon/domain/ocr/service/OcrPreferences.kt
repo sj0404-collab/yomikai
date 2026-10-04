@@ -84,6 +84,14 @@ class OcrPreferences(
 
     fun useFallbackModels() = preferenceStore.getBoolean("pref_use_fallback_models", true)
 
+    /**
+     * Считать ли страницу без текста картинкой и не гонять резервную цепочку.
+     *
+     * Включено по умолчанию. Иначе каждая иллюстрация прогонялась ещё и
+     * онлайн-движками с загрузкой картинки — авточтение на ней подвисало.
+     */
+    fun skipUntitledPages() = preferenceStore.getBoolean("pref_skip_untitled_pages", true)
+
     // Пресет цепочки фолбэков:
     //  auto      — умный порядок: онлайн при сети, локальные без сети
     //  online    — только онлайн-движки (GLENS -> ZEN_FREE -> GOOGLE)
