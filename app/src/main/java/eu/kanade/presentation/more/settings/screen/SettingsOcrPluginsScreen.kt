@@ -123,6 +123,14 @@ object SettingsOcrPluginsScreen : SearchableSettings {
     }
 }
 
+/**
+ * Есть ли сеть на момент показа экрана.
+ *
+ * Состояние кэшировалось только по [Context], то есть навсегда: включил
+ * интернет — и список онлайн-движков оставался серым до перезапуска процесса.
+ * [refreshKey] включают в ключ запоминания, поэтому вызывающий, который знает
+ * момент своего открытия, получает свежую проверку.
+ */
 @Composable
-internal fun rememberNetworkState(context: Context): Boolean =
-    remember(context) { isNetworkAvailable(context) }
+internal fun rememberNetworkState(context: Context, refreshKey: Any? = Unit): Boolean =
+    remember(context, refreshKey) { isNetworkAvailable(context) }

@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material.icons.Icons
@@ -323,7 +326,14 @@ class MangaScreen(
                     // и кнопка «консоль» стоит рядом с «Сканировать и читать».
                     TextButton(onClick = { showAiConsole = true }) { Text("Консоль ИИ") }
                     Column(
-                        Modifier.fillMaxWidth(),
+                        Modifier
+                            .fillMaxWidth()
+                            // Список ПРОКРУЧИВАЕТСЯ. Без этого 7 движков (у
+                            // недоступных — ещё и строка с причиной) и 4 формата
+                            // не влезали в диалог, и всё после первых двух строк
+                            // просто обрезалось: выглядело так, будто движок один.
+                            .heightIn(max = 440.dp)
+                            .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         // Что именно пойдёт в скан: одна глава — её название,
@@ -341,8 +351,11 @@ class MangaScreen(
                         // Тот же список, что и в «Плагины OCR»: сканировать можно
                         // любой движок приложения, а не два зашитых. Недоступные
                         // показаны с причиной и не выбираются.
+                        // Сеть переспрашивается при каждом открытии диалога:
+                        // включил интернет — и онлайн-движки стали доступны,
+                        // а не остались серыми до перезапуска процесса.
                         val engineOptions = screenModel.autoReadEngineOptions(
-                            networkAvailable = rememberNetworkState(context),
+                            networkAvailable = rememberNetworkState(context, showScanSettings),
                         )
                         engineOptions.forEach { option ->
                             ScanEngineRow(option, scanEngine) { model -> scanEngine = model }
