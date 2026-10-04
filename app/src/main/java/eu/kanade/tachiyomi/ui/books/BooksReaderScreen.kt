@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -713,13 +714,20 @@ data class BooksReaderScreen(
                     }
 
                     // --- Settings panel ---
+                    //
+                    // Высота ОГРАНИЧЕНА. Без потолка прокручивающийся Column
+                    // сообщает бесконечную желаемую высоту и забирает весь экран:
+                    // панель наезжала на верхнюю панель, а список глав и текст
+                    // страницы уезжали вниз и обрезались. Фон непрозрачный по
+                    // той же причине — на просвете читался текст страницы.
                     AnimatedVisibility(visible = showSettings) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                                .padding(16.dp)
-                                .verticalScroll(rememberScrollState()),
+                                .heightIn(max = 360.dp)
+                                .background(MaterialTheme.colorScheme.surface)
+                                .verticalScroll(rememberScrollState())
+                                .padding(16.dp),
                         ) {
                             Text(
                                 "Движок озвучки",
