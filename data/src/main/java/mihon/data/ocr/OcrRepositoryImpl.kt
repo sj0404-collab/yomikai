@@ -472,11 +472,12 @@ class OcrRepositoryImpl(
      */
     override suspend fun recognizeLocalText(image: OcrImage): String {
         lastRecognizedEngine = null
+        val primary = localTextEngine()
         return withActiveOperation {
             submitTask(PrioritizedTaskQueue.Priority.HIGH) {
                 image.useBitmap { bitmap ->
                     recognizeWithFallback(
-                        primary = engineTypeOf(OcrModel.CYRILLIC),
+                        primary = primary,
                         image = bitmap,
                         // Страница книги — не срочное чтение, но и не повод
                         // ждать облако: бюджет фолбэка тут только локальный.
@@ -486,6 +487,32 @@ class OcrRepositoryImpl(
                 }
             }
         }
+    }
+
+    /**
+     * Локальный движок для страниц книги.
+     *
+     * Выбирается по фактической готовности, а не жёстко. Кириллический
+     * PP-OCR — лучший для русского, но ему нужны скачанный пакет моделей и
+     * LiteRT; без них он не отработает и страница просто останется пустой.
+     * Тогда берётся Google ML Kit: он ВНУТРИ APK, ничего качать не надо, и
+     * для латиницы работает сразу.
+     *
+     * Оба варианта локальные. Сети здесь нет ни в одном.
+     */
+    private fun localTextEngine(): EngineType {
+        val litertReady = environmentResult.getOrNull() != null
+        val packReady = litertReady && runCatching {
+            OcrModelFiles.allInstalled(
+                context,
+                listOf(
+                    CyrillicOcrEngine.DETECTOR_PATH,
+                    CyrillicOcrEngine.PRIMARY_PATH,
+                    CyrillicOcrEngine.PRIMARY_DICT_PATH,
+                ),
+            )
+        }.getOrDefault(false)
+        return if (packReady) EngineType.CYRILLIC else EngineType.MLKIT
     }
 
     /**
