@@ -84,6 +84,7 @@ import eu.kanade.presentation.reader.TtsVoicePickerDialog
 import eu.kanade.tachiyomi.data.books.BookAmbience
 import eu.kanade.tachiyomi.data.books.BookChapter
 import eu.kanade.tachiyomi.data.books.BookOcr
+import eu.kanade.tachiyomi.data.books.BookProgress
 import eu.kanade.tachiyomi.data.books.BookParser
 import eu.kanade.tachiyomi.data.books.BookSpeechRole
 import eu.kanade.tachiyomi.data.books.BookSpeechSegment
@@ -198,10 +199,34 @@ data class BooksReaderScreen(
             val bmp = withContext(Dispatchers.IO) {
                 bookFile?.let { BookParser.renderPage(context, it, pageNumber) }
             }
-            val text = bmp?.let { BookOcr.recognize(it) } ?: ""
+            // Причина неудачи — читателю, а не в logcat: иначе страница молчала,
+            // а он гадал, что сломалось.
+            var failureReason: String? = null
+            val text = bmp?.let {
+                when (val r = BookOcr.recognizeResult(it)) {
+                    is BookOcr.Result.Text -> r.text
+                    is BookOcr.Result.Unavailable -> {
+                        failureReason = r.reason
+                        ""
+                    }
+                }
+            } ?: ""
             if (bmp != null && !bmp.isRecycled) bmp.recycle()
             pageSegments = pageSegments.toMutableMap().apply {
                 put(pageNumber, segmentsForReading(text, roleVoices))
+            }
+            failureReason?.let { reason ->
+                eu.kanade.tachiyomi.data.ai.AiConsole.ocr(
+                    title = "Страница $pageNumber: локальный OCR не дал текста",
+                    detail = reason,
+                    level = eu.kanade.tachiyomi.data.ai.AiConsole.Level.WARN,
+                )
+                readerScope.launch {
+                    snackbarHostState.showSnackbar(
+                        "Страница $pageNumber: $reason. Для PDF нужен скачанный пакет моделей " +
+                            "(Настройки → Распознавание текста).",
+                    )
+                }
             }
             pageOcrBusy = false
         }
@@ -317,7 +342,13 @@ data class BooksReaderScreen(
                         chapters = parsed.chapters
                         currentChapterIndex = saved.chapter.coerceIn(0, parsed.chapters.lastIndex.coerceAtLeast(0))
                         val currentCh = parsed.chapters.getOrNull(currentChapterIndex)
-                        val totalSentences = splitSentences(currentCh?.resolvedText.orEmpty()).size
+                        // Постраничная глава считается страницами, а не
+                        // предложениями: текста в ней до распознавания нет.
+                        val totalSentences = if (currentCh?.isPageBased == true) {
+                            currentCh.pageCount
+                        } else {
+                            splitSentences(currentCh?.resolvedText.orEmpty()).size
+                        }
                         currentSentenceIndex = saved.sentence.coerceIn(0, totalSentences.coerceAtLeast(1) - 1)
                         if (currentCh?.isPageBased == true) {
                             pdfPageIndex = saved.sentence.coerceIn(
@@ -537,10 +568,15 @@ data class BooksReaderScreen(
             val bk = bookFile ?: return@LaunchedEffect
             val current = chapters.getOrNull(currentChapterIndex)
             val saveSentence = if (current?.isPageBased == true) pdfPageIndex else currentSentenceIndex
-            val totalSentencesPerChapter = chapters.map { splitSentences(it.resolvedText).size }
-            val total = totalSentencesPerChapter.sum().coerceAtLeast(1)
-            val consumedBefore = totalSentencesPerChapter.subList(0, currentChapterIndex).sum() + saveSentence
-            val percent = ((consumedBefore.toLong() * 100) / total).toInt().coerceIn(0, 100)
+            // Расчёт в чистой функции: в composable он был сломан (единицы
+            // прогресса у глав разные, а у PDF текст появляется только после
+            // распознавания), и его не покрывали тесты.
+            val percent = BookProgress.percent(
+                chapters = chapters,
+                sentencesInText = { i: Int -> splitSentences(chapters[i].resolvedText).size },
+                currentIndex = currentChapterIndex,
+                positionInChapter = saveSentence,
+            )
             runCatching { BooksStore.save(context, bk, BooksStore.Snapshot(currentChapterIndex, saveSentence, percent)) }
         }
 

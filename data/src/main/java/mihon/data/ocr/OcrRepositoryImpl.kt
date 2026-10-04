@@ -462,6 +462,40 @@ class OcrRepositoryImpl(
 
     override suspend fun recognizeText(image: OcrImage): String = recognizeText(image, null)
 
+    /**
+     * Локальное распознавание без сети — для библиотеки книг.
+     *
+     * Движок задан здесь, а не берётся из настройки: у манги может быть выбран
+     * онлайн-движок, и книга не должна от этого зависеть. Фолбэк в сеть тоже
+     * запрещён — иначе «локальный» вызов всё равно ушёл бы в облако, только
+     * на втором шаге.
+     */
+    override suspend fun recognizeLocalText(image: OcrImage): String {
+        lastRecognizedEngine = null
+        return withActiveOperation {
+            submitTask(PrioritizedTaskQueue.Priority.HIGH) {
+                image.useBitmap { bitmap ->
+                    recognizeWithFallback(
+                        primary = engineTypeOf(OcrModel.CYRILLIC),
+                        image = bitmap,
+                        // Страница книги — не срочное чтение, но и не повод
+                        // ждать облако: бюджет фолбэка тут только локальный.
+                        fallbackBudgetMs = localOnlyFallbackBudgetMs,
+                        allowOnlineFallback = false,
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Сколько ждать локальных фолбэков.
+     *
+     * Отдельный бюджет от [defaultFallbackBudgetMs]: там цепочка заканчивается
+     * облаком за десятки секунд, а здесь её не будет, и ждать незачем.
+     */
+    private val localOnlyFallbackBudgetMs = 20_000L
+
     override suspend fun recognizeText(image: OcrImage, model: OcrModel?): String {
         // Новый вызов — новый отчёт: без сброса неудача показала бы движок
         // ПРЕДЫДУЩЕГО распознавания.

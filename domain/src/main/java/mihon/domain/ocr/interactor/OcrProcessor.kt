@@ -12,6 +12,15 @@ class OcrProcessor(
     }
 
     /**
+     * Только локальный движок, без сети. Для библиотеки книг: там текст уже
+     * текст, и онлайн-распознавание не нужно тем более, что молча уводило
+     * чтение книги в Gemini/OpenRouter.
+     */
+    suspend fun getLocalText(image: OcrImage): String {
+        return ocrRepository.recognizeLocalText(image)
+    }
+
+    /**
      * Движок, который реально вернул текст последнего [getText].
      *
      * Не совпадает с выбранным в настройках, когда сети нет: онлайн-движок

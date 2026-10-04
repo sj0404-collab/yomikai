@@ -17,8 +17,6 @@ package eu.kanade.tachiyomi.data.books
  * @param volume Номер тома (null если нет томов).
  * @param chapter Номер главы (null если нет нумерации).
  * @param subChapter Подглава / секция.
- * @param skipPages Количество страниц для пропуска в начале (обложки/титулы).
- *                  Оставлено для совместимости; страницы показываются все.
  */
 data class BookChapter(
     val id: Long,
@@ -37,7 +35,6 @@ data class BookChapter(
     val lastPageRead: Long = 0,
     val text: String = "",
     val pages: List<BookPage> = emptyList(),
-    val skipPages: Int = 0,
 ) {
     val isRecognizedNumber: Boolean
         get() = chapterNumber >= 0.0
@@ -196,7 +193,6 @@ data class BookChapter(
             chapter: Int? = null,
             subChapter: Int? = null,
             scanlator: String? = null,
-            skipBefore: Int = 0,
         ): BookChapter {
             val chapterNumber = when {
                 chapter != null && volume != null -> volume * 100.0 + chapter
@@ -217,7 +213,6 @@ data class BookChapter(
                 chapterNumber = chapterNumber,
                 scanlator = scanlator,
                 pages = pageList,
-                skipPages = skipBefore.coerceAtLeast(0),
             )
         }
     }
@@ -228,14 +223,14 @@ data class BookChapter(
  *
  * @param pageNumber Порядковый номер страницы в файле (1-based).
  * @param totalPages Общее число страниц в файле.
- * @param text Текст страницы (извлечённый через OCR или описание).
- * @param image Пиксели страницы (Bitmap bytes) для отображения.
+ * @param text Текст страницы. Для PDF/DJVU он пуст до локального распознавания:
+ *   Android PdfRenderer текстовый слой не отдаёт. Байты картинки в модели не
+ *   держались никогда — страницу рендерит `BookParser.renderPage` по требованию.
  */
 data class BookPage(
     val pageNumber: Int,
     val totalPages: Int = 0,
     val text: String = "",
-    val image: ByteArray? = null,
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
