@@ -831,7 +831,7 @@ class MangaScreenModel(
     private var autoReadFormat: String = "md"
 
 /**
-     * Запускает фоновый скан одной главы с прогрессом «стр. N из M» (через уже
+     * Запускает фоновый скан главы с прогрессом «стр. N из M» (через уже
      * существующий [OcrChapterScanner]), по завершении собирает транскрипт со
      * спикерами в документ и сигналит UI, чтобы тот открыл читалку в авточтении.
      *
@@ -840,110 +840,114 @@ class MangaScreenModel(
      * перезапуска экрана. Теперь любой исход, кроме успеха, закрывает
      * состояние.
      */
-    fun scanAndAutoReadChapter(chapter: Chapter) {
+    fun scanAndAutoReadChapter(chapter: Chapter) = scanAndAutoReadChapters(listOf(chapter))
+
+    /**
+     * То же самое пачкой: главы сканируются по очереди, прогресс показывает
+     * «глава i из N» и «стр. j из M» внутри неё.
+     *
+     * Одна кнопка «Сканировать и читать» на весь экран означала, что выбрать
+     * главу нельзя было вообще; теперь то же действие доступно и у каждой
+     * главы, и сразу для нескольких скачанных.
+     *
+     * Открывается авточтение ПЕРВОЙ удачно просканированной главы: следующая
+     * включается вручную — продолжение через главы в движке авточтения не
+     * описано, а молча перескакивать через главы хуже, чем остановиться.
+     */
+    fun scanAndAutoReadChapters(chapters: List<Chapter>) {
         if (_chapterAutoRead.value.running) return
+        if (chapters.isEmpty()) return
         val manga = successState?.manga
         if (manga == null) {
             _chapterAutoRead.value = ChapterAutoReadState(error = "Манга не загружена")
             return
         }
         screenModelScope.launchIO {
+            val queue = chapters
             _chapterAutoRead.value = ChapterAutoReadState(
                 running = true,
-                title = chapter.name,
+                title = if (queue.size == 1) queue.first().name else "${queue.size} глав",
                 total = 0,
                 stage = "Подготовка…",
             )
+            var firstScanned: Chapter? = null
+            var exports = 0
             try {
-                // Проверка картинки моделью включается только когда ключ есть:
-                // без него каждый кадр ждал бы сетевого таймаута впустую, и
-                // скан выглядел бы зависшим на минуты.
                 val aiReady = ocrPreferences.googleApiKey().get().isNotBlank()
-                val verifier = if (aiReady) {
-                    OcrChapterAiVerifier(ocrPreferences)
-                } else {
-                    null
-                }
-                val ok = ocrChapterScanner.scanChapter(
-                    chapterId = chapter.id,
-                    onProgress = { p ->
-                        // Строка прогресса обновляется ВСЕГДА, а не только при
-                        // включённой ИИ-проверке: без неё диалог показывал
-                        // «Подготовка…» все минуты скана и выглядел зависшим.
-                        val stage = if (aiReady) {
-                            "OCR страницы ${p.processedPages} из ${p.totalPages} + ИИ-проверка"
-                        } else {
-                            "OCR страницы ${p.processedPages} из ${p.totalPages}"
-                        }
-                        _chapterAutoRead.value = _chapterAutoRead.value.copy(
-                            running = true,
-                            processed = p.processedPages,
-                            total = p.totalPages,
-                            title = p.chapterName,
-                            stage = stage,
-                            stagePercent = if (p.totalPages > 0) {
-                                (p.processedPages * 100 / p.totalPages).coerceIn(0, 100)
+                val verifier = if (aiReady) OcrChapterAiVerifier(ocrPreferences) else null
+                for ((index, chapter) in queue.withIndex()) {
+                    val batchLabel = if (queue.size == 1) "" else " · глава ${index + 1} из ${queue.size}"
+                    val ok = ocrChapterScanner.scanChapter(
+                        chapterId = chapter.id,
+                        onProgress = { p ->
+                            val ocrStage = if (aiReady) {
+                                "OCR страницы ${p.processedPages} из ${p.totalPages} + ИИ-проверка"
                             } else {
-                                0
-                            },
-                        )
-                    },
-                    aiVerifier = verifier,
-                    onComplete = { p ->
+                                "OCR страницы ${p.processedPages} из ${p.totalPages}"
+                            }
+                            _chapterAutoRead.value = _chapterAutoRead.value.copy(
+                                running = true,
+                                processed = p.processedPages,
+                                total = p.totalPages,
+                                title = if (queue.size == 1) p.chapterName else "${queue.size} глав · ${p.chapterName}",
+                                stage = ocrStage + batchLabel,
+                                stagePercent = if (p.totalPages > 0) {
+                                    (p.processedPages * 100 / p.totalPages).coerceIn(0, 100)
+                                } else {
+                                    0
+                                },
+                            )
+                        },
+                        aiVerifier = verifier,
+                        onComplete = { p ->
+                            _chapterAutoRead.value = _chapterAutoRead.value.copy(
+                                running = true,
+                                processed = p.processedPages,
+                                total = p.totalPages,
+                                stage = "Сборка транскрипта…$batchLabel",
+                            )
+                        },
+                        onError = { e ->
+                            // Одна неудачная глава не отменяет пачку: иначе
+                            // выделенные 10 глав оказывались бы неозвученными
+                            // из-за одной без страниц.
+                            logcat(LogPriority.WARN) {
+                                "Scan-and-read: chapter ${chapter.id} failed: ${e.failure}"
+                            }
+                            _chapterAutoRead.value = _chapterAutoRead.value.copy(
+                                stage = "Глава «${chapter.name}» пропущена — ${e.failure}",
+                            )
+                        },
+                    )
+                    if (ok && verifier != null) {
                         _chapterAutoRead.value = _chapterAutoRead.value.copy(
-                            running = true,
-                            processed = p.processedPages,
-                            total = p.totalPages,
-                            stage = "Сборка транскрипта…",
+                            stage = "ИИ-проверка завершена, словарь ролей сохраняем…",
+                            aiChecking = true,
                         )
-                    },
-                    onError = { e ->
+                        val summary = verifier.commit(chapter.mangaId)
                         _chapterAutoRead.value = _chapterAutoRead.value.copy(
-                            running = false,
-                            error = when (e.failure) {
-                                OcrScanFailure.ChapterNotFound -> "Глава не найдена"
-                                OcrScanFailure.MangaNotFound -> "Манга не найдена"
-                                OcrScanFailure.NoPages -> "В главе нет страниц"
-                                is OcrScanFailure.Unexpected -> e.failure.message ?: "Ошибка сканирования"
-                            },
+                            stage = "ИИ закончил: персонажей ${summary.rolesFound}" +
+                                if (summary.rolesFound == 0) " (ключ есть, но ролей не найдено)" else "",
+                            stagePercent = 100,
+                            aiChecking = false,
                         )
-                    },
+                    }
+                    if (ok) {
+                        if (firstScanned == null) firstScanned = chapter
+                        buildChapterTranscript(manga, chapter)?.let { exports++ }
+                    }
+                }
+                val opened = firstScanned
+                _chapterAutoRead.value = _chapterAutoRead.value.copy(
+                    running = false,
+                    error = if (opened == null) "Не удалось просканировать ни одной главы" else null,
+                    transcriptsSaved = exports,
+                    openChapterId = opened?.id,
                 )
-                if (ok && verifier != null) {
-                    // Роли пишутся в словарь ЭТОЙ книги: голос персонажа
-                    // работает здесь и не утекает в другие издания.
-                    _chapterAutoRead.value = _chapterAutoRead.value.copy(
-                        stage = "ИИ-проверка завершена, словарь ролей сохраняем…",
-                        aiChecking = true,
-                    )
-                    val summary = verifier.commit(chapter.mangaId)
-                    _chapterAutoRead.value = _chapterAutoRead.value.copy(
-                        stage = "ИИ закончил: персонажей ${summary.rolesFound}" +
-                            if (summary.rolesFound == 0) " (ключ есть, но ролей не найдено)" else "",
-                        stagePercent = 100,
-                        aiChecking = false,
-                    )
-                }
-                if (ok) {
-                    val file = buildChapterTranscript(manga, chapter)
-                    _chapterAutoRead.value = _chapterAutoRead.value.copy(
-                        running = false,
-                        processed = _chapterAutoRead.value.total,
-                        error = null,
-                        exportFile = file?.absolutePath,
-                        openChapterId = chapter.id,
-                    )
-                } else if (_chapterAutoRead.value.running) {
-                    // Скан не отдал ни ошибки, ни успеха — диалог обязан закрыться.
-                    _chapterAutoRead.value = _chapterAutoRead.value.copy(
-                        running = false,
-                        error = "Сканирование прервано",
-                    )
-                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                logcat(LogPriority.ERROR, e) { "scanAndAutoReadChapter failed" }
+                logcat(LogPriority.ERROR, e) { "scanAndAutoReadChapters failed" }
                 _chapterAutoRead.value = _chapterAutoRead.value.copy(
                     running = false,
                     error = e.message ?: "Ошибка сканирования",
@@ -1487,6 +1491,8 @@ data class ChapterAutoReadState(
     val title: String = "",
     val error: String? = null,
     val exportFile: String? = null,
+    /** Сколько транскриптов записано: у пачки их по числу глав. */
+    val transcriptsSaved: Int = 0,
     val openChapterId: Long? = null,
     /** Идёт ли проверка страниц моделью (вторая стадия скана). */
     val aiChecking: Boolean = false,

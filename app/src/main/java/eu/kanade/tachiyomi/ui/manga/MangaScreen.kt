@@ -154,6 +154,8 @@ class MangaScreen(
         // непрочитанную»: в списке из 155 глав одна кнопка на весь экран была
         // единственным способом выбрать.
         var scanTargetChapter by remember { mutableStateOf<Chapter?>(null) }
+        // Список глав для пакетного скана; пустой — сканируется одна глава.
+        var scanBatchTarget by remember { mutableStateOf<List<Chapter>>(emptyList()) }
         // Скан занят — кнопки у глав гасим, чтобы не запустить второй поверх.
         val scanRunning = autoReadState.running || autoReadState.openChapterId != null
 
@@ -161,8 +163,14 @@ class MangaScreen(
         LaunchedEffect(autoReadState.openChapterId) {
             val chapterId = autoReadState.openChapterId
             if (chapterId != null) {
-                autoReadState.exportFile?.let { path ->
-                    context.toast("Транскрипт сохранён: $path")
+                // У пачки транскриптов по числу глав, и путь у каждого свой:
+                // показывать путь последнего молча значило бы выдать его за
+                // единственный файл.
+                when {
+                    autoReadState.transcriptsSaved > 1 ->
+                        context.toast("Транскриптов сохранено: ${autoReadState.transcriptsSaved}")
+                    autoReadState.exportFile != null ->
+                        context.toast("Транскрипт сохранён: ${autoReadState.exportFile}")
                 }
                 val chapter = successState.chapters.firstOrNull { it.chapter.id == chapterId }?.chapter
                 if (chapter != null) {
@@ -251,6 +259,14 @@ class MangaScreen(
             onMultiMarkAsReadClicked = screenModel::markChaptersRead,
             onMarkPreviousAsReadClicked = screenModel::markPreviousChapterRead,
             onOcrClicked = screenModel::scanChapters,
+            // Пачкой по выделенным скачанным главам: тот же диалог движка и
+            // формата, но сканируется весь список и открывается первая
+            // удачная глава.
+            onScanAndReadChapters = { chapters: List<Chapter> ->
+                scanBatchTarget = chapters
+                scanTargetChapter = chapters.firstOrNull()
+                showScanSettings = true
+            }.takeIf { !scanRunning },
             onMultiDeleteClicked = screenModel::showDeleteChapterDialog,
             onChapterSwipe = screenModel::chapterSwipe,
             onChapterSelected = screenModel::toggleSelection,
@@ -273,14 +289,25 @@ class MangaScreen(
                             screenModel.selectAutoReadEngine(scanEngine)
                             screenModel.setAutoReadFormat(scanFormat)
                             showScanSettings = false
-                            screenModel.scanAndAutoReadChapter(scanTarget)
+                            val batch = scanBatchTarget
+                            if (batch.isEmpty()) {
+                                screenModel.scanAndAutoReadChapter(scanTarget)
+                            } else {
+                                screenModel.scanAndAutoReadChapters(batch)
+                            }
+                            scanBatchTarget = emptyList()
                         },
                     ) {
                         Text("Сканировать и читать")
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showScanSettings = false }) {
+                    TextButton(
+                        onClick = {
+                            showScanSettings = false
+                            scanBatchTarget = emptyList()
+                        },
+                    ) {
                         Text("Отмена")
                     }
                 },
@@ -290,7 +317,17 @@ class MangaScreen(
                         Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        Text(scanTarget.name, fontWeight = FontWeight.Bold)
+                        // Что именно пойдёт в скан: одна глава — её название,
+                        // пачка — сколько глав и какая первой.
+                        val batch = scanBatchTarget
+                        Text(
+                            text = if (batch.size <= 1) {
+                                scanTarget.name
+                            } else {
+                                "${batch.size} глав, сначала «${scanTarget.name}»"
+                            },
+                            fontWeight = FontWeight.Bold,
+                        )
                         Text("Движок распознавания", fontWeight = FontWeight.Bold)
                         // Тот же список, что и в «Плагины OCR»: сканировать можно
                         // любой движок приложения, а не два зашитых. Недоступные

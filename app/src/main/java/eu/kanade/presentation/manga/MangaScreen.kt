@@ -126,6 +126,8 @@ fun MangaScreen(
     onMultiMarkAsReadClicked: (List<Chapter>, markAsRead: Boolean) -> Unit,
     onMarkPreviousAsReadClicked: (Chapter) -> Unit,
     onOcrClicked: ((List<Chapter>) -> Unit)? = null,
+    /** Скан выбранных глав пачкой с озвучкой. */
+    onScanAndReadChapters: ((List<Chapter>) -> Unit)? = null,
     onMultiDeleteClicked: (List<Chapter>) -> Unit,
 
     // For chapter swipe
@@ -176,6 +178,7 @@ fun MangaScreen(
             onMultiMarkAsReadClicked = onMultiMarkAsReadClicked,
             onMarkPreviousAsReadClicked = onMarkPreviousAsReadClicked,
             onOcrClicked = onOcrClicked,
+            onScanAndReadChapters = onScanAndReadChapters,
             onMultiDeleteClicked = onMultiDeleteClicked,
             onChapterSwipe = onChapterSwipe,
             onChapterSelected = onChapterSelected,
@@ -215,6 +218,7 @@ fun MangaScreen(
             onMultiMarkAsReadClicked = onMultiMarkAsReadClicked,
             onMarkPreviousAsReadClicked = onMarkPreviousAsReadClicked,
             onOcrClicked = onOcrClicked,
+            onScanAndReadChapters = onScanAndReadChapters,
             onMultiDeleteClicked = onMultiDeleteClicked,
             onChapterSwipe = onChapterSwipe,
             onChapterSelected = onChapterSelected,
@@ -267,6 +271,8 @@ private fun MangaScreenSmallImpl(
     onMultiMarkAsReadClicked: (List<Chapter>, markAsRead: Boolean) -> Unit,
     onMarkPreviousAsReadClicked: (Chapter) -> Unit,
     onOcrClicked: ((List<Chapter>) -> Unit)? = null,
+    /** Скан выбранных глав пачкой с озвучкой. */
+    onScanAndReadChapters: ((List<Chapter>) -> Unit)? = null,
     onMultiDeleteClicked: (List<Chapter>) -> Unit,
 
     // For chapter swipe
@@ -339,6 +345,7 @@ private fun MangaScreenSmallImpl(
                 onMultiMarkAsReadClicked = onMultiMarkAsReadClicked,
                 onMarkPreviousAsReadClicked = onMarkPreviousAsReadClicked,
                 onOcrClicked = onOcrClicked,
+                onScanAndReadChapters = onScanAndReadChapters,
                 onDownloadChapter = onDownloadChapter,
                 onMultiDeleteClicked = onMultiDeleteClicked,
                 fillFraction = 1f,
@@ -534,6 +541,8 @@ fun MangaScreenLargeImpl(
     onMultiMarkAsReadClicked: (List<Chapter>, markAsRead: Boolean) -> Unit,
     onMarkPreviousAsReadClicked: (Chapter) -> Unit,
     onOcrClicked: ((List<Chapter>) -> Unit)? = null,
+    /** Скан выбранных глав пачкой с озвучкой. */
+    onScanAndReadChapters: ((List<Chapter>) -> Unit)? = null,
     onMultiDeleteClicked: (List<Chapter>) -> Unit,
 
     // For swipe actions
@@ -603,6 +612,7 @@ fun MangaScreenLargeImpl(
                     onMultiMarkAsReadClicked = onMultiMarkAsReadClicked,
                     onMarkPreviousAsReadClicked = onMarkPreviousAsReadClicked,
                     onOcrClicked = onOcrClicked,
+                    onScanAndReadChapters = onScanAndReadChapters,
                     onDownloadChapter = onDownloadChapter,
                     onMultiDeleteClicked = onMultiDeleteClicked,
                     fillFraction = 0.5f,
@@ -761,6 +771,8 @@ private fun SharedMangaBottomActionMenu(
     onMultiMarkAsReadClicked: (List<Chapter>, markAsRead: Boolean) -> Unit,
     onMarkPreviousAsReadClicked: (Chapter) -> Unit,
     onOcrClicked: ((List<Chapter>) -> Unit)? = null,
+    /** Скан выбранных глав пачкой с озвучкой. */
+    onScanAndReadChapters: ((List<Chapter>) -> Unit)? = null,
     onDownloadChapter: ((List<ChapterList.Item>, ChapterDownloadAction) -> Unit)?,
     onMultiDeleteClicked: (List<Chapter>) -> Unit,
     fillFraction: Float,
@@ -773,6 +785,17 @@ private fun SharedMangaBottomActionMenu(
             onOcrClicked?.invoke(selected.fastMap { it.chapter })
             Unit
         }.takeIf { onOcrClicked != null },
+        // Пачкой — только скачанные: у нескачанной главы нет файлов, скан
+        // нечего брать. Нескачанные главы отсекаются, а не показываются с
+        // ошибкой по каждой.
+        onScanAndReadClicked = {
+            onScanAndReadChapters?.invoke(
+                selected.filter { it.downloadState == Download.State.DOWNLOADED }.fastMap { it.chapter },
+            )
+            Unit
+        }.takeIf {
+            onScanAndReadChapters != null && selected.fastAny { it.downloadState == Download.State.DOWNLOADED }
+        },
         onBookmarkClicked = {
             onMultiBookmarkClicked.invoke(selected.fastMap { it.chapter }, true)
         }.takeIf { selected.fastAny { !it.chapter.bookmark } },
