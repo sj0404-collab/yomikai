@@ -63,7 +63,9 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import com.google.android.material.transition.platform.MaterialContainerTransform
 import com.hippo.unifile.UniFile
@@ -292,20 +294,26 @@ class ReaderActivity : BaseActivity() {
         autoscrollJob?.cancel()
         autoscrollJob = null
         if (!active) return
+        // repeatOnLifecycle, а не просто lifecycleScope: тот живёт до
+        // onDestroy, поэтому после сворачивания приложения 60-Гц scrollBy
+        // продолжал крутиться в фоне и есть всю батарею, пока читатель в
+        // другом приложении. Цикл теперь живёт только в STARTED.
         autoscrollJob = lifecycleScope.launch {
-            while (true) {
-                when (val viewer = viewModel.state.value.viewer) {
-                    is eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer -> {
-                        // ~60 Гц; скорость 1..10 → 1..10 px за кадр
-                        viewer.recycler.scrollBy(0, speed.toInt().coerceAtLeast(1))
-                        kotlinx.coroutines.delay(16)
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (true) {
+                    when (val viewer = viewModel.state.value.viewer) {
+                        is eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer -> {
+                            // ~60 Гц; скорость 1..10 → 1..10 px за кадр
+                            viewer.recycler.scrollBy(0, speed.toInt().coerceAtLeast(1))
+                            kotlinx.coroutines.delay(16)
+                        }
+                        is eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer -> {
+                            // Скорость 1..10 → пауза 11..2 сек на страницу
+                            kotlinx.coroutines.delay((12_000L - speed.toLong() * 1_000L).coerceAtLeast(2_000L))
+                            viewer.moveToNext()
+                        }
+                        else -> kotlinx.coroutines.delay(250)
                     }
-                    is eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer -> {
-                        // Скорость 1..10 → пауза 11..2 сек на страницу
-                        kotlinx.coroutines.delay((12_000L - speed.toLong() * 1_000L).coerceAtLeast(2_000L))
-                        viewer.moveToNext()
-                    }
-                    else -> kotlinx.coroutines.delay(250)
                 }
             }
         }
@@ -2182,37 +2190,62 @@ class ReaderActivity : BaseActivity() {
         }
         val finished = kotlinx.coroutines.CompletableDeferred<Boolean>()
 
+        // Пофразный прокрут: один потребитель на весь кадр, а не корутина на
+        // каждую реплику. Раньше на странице из 40 баблов стартовало 40
+        // независимых smoothScrollBy — они накладывались друг на друга, и
+        // вьюпорт тащили рывками. CONFLATED держит только последнюю цель, то
+        // есть ровно то, что нужно: прокрутить к последней дочитанной реплике.
+        val scrollTargets =
+            if (phraseMode) kotlinx.coroutines.channels.Channel<Float>(kotlinx.coroutines.channels.Channel.CONFLATED) else null
+
         return try {
-            autoReadEngine.readFrame(
-                bitmap = frame.bitmap,
-                chapterId = chapterId,
-                pageIndex = pageIndex,
-                // Геометрия кадра нужна записи скриншота: по ней пометки
-                // порядка чтения возвращаются на страницу в книге.
-                geometry = frame.geometry,
-                // Кадр пейджера — это ровно страница. Если её уже разобрал скан
-                // главы, берём текст из кэша, вместо того чтобы гонять движок
-                // (особенно онлайн) по каждой странице заново.
-                cachedResult = cachedFrameText(chapterId, pageIndex, frame.geometry),
-                onLineSpoken = if (phraseMode) { box ->
-                    // Плавный ПОФРАЗНЫЙ прокрут вебтуна: реплика дочитана —
-                    // проматываю ровно на её высоту, следующая уже внизу
-                    // вьюпорта (границы кадра не перечитываются вовсе).
-                    lifecycleScope.launchIO {
-                        if (!autoReadActive) return@launchIO
-                        withUIContext {
-                            val v = viewModel.state.value.viewer
+            kotlinx.coroutines.coroutineScope {
+                val scrollJob = scrollTargets?.let { targets ->
+                    launch {
+                        for (dy in targets) {
+                            if (!autoReadActive) break
+                            val v = withUIContext { viewModel.state.value.viewer }
                             if (v is eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer) {
-                                val hF = (box.bottom - box.top).coerceAtLeast(0.03f)
-                                val dy = (box.bottom - 0.08f).coerceAtLeast(hF + 0.05f).coerceAtMost(0.85f)
-                                v.scrollDownByFraction(dy)
+                                withUIContext { v.scrollDownByFraction(dy) }
                             }
                         }
                     }
-                } else null,
-                onPageFinished = { finished.complete(true) },
-            )
-            if (awaitFrameOutcome(finished)) FrameResult.READ else FrameResult.BLOCKED
+                }
+                try {
+                    autoReadEngine.readFrame(
+                        bitmap = frame.bitmap,
+                        chapterId = chapterId,
+                        pageIndex = pageIndex,
+                        // Геометрия кадра нужна записи скриншота: по ней пометки
+                        // порядка чтения возвращаются на страницу в книге.
+                        geometry = frame.geometry,
+                        // Кадр пейджера — это ровно страница. Если её уже
+                        // разобрал скан главы, берём текст из кэша, вместо того
+                        // чтобы гонять движок (особенно онлайн) по каждой
+                        // странице заново.
+                        cachedResult = cachedFrameText(chapterId, pageIndex, frame.geometry),
+                        onLineSpoken = if (phraseMode) { box ->
+                            // Плавный ПОФРАЗНЫЙ прокрут вебтуна: реплика
+                            // дочитана — проматываем ровно на её высоту, следующая
+                            // уже внизу вьюпорта (границы кадра не перечитываются
+                            // вовсе).
+                            val hF = (box.bottom - box.top).coerceAtLeast(0.03f)
+                            val dy = (box.bottom - 0.08f)
+                                .coerceAtLeast(hF + 0.05f)
+                                .coerceAtMost(0.85f)
+                            scrollTargets?.trySend(dy)
+                        } else null,
+                        onPageFinished = { finished.complete(true) },
+                    )
+                    if (awaitFrameOutcome(finished)) FrameResult.READ else FrameResult.BLOCKED
+                } finally {
+                    // Потребитель прокрутки живёт в цикле по каналу: без закрытия
+                    // он вышел бы из for только при отмене, а значит подвесил бы
+                    // coroutineScope до конца кадра.
+                    scrollTargets?.close()
+                    scrollJob?.cancel()
+                }
+            }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {

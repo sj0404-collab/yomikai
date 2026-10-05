@@ -155,6 +155,12 @@ data class BooksReaderScreen(
         val chapterSegmentsCache = remember(chapters) {
             mutableMapOf<Pair<Int, Boolean>, List<BookSpeechSegment>>()
         }
+        // Число предложений главы — для прогресса. Раньше его пересчитывали
+        // заново для КАЖДОЙ главы на КАЖДУЮ озвученную реплику: splitSentences
+        // разбивал весь текст книги на список строк, а нужна была только длина.
+        // На книге в 40 глав это десятки тысяч аллокаций на каждое предложение
+        // — прямой источник подёргиваний при авточтении.
+        val sentenceCountCache = remember(chapters) { mutableMapOf<Int, Int>() }
 
         // --- TTS Engine state ---
         var ttsEngine by remember { mutableStateOf(bookPrefs.bookTtsEngine().get()) }
@@ -572,9 +578,22 @@ data class BooksReaderScreen(
             // Расчёт в чистой функции: в composable он был сломан (единицы
             // прогресса у глав разные, а у PDF текст появляется только после
             // распознавания), и его не покрывали тесты.
+            // Счётчики предложений кэшируются по главам: текст главы не
+            // меняется, а прогресс пересчитывается на каждой фразе.
             val percent = BookProgress.percent(
                 chapters = chapters,
-                sentencesInText = { i: Int -> splitSentences(chapters[i].resolvedText).size },
+                sentencesInText = { i: Int ->
+                    val chapter = chapters[i]
+                    // Постраничная глава меряется страницами, а её текст ещё и
+                    // меняется по мере OCR — считать там предложения нельзя.
+                    if (chapter.isPageBased) {
+                        0
+                    } else {
+                        sentenceCountCache.getOrPut(i) {
+                            countSentences(chapter.resolvedText)
+                        }
+                    }
+                },
                 currentIndex = currentChapterIndex,
                 positionInChapter = saveSentence,
             )
@@ -1184,6 +1203,32 @@ data class BooksReaderScreen(
             .split(SENTENCE_SPLIT)
             .map { it.trim() }
             .filter { it.isNotBlank() }
+    }
+
+    /**
+     * Число предложений без построчного списка.
+     *
+     * Считает ровно то же, что [splitSentences] вернул бы по длине, но не
+     * создаёт ни одной строки-реплики: прогрессу нужна только цифра, а
+     * прогресс пересчитывается на каждой озвученной фразе.
+     */
+    private fun countSentences(text: String): Int {
+        if (text.isBlank()) return 0
+        val normalized = text.replace(MULTI_NEWLINE, "\n")
+        val matcher = SENTENCE_SPLIT.toPattern().matcher(normalized)
+        var count = 0
+        var start = 0
+        while (matcher.find()) {
+            if (hasNonWhitespace(normalized, start, matcher.start())) count++
+            start = matcher.end()
+        }
+        if (hasNonWhitespace(normalized, start, normalized.length)) count++
+        return count
+    }
+
+    private fun hasNonWhitespace(s: String, from: Int, to: Int): Boolean {
+        for (i in from until to) if (!s[i].isWhitespace()) return true
+        return false
     }
 }
 
