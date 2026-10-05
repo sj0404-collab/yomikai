@@ -14,11 +14,14 @@ on:
 
 env:
   MIHON_GITHUB_RELEASE: true
+  ANDROID_API: '34'
+  ANDROID_BUILD_TOOLS: '34.0.0'
+  IMG: 'system-images;android-34;google_apis;x86_64'
 
 jobs:
   emulator-smoke:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 70
 
     steps:
       - name: Checkout
@@ -29,6 +32,7 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
 
       - name: Python + Pillow (генератор CBZ)
         run: |
@@ -48,25 +52,50 @@ jobs:
           python3 ci/emulator/make_cbz.py /tmp/cbz
           ls -la /tmp/cbz
 
-      - name: Запуск эмулятора и e2e smoke
-        uses: reactive-circus/android-emulator-runner@d94c3fbbe3a1a54ae7c475929523d6b370963561 # v2.34.0
-        with:
-          api-level: 34
-          target: google_apis
-          arch: x86_64
-          profile: Nexus 6
-          cores: 4
-          ram-size: 4096M
-          heap-size: 1024M
-          disable-animations: true
-          disable-spellchecker: true
-          headless: true
-          emulator-boot-timeout: 900
-          script: |
-            export ART_DIR=/home/runner/work/_e2e-artifacts
-            mkdir -p "$ART_DIR"
-            export SECS_AUTO_READ=${{ inputs.autoread_seconds }}
-            bash ci/emulator/smoke.sh "$PWD/yomikai.apk" /tmp/cbz/zen01.cbz
+      - name: Android SDK + образ эмулятора
+        id: sdk
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends libpulse0 libgl1 libgl1-mesa-dri libglvnd0 libxinerama1 libxcursor1 libxcomposite1 libxdamage1 libxi6 libxtst6 libnss3 libcups2 libxss1 libxrandr2 libasound2t64 unzip zip curl wget
+          export ANDROID_HOME=/home/runner/android-sdk
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O /tmp/ct.zip
+          unzip -q /tmp/ct.zip -d /tmp/ct
+          mv /tmp/ct/cmdline-tools "$ANDROID_HOME/cmdline-tools/latest"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "emulator" "$IMG" | tail -3
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          ls "$ANDROID_HOME"
+
+      - name: Создать AVD и стартовать эмулятор
+        run: |
+          echo 'hw.ui.backlight=no' | "$ANDROID_HOME/platform-tools/adb" version >/dev/null 2>&1 || true
+          echo "no" | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd \
+              -n test -k "$IMG" -d "Nexus 6" --force
+          nohup "$ANDROID_HOME/emulator/emulator" -avd test \
+              -no-window -no-audio -gpu swiftshader_indirect -no-snapshot-save \
+              -memory 4096 -cores 4 -no-boot-anim -wipe-data \
+              -netdelay none -netspeed full -qemu -m 4096 \
+              > /tmp/emulator.log 2>&1 &
+          echo "emulator starting..."
+          "$ANDROID_HOME/platform-tools/adb" wait-for-device
+          for i in $(seq 1 120); do
+            BOOT=$("$ANDROID_HOME/platform-tools/adb" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
+            [ "$BOOT" = "1" ] && break
+            echo "ждём загрузку ($i x 10s)"; sleep 10
+          done
+          "$ANDROID_HOME/platform-tools/adb" shell getprop sys.boot_completed
+          "$ANDROID_HOME/platform-tools/adb" shell wm size
+
+      - name: e2e smoke
+        env:
+          ART_DIR: /home/runner/work/_e2e-artifacts
+          SECS_AUTO_READ: ${{ inputs.autoread_seconds }}
+        run: |
+          mkdir -p "$ART_DIR"
+          bash ci/emulator/smoke.sh "$PWD/yomikai.apk" /tmp/cbz/zen01.cbz
+          echo "smoke exit: $?" > "$ART_DIR/smoke_exit.txt"
 
       - name: Артефакты
         if: always()
@@ -74,9 +103,17 @@ jobs:
         with:
           name: e2e-smoke-${{ github.run_number }}
           path: /home/runner/work/_e2e-artifacts
+          if-no-files-found: warn
 
       - name: Отчёт в отчёт рана
         if: always()
         run: |
           echo '## Emulator smoke' >> "$GITHUB_STEP_SUMMARY"
           cat /home/runner/work/_e2e-artifacts/smoke_report.md >> "$GITHUB_STEP_SUMMARY" || echo "(отчёт не создан см. логи рана)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Финальный marital кода выхода
+        if: always()
+        run: |
+          EXIT=$(cat /home/runner/work/_e2e-artifacts/smoke_exit.txt 2>/dev/null | grep -o '[0-9]*$' || echo 1)
+          echo "Итоговый код smoke: $EXIT"
+          exit "$EXIT"
