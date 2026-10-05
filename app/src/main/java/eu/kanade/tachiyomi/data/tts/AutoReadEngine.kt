@@ -23,6 +23,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
@@ -1961,9 +1963,41 @@ class AutoReadEngine(
             .take(MAX_BUBBLES_PER_FRAME)
         if (bubbles.isEmpty()) return emptyList()
 
+        // Параллель по рамкам с лимитом [BUBBLE_OCR_PARALLELISM]: иначе при
+        // онлайн-пресете авточтение ползёт (каждый баблон = сетевой раунд-трип
+        // + полный OCR-конвейер на него). async по всем сразу + Semaphore,
+        // сборка строго в геометрическом порядке детектора — речевой порядок
+        // не меняется.
+        val bubbleSemaphore = Semaphore(BUBBLE_OCR_PARALLELISM)
+        return coroutineScope {
+            bubbles.mapIndexed { index, r ->
+                async {
+                    bubbleSemaphore.withPermit {
+                        ocrBubbleRect(bitmap, chapterId, pageIndex, r, index, direction)
+                    }
+                }
+            }.flatMap { it.await() }
+        }
+    }
+
+    /**
+     * OCR одной рамки баблона (широкая join-рамка или обычное облачко).
+     * Вынесено из [readBubbles]: авточтение пускает рамки ПАРАЛЛЕЛЬНО
+     * (лимит [BUBBLE_OCR_PARALLELISM]) с сохранением исходного порядка —
+     * при онлайн-пресете каждый баблон это сетевой вызов, и 20 баблонов
+     * раньше давали 20 последовательных раунд-трипов на каждый кадр.
+     * Локальные движки защищены OcrEngineLocks и просто очередятся.
+     */
+    private suspend fun ocrBubbleRect(
+        bitmap: Bitmap,
+        chapterId: Long,
+        pageIndex: Int,
+        r: android.graphics.Rect,
+        index: Int,
+        direction: tachiyomi.core.common.util.system.ReadingDirection,
+    ): List<Line> {
         val out = mutableListOf<Line>()
-        for ((index, r) in bubbles.withIndex()) {
-            if (job?.isActive != true) break
+            if (job?.isActive != true) return out
             // 1) Широкая рамка (ширина > 1.6 высоты) часто обнимает ДВА круглых
             //    облачка, совмещённых вплотную, с разным текстом. Прогоняем по
             //    ней панельный детектор ещё раз и распознаём ВЕСЬ текст,
@@ -1978,7 +2012,7 @@ class AutoReadEngine(
                     direction = direction,
                 )
                 out += subLines
-                continue
+                return out
             }
             // 2) Обычное облачко: поля 6%, круглая форма маскируется эллипсом,
             //    чтобы углы квадратного кадрирования не тащили текст соседа.
@@ -1988,7 +2022,7 @@ class AutoReadEngine(
             val top = (r.top - padY).coerceAtLeast(0)
             val right = (r.right + padX).coerceAtMost(bitmap.width)
             val bottom = (r.bottom + padY).coerceAtMost(bitmap.height)
-            if (right - left < 16 || bottom - top < 16) continue
+            if (right - left < 16 || bottom - top < 16) return out
             var text = ocrCroppedRegion(
                 bitmap,
                 left,
@@ -2024,9 +2058,9 @@ class AutoReadEngine(
                     ),
                 )
             }
-        }
         return out
     }
+
 
     /**
      * Два круглых облачка вплотную внутри одной широкой рамки: повторный
@@ -2309,6 +2343,8 @@ class AutoReadEngine(
          * лишняя пунктуация, а не «новая фраза со знакомым словом».
          */
         private const val CONTAINMENT_RATIO = 0.8f
+        // Ограничитель параллельного OCR рамок баблонов (см. ocrBubbleRect/readBubbles).
+        private const val BUBBLE_OCR_PARALLELISM = 3
         private const val MAX_BUBBLES_PER_FRAME = 40
 
         /**

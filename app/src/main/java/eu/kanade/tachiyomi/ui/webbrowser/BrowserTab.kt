@@ -765,24 +765,31 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
                 // чтобы не проскочить текст и не «листать впустую».
                 val hadText = readEngine.lastFrameHadText
                 val step = (wv.height * (if (hadText) 0.6f else 0.35f)).roundToInt().coerceAtLeast(1)
-                var scrolled = 0
-                while (scrolled < step && isAutoRead) {
-                    val d = minOf(24, step - scrolled) // мелкий шаг = плавно, без рывков
-                    scrollJs(wv, d)
-                    scrolled += d
-                    delay(28)
+                // Плавная прокрутка: косинусная фаза (мягкий разгон/торможение)
+                // вместо отрезков 24px/28мс — на линейных сегментах кадр
+                // визуально «ёрзал»; тик 16мс под vsync, сумма шага неизменна.
+                suspend fun smoothAdvance(total: Int, scroll: suspend (Int) -> Unit) {
+                    val durMs = (total / 2.5f).toLong().coerceIn(200L, 900L)
+                    val t0 = android.os.SystemClock.elapsedRealtime()
+                    var sent = 0
+                    while (isAutoRead) {
+                        val t = (android.os.SystemClock.elapsedRealtime() - t0).toFloat() / durMs
+                        if (t >= 1f) break
+                        val eased = 0.5f * (1f - kotlin.math.cos(t * kotlin.math.PI.toFloat()))
+                        val target = (total * eased).toInt()
+                        val d = target - sent
+                        if (d > 0) { scroll(d); sent += d }
+                        delay(16)
+                    }
+                    val rest = total - sent
+                    if (rest > 0) scroll(rest)
                 }
+                smoothAdvance(step) { d -> scrollJs(wv, d) }
                 delay(150)
                 var posAfter = readScrollPos(wv)
                 if (posAfter - posBefore <= 0f) {
                     // JS не сдвинул (нет контейнера) — старый путь scrollBy
-                    var s2 = 0
-                    while (s2 < step && isAutoRead) {
-                        val d = minOf(6, step - s2)
-                        wv.scrollBy(0, d)
-                        s2 += d
-                        delay(16)
-                    }
+                    smoothAdvance(step) { d -> wv.scrollBy(0, d) }
                     delay(150)
                     posAfter = readScrollPos(wv)
                 }
