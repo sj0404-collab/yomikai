@@ -6,6 +6,10 @@ import eu.kanade.tachiyomi.data.ai.AiConsole
 import eu.kanade.tachiyomi.util.ocr.toOcrImage
 import eu.kanade.tachiyomi.util.system.activeNetworkState
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import logcat.LogPriority
 import mihon.domain.ocr.interactor.ClearCachedChapterOcr
 import mihon.domain.ocr.interactor.SaveCachedPageOcr
@@ -17,6 +21,12 @@ import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.manga.interactor.GetManga
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+
+// Полоса параллельного скана страниц главы: 2 страницы в полёте.
+// При пресете «online» каждая страница — сетевой вызов, так что скан главы
+// вдвое быстрее; больше 2 нельзя — в полёте не может жить много декодированных
+// битмапов страниц (память), а локальные движки всё равно очередятся в OcrEngineLocks.
+private const val CHAPTER_SCAN_PARALLELISM = 2
 
 internal class OcrChapterScanner(
     private val context: Context,
@@ -97,7 +107,7 @@ internal class OcrChapterScanner(
                         onProgress(lastProgress)
 
                         try {
-                            var chapterHasCachedResults = false
+                            val chapterHasCachedResults = java.util.concurrent.atomic.AtomicBoolean(false)
                             AiConsole.ocr(
                                 title = "Скан главы «${chapter.name}» начат",
                                 detail = buildString {
@@ -107,61 +117,68 @@ internal class OcrChapterScanner(
                                 },
                             )
                             val chapterStartedAt = android.os.SystemClock.elapsedRealtime()
-                            for ((index, page) in pages.pages.withIndex()) {
-                                val networkError = checkNetworkState()
-                                if (networkError != null) {
-                                    clearCachedChapterOcr.await(chapterId)
-                                    onCacheStateChanged(chapterId, false)
-                                    onError(
-                                        OcrChapterScanError(
-                                            mangaId = manga.id,
-                                            mangaTitle = manga.title,
-                                            chapterId = chapterId,
-                                            chapterName = chapter.name,
-                                            failure = OcrScanFailure.Unexpected(networkError),
-                                        ),
-                                    )
-                                    return@pageScope false
-                                }
+                            // Скан страниц — полосой по CHAPTER_SCAN_PARALLELISM:
+                            // при пресете «online» каждая страница это сетевой вызов,
+                            // и последовательный цикл полз в 2 раза медленнее, чем мог
+                            // бы. Ошибка любой страницы (или потеря сети) отменяет
+                            // coroutineScope и обрабатывается общим catch ниже — как
+                            // и раньше (кэш главы стирается, onError с Unexpected).
+                            // Прогресс считается по факту завершения страниц — это
+                            // монотонный счётчик, порядок страниц в отчёте не важен.
+                            val scanSemaphore = Semaphore(CHAPTER_SCAN_PARALLELISM)
+                            val progressLock = Any()
+                            var processedPagesCount = 0
+                            coroutineScope {
+                                val pageJobs = pages.pages.mapIndexed { index, page ->
+                                    async {
+                                        val networkError = checkNetworkState()
+                                        if (networkError != null) error(networkError)
+                                        scanSemaphore.withPermit {
+                                            val bitmap = page.openBitmap() ?: error("Unable to decode page ${page.pageIndex + 1}")
+                                            try {
+                                                val ocr = scanPageOcr.await(chapterId, page.pageIndex, bitmap.toOcrImage())
+                                                // Проверка картинки моделью идёт ПОСЛЕ OCR и до
+                                                // recycle битмапа: JPEG нужен модели, а реплики —
+                                                // только что распознанным черновиком. Кадр
+                                                // гасится флагом scanChapter(aiVerifier = null),
+                                                // поэтому часовой оффлайн-скан остаётся как был.
+                                                val fixed = aiVerifier?.verifyPage(
+                                                    pageName = "${chapter.name} #${index + 1}",
+                                                    bitmap = bitmap,
+                                                    regions = ocr.regions,
+                                                )
+                                                // Проверенный текст возвращается в кэш, иначе
+                                                // читатель получил бы старый распознанный текст,
+                                                // а правка модели осталась бы в отчёте.
+                                                if (fixed != null) {
+                                                    saveCachedPageOcr.await(
+                                                        ocr.copy(
+                                                            chapterId = chapterId,
+                                                            pageIndex = page.pageIndex,
+                                                            regions = fixed,
+                                                        ),
+                                                    )
+                                                }
+                                            } finally {
+                                                if (!bitmap.isRecycled) {
+                                                    bitmap.recycle()
+                                                }
+                                            }
+                                        }
 
-                                val bitmap = page.openBitmap() ?: error("Unable to decode page ${page.pageIndex + 1}")
-                                try {
-                                    val ocr = scanPageOcr.await(chapterId, page.pageIndex, bitmap.toOcrImage())
-                                    // Проверка картинки моделью идёт ПОСЛЕ OCR и до
-                                    // recycle битмапа: JPEG нужен модели, а реплики —
-                                    // только что распознанным черновиком. Кадр
-                                    // гасится флагом scanChapter(aiVerifier = null),
-                                    // поэтому часовой оффлайн-скан остаётся как был.
-                                    val fixed = aiVerifier?.verifyPage(
-                                        pageName = "${chapter.name} #${index + 1}",
-                                        bitmap = bitmap,
-                                        regions = ocr.regions,
-                                    )
-                                    // Проверенный текст возвращается в кэш, иначе
-                                    // читатель получил бы старый распознанный текст,
-                                    // а правка модели осталась бы в отчёте.
-                                    if (fixed != null) {
-                                        saveCachedPageOcr.await(
-                                            ocr.copy(
-                                                chapterId = chapterId,
-                                                pageIndex = page.pageIndex,
-                                                regions = fixed,
-                                            ),
-                                        )
+                                        if (chapterHasCachedResults.compareAndSet(false, true)) {
+                                            onCacheStateChanged(chapterId, true)
+                                        }
+
+                                        val nextProgress = synchronized(progressLock) {
+                                            processedPagesCount++
+                                            lastProgress = lastProgress.copy(processedPages = processedPagesCount)
+                                            lastProgress
+                                        }
+                                        onProgress(nextProgress)
                                     }
-                                } finally {
-                                    if (!bitmap.isRecycled) {
-                                        bitmap.recycle()
-                                    }
                                 }
-
-                                if (!chapterHasCachedResults) {
-                                    chapterHasCachedResults = true
-                                    onCacheStateChanged(chapterId, true)
-                                }
-
-                                lastProgress = lastProgress.copy(processedPages = index + 1)
-                                onProgress(lastProgress)
+                                pageJobs.forEach { it.await() }
                             }
 
                             onComplete(lastProgress)
