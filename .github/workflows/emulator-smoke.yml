@@ -73,7 +73,7 @@ jobs:
           set -x
           echo "no" | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd \
               -n test -k "$IMG" -d "Nexus 6" --force
-          nohup setsid "$ANDROID_HOME/emulator/emulator/emulator" -avd test \
+          nohup setsid "$ANDROID_HOME/emulator/emulator" -avd test \
               -no-window -no-audio -gpu swiftshader_indirect -no-snapshot \
               -memory 4096 -accel on -no-boot-anim -wipe-data \
               -netdelay none -netspeed full \
@@ -82,7 +82,7 @@ jobs:
           sleep 3
           head -40 /tmp/emulator.log || true
           timeout 420 "$ANDROID_HOME/platform-tools/adb" wait-for-device || true
-          for i in $(seq 1 100); do
+          for i in $(seq 1 60); do
             BOOT=$(timeout 20 "$ANDROID_HOME/platform-tools/adb" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
             [ "$BOOT" = "1" ] && break
             echo "ждём загрузку ($i x 10s)"; sleep 10
