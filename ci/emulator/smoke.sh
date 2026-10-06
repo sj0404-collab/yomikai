@@ -27,10 +27,10 @@ sleep 3; adb wait-for-device
 R=$([ -n "$(adb shell id | grep uid=0)" ] && echo yes || echo no)
 say "adb root: $R"
 
-# 1) Контент: локальная манга в папке Yomikai/local
-adb shell "mkdir -p /sdcard/Yomikai/local/ZenTest"
-adb push "$CBZ" "/sdcard/Yomikai/local/ZenTest/zen01.cbz" >> "$ART/adb.log" 2>&1
-adb shell "ls -la /sdcard/Yomikai/local/ZenTest" | tee -a "$ART/adb.log"
+# 1) Контент: папка манги создаётся от uid приложения (sdcardfs): пушим cbz в /sdcard/Download,
+#    а ZenTest и копию делает run-as — иначе LocalSource не может записать .noxml → глав = 0.
+adb push "$CBZ" "/sdcard/Download/zen01.cbz" >> "$ART/adb.log" 2>&1
+
 
 # 2) Установка APK
 adb install -r -g "$APK" | tee -a "$ART/adb.log"
@@ -45,6 +45,17 @@ adb shell appops get $PKG MANAGE_EXTERNAL_STORAGE 2>/dev/null | head -1 | tee -a
   && pass "APK установлен ($PKG)" || fails "APK не установился"
 UID_APP=$(adb shell "dumpsys package $PKG" | awk '/userId=/{print $0}' | grep -o "appId=[0-9]*" | head -1 | cut -d= -f2)
 say "uid: $UID_APP"
+if adb shell run-as $PKG mkdir -p "/sdcard/Yomikai/local/ZenTest" >> "$ART/adb.log" 2>&1; then
+  adb shell run-as $PKG cp -f "/sdcard/Download/zen01.cbz" "/sdcard/Yomikai/local/ZenTest/zen01.cbz" >> "$ART/adb.log" 2>&1
+  say "контент заложен через run-as (uid приложения)"
+else
+  say "WARN: run-as недоступен (релиз не debuggable) — fallback: shell mkdir+chown"
+  adb shell "mkdir -p /sdcard/Yomikai/local/ZenTest"
+  adb shell run-as root cp -f "/sdcard/Download/zen01.cbz" "/sdcard/Yomikai/local/ZenTest/zen01.cbz" >> "$ART/adb.log" 2>&1 \
+    || adb shell "cp -f /sdcard/Download/zen01.cbz /sdcard/Yomikai/local/ZenTest/zen01.cbz"
+  adb shell chown -R $UID_APP:$UID_APP /sdcard/Yomikai/local/ZenTest
+fi
+adb shell "ls -la /sdcard/Yomikai/local/ZenTest/" | tee -a "$ART/adb.log"
 
 # 3) Сид настроек ДО первого запуска
 if [ "$R" = yes ]; then
@@ -74,13 +85,17 @@ adb logcat -v threadtime > "$ART/logcat.txt" 2>&1 &
 LC_PID=$!
 sleep 1
 
+probe_port(){
+  say "netstat 8765 probe ($1)"
+  adb shell "ss -lntp 2>/dev/null | grep 8765 || echo '(порт 8765 не слушается)'" | tee -a "$ART/adb.log"
+}
 # 5) Запуск приложения
 # ВАЖНО: директории манги отдаём приложению — LocalSource пишет туда .noxml маркер (иначе EPERM и глав не видно)
-adb shell chown -R $UID_APP:$UID_APP /sdcard/Yomikai
 adb shell "ls -la /sdcard/Yomikai/local/ZenTest/" | tee -a "$ART/adb.log"
 adb shell "cat /data/data/$PKG/shared_prefs/app.yomikai_preferences.xml | grep -E 'ai_http|fallback_preset|voice_engine'" | tee -a "$ART/adb.log"
 adb shell am start -n "$PKG/eu.kanade.tachiyomi.ui.main.MainActivity" >> "$ART/adb.log" 2>&1
 sleep 18
+probe_port "после старта"
 UAPY="python3 ci/emulator/uiauto.py"
 # если всё же вылез контроллер разрешений — скинуть его
 for i in 1 2 3; do
@@ -195,6 +210,7 @@ while [ $(( $(date +%s) - t0 )) -lt "$SECS" ]; do
   say "Т+$(($(date +%s) - t0))с: $CU"
 done
 
+probe_port "перед финальными логами"
 # 11) Проверки по логмам
 LC="$ART/logcat.txt"
 grep -q "AiHttpServer started on :8765" "$LC" && pass "AiHttpServer стартовал в приложении" || fails "AiHttpServer не стартовал"
