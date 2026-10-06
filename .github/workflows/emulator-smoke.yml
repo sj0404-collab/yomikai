@@ -56,8 +56,10 @@ jobs:
         id: sdk
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends libpulse0 libgl1 libgl1-mesa-dri libglvnd0 libxinerama1 libxcursor1 libxcomposite1 libxdamage1 libxi6 libxtst6 libnss3 libcups2 libxss1 libxrandr2 libasound2 unzip zip curl wget
+          sudo apt-get install -y -qq --no-install-recommends libpulse0 libgl1 libgl1-mesa-dri libglvnd0 libxinerama1 libxcursor1 libxcomposite1 libxdamage1 libxi6 libxtst6 libnss3 libcups2 libxss1 libxrandr2 libasound2 unzip zip curl wget openjdk-17-jre-headless
           export ANDROID_HOME=/home/runner/android-sdk
+          export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+          echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
           mkdir -p "$ANDROID_HOME/cmdline-tools"
           wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O /tmp/ct.zip
           unzip -q /tmp/ct.zip -d /tmp/ct
