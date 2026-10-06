@@ -39,6 +39,7 @@ for PERM in android.permission.POST_NOTIFICATIONS android.permission.READ_MEDIA_
   adb shell pm grant $PKG $PERM >/dev/null 2>&1 || true
 done
 # Видимость .cbz в /sdcard/Yomikai требует all-files доступа (scoped storage API 30+)
+adb shell pm grant $PKG android.permission.MANAGE_EXTERNAL_STORAGE >> "$ART/adb.log" 2>&1 || true
 adb shell appops set --uid $PKG MANAGE_EXTERNAL_STORAGE allow >> "$ART/adb.log" 2>&1 || true
 adb shell appops get $PKG MANAGE_EXTERNAL_STORAGE 2>/dev/null | head -1 | tee -a "$ART/adb.log"
 [ "$(adb shell pm list packages | grep -c "^package:$PKG$")" = 1 ] \

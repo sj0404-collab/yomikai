@@ -107,7 +107,11 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
                 val ocrPrefs = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
                 if (ocrPrefs.aiHttpServer().get()) {
                     eu.kanade.tachiyomi.data.ai.AiHttpServer.start(applicationContext)
+                } else {
+                    logcat(LogPriority.INFO) { "AiHttpServer: выключен в настройках, не стартую" }
                 }
+            }.onFailure { e ->
+                logcat(LogPriority.WARN, e) { "AiHttpServer: не удалось стартовать" }
             }
         }.apply { name = "ai-http-init"; priority = Thread.MIN_PRIORITY }.start()
 
