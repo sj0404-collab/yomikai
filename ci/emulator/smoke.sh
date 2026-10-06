@@ -39,8 +39,8 @@ for PERM in android.permission.POST_NOTIFICATIONS android.permission.READ_MEDIA_
   adb shell pm grant $PKG $PERM >/dev/null 2>&1 || true
 done
 # Видимость .cbz в /sdcard/Yomikai требует all-files доступа (scoped storage API 30+)
-adb shell pm grant $PKG android.permission.MANAGE_EXTERNAL_STORAGE >> "$ART/adb.log" 2>&1 || true
-adb shell appops set --uid $PKG MANAGE_EXTERNAL_STORAGE allow >> "$ART/adb.log" 2>&1 || true
+# all-files через appops (pm grant → SecurityException: permission not changeable)
+adb shell appops set $PKG MANAGE_EXTERNAL_STORAGE allow >> "$ART/adb.log" 2>&1 || true
 adb shell appops get $PKG MANAGE_EXTERNAL_STORAGE 2>/dev/null | head -1 | tee -a "$ART/adb.log"
 [ "$(adb shell pm list packages | grep -c "^package:$PKG$")" = 1 ] \
   && pass "APK установлен ($PKG)" || fails "APK не установился"
@@ -55,14 +55,20 @@ if [ -z "$USERID" ]; then
 fi
 UID_APP=$USERID
 say "uid: $UID_APP"
-if adb shell run-as $PKG mkdir -p "/sdcard/Yomikai/local/ZenTest" >> "$ART/adb.log" 2>&1; then
+# FUSE /sdcard: chown НЕ меняет владельца для существующих файлов (остаётся старый uid),
+# поэтому мангу создаёт из-под uid приложения — toybox setpriv (adb root есть).
+RUN_AS_APP="setpriv --reuid=$UID_APP --regid=$UID_APP --clear-groups"
+if adb shell "command -v setpriv" >/dev/null 2>&1; then
+  adb shell "$RUN_AS_APP mkdir -p /sdcard/Yomikai/local/ZenTest" >> "$ART/adb.log" 2>&1
+  adb shell "$RUN_AS_APP cp -f /sdcard/Download/zen01.cbz /sdcard/Yomikai/local/ZenTest/zen01.cbz" >> "$ART/adb.log" 2>&1
+  say "контент заложен от uid приложения (setpriv)"
+elif adb shell run-as $PKG mkdir -p "/sdcard/Yomikai/local/ZenTest" >> "$ART/adb.log" 2>&1; then
   adb shell run-as $PKG cp -f "/sdcard/Download/zen01.cbz" "/sdcard/Yomikai/local/ZenTest/zen01.cbz" >> "$ART/adb.log" 2>&1
   say "контент заложен через run-as (uid приложения)"
 else
-  say "WARN: run-as недоступен (релиз не debuggable) — fallback: shell mkdir+chown"
+  say "WARN: ни setpriv, ни run-as — fallback: shell mkdir+chown"
   adb shell "mkdir -p /sdcard/Yomikai/local/ZenTest"
-  adb shell run-as root cp -f "/sdcard/Download/zen01.cbz" "/sdcard/Yomikai/local/ZenTest/zen01.cbz" >> "$ART/adb.log" 2>&1 \
-    || adb shell "cp -f /sdcard/Download/zen01.cbz /sdcard/Yomikai/local/ZenTest/zen01.cbz"
+  adb shell "cp -f /sdcard/Download/zen01.cbz /sdcard/Yomikai/local/ZenTest/zen01.cbz"
   adb shell chown -R $UID_APP:$UID_APP /sdcard/Yomikai/local/ZenTest
 fi
 adb shell "ls -la /sdcard/Yomikai/local/ZenTest/" | tee -a "$ART/adb.log"
