@@ -44,7 +44,14 @@ adb shell appops set --uid $PKG MANAGE_EXTERNAL_STORAGE allow >> "$ART/adb.log" 
 adb shell appops get $PKG MANAGE_EXTERNAL_STORAGE 2>/dev/null | head -1 | tee -a "$ART/adb.log"
 [ "$(adb shell pm list packages | grep -c "^package:$PKG$")" = 1 ] \
   && pass "APK установлен ($PKG)" || fails "APK не установился"
-UID_APP=$(adb shell "dumpsys package $PKG" | awk '/userId=/{print $0}' | grep -o "appId=[0-9]*" | head -1 | cut -d= -f2)
+# uid приложения — на API 30+ строка "userId=10192", на 	older "appId=10192"; парсим оба
+USERID=$(adb shell "dumpsys package $PKG" | grep -m1 "userId=" | grep -oE "[0-9]+" | head -1)
+say "userId line: $(adb shell "dumpsys package $PKG" | grep -m1 "userId=")"
+if [ -z "$USERID" ]; then
+  say "FATAL: не распарсил userId — сиды бессмысленны"
+  exit 1
+fi
+UID_APP=$USERID
 say "uid: $UID_APP"
 if adb shell run-as $PKG mkdir -p "/sdcard/Yomikai/local/ZenTest" >> "$ART/adb.log" 2>&1; then
   adb shell run-as $PKG cp -f "/sdcard/Download/zen01.cbz" "/sdcard/Yomikai/local/ZenTest/zen01.cbz" >> "$ART/adb.log" 2>&1
