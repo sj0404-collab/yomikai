@@ -215,14 +215,30 @@ $UAPY cap "$ART/06b_engine_picked.png"
 adb shell input keyevent BACK   # закрыть меню выбора движка
 sleep 2
 $UAPY dumpfile "$ART/ui_reader_menu.xml"
-adb shell input tap 720 135     # иконка авточтения (голова-шестерёнка в app-bar)
-sleep 3
+# app-bar точно поднят: тап по центру и СРАЗУ иконка авточтения (не ждём автотайма хелта)
+adb shell input tap 720 900
+sleep 1
+$UAPY dumpfile "$ART/ui_reader_appbar2.xml"
+if $UAPY tapnode "Авточтение\|Прочтите\|Вслух\|Читать главу" 8; then
+  say "Иконка авточтения тапнута по desc"
+fi
+sleep 2
 $UAPY cap "$ART/07_autoread_menu.png"
 $UAPY dumpfile "$ART/ui_autoread_menu.xml"
 STARTED=0
-for s in "Читать главу" "Читать вслух" "Авточтение" "Слушать главу" "Голосом" "Читать с голосом"; do
-  if $UAPY tapnode "$s" 10; then say "Запустил авточтение: $s"; STARTED=1; break; fi
+for s in "Читать главу" "Читать вслух" "Читать с голосом" "Голосом" "Вслух" "Слушать главу" "Авточтение"; do
+  if $UAPY tapnode "$s" 8; then say "Запустил авточтение: $s"; STARTED=1; break; fi
 done
+if [ $STARTED = 0 ]; then
+  say "по тексту не нашлось — жму координату иконки авточтения (голова-шестерёнка)"
+  adb shell input tap 720 135
+  sleep 3
+  $UAPY cap "$ART/07b_autoread_menu.png"
+  $UAPY dumpfile "$ART/ui_autoread_menu2.xml"
+  for s in "Читать главу" "Читать вслух" "Читать с голосом" "Голосом" "Вслух"; do
+    if $UAPY tapnode "$s" 8; then say "Запустил авточтение: $s"; STARTED=1; break; fi
+  done
+fi
 if [ $STARTED = 1 ]; then
   pass "Авточтение главы запущено"
 else
