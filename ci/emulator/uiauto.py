@@ -90,3 +90,9 @@ if __name__ == "__main__":
         screencap(sys.argv[2]); print("cap", sys.argv[2])
     elif cmd == "tapxy":
         tap(int(sys.argv[2]), int(sys.argv[3])); print("tap", sys.argv[2], sys.argv[3])
+    elif cmd == "dumpfile":
+        # полный UI-дамп прямо в файл (для офлайн-разбора content-desc/координат)
+        xml_str = dump()
+        with open(sys.argv[2], "w") as f:
+            f.write(xml_str)
+        print("dumpfile", sys.argv[2], len(xml_str))

@@ -192,18 +192,41 @@ $UAPY cap "$ART/05_reader.png"
 CURR=$(adb shell dumpsys activity activities | grep -m1 "topResumedActivity" || true)
 echo "$CURR" | grep -qiE "Reader|reader|ui.reader" && pass "Читалка открыта" || fails "Читалка не открылась"
 
-# 9) Overlay → OCR-меню → «Читать главу»
-adb shell input tap 720 900   # центр: поднять оверлей
+# 9) Overlay → OEM-меню → онлайн-движок → авточтение
+# первый запуск читалки: баннер полного экрана и подсказки зон — снять
+$UAPY tapnode "Got it" 8 || $UAPY tapnode "Понятно" 8 || true
+sleep 1
+adb shell input tap 720 900   # снять Н-hint (Left/Right) если ещё висит
+sleep 1
+adb shell input tap 720 900   # поднять app-bar
 sleep 2
+$UAPY dumpfile "$ART/ui_reader_appbar.xml"
 $UAPY tapnode "^OCR$" 10 || $UAPY tapnode "DocumentScanner|OCR" 10
 sleep 2
 $UAPY cap "$ART/06_ocr_menu.png"
-if $UAPY tapnode "Читать главу" 10; then
-  pass "Авточтение главы запущено"
-  STARTED=1
+# выбираем ОНЛАЙН-движок Space Bunny Free (OpenCode Zen) — без ключей
+if $UAPY tapnode "OpenCode Zen" 12 || $UAPY tapnode "Space Bunny" 12; then
+  pass "Движок OCR = Space Bunny Free (OpenCode Zen, онлайн)"
 else
-  fails "Кнопка «Читать главу» не найдена"
-  STARTED=0
+  say "NOTE: онлайн-движок в меню не тапнулся"
+fi
+sleep 2
+$UAPY cap "$ART/06b_engine_picked.png"
+adb shell input keyevent BACK   # закрыть меню выбора движка
+sleep 2
+$UAPY dumpfile "$ART/ui_reader_menu.xml"
+adb shell input tap 720 135     # иконка авточтения (голова-шестерёнка в app-bar)
+sleep 3
+$UAPY cap "$ART/07_autoread_menu.png"
+$UAPY dumpfile "$ART/ui_autoread_menu.xml"
+STARTED=0
+for s in "Читать главу" "Читать вслух" "Авточтение" "Слушать главу" "Голосом" "Читать с голосом"; do
+  if $UAPY tapnode "$s" 10; then say "Запустил авточтение: $s"; STARTED=1; break; fi
+done
+if [ $STARTED = 1 ]; then
+  pass "Авточтение главы запущено"
+else
+  fails "Кнопка «Читать главу» не найдена (см. 07_autoread_menu.png и ui_autoread_menu.xml)"
 fi
 
 # 10) 3 минуты авточтения: кадры, листание, логкат-маркеры
