@@ -44,9 +44,11 @@ adb shell appops set --uid $PKG MANAGE_EXTERNAL_STORAGE allow >> "$ART/adb.log" 
 adb shell appops get $PKG MANAGE_EXTERNAL_STORAGE 2>/dev/null | head -1 | tee -a "$ART/adb.log"
 [ "$(adb shell pm list packages | grep -c "^package:$PKG$")" = 1 ] \
   && pass "APK установлен ($PKG)" || fails "APK не установился"
-# uid приложения — на API 30+ строка "userId=10192", на 	older "appId=10192"; парсим оба
-USERID=$(adb shell "dumpsys package $PKG" | grep -m1 "userId=" | grep -oE "[0-9]+" | head -1)
-say "userId line: $(adb shell "dumpsys package $PKG" | grep -m1 "userId=")"
+# uid приложения — самый стабильный вывод: pm list packages -U → "package:app.yomikai uid:10192"
+PMU=$(adb shell "pm list packages -U" | grep -F "package:$PKG" | head -1)
+say "pm -U line: $PMU"
+USERID=$(echo "$PMU" | grep -oE "uid:[0-9]+" | cut -d: -f2)
+[ -z "$USERID" ] && USERID=$(adb shell "dumpsys package $PKG" | grep -m1E "userId=|appId=" | grep -oE "[0-9]+" | head -1)
 if [ -z "$USERID" ]; then
   say "FATAL: не распарсил userId — сиды бессмысленны"
   exit 1
