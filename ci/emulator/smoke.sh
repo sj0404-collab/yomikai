@@ -192,63 +192,45 @@ $UAPY cap "$ART/05_reader.png"
 CURR=$(adb shell dumpsys activity activities | grep -m1 "topResumedActivity" || true)
 echo "$CURR" | grep -qiE "Reader|reader|ui.reader" && pass "Читалка открыта" || fails "Читалка не открылась"
 
-# 9) Быстрые действия манги (FAB): розовая «читать голосом» → авточтение сразу;
-#    иначе через Start → читалка → иконки app-bar.
-adb shell input tap 558 1417    # розовая FAB «читать с голосом»
-sleep 5
-$UAPY cap "$ART/06_fab_route.png"
-$UAPY dumpfile "$ART/ui_fab_route.xml"
-STARTED=0
-if $UAPY tapnode "Got it" 6 || $UAPY tapnode "Понятно" 6; then sleep 2; fi
-# авточтение уже запустилось самой FAB? проверим по любому текстовому маркеру
-DUMP=$($UAPY dump 2>/dev/null || true)
-if echo "$DUMP" | grep -qiE "пауз|стоп|auto.read|пуск|останов"; then
-  STARTED=1; say "FAB: авточтение похоже активно"
+# 9) Reader-app-bar по desc: OCR-движок → Space Bunny (онлайн) → Меню читалки → «Читать главу»
+$UAPY tapnode "Got it" 6 || $UAPY tapnode "Понятно" 6 || true
+sleep 1
+adb shell input tap 730 1200    # поднять app-bar (физ. 1440x2560)
+sleep 1
+$UAPY dumpfile "$ART/ui_appbar.xml"
+if $UAPY tapnode "^OCR-движок$" 10; then
+  say "открыл меню движков"
 else
-  say "FAB: не запустилась — маршрут Start → читалка → app-bar"
-  adb shell input keyevent BACK >/dev/null 2>&1 || true
-  sleep 1
-  adb shell input keyevent BACK >/dev/null 2>&1 || true
-  sleep 1
-  # вернулись на экран манги → Start
-  if $UAPY tapnode "Start" 8 || $UAPY tapnode "Продолжить" 8 || $UAPY tapnode "Read" 8; then
-    say "Start тапнулся"
-  else
-    adb shell input tap 740 1417   # fallback: правая синяя Start кнопка
-  fi
-  sleep 12
-  $UAPY cap "$ART/05b_reader.png"
-  # баннер / hints
-  $UAPY tapnode "Got it" 6 || $UAPY tapnode "Понятно" 6 || true
-  sleep 1
-  # app-bar: центр, движок, назад, авточтение
-  adb shell input tap 720 900
-  sleep 1
-  adb shell input tap 617 125
-  sleep 2
-  $UAPY cap "$ART/06_ocr_menu.png"
-  if $UAPY tapnode "Space Bunny" 8 || $UAPY tapnode "OpenCode" 8; then
-    pass "Движок OCR = Space Bunny Free (OpenCode Zen, онлайн)"
-  else
-    say "NOTE: онлайн-движок не тапнулся (см. 06_ocr_menu.png)"
-  fi
-  sleep 1
-  adb shell input keyevent BACK
-  sleep 1
-  adb shell input tap 720 900
-  sleep 1
-  adb shell input tap 720 125
-  sleep 3
-  $UAPY cap "$ART/07_autoread_menu.png"
-  $UAPY dumpfile "$ART/ui_autoread_menu.xml"
-  for s in "Читать главу" "Читать вслух" "Читать с голосом" "Голосом" "Вслух" "Начать чтение" "Слушать главу" "Авточтение"; do
-    if $UAPY tapnode "$s" 8; then say "Запустил авточтение: $s"; STARTED=1; break; fi
-  done
+  adb shell input tap 1174 196  # физ. координата иконки OCR-движок (из ui dump bounds)
 fi
+sleep 2
+$UAPY cap "$ART/06_ocr_menu.png"
+if $UAPY tapnode "Space Bunny" 10 || $UAPY tapnode "OpenCode" 10; then
+  pass "Движок OCR = Space Bunny Free (OpenCode Zen, онлайн)"
+else
+  say "NOTE: онлайн-движок не тапнулся (см. 06_ocr_menu.png)"
+fi
+sleep 1
+adb shell input keyevent BACK
+sleep 1
+adb shell input tap 730 1200    # app-bar снова вверх
+sleep 1
+if $UAPY tapnode "^Меню читалки$" 10; then
+  say "открыл меню читалки"
+else
+  adb shell input tap 1342 196
+fi
+sleep 3
+$UAPY cap "$ART/07_autoread_menu.png"
+$UAPY dumpfile "$ART/ui_autoread_menu.xml"
+STARTED=0
+for s in "Читать главу" "Читать вслух" "Читать с голосом" "Голосом" "Вслух" "Начать чтение" "Слушать главу" "Авточтение" "Озвучить"; do
+  if $UAPY tapnode "$s" 8; then say "Запустил авточтение: $s"; STARTED=1; break; fi
+done
 if [ $STARTED = 1 ]; then
   pass "Авточтение главы запущено"
 else
-  fails "Авточтение не запустилось ни FAB, ни через меню (см. 06/07 + ui_autoread_menu.xml)"
+  fails "Авточтение не запустилось (см. 07_autoread_menu.png + ui_autoread_menu.xml)"
 fi
 
 # 10) 3 минуты авточтения: кадры, листание, логкат-маркеры
