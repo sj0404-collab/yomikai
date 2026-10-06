@@ -75,6 +75,10 @@ if [ "$R" = yes ]; then
 EOF
   adb push "$ART/prefs.xml" "/data/data/$PKG/shared_prefs/app.yomikai_preferences.xml" >/dev/null
   adb shell "chown $UID_APP:$UID_APP /data/data/$PKG/shared_prefs/app.yomikai_preferences.xml; chmod 660 /data/data/$PKG/shared_prefs/app.yomikai_preferences.xml"
+  # SELinux-контекст: без этого app не может прочитать файл (W SharedPreferencesImpl: without permission)
+  adb shell "restorecon /data/data/$PKG/shared_prefs/app.yomikai_preferences.xml" >> "$ART/adb.log" 2>&1 || \
+  adb shell "chcon u:object_r:app_data_file:s0:c192,c256,c512,c768 /data/data/$PKG/shared_prefs/app.yomikai_preferences.xml" >> "$ART/adb.log" 2>&1 || true
+  adb shell "ls -laZ /data/data/$PKG/shared_prefs/app.yomikai_preferences.xml" | tee -a "$ART/adb.log"
   pass "Настройки засеяны (preset=online, voice=edge_tts, onboarding+token)"
 else
   fails "Нет root — prefs не засеять"
