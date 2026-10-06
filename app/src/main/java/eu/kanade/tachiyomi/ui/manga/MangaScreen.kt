@@ -357,9 +357,27 @@ class MangaScreen(
                         val engineOptions = screenModel.autoReadEngineOptions(
                             networkAvailable = rememberNetworkState(context, showScanSettings),
                         )
+                        val ocrPrefs = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
                         engineOptions.forEach { option ->
-                            ScanEngineRow(option, scanEngine) { model -> scanEngine = model }
+                            // v1.9.134: у каждого движка — замер последнего кадра
+                            // авточтения (мс), чтобы скорость модели сравнивалась
+                            // прямо в диалоге, а не на глаз.
+                            ScanEngineRow(
+                                option,
+                                scanEngine,
+                                ocrPrefs.autoReadLastMs(option.model).get().ifBlank { null },
+                            ) { model -> scanEngine = model }
                         }
+                        // Режим авточтения выбирается ОТДЕЛЬНО под каждый движок:
+                        // GLens с «page» не перечитывает реплики, Space Bunny со
+                        // «stream» не молчит, пока переводится кадр.
+                        Spacer(Modifier.height(8.dp))
+                        val scanModePref = ocrPrefs.autoReadModeFor(scanEngine)
+                        val scanMode by scanModePref.changes().collectAsState(initial = scanModePref.get())
+                        Text("Режим авточтения", fontWeight = FontWeight.Bold)
+                        ScanFormatRow("Строки сразу", "stream", scanMode) { scanModePref.set(it) }
+                        ScanFormatRow("Баблоны с буфером слов", "bubble", scanMode) { scanModePref.set(it) }
+                        ScanFormatRow("Вся страница одной озвучкой", "page", scanMode) { scanModePref.set(it) }
                         Spacer(Modifier.height(8.dp))
                         Text("Формат документа", fontWeight = FontWeight.Bold)
                         ScanFormatRow("Markdown (md)", "md", scanFormat) { scanFormat = it }
@@ -684,6 +702,7 @@ class MangaScreen(
 private fun ScanEngineRow(
     option: AutoReadEngineOption,
     current: OcrModel,
+    lastMs: String? = null,
     onSelect: (OcrModel) -> Unit,
 ) {
     val enabled = option.available
@@ -701,6 +720,14 @@ private fun ScanEngineRow(
         )
         Column {
             Text(option.title, color = LocalContentColor.current.copy(alpha = alpha))
+            // v1.9.134: последний замер кадра авточтения этого движка.
+            lastMs?.let {
+                Text(
+                    text = "⏱ последний кадр: $it мс",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = LocalContentColor.current.copy(alpha = DISABLED_ALPHA),
+                )
+            }
             option.unavailableReason?.let {
                 Text(
                     text = it,

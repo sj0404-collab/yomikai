@@ -183,6 +183,29 @@ class OcrPreferences(
     // Авто-OCR видимой страницы + мгновенная озвучка результата
     fun autoScanAndSpeak() = preferenceStore.getBoolean("pref_auto_scan_speak", false)
 
+    /**
+     * Режим авточтения ПОД КОНКРЕТНУЮ модель (ранее — один общий конвейер
+     * для всех движков; GLens повторял целые реплики, Space Bunny медлил
+     * на переводе — теперь поведение подстраивается под природу движка):
+     *  - "stream" — «Строки сразу»: перевод страницы идёт в фоне, озвучка
+     *    стартует немедленно с оригинала и подхватывает перевод по мере
+     *    готовности. Для быстрых OCR / чтения исходного языка.
+     *  - "bubble" — «Баблоны с буфером слов» (дефолт): стабильный
+     *    по-баллонный путь с отсечением уже прочитанных слов.
+     *  - "page"   — «Вся страница одной озвучкой»: кадр склеивается в
+     *    одну реплику (дубль-приставка у старых слов всё равно срезается).
+     */
+    fun autoReadModeFor(model: OcrModel) = preferenceStore.getString(
+        "pref_autoread_mode_" + model.name.lowercase(),
+        "bubble",
+    )
+
+    /** Последний замер скорости кадра авточтения (мс) для движка [model]. */
+    fun autoReadLastMs(model: OcrModel) = preferenceStore.getString(
+        "pref_autoread_last_ms_" + model.name.lowercase(),
+        "",
+    )
+
     // Пресет направления сканирования/чтения страницы:
     // rtl (манга), ltr (комиксы), vertical (вебтуны)
     fun scanReadingOrder() = preferenceStore.getString("pref_scan_reading_order", "rtl")

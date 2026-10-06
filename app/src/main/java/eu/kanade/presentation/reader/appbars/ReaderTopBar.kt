@@ -1,5 +1,6 @@
 package eu.kanade.presentation.reader.appbars
 
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Bookmark
@@ -194,6 +195,9 @@ private fun OcrModelQuickSwitcher() {
                 model == OcrModel.OPENROUTER || model == OcrModel.GOOGLE -> "онлайн • нужен API-ключ"
                 else -> "онлайн • без ключа"
             }
+            // v1.9.134: замер кадра в мс — прямо у движка, чтобы было видно,
+            // «кто медлит» (GLens быстрый, но вручную никто не мерил).
+            val lastMsRaw = prefs.autoReadLastMs(model).changes().collectAsState(initial = prefs.autoReadLastMs(model).get()).value
             DropdownMenuItem(
                 text = {
                     androidx.compose.foundation.layout.Column {
@@ -201,6 +205,13 @@ private fun OcrModelQuickSwitcher() {
                         if (subtitle != null) {
                             Text(
                                 subtitle,
+                                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (lastMsRaw.isNotBlank()) {
+                            Text(
+                                "⏱ последний кадр: $lastMsRaw мс",
                                 style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
                                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -234,6 +245,40 @@ private fun OcrModelQuickSwitcher() {
                         }
                     }
                 },
+            )
+        }
+        // v1.9.134: режим АВТОЧТЕНИЯ СОХРАНЯЕТСЯ ОТДЕЛЬНО ДЛЯ КАЖДОЙ МОДЕЛИ.
+        // GLens быстрый, но при росте области захвата перевыпускал реплики
+        // целиком — «page»/«bubble» читают с отсечением прочитанных слов
+        // (см. AutoReadEngine.stripSpokenPrefix); «stream» запускает озвучку,
+        // не дожидаясь перевода страницы (ветка, которая медлила «по циклам»).
+        androidx.compose.material3.HorizontalDivider()
+        val modePref = prefs.autoReadModeFor(current)
+        val currentMode by modePref.changes().collectAsState(initial = modePref.get())
+        androidx.compose.material3.Text(
+            text = "Режим авточтения: " + stringResource(current.titleRes),
+            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+        )
+        listOf(
+            Triple("Строки сразу", "stream", "реплики звучат мгновенно, перевод подхватится сам"),
+            Triple("Баблоны с буфером слов", "bubble", "стабильно: прочитанные слова не повторяются"),
+            Triple("Вся страница одной озвучкой", "page", "один кадр — одна фраза, без пауз"),
+        ).forEach { (label, value, hint) ->
+            DropdownMenuItem(
+                text = {
+                    androidx.compose.foundation.layout.Column {
+                        Text(label)
+                        Text(
+                            hint,
+                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
+                leadingIcon = { RadioButton(selected = currentMode == value, onClick = null) },
+                onClick = { modePref.set(value) },
             )
         }
     }

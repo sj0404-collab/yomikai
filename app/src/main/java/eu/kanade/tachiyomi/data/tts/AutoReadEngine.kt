@@ -526,6 +526,10 @@ class AutoReadEngine(
      */
     private val spokenTexts = ArrayDeque<String>()
 
+    /** Сырые (не сжатые) строки истории — нужны stripSpokenPrefix для
+     *  пословного префикс-матча (нормы выше склеены без пробелов). */
+    private val spokenRaws = ArrayDeque<String>()
+
     @Synchronized
     private fun isDuplicate(rawText: String): Boolean {
         val norm = rawText.lowercase().filter { it.isLetterOrDigit() }
@@ -544,12 +548,80 @@ class AutoReadEngine(
             if (isSameSpokenLine(old, norm)) return true
         }
         spokenTexts.addLast(norm)
+        spokenRaws.addLast(rawText)
         while (spokenTexts.size > HISTORY_LIMIT) spokenTexts.removeFirst()
+        while (spokenRaws.size > HISTORY_LIMIT) spokenRaws.removeFirst()
         return false
     }
 
     @Synchronized
-    fun clearHistory() = spokenTexts.clear()
+    fun clearHistory() {
+        spokenTexts.clear()
+        spokenRaws.clear()
+    }
+
+    // ---- v1.9.134: GLens-дубли «реплика выросла» ----
+    // GLens (и любой движок) при расширении области захвата или лёгком дрожании
+    // рамки перевыпускает ТУ ЖЕ реплику с новым хвостом: «…вперёд!» → «…вперёд!
+    // Берегись!». Точный lineKey проходит мимо, а нечёткая история [isDuplicate]
+    // ловит целиком, только если старый текст — почти весь новый. Если старая
+    // строка короткая, а новая — та же реплика + ещё пара предложений, кадр
+    // перечитывался сначала. Решение: перед озвучкой срезаем УЖЕ ПРОЧИТАННУЮ
+    // словарную приставку — озвучиваются только новые слова.
+    private data class WordTok(val start: Int, val end: Int, val word: String)
+
+    private val wordRegex = Regex("[A-Za-zА-Яа-яЁё0-9'ʼ’]+")
+
+    private fun tokensOf(s: String): List<WordTok> =
+        wordRegex.findAll(s).map { m -> WordTok(m.range.first, m.range.last + 1, m.value.lowercase()) }.toList()
+
+    /**
+     * Отрезает ведущие слова [text], если они являются (почти) точным ПРЕФИКСОМ
+     * уточнённого продолжения одной из уже озвученных реплик [spokenTexts].
+     * Возвращает хвост (только новую часть) или null — если срезать нечего.
+     * Допускается одно «шумное» слово-вставка у границы (межпредложные OCR-ломы
+     * вроде «Ё» / «—» не должны ломать стык).
+     */
+    private fun stripSpokenPrefix(text: String): String? {
+        val toks = tokensOf(text)
+        if (toks.size < 2) return null
+        var cutEnd = -1
+        synchronized(this) {
+            val reversed = spokenRaws.asReversed()
+            for (oldRaw in reversed) {
+                val old = tokensOf(oldRaw).map { it.word }
+                // Реплика «выросла» => историческая строка СТРОГО короче новой.
+                // Одинаковая длина — это та же строка из истории текущего кадра
+                // (isDuplicate добавляет строки ещё на этапе фильтра); чистить
+                // её префиксом самой себя = гасить всю озвучку.
+                if (old.size < 3 || old.size >= toks.size) continue
+                var si = 0; var oi = 0; var skipped = 0
+                while (si < toks.size && oi < old.size) {
+                    if (toks[si].word == old[oi]) { si++; oi++ }
+                    else {
+                        skipped++
+                        if (skipped > 1) break
+                        si++
+                    }
+                }
+                // Старая реплика полностью «поглощена» приставкой новой →
+                // всё до конца последнего совпавшего слова читать не надо.
+                if (oi >= old.size && si > 0) {
+                    val e = toks[si - 1].end
+                    if (e > cutEnd) cutEnd = e
+                }
+            }
+        }
+        if (cutEnd <= 0) return null
+        val tail = text.substring(cutEnd).trimStart { it.isPunctuation() || it.isWhitespace() }
+        // Хвост из пары слов («нет», «ага!») — шумное оборвание реплики,
+        // а не новый текст; но полноценную фразу пропускать нельзя.
+        return when {
+            tail.isEmpty() -> ""
+            tokensOf(tail).size < 2 -> ""
+            else -> tail
+        }
+    }
 
     /**
      * Порядок чтения кадра: сначала выученное правило книги, иначе пресет
@@ -723,6 +795,10 @@ class AutoReadEngine(
                 // кадра только жгло бы время (и трафик онлайн-движка) на текст,
                 // который лежит в кэше. Потокового прохода при этом нет — реплики
                 // всё равно придут пачкой, озвучка ниже их разберёт по очереди.
+                // v1.9.134: замер скорости кадра в миллисекундах — юзер просил
+                // видеть, кто медлит: снимок/детект/OCR против озвучки. t0 —
+                // старт OCR кадра; полный итог — после склейки строк.
+                val tFrame0 = android.os.SystemClock.elapsedRealtime()
                 val result: mihon.domain.ocr.model.OcrPageResult = if (cachedResult != null) {
                     logcat(LogPriority.DEBUG) {
                         "AutoRead frame pageIndex=$pageIndex: берём текст из кэша скана " +
@@ -920,6 +996,18 @@ class AutoReadEngine(
                 // а не по фиксированным 12% полосам — убирает «лесенку»)
                 val ordered = orderRegions(fresh, order)
 
+                // v1.9.134: фиксируем скорость кадра (снимок + OCR + разбор
+                // строк, БЕЗ времени самой озвучки — она не входит в кадровый
+                // конвейер). Видимость: строка в «Консоль ИИ» + рядом с
+                // движком в диалоге выбора (per-engine pref last_ms).
+                val frameMs = android.os.SystemClock.elapsedRealtime() - tFrame0
+                runCatching { prefs.autoReadLastMs(result.ocrModel).set(frameMs.toString()) }
+                eu.kanade.tachiyomi.data.ai.AiConsole.ocr(
+                    title = "⏱ Кадр $pageIndex · ${result.ocrModel.name} · ${frameMs} мс",
+                    detail = "режим ${prefs.autoReadModeFor(result.ocrModel).get()} · реплик ${ordered.size} · кэш ${cachedResult != null}",
+                )
+                logcat(LogPriority.INFO) { "AutoRead ⏱ frame=$pageIndex engine=${result.ocrModel.name} ms=$frameMs lines=${ordered.size}" }
+
                 // ===== СКРИНШОТ: сохраняем распознанные регионы в буфер =====
                 // Лёгкая запись (~1-5 KB) — текст + координаты + JPEG-кадр кадра
                 // (который снимался ещё до recycle). Показывается на вкладке
@@ -1038,7 +1126,22 @@ class AutoReadEngine(
                         if (translate && language != target) append(" · перевод на ").append(target)
                     },
                 )
-                val translations: List<String> = if (translate && language != target) {
+                // v1.9.134: РЕЖИМ АВТОЧТЕНИЯ ПОД ДВИЖОК (per-model pref).
+                //  stream — «Строки сразу»: обратный запрос перевода уходит
+                //           в фон, озвучка стартует сразу (для цепочек
+                //           «быстрый OCR + медленный перевод» — раньше первое
+                //           слово ждало весь пакет перевода страницы).
+                //  bubble — стабильный по-баллонный путь (дефолт).
+                //  page   — кадр целиком одной озвучкой (см. wholePageMode).
+                val autoReadMode = prefs.autoReadModeFor(result.ocrModel).get()
+                val streamMode = autoReadMode == "stream"
+                val translationsDeferred = if (translate && language != target && streamMode) {
+                    scope.async {
+                        runCatching { MangaTranslatorService.translateAll(ordered.map { it.text }, target) }
+                            .getOrElse { ordered.map { it.text } }
+                    }
+                } else null
+                val translations: List<String> = if (translate && language != target && !streamMode) {
                     runCatching { MangaTranslatorService.translateAll(ordered.map { it.text }, target) }
                         .getOrElse { ordered.map { it.text } }
                 } else {
@@ -1080,14 +1183,32 @@ class AutoReadEngine(
                 // ниоткуда, и страница всегда читалась по баблам. Здесь тот же
                 // результат получается без второго снимка: текст кадра уже есть,
                 // листание и учёт истории — те же самые.
-                val wholePageMode = prefs.autoScanAndSpeak().get() && speakable.size > 1
+                // Режим «page» (per-dвижок) форсирует чтение кадра одной
+                // озвучкой независимо от общего переключателя «Сканировать и
+                // озвучить страницу»: у онлайн-движков так один сетевой кадр
+                // превращается в одну реплику без меж-баллонных пауз.
+                val wholePageMode = (autoReadMode == "page" || prefs.autoScanAndSpeak().get()) && speakable.size > 1
                 if (wholePageMode) {
-                    val joined = speakable.joinToString(". ") { it.text.trim() }
+                    // GLens-фикс: у каждой реплики кадра перед склейкой срезаем
+                    // уже озвученную словарную приставку (stripSpokenPrefix) —
+                    // выросшая/повторно попавшая в захват реплика перечитывает
+                    // ТОЛЬКО новые слова вместо всей фразы.
+                    val joined = speakable
+                        .mapNotNull { line ->
+                            val t = line.text.trim()
+                            stripSpokenPrefix(t) ?: t
+                        }
+                        .filter { it.isNotBlank() }
+                        .joinToString(". ")
                     val pageGender = speakerGenderFor(
                         VoiceModeResolver.currentMode(),
                         genders.get(ordered.indexOfFirst { it.text == speakable.first().text }),
                     )
-                    when (speakAndAwait(SpeechMarkup.strip(joined), pageGender, 0)) {
+                    if (joined.isBlank()) {
+                        // Весь кадр звучал раньше (приставки срезались дочиста):
+                        // помечаем реплики прочитанными и листаем дальше.
+                        speakable.forEach { spokenLines.add(lineKey(it.text)) }
+                    } else when (speakAndAwait(SpeechMarkup.strip(joined), pageGender, 0)) {
                         SpeakOutcome.SPOKEN, SpeakOutcome.SILENT -> {
                             rejectedStreak = 0
                             speakable.forEach { spokenLines.add(lineKey(it.text)) }
@@ -1156,11 +1277,30 @@ class AutoReadEngine(
                         )
                     }
 
-                    val translatedText = translations.getOrNull(orderedIndex)?.takeIf { it.isNotBlank() }
-                    val speakTextRaw = if (translate && language != target) {
+                    // STREAM-режим: пакетный перевод ещё в пути — читаем
+                    // оригинал; прилетел — подхватываем с этой же реплики.
+                    val translatedText = when {
+                        translationsDeferred != null && translationsDeferred.isCompleted ->
+                            translationsDeferred.getCompleted().getOrNull(orderedIndex)?.takeIf { it.isNotBlank() }
+                        translationsDeferred != null -> null
+                        else -> translations.getOrNull(orderedIndex)?.takeIf { it.isNotBlank() }
+                    }
+                    var speakTextRaw = if (translate && language != target) {
                         translatedText ?: region.text
                     } else {
                         prep?.text?.takeIf { it.isNotBlank() } ?: translatedText ?: region.text
+                    }
+
+                    // GLens-фикс (по-баллонный путь): та же реплика пришла
+                    // с новым хвостом — отрезаем уже прочитанную приставку
+                    // и озвучиваем только новые слова; хвоста нет — реплика
+                    // повторная, закрываем её как прочитанную.
+                    val grownTail = stripSpokenPrefix(speakTextRaw)
+                    if (grownTail != null && grownTail.isBlank()) {
+                        spokenLines.add(lineKey(region.text))
+                        continue
+                    } else if (grownTail != null) {
+                        speakTextRaw = grownTail
                     }
 
                     // Ручной режим важнее автоопределения: читатель выбрал
