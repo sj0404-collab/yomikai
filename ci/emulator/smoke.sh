@@ -75,6 +75,9 @@ LC_PID=$!
 sleep 1
 
 # 5) Запуск приложения
+# ВАЖНО: директории манги отдаём приложению — LocalSource пишет туда .noxml маркер (иначе EPERM и глав не видно)
+adb shell chown -R $UID_APP:$UID_APP /sdcard/Yomikai
+adb shell "ls -la /sdcard/Yomikai/local/ZenTest/" | tee -a "$ART/adb.log"
 adb shell "cat /data/data/$PKG/shared_prefs/app.yomikai_preferences.xml | grep -E 'ai_http|fallback_preset|voice_engine'" | tee -a "$ART/adb.log"
 adb shell am start -n "$PKG/eu.kanade.tachiyomi.ui.main.MainActivity" >> "$ART/adb.log" 2>&1
 sleep 18
