@@ -62,12 +62,11 @@ def tap_node(pattern, timeout_s=25, index=0, fields=("text", "content-desc", "re
     return True
 
 def screencap(path):
-    with open(path, "wb") as f:
-        r = sh(f"adb exec-out screencap -p", timeout=60)
-        f.write(r.stdout.encode("latin-1", "ignore") if isinstance(r.stdout, str) else r.stdout)
-    # proper: скрин бинарный — через shell с файлом надёжнее
-    sh(f"adb shell screencap -p /sdcard/_cap.png")
-    sh(f"adb pull /sdcard/_cap.png '{path}' >/dev/null 2>&1")
+    # бинарь — только через файл на устройстве (exec-out с text=True ломает PNG)
+    r = sh(f"adb shell screencap -p /sdcard/_cap.png", timeout=60)
+    r2 = sh(f"adb pull /sdcard/_cap.png '{path}'", timeout=90)
+    if r2.returncode != 0:
+        log("cap FAILED", path, r2.stderr.strip())
 
 def activity_check(pkg):
     r = sh(f"adb shell dumpsys activity activities | grep -m1 \"topResumedActivity\"")

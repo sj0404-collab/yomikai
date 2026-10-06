@@ -33,7 +33,11 @@ adb push "$CBZ" "/sdcard/Yomikai/local/ZenTest/zen01.cbz" >> "$ART/adb.log" 2>&1
 adb shell "ls -la /sdcard/Yomikai/local/ZenTest" | tee -a "$ART/adb.log"
 
 # 2) Установка APK
-adb install -r "$APK" | tee -a "$ART/adb.log"
+adb install -r -g "$APK" | tee -a "$ART/adb.log"
+# жёсткий догрант основных runtime-разрешений (POST_NOTIFICATIONS и др.)
+for PERM in android.permission.POST_NOTIFICATIONS android.permission.READ_MEDIA_IMAGES android.permission.READ_MEDIA_VIDEO android.permission.ACCESS_NETWORK_STATE; do
+  adb shell pm grant $PKG $PERM >/dev/null 2>&1 || true
+done
 [ "$(adb shell pm list packages | grep -c "^package:$PKG$")" = 1 ] \
   && pass "APK установлен ($PKG)" || fails "APK не установился"
 UID_APP=$(adb shell "dumpsys package $PKG" | awk '/userId=/{print $0}' | grep -o "appId=[0-9]*" | head -1 | cut -d= -f2)
@@ -70,6 +74,14 @@ sleep 1
 adb shell am start -n "$PKG/eu.kanade.tachiyomi.ui.main.MainActivity" >> "$ART/adb.log" 2>&1
 sleep 18
 UAPY="python3 ci/emulator/uiauto.py"
+# если всё же вылез контроллер разрешений — скинуть его
+for i in 1 2 3; do
+  CUR=$(adb shell dumpsys activity activities | grep -m1 "topResumedActivity" || true)
+  echo "$CUR" | grep -q "permissioncontroller" || break
+  say "Системный диалог разрешений — скипаю ($i)"
+  $UAPY tapnode "Разрешить" 3 || $UAPY tapnode "Allow" 3 || $UAPY tapnode "WHILE USING THE APP|При использовании|Далее|Next|OK" 3 || adb shell input keyevent BACK
+  sleep 2
+done
 $UAPY cap "$ART/01_home.png"
 CURR=$(adb shell dumpsys activity activities | grep -m1 "topResumedActivity" || true)
 say "На вершине: $CURR"
@@ -158,8 +170,8 @@ LC="$ART/logcat.txt"
 grep -q "AiHttpServer started on :8765" "$LC" && pass "AiHttpServer стартовал в приложении" || fails "AiHttpServer не стартовал"
 [ "$STARTED" = 1 ] && grep -qiE "AutoRead|reader.auto_read|avtoчтение|Авточтение|startAutoRead" "$LC" \
   && pass "Лог авточтения присутствует" || fails "Лог авточтения не найден"
-grep -qiE "zen|ZenFree|opencode.ai" "$LC" && pass "Онлайн OCR-движок вызывался (zen)" || fails "ZenFreeOcr в логе не найден"
-grep -qiE "edge|edge_tts|TrustedClientToken" "$LC" && pass "TTS (edge) в логе виден" || say "NOTE: edge_tts маркеров в logcat нет (см. сам лог)"
+grep -qiE "ZenFreeOcr|opencode.ai" "$LC" && pass "Онлайн OCR-движок вызывался (zen)" || fails "ZenFreeOcr в логе не найден"
+grep -qiE "edge_tts|TrustedClientToken" "$LC" && pass "TTS (edge) в логе виден" || say "NOTE: edge_tts маркеров в logcat нет (см. сам лог)"
 grep -qiE "bubble|YoloDetector|detectPanels" "$LC" && pass "Детектор баблонов вызывался" || say "NOTE: детектор не логирует"
 grep -qiE "FATAL EXCEPTION|AndroidRuntime: E" "$LC" && fails "В логе FATAL EXCEPTION" || pass "Fatal-крейшей нет"
 grep -qiE "ANR in" "$LC" && fails "В логе ANR" || pass "ANR нет"
