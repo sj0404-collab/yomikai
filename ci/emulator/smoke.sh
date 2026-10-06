@@ -53,6 +53,7 @@ if [ "$R" = yes ]; then
     <string name="pref_fallback_preset">online</string>
     <string name="pref_voice_engine">edge_tts</string>
     <string name="pref_ai_http_token">$TOKEN</string>
+    <boolean name="pref_ai_http_server" value="true" />
     <boolean name="pref_autoread_advance" value="true" />
     <boolean name="pref_autoread_music_enabled" value="false" />
 </map>
@@ -101,26 +102,34 @@ curl -sS -m 15 "http://127.0.0.1:8765/tts/voices?key=$TOKEN" -o "$ART/tts_voices
 grep -qi "Svetlana\|edge\|voice" "$ART/tts_voices.json" 2>/dev/null \
   && pass "Каталог голосов непустой" || fails "Каталог голосов пуст"
 
-# 7) Вкладка Каталоги (BROWSE/Catalogo/Tomiomi-варианты) — проверка расширений
+# 7) Вкладка Каталоги — расширения (проверка что реестр загружается из сети)
 TAP_SCAN=0
-for probe in "Каталоги" "Browse" "Catalogs" "Explore"; do
+for probe in "Browse"; do
   if $UAPY tapnode "$probe" 15; then say "Тап по вкладке: $probe"; break; fi
 done
-sleep 20   # сеть: подгрузка репо Keiyoushi
+sleep 22   # сеть: подгрузка репо Keiyoushi
+$UAPY tapnode "^Extensions$" 10 || $UAPY tapnode "Расширени" 10 || true
+sleep 10
 $UAPY cap "$ART/02_browse.png"
 DUMP=$($UAPY dump 2>/dev/null || true)
-if echo "$DUMP" | grep -qi "Local\|Локальн"; then pass "Локальный источник виден"; fi
-if echo "$DUMP" | grep -qiE "Keiyoushi|GroupExtension|Source|Расширен"; then
+if echo "$DUMP" | grep -qiE "Keiyoushi|Multi-source|Group|Source:|Расширен"; then
   pass "Список источников/расширений загрузился"
 else
-  say "NOTE: имени источника на экране не видно (см. 02_browse.png)"
+  say "NOTE: вкладку расширений не заценили (см. 02_browse.png)"
 fi
 
-# 8) Открываем локальный источник и мангу ZenTest
-for s in "Локальные файлы" "Local source" "Local" "Локальный"; do
-  if $UAPY tapnode "$s" 8; then TAP_SCAN=1; say "Открыл локальный источник: $s"; break; fi
-done
-sleep 6
+# 8) Локальная библиотека — там живёт ZenTest (вкладка между Library и Updates)
+if $UAPY tapnode "^Локальная$" 12; then
+  say "Вошёл на вкладку Локальная"
+else
+  say "NOTE: вкладка Локальная не найдена по тексту — пробую по иконке (2-я слева)"
+  adb shell input tap 175 1480 || true
+fi
+sleep 8
+$UAPY cap "$ART/03_pref_local.png"
+# если есть кнопка сканирования/обновления — нажать
+$UAPY tapnode "Сканир|Обнов|Scan|Refresh" 6 || true
+sleep 10
 $UAPY cap "$ART/03_local_list.png"
 if $UAPY tapnode "ZenTest" 25; then
   pass "Манга ZenTest найдена и открыта"
