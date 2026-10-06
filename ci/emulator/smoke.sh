@@ -30,9 +30,10 @@ say "adb root: $R"
 # 1) Контент: манга в app-private Android/data — там FUSE не режет по uid (любые uid файлов
 #    приложению видны и доступны), папку распознаём через external_library_roots (сид в префах)
 adb shell "rm -rf /sdcard/Yomikai"   # мусор старых прогонов (чужие uid — пусть не мешает)
-adb shell "mkdir -p /sdcard/Android/data/$PKG/files/zmanga/ZenTest"
-adb push "$CBZ" "/sdcard/Android/data/$PKG/files/zmanga/ZenTest/zen01.cbz" >> "$ART/adb.log" 2>&1
-adb shell "ls -la /sdcard/Android/data/$PKG/files/zmanga/ZenTest/" | tee -a "$ART/adb.log"
+# контент — на ext4 /data в files приложения: утилита uid там настоящая, chown работает.
+# Базовое хранилище приложения сидим (storage_dir) на этот ext4-путь в префах ниже.
+adb shell "mkdir -p /data/data/$PKG/files/ystorage/local/ZenTest"
+adb push "$CBZ" "/data/data/$PKG/files/ystorage/local/ZenTest/zen01.cbz" >> "$ART/adb.log" 2>&1
 
 # 2) Установка APK
 adb install -r -g "$APK" | tee -a "$ART/adb.log"
@@ -51,6 +52,8 @@ adb shell appops get $PKG MANAGE_EXTERNAL_STORAGE 2>/dev/null | head -1 | tee -a
 PMU=$(adb shell "pm list packages -U" | grep -F "package:$PKG" | head -1)
 UID_APP=$(echo "$PMU" | grep -oE "uid:[0-9]+" | cut -d: -f2)
 say "uid: $UID_APP"
+adb shell chown -R $UID_APP:$UID_APP /data/data/$PKG/files/ystorage
+adb shell "ls -laR /data/data/$PKG/files/ystorage" | tee -a "$ART/adb.log"
 
 # 3) Сид настроек ДО первого запуска
 if [ "$R" = yes ]; then
@@ -63,9 +66,7 @@ if [ "$R" = yes ]; then
     <string name="pref_voice_engine">edge_tts</string>
     <string name="pref_ai_http_token">$TOKEN</string>
     <boolean name="pref_ai_http_server" value="true" />
-    <set name="__APP_STATE_external_library_roots">
-      <string>file:///storage/emulated/0/Android/data/app.yomikai/files/zmanga</string>
-    </set>
+    <string name="__APP_STATE_storage_dir">file:///data/user/0/app.yomikai/files/ystorage</string>
     <boolean name="pref_autoread_advance" value="true" />
     <boolean name="pref_autoread_music_enabled" value="false" />
 </map>
