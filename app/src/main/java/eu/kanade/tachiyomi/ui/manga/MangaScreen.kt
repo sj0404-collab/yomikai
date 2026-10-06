@@ -84,6 +84,8 @@ import kotlinx.coroutines.launch
 import logcat.LogPriority
 import mihon.feature.migration.config.MigrationConfigScreen
 import mihon.feature.migration.dialog.MigrateMangaDialog
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import eu.kanade.presentation.more.settings.screen.rememberNetworkState
@@ -357,7 +359,7 @@ class MangaScreen(
                         val engineOptions = screenModel.autoReadEngineOptions(
                             networkAvailable = rememberNetworkState(context, showScanSettings),
                         )
-                        val ocrPrefs = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+                        val ocrPrefs = Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
                         engineOptions.forEach { option ->
                             // v1.9.134: у каждого движка — замер последнего кадра
                             // авточтения (мс), чтобы скорость модели сравнивалась

@@ -613,7 +613,7 @@ class AutoReadEngine(
             }
         }
         if (cutEnd <= 0) return null
-        val tail = text.substring(cutEnd).trimStart { it.isPunctuation() || it.isWhitespace() }
+        val tail = text.substring(cutEnd).trimStart { !it.isLetterOrDigit() }
         // Хвост из пары слов («нет», «ага!») — шумное оборвание реплики,
         // а не новый текст; но полноценную фразу пропускать нельзя.
         return when {
