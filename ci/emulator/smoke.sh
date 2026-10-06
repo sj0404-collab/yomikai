@@ -63,9 +63,9 @@ if [ "$R" = yes ]; then
     <string name="pref_voice_engine">edge_tts</string>
     <string name="pref_ai_http_token">$TOKEN</string>
     <boolean name="pref_ai_http_server" value="true" />
-    <string-set name="__APP_STATE_external_library_roots">
-      <item>file:///storage/emulated/0/Android/data/app.yomikai/files/zmanga</item>
-    </string-set>
+    <set name="__APP_STATE_external_library_roots">
+      <string>file:///storage/emulated/0/Android/data/app.yomikai/files/zmanga</string>
+    </set>
     <boolean name="pref_autoread_advance" value="true" />
     <boolean name="pref_autoread_music_enabled" value="false" />
 </map>
