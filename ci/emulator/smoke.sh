@@ -27,10 +27,12 @@ sleep 3; adb wait-for-device
 R=$([ -n "$(adb shell id | grep uid=0)" ] && echo yes || echo no)
 say "adb root: $R"
 
-# 1) Контент: папка манги создаётся от uid приложения (sdcardfs): пушим cbz в /sdcard/Download,
-#    а ZenTest и копию делает run-as — иначе LocalSource не может записать .noxml → глав = 0.
-adb push "$CBZ" "/sdcard/Download/zen01.cbz" >> "$ART/adb.log" 2>&1
-
+# 1) Контент: манга в app-private Android/data — там FUSE не режет по uid (любые uid файлов
+#    приложению видны и доступны), папку распознаём через external_library_roots (сид в префах)
+adb shell "rm -rf /sdcard/Yomikai"   # мусор старых прогонов (чужие uid — пусть не мешает)
+adb shell "mkdir -p /sdcard/Android/data/$PKG/files/zmanga/ZenTest"
+adb push "$CBZ" "/sdcard/Android/data/$PKG/files/zmanga/ZenTest/zen01.cbz" >> "$ART/adb.log" 2>&1
+adb shell "ls -la /sdcard/Android/data/$PKG/files/zmanga/ZenTest/" | tee -a "$ART/adb.log"
 
 # 2) Установка APK
 adb install -r -g "$APK" | tee -a "$ART/adb.log"
@@ -45,33 +47,10 @@ adb shell appops get $PKG MANAGE_EXTERNAL_STORAGE 2>/dev/null | head -1 | tee -a
 [ "$(adb shell pm list packages | grep -c "^package:$PKG$")" = 1 ] \
   && pass "APK установлен ($PKG)" || fails "APK не установился"
 # uid приложения — самый стабильный вывод: pm list packages -U → "package:app.yomikai uid:10192"
+# uid приложения (для chown prefs на /data — там chown работает честно)
 PMU=$(adb shell "pm list packages -U" | grep -F "package:$PKG" | head -1)
-say "pm -U line: $PMU"
-USERID=$(echo "$PMU" | grep -oE "uid:[0-9]+" | cut -d: -f2)
-[ -z "$USERID" ] && USERID=$(adb shell "dumpsys package $PKG" | grep -m1E "userId=|appId=" | grep -oE "[0-9]+" | head -1)
-if [ -z "$USERID" ]; then
-  say "FATAL: не распарсил userId — сиды бессмысленны"
-  exit 1
-fi
-UID_APP=$USERID
+UID_APP=$(echo "$PMU" | grep -oE "uid:[0-9]+" | cut -d: -f2)
 say "uid: $UID_APP"
-# FUSE /sdcard: chown НЕ меняет владельца для существующих файлов (остаётся старый uid),
-# поэтому мангу создаёт из-под uid приложения — toybox setpriv (adb root есть).
-RUN_AS_APP="setpriv --reuid=$UID_APP --regid=$UID_APP --clear-groups"
-if adb shell "command -v setpriv" >/dev/null 2>&1; then
-  adb shell "$RUN_AS_APP mkdir -p /sdcard/Yomikai/local/ZenTest" >> "$ART/adb.log" 2>&1
-  adb shell "$RUN_AS_APP cp -f /sdcard/Download/zen01.cbz /sdcard/Yomikai/local/ZenTest/zen01.cbz" >> "$ART/adb.log" 2>&1
-  say "контент заложен от uid приложения (setpriv)"
-elif adb shell run-as $PKG mkdir -p "/sdcard/Yomikai/local/ZenTest" >> "$ART/adb.log" 2>&1; then
-  adb shell run-as $PKG cp -f "/sdcard/Download/zen01.cbz" "/sdcard/Yomikai/local/ZenTest/zen01.cbz" >> "$ART/adb.log" 2>&1
-  say "контент заложен через run-as (uid приложения)"
-else
-  say "WARN: ни setpriv, ни run-as — fallback: shell mkdir+chown"
-  adb shell "mkdir -p /sdcard/Yomikai/local/ZenTest"
-  adb shell "cp -f /sdcard/Download/zen01.cbz /sdcard/Yomikai/local/ZenTest/zen01.cbz"
-  adb shell chown -R $UID_APP:$UID_APP /sdcard/Yomikai/local/ZenTest
-fi
-adb shell "ls -la /sdcard/Yomikai/local/ZenTest/" | tee -a "$ART/adb.log"
 
 # 3) Сид настроек ДО первого запуска
 if [ "$R" = yes ]; then
@@ -84,6 +63,9 @@ if [ "$R" = yes ]; then
     <string name="pref_voice_engine">edge_tts</string>
     <string name="pref_ai_http_token">$TOKEN</string>
     <boolean name="pref_ai_http_server" value="true" />
+    <string-set name="__APP_STATE_external_library_roots">
+      <item>file:///storage/emulated/0/Android/data/app.yomikai/files/zmanga</item>
+    </string-set>
     <boolean name="pref_autoread_advance" value="true" />
     <boolean name="pref_autoread_music_enabled" value="false" />
 </map>
@@ -111,7 +93,6 @@ probe_port(){
 }
 # 5) Запуск приложения
 # ВАЖНО: директории манги отдаём приложению — LocalSource пишет туда .noxml маркер (иначе EPERM и глав не видно)
-adb shell "ls -la /sdcard/Yomikai/local/ZenTest/" | tee -a "$ART/adb.log"
 adb shell "cat /data/data/$PKG/shared_prefs/app.yomikai_preferences.xml | grep -E 'ai_http|fallback_preset|voice_engine'" | tee -a "$ART/adb.log"
 adb shell am start -n "$PKG/eu.kanade.tachiyomi.ui.main.MainActivity" >> "$ART/adb.log" 2>&1
 sleep 18
