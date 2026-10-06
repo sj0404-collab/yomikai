@@ -172,24 +172,25 @@ fi
 sleep 6
 $UAPY cap "$ART/04_manga.png"
 
-# список глав: ждём подгрузки локальн. источника, снимаем возможный боттомшит
-adb shell input keyevent BACK
-sleep 2
+# список глав грузится на ЭКРАНЕ МАНГИ (уходить через BACK нельзя — вернёт в каталог);
+# вместо этого: ждём имя нашей главы, при необходимости проскроллить до неё
 CU=0
 for i in 1 2 3 4 5 6; do
   DMP=$($UAPY dump 2>/dev/null || true)
-  if echo "$DMP" | grep -qi "zen01\|chapters.*[1-9]\|[1-9] chapter"; then CU=1; break; fi
-  say "главы ещё грузятся ($i/6)"; sleep 6
+  if echo "$DMP" | grep -qi "zen01\|chapters.*[1-9]\|[1-9] chapter\|1 глава"; then CU=1; break; fi
+  say "главы ещё грузятся ($i/6)"
+  adb shell input swipe 720 1500 720 700 400  # проскролл вниз, вдруг ушло ниже
+  sleep 6
 done
 $UAPY cap "$ART/04b_chapters.png"
-# add-to-library → chapter list: tap на главу (zen01 / ch1 / Chapter)
-for s in "zen01" "ch1" "Chapter 1" "glava"; do
-  if $UAPY tapnode "$s" 12; then say "Открыл главу: $s"; break; fi
+# tap по главе: имя файла БЕЗ регистра: пробуем варианты отображения
+for s in "zen01" "Zen01" "Глава 1" "Chapter"; do
+  if $UAPY tapnode "$s" 25; then say "Открыл главу: $s"; break; fi
 done
-sleep 12
+sleep 14
 $UAPY cap "$ART/05_reader.png"
 CURR=$(adb shell dumpsys activity activities | grep -m1 "topResumedActivity" || true)
-echo "$CURR" | grep -qi "Reader\|reader" && pass "Читалка открыта" || fails "Читалка не открылась"
+echo "$CURR" | grep -qiE "Reader|reader|ui.reader" && pass "Читалка открыта" || fails "Читалка не открылась"
 
 # 9) Overlay → OCR-меню → «Читать главу»
 adb shell input tap 720 900   # центр: поднять оверлей
