@@ -32,8 +32,8 @@ say "adb root: $R"
 adb shell "rm -rf /sdcard/Yomikai"   # мусор старых прогонов (чужие uid — пусть не мешает)
 # контент — на ext4 /data в files приложения: утилита uid там настоящая, chown работает.
 # Базовое хранилище приложения сидим (storage_dir) на этот ext4-путь в префах ниже.
-adb shell "mkdir -p /data/data/$PKG/files/ystorage/local/ZenTest"
-adb push "$CBZ" "/data/data/$PKG/files/ystorage/local/ZenTest/zen01.cbz" >> "$ART/adb.log" 2>&1
+# CBZ временно на /sdcard/Download (существует всегда); перенос из-под приложения — после установки
+adb push "$CBZ" "/sdcard/Download/zen01.cbz" >> "$ART/adb.log" 2>&1
 
 # 2) Установка APK
 adb install -r -g "$APK" | tee -a "$ART/adb.log"
@@ -52,7 +52,12 @@ adb shell appops get $PKG MANAGE_EXTERNAL_STORAGE 2>/dev/null | head -1 | tee -a
 PMU=$(adb shell "pm list packages -U" | grep -F "package:$PKG" | head -1)
 UID_APP=$(echo "$PMU" | grep -oE "uid:[0-9]+" | cut -d: -f2)
 say "uid: $UID_APP"
+# контент — ПОСЛЕ install: /data/data/<pkg> от PackageManager уже создан корректно;
+# app-private files: создаём дерево от root и отдаём владение приложению (ext4 честный chown).
+adb shell "mkdir -p /data/data/$PKG/files/ystorage/local/ZenTest" >> "$ART/adb.log" 2>&1
+adb shell "cp -f /sdcard/Download/zen01.cbz /data/data/$PKG/files/ystorage/local/ZenTest/zen01.cbz" >> "$ART/adb.log" 2>&1
 adb shell chown -R $UID_APP:$UID_APP /data/data/$PKG/files/ystorage
+adb shell restorecon -R /data/data/$PKG/files/ystorage >> "$ART/adb.log" 2>&1 || true
 adb shell "ls -laR /data/data/$PKG/files/ystorage" | tee -a "$ART/adb.log"
 
 # 3) Сид настроек ДО первого запуска
