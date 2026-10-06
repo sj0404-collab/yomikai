@@ -73,9 +73,15 @@ jobs:
       - name: Создать AVD и стартовать эмулятор
         run: |
           set -x
+          export ANDROID_AVD_HOME="$HOME/.android/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
           echo "no" | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd \
               -n test -k "$IMG" -d "Nexus 6" --force
-          nohup setsid "$ANDROID_HOME/emulator/emulator" -avd test \
+          echo "== AVD дом =="
+          find "$ANDROID_AVD_HOME" -maxdepth 2 | head -20
+          "$ANDROID_HOME/emulator/emulator" -list-avds
+          nohup "$ANDROID_HOME/emulator/emulator" -avd test \
               -no-window -no-audio -gpu swiftshader_indirect -no-snapshot \
               -memory 4096 -accel on -no-boot-anim -wipe-data \
               -netdelay none -netspeed full \
