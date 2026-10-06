@@ -228,7 +228,22 @@ for s in "Читать главу" "Читать вслух" "Читать с г
   if $UAPY tapnode "$s" 8; then say "Запустил авточтение: $s"; STARTED=1; break; fi
 done
 if [ $STARTED = 1 ]; then
-  pass "Авточтение главы запущено"
+  # «Озвучить» открыл диалог «Сканирование главы»: выбрать ОНЛАЙН-движок и подтвердить
+  sleep 1
+  $UAPY cap "$ART/08_scan_dialog.png"
+  if $UAPY tapnode "Space Bunny" 10 || $UAPY tapnode "OpenCode" 10; then
+    say "в диалоге сканирования выбран онлайн-движок Space Bunny (OpenCode Zen)"
+  else
+    say "NOTE: в диалоге сканирования Space Bunny не нашёлся (см. 08_scan_dialog.png)"
+  fi
+  sleep 1
+  if $UAPY tapnode "Сканировать и читать" 8; then
+    pass "Авточтение главы запущено (онлайн OCR + голос)"
+  else
+    say "NOTE: кнопку «Сканировать и читать» не нажал — пробую ОК"
+    $UAPY tapnode "OK" 6 || true
+  fi
+  sleep 3
 else
   fails "Авточтение не запустилось (см. 07_autoread_menu.png + ui_autoread_menu.xml)"
 fi
