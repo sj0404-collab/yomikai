@@ -137,6 +137,15 @@ fun AutoReadHighlight(
         val stroke = strokeWidth.dp
         val label = if (showNumbers) region.index.toString() else region.marks.trim()
 
+        // v1.9.137: «баг с эллипсом». Текущая реплика порой приходила рамкой
+        // во весь кадр (целый видимый регион скана): в стиле box/both она
+        // рисовалась огранённым 50%-скруглением — ВЕРТИКАЛЬНЫЙ эллипс через
+        // пол-экрана поверх арта, где текста нет. Такие гигантские рамки
+        // бессмысленны — не рисуем ни контур, ни бейдж.
+        val boxTall = box.bottom - box.top
+        val boxWide = box.right - box.left
+        if (boxTall > 0.6f || boxWide > 0.9f) return@BoxWithConstraints
+
         when (style) {
             // Мягкое пятно: прямоугольных рамок нет вовсе, только радиальный
             // круг по центру реплики.
@@ -184,7 +193,11 @@ fun AutoReadHighlight(
                             Modifier
                         },
                     )
-                    .border(stroke, accent.copy(alpha = 0.65f), RoundedCornerShape(percent = 50)),
+                    // v1.9.137: прямоугольник со слегка скруглёнными углами
+                    // (раньше RoundedCornerShape(percent = 50) = ЭЛЛИПС на
+                    // длинных рамках — он же на скриншоте как «эллипс через
+                    // весь экран там, где текста нет»).
+                    .border(stroke, accent.copy(alpha = 0.65f), RoundedCornerShape(10.dp)),
             )
         }
 

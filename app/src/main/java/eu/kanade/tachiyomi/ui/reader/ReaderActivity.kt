@@ -289,10 +289,26 @@ class ReaderActivity : BaseActivity() {
     /**
      * Реальная автопрокрутка вместо прежней тост-заглушки: вебтун плавно
      * скроллится, пейджер листает страницы с интервалом, зависящим от скорости.
+     *
+     * v1.9.137 — ПЕЙСИНГ С АВТОЧТЕНИЕМ: пока кадр сканируется/распознаётся/
+     * озвучивается ([autoReadFrameBusy]), прокрутка СТОИТ — на большой скорости
+     * глаза больше не убегают от голоса. А сама авточтение при старте сама
+     * включает эту кнопку (см. startAutoReadLoop), а не свои «прыжки».
      */
+    @Volatile
+    private var autoReadFrameBusy = false
+
+    /** Автопрокрутку включила АВТОЧТЕНИЕ (снять при его остановке). */
+    @Volatile
+    private var autoscrollAutoEnabled = false
+
+    /** Последняя выбранная скорость — чтобы авто-включение шло с той же. */
+    private var lastAutoscrollSpeed = 2f
+
     private fun toggleAutoscroll(active: Boolean, speed: Float) {
         autoscrollJob?.cancel()
         autoscrollJob = null
+        if (active) lastAutoscrollSpeed = speed
         if (!active) return
         // repeatOnLifecycle, а не просто lifecycleScope: тот живёт до
         // onDestroy, поэтому после сворачивания приложения 60-Гц scrollBy
@@ -303,9 +319,15 @@ class ReaderActivity : BaseActivity() {
                 while (true) {
                     when (val viewer = viewModel.state.value.viewer) {
                         is eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer -> {
-                            // ~60 Гц; скорость 1..10 → 1..10 px за кадр
-                            viewer.recycler.scrollBy(0, speed.toInt().coerceAtLeast(1))
-                            kotlinx.coroutines.delay(16)
+                            // Пейсинг: кадр авточтения занят (скан/OCR/речь) —
+                            // прокрутка ждёт, иначе при ×N глаз убегал от голоса.
+                            if (autoReadActive && autoReadFrameBusy) {
+                                kotlinx.coroutines.delay(140)
+                            } else {
+                                // ~60 Гц; скорость 1..10 → 1..10 px за кадр
+                                viewer.recycler.scrollBy(0, speed.toInt().coerceAtLeast(1))
+                                kotlinx.coroutines.delay(16)
+                            }
                         }
                         is eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer -> {
                             // Скорость 1..10 → пауза 11..2 сек на страницу
@@ -1880,6 +1902,17 @@ class ReaderActivity : BaseActivity() {
         stopAutoReadLoop()
         autoReadActive = true
         chapterReadActiveFlow.value = true
+        // v1.9.137: авточтение ВКЛЮЧАЕТ штатную автопрокрутку (ту же кнопку
+        // из меню справа) — вместо собственных «прыжков» по кадру. Прокрутку
+        // останавливаем при остановке чтения (stopAutoReadLoop). Если читатель
+        // сам включил прокрутку до этого — она останется его настройкой, и
+        // снимать её мы не будем (флажок не взводим).
+        if (viewModel.state.value.viewer is eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer &&
+            autoscrollJob == null
+        ) {
+            autoscrollAutoEnabled = true
+            toggleAutoscroll(true, lastAutoscrollSpeed)
+        }
         autoReadEngine.clearHistory()
         autoReadEngine.pageLabel = null
         // Запрос «остановить» из шторки относится к ПРЕДЫДУЩЕЙ главе: забытый,
@@ -1956,6 +1989,12 @@ class ReaderActivity : BaseActivity() {
         autoReadLoop = null
         autoReadEngine.stop()
         eu.kanade.tachiyomi.data.tts.TtsReadingNotifier.dismiss(this)
+        // v1.9.137: прокрутку, которую включала сама авто-чтение — выключаем
+        // вместе с ним (ручную настройку читателя не трогаем).
+        if (autoscrollAutoEnabled) {
+            autoscrollAutoEnabled = false
+            toggleAutoscroll(false, lastAutoscrollSpeed)
+        }
     }
 
     /** Понятное читателю объяснение, почему авточтение само остановилось. */
@@ -2189,6 +2228,9 @@ class ReaderActivity : BaseActivity() {
             if (total > 0) "Страница ${pageIndex + 1} из $total" else null
         }
         val finished = kotlinx.coroutines.CompletableDeferred<Boolean>()
+        // v1.9.137: метка «кадровый конвейер занят» для пейсинга
+        // автопрокрутки (та стоит, пока идут скан/OCR/озвучка кадра).
+        autoReadFrameBusy = true
 
         // Пофразный прокрут: один потребитель на весь кадр, а не корутина на
         // каждую реплику. Раньше на странице из 40 баблов стартовало 40
@@ -2244,6 +2286,7 @@ class ReaderActivity : BaseActivity() {
                     // coroutineScope до конца кадра.
                     scrollTargets?.close()
                     scrollJob?.cancel()
+                    autoReadFrameBusy = false // кадр закрыт: прокрутка может ехать
                 }
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
