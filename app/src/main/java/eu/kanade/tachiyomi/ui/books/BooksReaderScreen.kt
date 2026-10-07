@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.MediaPlayer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
@@ -343,7 +344,7 @@ data class BooksReaderScreen(
                     val dir = BooksStore.booksDirectory(context) ?: throw IllegalStateException("Нет каталога книг")
                     val bk = dir.findFile(bookFileName)
                         ?: throw IllegalStateException("Файл книги не найден")
-                    val parsed = BookParser.parse(bk, bk.uri.toString())
+                    val parsed = BookParser.parse(bk, bk.uri.toString(), context)
                     val saved = BooksStore.load(context, bk)
                     withContext(Dispatchers.Main) {
                         chapters = parsed.chapters
@@ -665,6 +666,16 @@ data class BooksReaderScreen(
         }
         val headerCount = if (isPageBased && segments.isNotEmpty()) 1 else 0
 
+        // Лента чтения: текст вперемешку с иллюстрациями (в той же очерёдности,
+        // в которой картинки шли в EPUB; TTS на них не реагирует).
+        val viewItems = if (currentChapter == null || isPageBased) {
+            emptyList()
+        } else {
+            remember(currentChapterIndex, roleVoices, segments.size) {
+                buildBookViewItems(currentChapter.resolvedText, segments, roleVoices)
+            }
+        }
+
         // Автопрокрутка к читаемому сегменту
         LaunchedEffect(currentChapterIndex, currentSentenceIndex, isPageBased) {
             if (segments.isNotEmpty()) {
@@ -960,34 +971,79 @@ data class BooksReaderScreen(
                                 }
                             }
                         }
-                        segments.isNotEmpty() -> {
+                        viewItems.isNotEmpty() -> {
                             LazyColumn(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .padding(horizontal = 16.dp, vertical = 8.dp),
                                 state = listState,
                             ) {
-                                itemsIndexed(segments, key = { idx, _ -> idx }) { idx, segment ->
-                                    val isCurrent = idx == currentSentenceIndex
-                                    Text(
-                                        text = if (isCurrent) "▸ ${segment.text}" else segment.text,
-                                        style = MaterialTheme.typography.bodyLarge.copy(
-                                            fontSize = 18.sp,
-                                            lineHeight = 28.sp,
-                                        ),
-                                        color = if (isCurrent)
-                                            MaterialTheme.colorScheme.onPrimaryContainer
-                                        else MaterialTheme.colorScheme.onSurface,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .background(
-                                                if (isCurrent)
-                                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
-                                                else Color.Transparent,
+                                itemsIndexed(viewItems, key = { idx, _ -> idx }) { _, item ->
+                                    when (item) {
+                                        is BookImageItem -> {
+                                            val bmp = remember(item.path) {
+                                                BookIllustrations.get(item.path)
+                                            }
+                                            if (bmp != null) {
+                                                Column(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(vertical = 8.dp),
+                                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                                ) {
+                                                    Image(
+                                                        bitmap = bmp.asImageBitmap(),
+                                                        contentDescription = item.caption
+                                                            .ifBlank { "Иллюстрация" },
+                                                        contentScale = ContentScale.FillWidth,
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .clip(RoundedCornerShape(4.dp)),
+                                                    )
+                                                    if (item.caption.isNotBlank()) {
+                                                        Text(
+                                                            text = item.caption,
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                            textAlign = TextAlign.Center,
+                                                            modifier = Modifier.padding(top = 4.dp),
+                                                        )
+                                                    }
+                                                }
+                                            } else if (item.caption.isNotBlank()) {
+                                                Text(
+                                                    text = "(иллюстрация: ${item.caption})",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(vertical = 6.dp),
+                                                )
+                                            }
+                                        }
+                                        is BookTextItem -> {
+                                            val isCurrent = item.index == currentSentenceIndex
+                                            Text(
+                                                text = if (isCurrent) "▸ ${item.segment.text}" else item.segment.text,
+                                                style = MaterialTheme.typography.bodyLarge.copy(
+                                                    fontSize = 18.sp,
+                                                    lineHeight = 28.sp,
+                                                ),
+                                                color = if (isCurrent)
+                                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                                else MaterialTheme.colorScheme.onSurface,
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clip(RoundedCornerShape(6.dp))
+                                                    .background(
+                                                        if (isCurrent)
+                                                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                                                        else Color.Transparent,
+                                                    )
+                                                    .padding(horizontal = 6.dp, vertical = 2.dp),
                                             )
-                                            .padding(horizontal = 6.dp, vertical = 2.dp),
-                                    )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1186,11 +1242,103 @@ data class BooksReaderScreen(
         }
     }
 
+    /**
+     * Строка-маркер иллюстрации в тексте главы EPUB: «⟦путь-к-файлу⟧|подпись».
+     * TTS и счётчики предложений такие строки не видят (картинки не
+     * озвучиваем), читалка рендерит их настоящим изображением.
+     */
+    private val BOOK_IMG_MARKER = Regex("^⟦(.+?)⟧\|?([^\n]*)$")
+
+    private fun stripIllustrations(text: String): String {
+        if ('⟦' !in text) return text
+        return text.lineSequence()
+            .filter { BOOK_IMG_MARKER.matchEntire(it.trim()) == null }
+            .joinToString("\n")
+    }
+
+    /** Элемент ленты чтения книги: предложение или иллюстрация. */
+    private data class BookTextItem(val index: Int, val segment: BookSpeechSegment)
+    private data class BookImageItem(val path: String, val caption: String)
+
+    /**
+     * Собирает ленту отображения главы: строки-маркеры иллюстраций становятся
+     * картинками между абзацами, остальное — предложения из [segments] (в том
+     * же порядке, чтобы подсветка и индексы озвучки совпадали).
+     */
+    private fun buildBookViewItems(
+        text: String,
+        segments: List<BookSpeechSegment>,
+        roleVoices: Boolean,
+    ): List<Any> {
+        if ('⟦' !in text) return segments.mapIndexed { i, seg -> BookTextItem(i, seg) }
+        val items = ArrayList<Any>(segments.size + 4)
+        var segIdx = 0
+        val block = StringBuilder()
+        fun flushBlock() {
+            if (block.isEmpty()) return
+            val blockSegsCount = segmentsForReading(block.toString(), roleVoices).size
+            block.setLength(0)
+            repeat(blockSegsCount) {
+                if (segIdx < segments.size) {
+                    items += BookTextItem(segIdx, segments[segIdx])
+                    segIdx++
+                }
+            }
+        }
+        for (line in text.lineSequence()) {
+            val m = BOOK_IMG_MARKER.matchEntire(line.trim())
+            if (m != null) {
+                flushBlock()
+                items += BookImageItem(m.groupValues[1], m.groupValues[2].trim())
+            } else {
+                if (block.isNotEmpty()) block.append('\n')
+                block.append(line)
+            }
+        }
+        flushBlock()
+        // Гарантия: ни один озвученный сегмент не потерян при расхождении счёта.
+        while (segIdx < segments.size) {
+            items += BookTextItem(segIdx, segments[segIdx])
+            segIdx++
+        }
+        return items
+    }
+
+    /** Кэш распакованных иллюстраций по абсолютным путям (маленький LRU). */
+    private object BookIllustrations {
+        private const val CAPACITY = 16
+        private val map = java.util.LinkedHashMap<String, Bitmap>(CAPACITY, 0.75f, true)
+
+        @Synchronized
+        fun get(path: String): Bitmap? {
+            map[path]?.let { return it }
+            val bmp = decode(path) ?: return null
+            while (map.size >= CAPACITY) {
+                val eldest = map.entries.first().key
+                map.remove(eldest)
+            }
+            map[path] = bmp
+            return bmp
+        }
+
+        private fun decode(path: String): Bitmap? = runCatching {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(path, bounds)
+            var sample = 1
+            while (bounds.outWidth / sample > 2048) sample *= 2
+            BitmapFactory.decodeFile(
+                path,
+                BitmapFactory.Options().apply { inSampleSize = sample },
+            )
+        }.getOrNull()
+    }
+
     private fun segmentsForReading(text: String, roleVoices: Boolean): List<BookSpeechSegment> {
+        val clean = stripIllustrations(text)
         return if (roleVoices) {
-            BookTtsScript.split(text)
+            BookTtsScript.split(clean)
         } else {
-            splitSentences(text).map { BookSpeechSegment(BookSpeechRole.NARRATOR, 0, it) }
+            splitSentences(clean).map { BookSpeechSegment(BookSpeechRole.NARRATOR, 0, it) }
         }
     }
 
@@ -1198,7 +1346,7 @@ data class BooksReaderScreen(
     private val SENTENCE_SPLIT = Regex("(?<=[.!?…])\\s+")
 
     private fun splitSentences(text: String): List<String> {
-        return text
+        return stripIllustrations(text)
             .replace(MULTI_NEWLINE, "\n")
             .split(SENTENCE_SPLIT)
             .map { it.trim() }
@@ -1213,8 +1361,9 @@ data class BooksReaderScreen(
      * прогресс пересчитывается на каждой озвученной фразе.
      */
     private fun countSentences(text: String): Int {
-        if (text.isBlank()) return 0
-        val normalized = text.replace(MULTI_NEWLINE, "\n")
+        val clean = stripIllustrations(text)
+        if (clean.isBlank()) return 0
+        val normalized = clean.replace(MULTI_NEWLINE, "\n")
         val matcher = SENTENCE_SPLIT.toPattern().matcher(normalized)
         var count = 0
         var start = 0

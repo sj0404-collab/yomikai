@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
+import android.content.Context
 import com.hippo.unifile.UniFile
 import java.io.File
 import java.io.FileOutputStream
@@ -12,10 +13,12 @@ import java.nio.ByteBuffer
 import java.nio.charset.Charset
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
+import java.util.zip.ZipEntry
 import java.util.zip.ZipException
 import java.util.zip.ZipFile
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
+import org.jsoup.nodes.Element
 import org.jsoup.parser.Parser
 
 /**
@@ -81,13 +84,17 @@ object BookParser {
 
     private val ZIP_EXTS = setOf("epub", "docx")
 
+    /** Лимиты иллюстраций EPUB: не распаковывать книгу на сотни картинок. */
+    private const val MAX_CHAPTER_IMAGES = 64
+    private const val MAX_CHAPTER_IMAGE_BYTES = 8 * 1024 * 1024
+
     private val PDF_MAGIC = byteArrayOf(0x25, 0x50, 0x44, 0x46, 0x2D) // %PDF-
     private val RTF_MAGIC = byteArrayOf(0x7B, 0x5C, 0x72, 0x74, 0x66) // RTF: {\rtf
     private val ZIP_LOCAL_MAGIC = byteArrayOf(0x50, 0x4B, 0x03, 0x04) // PK\x03\x04
     private val ZIP_EMPTY_MAGIC = byteArrayOf(0x50, 0x4B, 0x05, 0x06) // PK\x05\x06
     private val ZIP_SPANNED_MAGIC = byteArrayOf(0x50, 0x4B, 0x07, 0x08) // PK\x07\x08
 
-    fun parse(bookFile: UniFile, bookId: String = bookFile.uri.toString()): ParsedBook {
+    fun parse(bookFile: UniFile, bookId: String = bookFile.uri.toString(), context: Context? = null): ParsedBook {
         val input = bookFile.openInputStream() ?: throw UnsupportedBookException("Не удалось открыть файл книги")
         val bytes = input.use { stream ->
             val buf = java.io.ByteArrayOutputStream()
@@ -116,7 +123,7 @@ object BookParser {
                 "pdf" -> parsePdf(bytes, name, bookId)
                 "fb2" -> parseFb2(bytes, name, bookId)
                 "html" -> parseHtml(bytes, name, bookId)
-                "epub" -> parseEpub(bytes, bookId)
+                "epub" -> parseEpub(bytes, bookId, context)
                 "docx" -> parseDocx(bytes, name, bookId)
                 "plain", "rtf" -> parsePlain(bytes, name, bookId)
                 else -> {
@@ -408,45 +415,17 @@ object BookParser {
                     zip.getInputStream(containerEntry).readBytes().toString(Charsets.UTF_8),
                     "", Parser.xmlParser(),
                 )
-                val opfPath = decodeHref(container.selectFirst("rootfile")?.attr("full-path") ?: return@use BookMetadata(title = "Книга"))
+                val opfPathRaw = firstDeepByLocal(container, "rootfile")?.attr("full-path")
+                    ?: return@use BookMetadata(title = "Книга")
+                val opfPath = decodeHref(opfPathRaw).trimStart('/')
                 val base = opfPath.substringBeforeLast('/', "")
-                val opfEntry = zip.getEntry(opfPath) ?: return@use BookMetadata(title = "Книга")
+                val opfEntry = epubEntryOf(zip, "", opfPathRaw) ?: return@use BookMetadata(title = "Книга")
+                // Метаданные и обложку читаем одним ns-толерантным проходом.
                 val opf = Jsoup.parse(
                     zip.getInputStream(opfEntry).readBytes().toString(Charsets.UTF_8),
                     "", Parser.xmlParser(),
                 )
-                val coverId = opf.selectFirst("metadata meta[name=cover]")?.attr("content")
-                    ?: opf.selectFirst("manifest item[properties*=cover-image]")?.attr("id")
-                val coverImage = coverId?.let { findEpubImage(zip, base, it, opf) }
-                val meta = opf.selectFirst("metadata") ?: return@use BookMetadata(title = "Книга")
-                val title = meta.children()
-                    ?.firstOrNull { it.normalName().equals("title", ignoreCase = true) }
-                    ?.text()?.trim()?.takeIf { it.isNotBlank() } ?: "Книга"
-                val creator = meta.children()
-                    ?.firstOrNull { it.normalName().equals("creator", ignoreCase = true) }
-                    ?.text()?.trim()?.takeIf { it.isNotBlank() }
-                val description = meta.children()
-                    ?.firstOrNull { it.normalName().equals("description", ignoreCase = true) }
-                    ?.text()?.trim()?.takeIf { it.isNotBlank() }
-                val language = meta.children()
-                    ?.firstOrNull { it.normalName().equals("language", ignoreCase = true) }
-                    ?.text()?.trim()?.takeIf { it.isNotBlank() }
-                val publisher = meta.children()
-                    ?.firstOrNull { it.normalName().equals("publisher", ignoreCase = true) }
-                    ?.text()?.trim()?.takeIf { it.isNotBlank() }
-                val date = meta.children()
-                    ?.firstOrNull { it.normalName().equals("date", ignoreCase = true) }
-                    ?.text()?.trim()?.takeIf { it.isNotBlank() }
-                val year = date?.let { Regex("""\d{4}""").find(it)?.value?.toIntOrNull() }
-                BookMetadata(
-                    title = title,
-                    author = creator,
-                    description = description,
-                    coverImage = coverImage,
-                    language = language,
-                    publisher = publisher,
-                    year = year,
-                )
+                return@use extractEpubMetadataFromOpf(opf, zip, base)
             }
         } catch (e: Exception) {
             BookMetadata(title = bytes.toString(Charsets.UTF_8).substringAfterLast('/').substringBeforeLast('.').ifBlank { "Книга" })
@@ -659,20 +638,29 @@ object BookParser {
         )
     }
 
-    private fun htmlToChapters(doc: Document): List<Pair<String, String>> {
+    private fun htmlToChapters(
+        doc: Document,
+        imgBlock: ((src: String, caption: String) -> String?)? = null,
+    ): List<Pair<String, String>> {
         val headingTags = setOf("h1", "h2", "h3", "h4")
         val order = mutableListOf<Pair<String?, String>>()
         val body = doc.body() ?: return emptyList()
         for (el in body.select("p,pre,blockquote,h1,h2,h3,h4,img")) {
             val tag = el.normalName()
             if (tag == "img") {
-                // Картинка между абзацами: если у неё есть подпись (alt/title),
-                // сохраняем её в текст главы, чтобы она не терялась и могла
-                // быть озвучена TTS. Чисто декоративные img без alt пропускаются.
+                // Картинка между абзацами. С imgBlock (EPUB) — реальный файл и
+                // маркер в тексте (читалка покажет иллюстрацию на месте); без —
+                // подпись (alt/title), чтобы картинка не терялась из текста.
+                val src = el.attr("src").trim()
                 val alt = el.attr("alt").trim()
                 val title = el.attr("title").trim()
                 val caption = if (alt.isNotBlank()) alt else title
-                if (caption.isNotBlank()) order += null to "(иллюстрация: $caption)"
+                val marker = imgBlock?.let { it(src, caption) }
+                if (marker != null) {
+                    order += null to marker
+                } else if (caption.isNotBlank()) {
+                    order += null to "(иллюстрация: $caption)"
+                }
                 continue
             }
             if (tag in headingTags) {
@@ -717,17 +705,17 @@ object BookParser {
 
     // ---------- EPUB ----------
 
-    private fun parseEpub(bytes: ByteArray, bookId: String): ParsedBook {
+    private fun parseEpub(bytes: ByteArray, bookId: String, context: Context? = null): ParsedBook {
         val tmp = File.createTempFile("book_", ".epub").apply { deleteOnExit() }
         tmp.writeBytes(bytes)
         return try {
-            ZipFile(tmp).use { zip -> parseEpubZip(zip, bookId) }
+            ZipFile(tmp).use { zip -> parseEpubZip(zip, bookId, context) }
         } finally {
             tmp.delete()
         }
     }
 
-    private fun parseEpubZip(zip: ZipFile, bookId: String): ParsedBook {
+    private fun parseEpubZip(zip: ZipFile, bookId: String, context: Context? = null): ParsedBook {
         val containerEntry = zip.getEntry("META-INF/container.xml")
             ?: zip.getEntry("meta-inf/container.xml")
             ?: throw UnsupportedBookException("EPUB без container.xml")
@@ -736,11 +724,11 @@ object BookParser {
             "",
             Parser.xmlParser(),
         )
-        val opfPathRaw = container.selectFirst("rootfile")?.attr("full-path")
+        val opfPathRaw = firstDeepByLocal(container, "rootfile")?.attr("full-path")
             ?: throw UnsupportedBookException("EPUB без rootfile")
-        val opfPath = decodeHref(opfPathRaw)
-        val opfEntry = zip.getEntry(opfPath)
+        val opfEntry = epubEntryOf(zip, "", opfPathRaw)
             ?: throw UnsupportedBookException("EPUB без OPF ($opfPathRaw)")
+        val opfPath = decodeHref(opfPathRaw).trimStart('/')
         val opf = Jsoup.parse(
             zip.getInputStream(opfEntry).readBytes().toString(Charsets.UTF_8),
             "",
@@ -753,42 +741,112 @@ object BookParser {
 
         // id -> (href, mediaType, properties)
         val manifest = mutableMapOf<String, Triple<String, String, String>>()
-        opf.selectFirst("manifest")?.children()?.forEach { item ->
-            val id = item.attr("id")
-            if (id.isNotBlank()) {
-                manifest[id] = Triple(item.attr("href"), item.attr("media-type"), item.attr("properties"))
+        firstDeepByLocal(opf, "manifest")?.let { man ->
+            childrenByLocal(man, "item").forEach { item ->
+                val id = item.attr("id")
+                if (id.isNotBlank()) {
+                    manifest[id] = Triple(item.attr("href"), item.attr("media-type"), item.attr("properties"))
+                }
             }
         }
-        var spine = opf.selectFirst("spine")?.children()
-            ?.mapNotNull { it.attr("idref").takeIf { x -> x.isNotBlank() } }
-            ?: emptyList()
+        var spine = firstDeepByLocal(opf, "spine")?.let { sp ->
+            childrenByLocal(sp, "itemref").mapNotNull { it.attr("idref").takeIf { x -> x.isNotBlank() } }
+        } ?: emptyList()
         if (spine.isEmpty()) {
             spine = manifest.keys.toList()
         }
 
-        val chapters = mutableListOf<BookChapter>()
+        // Картинки-иллюстрации внутри глав: entryName → байты. Токен-маркер
+        // «⟦entry⟧|подпись» встаёт в текст главы там, где стояла картинка.
+        val images = mutableMapOf<String, ByteArray>()
+        val rawChapters = mutableListOf<RawEpubChapter>()
         var spineIndex = 0
         for (idref in spine) {
             val (hrefRaw, mediaType, properties) = manifest[idref] ?: continue
-            val chunk = runCatching { parseEpubItem(zip, base, hrefRaw, mediaType, properties) }.getOrNull()
+            val chunk = runCatching {
+                parseEpubItem(zip, base, hrefRaw, mediaType, properties, images)
+            }.getOrNull()
             if (chunk != null) {
-                val (chTitle, chText) = chunk
-                val (vol, chap) = parseChapterNumbering(chTitle, spineIndex)
-                chapters += BookChapter.create(
-                    index = spineIndex,
-                    bookId = bookId,
-                    title = chTitle,
-                    volume = vol,
-                    chapter = chap,
-                    url = hrefRaw,
-                    scanlator = metadata.author,
-                    text = chText,
-                )
+                rawChapters += RawEpubChapter(spineIndex, hrefRaw, chunk.first, chunk.second)
                 spineIndex++
             }
         }
-        if (chapters.isEmpty()) throw UnsupportedBookException("В EPUB нет текстовых глав")
+        if (rawChapters.isEmpty()) throw UnsupportedBookException("В EPUB нет текстовых глав")
+        val chapters = materializeEpubChapters(rawChapters, images, bookId, context, metadata.author)
         return ParsedBook(metadata = metadata, chapters = chapters)
+    }
+
+    /** Сырая глава EPUB: текст ещё с токенами ⟦entry⟧ вместо путей картинок. */
+    private data class RawEpubChapter(
+        val index: Int,
+        val href: String,
+        val title: String,
+        val text: String,
+    )
+
+    /**
+     * Материализует картинки EPUB на диск и подставляет реальные пути в маркеры.
+     *
+     * Без [context] (юнит-тесты, чужие вызовы) маркеры заменяются текстовой
+     * пометкой «(иллюстрация: подпись)» — поведение, как до введения картинок.
+     */
+    private fun materializeEpubChapters(
+        rawChapters: List<RawEpubChapter>,
+        images: Map<String, ByteArray>,
+        bookId: String,
+        context: Context?,
+        author: String?,
+    ): List<BookChapter> {
+        val fileByEntry = mutableMapOf<String, String>()
+        if (context != null && images.isNotEmpty()) {
+            // Каталог картинок книги: filesDir/book_images/<хэш-книги>/…
+            val bookKey = bookId.hashCode().toUInt().toString(16)
+            val dir = File(File(context.filesDir, "book_images"), bookKey).apply { mkdirs() }
+            var written = 0
+            for ((entryName, bytes) in images) {
+                if (bytes.isEmpty()) continue
+                if (written >= MAX_CHAPTER_IMAGES) break
+                val fname = entryName.replace(Regex("[^A-Za-zА-Яа-я0-9._-]"), "_")
+                val out = File(dir, fname)
+                runCatching {
+                    out.writeBytes(bytes)
+                    fileByEntry[entryName] = out.absolutePath
+                    written++
+                }
+            }
+        }
+        return rawChapters.mapIndexed { idx, raw ->
+            var text = raw.text
+            for ((entryName, _) in images) {
+                val marker = "⟦$entryName⟧"
+                if (!text.contains(marker)) continue
+                val path = fileByEntry[entryName]
+                text = if (path != null) {
+                    text.replace(marker, "⟦$path⟧")
+                } else {
+                    // Маркера на диске нет (лимит/нет контекста) — оставляем
+                    // текст «(иллюстрация: подпись)» вместо пути.
+                    text.replace(
+                        Regex(Regex.escape(marker) + "\\|([^\\n]*)"),
+                    ) { m ->
+                        val cap = m.groupValues[1].trim()
+                        if (cap.isBlank()) "(иллюстрация)" else "(иллюстрация: $cap)"
+                    }
+                        .replace(Regex(Regex.escape(marker)), "")
+                }
+            }
+            val (vol, chap) = parseChapterNumbering(raw.title, idx)
+            BookChapter.create(
+                index = idx,
+                bookId = bookId,
+                title = raw.title,
+                volume = vol,
+                chapter = chap,
+                url = raw.href,
+                scanlator = author,
+                text = text,
+            )
+        }
     }
 
     /** Извлекает номер тома и главы из названия (например, "Chapter 5" → (null, 5)). */
@@ -801,30 +859,28 @@ object BookParser {
     }
 
     private fun extractEpubMetadataFromOpf(opf: Document, zip: ZipFile, base: String): BookMetadata {
-        val meta = opf.selectFirst("metadata") ?: return BookMetadata(title = "Книга")
-        val title = meta.children()
-            ?.firstOrNull { it.normalName().equals("title", ignoreCase = true) }
-            ?.text()?.trim()?.takeIf { it.isNotBlank() } ?: "Книга"
-        val creator = meta.children()
-            ?.firstOrNull { it.normalName().equals("creator", ignoreCase = true) }
+        val meta = firstDeepByLocal(opf, "metadata") ?: return BookMetadata(title = "Книга")
+        fun dc(local: String): String? = meta.children()
+            .firstOrNull { tagIs(it, local) }
             ?.text()?.trim()?.takeIf { it.isNotBlank() }
-        val description = meta.children()
-            ?.firstOrNull { it.normalName().equals("description", ignoreCase = true) }
-            ?.text()?.trim()?.takeIf { it.isNotBlank() }
-        val language = meta.children()
-            ?.firstOrNull { it.normalName().equals("language", ignoreCase = true) }
-            ?.text()?.trim()?.takeIf { it.isNotBlank() }
-        val publisher = meta.children()
-            ?.firstOrNull { it.normalName().equals("publisher", ignoreCase = true) }
-            ?.text()?.trim()?.takeIf { it.isNotBlank() }
-        val date = meta.children()
-            ?.firstOrNull { it.normalName().equals("date", ignoreCase = true) }
-            ?.text()?.trim()?.takeIf { it.isNotBlank() }
+        val title = dc("title") ?: "Книга"
+        val creator = dc("creator")
+        val description = dc("description")
+        val language = dc("language")
+        val publisher = dc("publisher")
+        val date = dc("date")
         val year = date?.let { Regex("""\d{4}""").find(it)?.value?.toIntOrNull() }
 
-        // Ищем обложку
-        val coverId = meta.selectFirst("meta[name=cover]")?.attr("content")
-            ?: opf.selectFirst("manifest item[properties*=cover-image]")?.attr("id")
+        // Ищем обложку: либо <meta name="cover" content="…"/> (EPUB 2),
+        // либо item с properties="cover-image" (EPUB 3)
+        val coverId = meta.children()
+            .firstOrNull { tagIs(it, "meta") && it.attr("name").equals("cover", ignoreCase = true) }
+            ?.attr("content")
+            ?: firstDeepByLocal(opf, "manifest")?.let { man ->
+                childrenByLocal(man, "item")
+                    .firstOrNull { it.attr("properties").contains("cover-image", ignoreCase = true) }
+                    ?.attr("id")
+            }
         val coverImage = coverId?.let { findEpubImage(zip, base, it, opf) }
 
         return BookMetadata(
@@ -839,9 +895,11 @@ object BookParser {
     }
 
     private fun findEpubImage(zip: ZipFile, base: String, id: String, opf: Document): ByteArray? {
-        val href = opf.selectFirst("manifest item[id=$id]")?.attr("href") ?: return null
-        val fullPath = if (base.isEmpty()) href else "$base/$href"
-        val entry = zip.getEntry(fullPath) ?: zip.getEntry(href) ?: return null
+        val href = firstDeepByLocal(opf, "manifest")
+            ?.let { man -> childrenByLocal(man, "item").firstOrNull { it.attr("id") == id } }
+            ?.attr("href")
+            ?: return null
+        val entry = epubEntryOf(zip, base, href) ?: return null
         return zip.getInputStream(entry).readBytes()
     }
 
@@ -856,15 +914,22 @@ object BookParser {
                     zip.getInputStream(containerEntry).use { it.readBytes().toString(Charsets.UTF_8) },
                     "", Parser.xmlParser(),
                 )
-                val opfPath = decodeHref(container.selectFirst("rootfile")?.attr("full-path") ?: return@use null)
+                val opfPathRaw = firstDeepByLocal(container, "rootfile")?.attr("full-path") ?: return@use null
+                val opfPath = decodeHref(opfPathRaw).trimStart('/')
                 val base = opfPath.substringBeforeLast('/', "")
-                val opfEntry = zip.getEntry(opfPath) ?: return@use null
+                val opfEntry = epubEntryOf(zip, "", opfPathRaw) ?: return@use null
                 val opf = Jsoup.parse(
                     zip.getInputStream(opfEntry).use { it.readBytes().toString(Charsets.UTF_8) },
                     "", Parser.xmlParser(),
                 )
-                val coverId = opf.selectFirst("metadata meta[name=cover]")?.attr("content")
-                    ?: opf.selectFirst("manifest item[properties*=cover-image]")?.attr("id")
+                val coverId = firstDeepByLocal(opf, "metadata")?.children()
+                    ?.firstOrNull { tagIs(it, "meta") && it.attr("name").equals("cover", ignoreCase = true) }
+                    ?.attr("content")
+                    ?: firstDeepByLocal(opf, "manifest")?.let { man ->
+                        childrenByLocal(man, "item")
+                            .firstOrNull { it.attr("properties").contains("cover-image", ignoreCase = true) }
+                            ?.attr("id")
+                    }
                 coverId?.let { findEpubImage(zip, base, it, opf) }
             }
         } catch (e: Exception) {
@@ -878,12 +943,72 @@ object BookParser {
         return runCatching { java.net.URLDecoder.decode(raw, "UTF-8") }.getOrDefault(raw)
     }
 
+    // ---------- EPUB: namespace-переносимые запросы и пути ----------
+
+    /**
+     * Локальное имя тега без ns-префикса: «opf:manifest» → «manifest»,
+     * «dc:title» → «title». Часть EPUB (особенно из fb2/kindle-конвертеров)
+     * пишет OPF с префиксами — обычные selectFirst("manifest") на них молчит,
+     * и книга падала с «В EPUB нет текстовых глав», хотя главы были.
+     */
+    private fun tagLocal(el: Element): String = el.tagName().substringAfter(':')
+
+    private fun tagIs(el: Element, name: String): Boolean =
+        tagLocal(el).equals(name, ignoreCase = true)
+
+    private fun firstDeepByLocal(root: Element?, name: String): Element? {
+        root ?: return null
+        if (tagIs(root, name)) return root
+        for (c in root.children()) {
+            firstDeepByLocal(c, name)?.let { return it }
+        }
+        return null
+    }
+
+    private fun childrenByLocal(el: Element?, name: String): List<Element> =
+        el?.children()?.filter { tagIs(it, name) }.orEmpty()
+
+    /** Нормализует zip-путь: раскрывает «.»/«..», срезает ведущий слэш. */
+    private fun normalizeZipPath(path: String): String {
+        val out = ArrayDeque<String>()
+        for (seg in decodeHref(path).trim().split('/')) {
+            when (seg) {
+                "", "." -> Unit
+                ".." -> if (out.isNotEmpty()) out.removeLast()
+                else -> out.addLast(seg)
+            }
+        }
+        return out.joinToString("/")
+    }
+
+    /**
+     * Запись EPUB-zip по href как в манифесте: находим и «OPS/x», и просто «x»,
+     * и процентно-кодированные варианты, и абсолютные пути «/OPS/x» — у
+     * разных сборщиков по-разному, и раньше глава просто молча пропадала.
+     */
+    private fun epubEntryOf(zip: ZipFile, base: String, rawHref: String): ZipEntry? {
+        val raw = decodeHref(rawHref.substringBefore('#')).trim().trimStart('/')
+        if (raw.isBlank()) return null
+        val variants = LinkedHashSet<String>()
+        if (base.isNotEmpty()) {
+            variants += normalizeZipPath("$base/$raw")
+            variants += "$base/${decodeHref(raw)}"
+        }
+        variants += normalizeZipPath(raw)
+        variants += raw
+        for (v in variants) {
+            zip.getEntry(v)?.let { return it }
+        }
+        return null
+    }
+
     private fun parseEpubItem(
         zip: ZipFile,
         base: String,
         hrefRaw: String,
         mediaType: String,
         properties: String,
+        images: MutableMap<String, ByteArray>? = null,
     ): Pair<String, String>? {
         val href = decodeHref(hrefRaw.substringBefore('#')).trim().ifBlank { return null }
         val lowerHref = href.lowercase()
@@ -897,13 +1022,44 @@ object BookParser {
             ext in setOf("xhtml", "html", "htm", "xml")
         if (!textLike) return null
         val name = href.substringAfterLast('/').substringBeforeLast('.').ifBlank { "Глава" }
-        val entry = zip.getEntry(if (base.isEmpty()) href else "$base/$href")
-            ?: zip.getEntry(href)
-            ?: return null
+        val entry = epubEntryOf(zip, base, href) ?: return null
         val entryBytes = zip.getInputStream(entry).readBytes()
         val doc = Jsoup.parse(decodeText(entryBytes))
         val docTitle = doc.title().trim().takeIf { it.isNotBlank() }
-        val chunk = htmlToChapters(doc)
+        // Картинки-иллюстрации. src документа разрешается ОТНОСИТЕЛЬНО папки
+        // самого документа (у ранобэ это часто «../Images/i1.jpg»), а zip-токен
+        // — каноничное имя записи, чтобы потом заменить его на путь файла.
+        val docDir = entry.name.substringBeforeLast('/', "")
+        val imgBlock: ((String, String) -> String?)? = images?.let { bag ->
+            { src, caption ->
+                when {
+                    src.startsWith("data:", ignoreCase = true) -> null
+                    src.startsWith("http://", ignoreCase = true) ||
+                        src.startsWith("https://", ignoreCase = true) -> null
+                    bag.size >= MAX_CHAPTER_IMAGES -> null
+                    else -> {
+                        val joined = if (src.startsWith('/')) src else "$docDir/$src"
+                        val entryName = normalizeZipPath(joined)
+                        val imgEntry = zip.getEntry(entryName)
+                        if (imgEntry == null) {
+                            null
+                        } else {
+                            val bytes = bag.getOrPut(entryName) {
+                                runCatching { zip.getInputStream(imgEntry).readBytes() }
+                                    .getOrDefault(ByteArray(0))
+                            }
+                            if (bytes.isEmpty() || bytes.size > MAX_CHAPTER_IMAGE_BYTES) {
+                                bag.remove(entryName)
+                                null
+                            } else {
+                                "⟦$entryName⟧|$caption"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        val chunk = htmlToChapters(doc, imgBlock)
         if (chunk.isEmpty()) {
             val t = doc.body()?.text()?.trim()
             if (t.isNullOrBlank()) return null
