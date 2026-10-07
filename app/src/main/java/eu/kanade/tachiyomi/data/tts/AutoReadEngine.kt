@@ -2930,6 +2930,8 @@ class AutoReadEngine(
                 if (joined.isNotEmpty()) {
                     if (joined.lastOrNull() == '-') {
                         joined.deleteCharAt(joined.length - 1)
+                    } else if (joinsWithLeadingWord(joined, row)) {
+                        // v1.9.139: стык склеен в одно слово — пробел не нужен.
                     } else {
                         joined.append(' ')
                     }
@@ -2947,6 +2949,31 @@ class AutoReadEngine(
                 }
             }
             return result
+        }
+
+        /**
+         * v1.9.139 — OCR иногда рвёт слово на стыке строк БЕЗ дефиса
+         * («ЗДО-\nРОВЬЕ», «ЗДО\nРОВЬЕ»): TTS читал такое по слогам
+         * («здо-ровье»). Склеиваем стык, только если:
+         *  • обе части — кириллица от 2 букв и без пунктуации на стыке;
+         *  • конкатенация — известное словарное слово ([OcrTextCleaner.knownWord]);
+         *  • и хотя бы одна из частей сама словом НЕ является — иначе
+         *    «ЧТО\nТО СКАЗАЛ» слиплось бы в «ЧТОТО».
+         */
+        private fun joinsWithLeadingWord(acc: StringBuilder, nextRow: String): Boolean {
+            // Части берём как «прилегающие прогоны кириллицы», а не слова до
+            // пробела: переносы вида «ЗДО-\nРОВЬЕ, ГОСПОЖА.» несут запятую в
+            // начале следующей строки, и простой substringBefore(' ') её
+            // цеплял — стык не склеивался.
+            // acc.toString() обязателен: у StringBuilder-перегрузки
+            // takeLastWhile возврат CharSequence, и String-конкатенация
+            // тогда не компилируется.
+            val lastWord = acc.toString().takeLastWhile { it in '\u0400'..'\u04FF' }
+            val firstWord = nextRow.takeWhile { it in '\u0400'..'\u04FF' }
+            if (lastWord.length < 2 || firstWord.length < 2) return false
+            val glued = lastWord + firstWord
+            return OcrTextCleaner.knownWord(glued) &&
+                (!OcrTextCleaner.knownWord(lastWord) || !OcrTextCleaner.knownWord(firstWord))
         }
 
         /** Похожа ли строка на осмысленный текст (не обрывок/не мусор). */

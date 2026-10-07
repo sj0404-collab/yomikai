@@ -295,8 +295,20 @@ object OcrTextCleaner {
 
     private fun restoreRun(source: String): String {
         val upper = source.uppercase()
-        var segments = splitKnownWords(upper)
-        if (segments == null) {
+        // v1.9.139: больше НЕ дробим настоящие слова. DP-разбиение с лексиконом
+        // коротких слов резало частотную лексику на «слоги»:
+        // СВОИХ→«С ВО ИХ», НЕУЖЕЛИ→«НЕ УЖ ЕЛИ», ВЫГЛЯДИТ→«ВЫ ГЛЯДИТ»,
+        // МИРА→«МИР А», ПРИБЫЛИ→«ПРИ БЫЛИ», ВДРУГ→«В ДРУГ» — и TTS читал
+        // реплики по кускам с паузами («не-уж-ели»). Теперь:
+        //  • целое словарное слово (RuWordList/польз. словарь/лексикон
+        //    подписей) — неприкосновенно;
+        //  • прогон короче 9 букв не разбивается вовсе: почти вся частотная
+        //    русская лексика короче, а слипшиеся строки с несколькими словами
+        //    практически всегда длиннее («СЕГОДНЯЯНЕ» — 10 — чинится как раньше).
+        val solid = upper.length < 9 ||
+            upper in CAPTION_WORDS || knownWord(upper)
+        var segments = if (solid) null else splitKnownWords(upper)
+        if (segments == null && !solid) {
             // Слиплись слова без пробелов: разбиваем по частотному
             // словарю словоформ. Только вставка пробелов.
             val glued = splitGluedRun(upper)
@@ -342,7 +354,9 @@ object OcrTextCleaner {
      * тоже делятся на слова.
      */
     private fun splitGluedRun(run: String): List<String>? {
-        if (run.length < 6) return null
+        // v1.9.139: порог 6 → 9 букв: «ПРИБЫЛИ»(7) резалось на «ПРИ БЫЛИ»
+        // частотным словарём, пока вызывающий не ввёл общий гейт `solid`.
+        if (run.length < 9) return null
         val best = arrayOfNulls<List<String>>(run.length + 1)
         best[0] = emptyList()
         for (start in run.indices) {

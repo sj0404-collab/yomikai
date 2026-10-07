@@ -1304,10 +1304,23 @@ class ReaderActivity : BaseActivity() {
                     readingOrder = readingOrderState,
                     contentPreset = contentPresetId,
                     onContentPresetChange = { id ->
-                        // Пресетов типа контента больше нет: порядок чтения
-                        // задаётся самой читалкой (вертикально/RTL) и явным
-                        // выбором в настройках области скана.
+                        // v1.9.139: кнопка раньше крутила только локальную
+                        // переменную и не писала ничего в настройки — пресеты
+                        // «Сбаланс./Манга/…» не влияли на порядок чтения вовсе
+                        // (реальный порядок брал из readingOrderFor(prefs), а
+                        // он читает pref_scan_reading_order). Теперь выбор
+                        // СОХРАНЯЕТСЯ: тип контента — в pref_ocr_content_type,
+                        // порядок — в pref_scan_reading_order; следующий скан
+                        // и авточтение нумеруют баблоны в этом порядке.
                         val prefs = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+                        val mappedOrder = when (id) {
+                            "manga" -> "rtl"
+                            "manhwa", "manhua" -> "vertical"
+                            "comic" -> "ltr"
+                            else -> "" // «Сбаланс.»: авто — по режиму читалки
+                        }
+                        prefs.contentType().set(id)
+                        prefs.scanReadingOrder().set(mappedOrder)
                         contentPresetId = id
                         val order = mihon.data.ocr.OcrRegionRules.readingOrderFor(prefs)
                         readingOrderState = order
