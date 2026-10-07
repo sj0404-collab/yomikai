@@ -112,7 +112,15 @@ object OcrTextCleaner {
 
     fun isPromotionalText(text: String): Boolean {
         if (text.isBlank()) return false
-        return stripPromotionalText(text).isBlank()
+        // v1.9.136: линюя-строка с водяником режется ЦЕЛИКОМ, даже если после
+        // слогана стоит ещё слово («ЧИТАЙ НА САЙТЕ MANGABUFF… И ПРОЧЕЕ»): раньше
+        // проверка требовала, чтобы strip обнулил строку дочиста, и любой
+        // лишний хвост реабилитировал водяник. Промо-маркер внутри реплики не
+        // бывает случайным: нормальный текст слов «readmanga/mangabuff» и
+        // «читай на сайте» не содержит.
+        return stripPromotionalText(text).isBlank() ||
+            PROMOTIONAL_SITE.containsMatchIn(text) ||
+            PROMOTIONAL_SLOGAN.containsMatchIn(text)
     }
 
     /**
