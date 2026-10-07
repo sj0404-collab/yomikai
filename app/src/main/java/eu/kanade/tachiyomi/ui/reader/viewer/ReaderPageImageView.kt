@@ -834,8 +834,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
                 // кадров / микропятна) дают на странице «линии + кружки-номера
                 // без смысла» — рисовать их не надо.
                 if (region.text.isBlank()) continue
-                val hFrac = (region.boundingBox.bottom - region.boundingBox.top)
-                val wFrac = (region.boundingBox.right - region.boundingBox.left)
+                val hFrac = region.bottom - region.top
+                val wFrac = region.right - region.left
                 if (hFrac < 0.012f || wFrac < 0.02f) continue
                 val fileBox = entry.regionFileBoundingBox(region) ?: continue
                 val fileRect = RectF(
