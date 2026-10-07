@@ -1247,7 +1247,7 @@ data class BooksReaderScreen(
      * TTS и счётчики предложений такие строки не видят (картинки не
      * озвучиваем), читалка рендерит их настоящим изображением.
      */
-    private val BOOK_IMG_MARKER = Regex("^⟦(.+?)⟧\|?([^\n]*)$")
+    private val BOOK_IMG_MARKER = Regex("^⟦(.+?)⟧\\|?([^\\n]*)$")
 
     private fun stripIllustrations(text: String): String {
         if ('⟦' !in text) return text
