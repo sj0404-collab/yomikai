@@ -100,6 +100,13 @@ fun AutoReadHighlight(
         // План чтения и уже озвученные реплики — тусклыми кружками, чтобы видеть
         // «где я» и «что дальше», не перекрывая рисунок.
         drawn.forEach { frame ->
+            // v1.9.135: вырожденные рамки (пустой текст, почти нулевая высота
+            // на стыке кадров) отрисовывались артефактом «тонкая линия через
+            // страницу + бейдж». Такие регионы не рисуем вовсе.
+            if (frame.text.isBlank() ||
+                frame.box.bottom - frame.box.top < 0.012f ||
+                frame.box.right - frame.box.left < 0.02f
+            ) return@forEach
             when (frame.state) {
                 AutoReadEngine.FrameRegion.State.DONE,
                 AutoReadEngine.FrameRegion.State.UPCOMING,
@@ -184,7 +191,12 @@ fun AutoReadHighlight(
         // Номер реплики — служебная метка, в озвучку не идёт, но читателю
         // показывает порядок чтения.
         if (showNumbers && label.isNotBlank()) {
-            val numberOffset = IntOffset(cur[0], (cur[1] - 20.dp.value).roundToInt())
+            // Бейдж СЛЕВА-НАД рамкой: раньше он ложился ровно на левый край
+            // рамки и перекрывал первую букву текста («2ЛЕНА СЕВЕС…», «2Мир»).
+            // Выносим за границу рамки и не даём уйти за экран (кламп к 0).
+            val bx = (cur[0] - 26.dp.value).roundToInt().coerceAtLeast(0)
+            val by = (cur[1] - 22.dp.value).roundToInt().coerceAtLeast(0)
+            val numberOffset = IntOffset(bx, by)
             Box(
                 modifier = Modifier
                     .offset { numberOffset }

@@ -2026,6 +2026,16 @@ class AutoReadEngine(
      * пол только при явном перевесе — иначе null (нейтральный голос).
      */
     private fun detectGenderByDictionary(text: String): String? {
+        // v1.9.135: ИНВЕРСИЯ ГОЛОСОВ. Старый путь голосовал словарём по
+        // УПОМЯНУТЫМ в реплике людям и наивной статистикой окончаний
+        // СЛУЧАЙНЫХ слов (RuMorph): мужчина, говорящий «госпожа ждёт»,
+        // озвучивался нежным женским голосом, а девушка, упомянувшая «брата»,
+        // — хриплым мужским. Первичный локальный определитель (LocalSpeakerAi,
+        // глаголы первого лица: «пришла/решила» → ж — см. выше в кадровом
+        // конвейере) идёт этой функции ПЕРЕД вызовом, поэтому здесь только
+        // словарная подстраховка, и она угадывает лишь при ЧИСТОМ признаке:
+        // упомянут один пол. Оба пола в одной реплике — разговор О ком-то,
+        // авто-пол не определяем (null → голос нарратора, не переворот).
         val maleMarkers = listOf(
             "брат", "отец", "папа", "дед", "сын", "мужчина", "парень",
             "господин", "старик", "мальчик", "юноша", "принц", "король",
@@ -2038,18 +2048,12 @@ class AutoReadEngine(
         // Подстрочный поиск покрывает падежи: «моей сестры», «к отцу».
         val maleCount = maleMarkers.count { lower.contains(it) }
         val femaleCount = femaleMarkers.count { lower.contains(it) }
-        val byMarkers = when {
-            maleCount > femaleCount -> "male"
-            femaleCount > maleCount -> "female"
+        if (maleCount > 0 && femaleCount > 0) return null
+        return when {
+            maleCount > 0 -> "male"
+            femaleCount > 0 -> "female"
             else -> null
         }
-        if (byMarkers != null) return byMarkers
-        // Морфологический фолбэк: род по окончаниям словоформ (RuMorph).
-        val morph = RuMorph.guessGender(text)
-        if (morph != null) {
-            OcrHistoryStore.addAutoRead(true, "пол говорящего: морфология", "$morph: ${text.take(40)}")
-        }
-        return morph
     }
 
     // region Баллоны (YOLO) и чистка OCR-мусора

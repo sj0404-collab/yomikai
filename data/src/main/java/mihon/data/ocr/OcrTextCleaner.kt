@@ -81,11 +81,19 @@ object OcrTextCleaner {
     }
 
     private val PROMOTIONAL_SITE = Regex(
-        "reman?ga(?:\\.org)?",
+        // v1.9.135: водяники манга-сайтов попадали в OCR и ЗАЧИТЫВАЛИСЬ как
+        // реплика («ЧИТАЙ НА САЙТЕ MANGABUFF…» получала номер реплики).
+        "reman?ga(?:\\.org)?|readmanga|mintmanga|mangabuff(?:\\.ru|\\.me|\\.com)?" +
+            "|mangapoisk|manga_?one|mangalib|acomics|usagi(?:\\.one)?|seimanga" +
+            "|desu(?:\\.me|s)?(?!\\p{L})|mangarip|manga-?sama|new-manga",
         RegexOption.IGNORE_CASE,
     )
     private val PROMOTIONAL_SLOGAN = Regex(
-        "читай\\s+раньше\\s+всех(?:\\s+на\\s+reman?ga(?:\\.org)?)?",
+        // слоганы «читай раньше/на сайте» и слепки с адресом; короткие формы
+        // OCR (без точек/с опечатками «ситуатУка») ловим общими кусками.
+        "читай\\s+раньше\\s+всех(?:\\s+на\\s+\\S+)?" +
+            "|читай(те)?\\s+(?:новинки\\s+)?(?:бесплатно\\s+)?на\\s+сайте?(?:\\s+\\S+){0,3}" +
+            "|читаем\\s+на\\s+сайте?|сайте?\\s+\\S{0,16}\\.\\s*(?:ru|com|net|club|me|fun)",
         RegexOption.IGNORE_CASE,
     )
 
