@@ -641,6 +641,7 @@ class AutoReadEngine(
 
     /** Старое одиночное поле `readingOrder` из файла знаний книги. */
     private fun legacyBookReadingOrder(): String? {
+        if (!prefs.bookKnowledgeEnabled().get()) return null
         val mangaId = mihon.data.ocr.ReaderContextBus.current.value?.mangaId ?: return null
         val stored = runCatching {
             eu.kanade.tachiyomi.data.ai.BookKnowledge
@@ -666,7 +667,11 @@ class AutoReadEngine(
 
     /** Правила книги текущей книги (пусто, если книга не задана). */
     private fun loadBookRules(): List<eu.kanade.tachiyomi.data.ai.LearningRule> =
-        eu.kanade.tachiyomi.data.ai.BookKnowledge.rulesOf(
+        // Переключатель «знание о книге» (выключено по умолчанию — скорость):
+        // чтение файла книги и разбора JSON на КАЖДЫЙ кадр давало лишнюю
+        // секунду на странице, когда правил для книги и не было вовсе.
+        if (!prefs.bookKnowledgeEnabled().get()) emptyList()
+        else eu.kanade.tachiyomi.data.ai.BookKnowledge.rulesOf(
             context,
             mihon.data.ocr.ReaderContextBus.current.value?.mangaId,
         )
@@ -884,6 +889,9 @@ class AutoReadEngine(
 
                 val language = prefs.autoReadLanguage().get()
                 val translate = prefs.autoReadTranslate().get()
+                // Ручной выбор пары языков («ja→ru», «ru→ja»): «auto» ведёт
+                // себя как раньше — переводчик решает сам.
+                val translateSource = prefs.autoReadTranslateSource().get().ifBlank { "auto" }
                 // Порядок чтения берём из пресета типа контента (манхва/вебтун →
                 // «vertical» сверху вниз), а не из старого `scanReadingOrder`,
                 // который по умолчанию «rtl» и ломал подсветку на вебтунах.
@@ -1060,10 +1068,14 @@ class AutoReadEngine(
                 if (prefs.aiGenderVoices().get() && ordered.isNotEmpty()) {
                     val newLines = ordered.map { it.text }
                     val prevSnapshot = prevFrameLines
-                    val advice = eu.kanade.tachiyomi.data.ai.BookKnowledge.renderAdvice(
-                        context = context,
-                        mangaId = mihon.data.ocr.ReaderContextBus.current.value?.mangaId,
-                    )
+                    val advice = if (prefs.bookKnowledgeEnabled().get()) {
+                        eu.kanade.tachiyomi.data.ai.BookKnowledge.renderAdvice(
+                            context = context,
+                            mangaId = mihon.data.ocr.ReaderContextBus.current.value?.mangaId,
+                        )
+                    } else {
+                        ""
+                    }
                     // Ссылку на задание ОБЯЗАТЕЛЬНО держим. Раньше здесь стоял
                     // голый scope.launch { … }, а следом aiRefine = null обнулял
                     // поле ещё ДО присваивания: задание ни отменялось (finally),
@@ -1137,12 +1149,12 @@ class AutoReadEngine(
                 val streamMode = autoReadMode == "stream"
                 val translationsDeferred = if (translate && language != target && streamMode) {
                     scope.async {
-                        runCatching { MangaTranslatorService.translateAll(ordered.map { it.text }, target) }
+                        runCatching { MangaTranslatorService.translateAll(ordered.map { it.text }, target, translateSource) }
                             .getOrElse { ordered.map { it.text } }
                     }
                 } else null
                 val translations: List<String> = if (translate && language != target && !streamMode) {
-                    runCatching { MangaTranslatorService.translateAll(ordered.map { it.text }, target) }
+                    runCatching { MangaTranslatorService.translateAll(ordered.map { it.text }, target, translateSource) }
                         .getOrElse { ordered.map { it.text } }
                 } else {
                     ordered.map { it.text }
@@ -1361,7 +1373,14 @@ class AutoReadEngine(
                         SpeechMarkup.strip(speakTextRaw),
                         speakerName,
                     )
-                    when (speakAndAwait(spokenText, gender, slot)) {
+                    // Голос ЯЗЫКА ПЕРЕВОДА (напр. японский дублёр для
+                    // переведённого на японский текста): hint ставится только
+                    // если реплика реально читается переведённой, а не в
+                    // исходнике (фолбэк перевода или stream до подхвата).
+                    val langHint = if (translate && language != target &&
+                        translatedText != null && translatedText != region.text
+                    ) target else null
+                    when (speakAndAwait(spokenText, gender, slot, langHint)) {
                         SpeakOutcome.SPOKEN, SpeakOutcome.SILENT -> rejectedStreak = 0
                         SpeakOutcome.NO_ENGINE -> {
                             blockAutoread(NO_VOICE_MESSAGE)
@@ -1891,10 +1910,10 @@ class AutoReadEngine(
      * Фразы выстраиваются в очередь ([speakMutex]): движок синтеза один, и без
      * очереди ручной тап по баблу перебивал реплику кадра на полуслове.
      */
-    private suspend fun speakAndAwait(text: String, gender: String? = null, speakerSlot: Int = 0): SpeakOutcome =
-        speakMutex.withLock { speakAndAwaitAlone(text, gender, speakerSlot) }
+    private suspend fun speakAndAwait(text: String, gender: String? = null, speakerSlot: Int = 0, langHint: String? = null): SpeakOutcome =
+        speakMutex.withLock { speakAndAwaitAlone(text, gender, speakerSlot, langHint) }
 
-    private suspend fun speakAndAwaitAlone(text: String, gender: String? = null, speakerSlot: Int = 0): SpeakOutcome {
+    private suspend fun speakAndAwaitAlone(text: String, gender: String? = null, speakerSlot: Int = 0, langHint: String? = null): SpeakOutcome {
         // Реплика может прийти с меткой `{имя:…}` (её снимает сам движок), а в
         // журнал и таймаут разумно класть то, что реально произносится.
         val spoken = SpeechMarkup.strip(text).ifBlank { text }
@@ -1914,7 +1933,7 @@ class AutoReadEngine(
         // Флаг фактического завершения фразы.
         val done = MutableStateFlow(false)
         val t0 = System.currentTimeMillis()
-        TtsSpeaker.speakAs(context, text, gender, speakerSlot) { speaking ->
+        TtsSpeaker.speakAs(context, text, gender, speakerSlot, langHint = langHint) { speaking ->
             if (speaking && !started.value) {
                 started.value = true
                 logcat(LogPriority.DEBUG) { "TTS started (${System.currentTimeMillis() - t0}ms): ${spoken.take(60)}" }

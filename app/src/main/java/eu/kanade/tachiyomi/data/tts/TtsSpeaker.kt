@@ -565,6 +565,7 @@ object TtsSpeaker {
         gender: String?,
         speakerSlot: Int = 0,
         onState: (Boolean) -> Unit = {},
+        langHint: String? = null,
     ) {
         stop()
         onStateChange = onState
@@ -628,7 +629,7 @@ object TtsSpeaker {
             ENGINE_GOOGLE_WEB -> if (roleSpec != null && isEdgeVoiceName(roleSpec)) {
                 speakWithEdgeVoice(context, spoken, roleSpec, onState)
             } else {
-                speakGoogleWeb(context, spoken)
+                speakGoogleWeb(context, spoken, langHint)
             }
             // У Edge женские и мужские голоса настоящие, поэтому пол и слот
             // персонажа там работают по-настоящему.
@@ -638,6 +639,7 @@ object TtsSpeaker {
                 voiceName = roleSpec,
                 gender = effectiveGender,
                 speakerSlot = slot,
+                langHint = langHint,
                 role = role,
             )
             ENGINE_ELEVENLABS -> speakElevenLabs(
@@ -1213,8 +1215,11 @@ object TtsSpeaker {
      * тем, что endpoint умеет, — заданным для персонажа голосом (маршрутизация
      * делается в [speakAs]); если голоса роли нет, звучит как раньше.
      */
-    private fun speakGoogleWeb(context: Context, text: String) {
-        val lang = prefs().ttsWebLanguage().get().ifBlank { "ru" }
+    private fun speakGoogleWeb(context: Context, text: String, langHint: String? = null) {
+        // Переведённым текстом читает голос ЦЕЛЕВОГО языка (Google Web TTS
+        // кодирует язык прямо в URL; у него один голос на язык — выбор прост).
+        val lang = langHint?.takeIf { it.isNotBlank() }
+            ?: prefs().ttsWebLanguage().get().ifBlank { "ru" }
         currentJob = scope.launch {
             // СВОЙ Job, а не поле: тело задачи стартует на другом потоке и
             // может выполниться ДО присваивания currentJob, увидев там null, —
@@ -1259,9 +1264,19 @@ object TtsSpeaker {
         gender: String? = null,
         speakerSlot: Int = 0,
         role: VoiceRole? = null,
+        langHint: String? = null,
     ) {
         val p = prefs()
-        val voice = voiceName?.takeIf { it.isNotBlank() } ?: edgeVoiceFor(gender, speakerSlot)
+        val voice = when {
+            // Перевод: голос ЦЕЛЕВОГО языка («правильная постановка» под язык
+            // текста — русскоязычный голос читал бы японский перевод с
+            // русским акцентом). Роль/пресет берём только если он совпал по
+            // языку, иначе родной голос нужного языка из таблицы.
+            !langHint.isNullOrBlank() ->
+                voiceName?.takeIf { it.isNotBlank() && it.startsWith(langHint + "-", ignoreCase = true) }
+                    ?: edgeVoiceFor(gender, speakerSlot, langHint)
+            else -> voiceName?.takeIf { it.isNotBlank() } ?: edgeVoiceFor(gender, speakerSlot)
+        }
         // Правило интонаций ищется по всей реплике: Edge синтезирует её одним
         // запросом, разбивать её на предложения с разным тоном здесь нельзя.
         val rule = VoiceIntonationDictionary.matchRule(p, text)
@@ -1323,23 +1338,29 @@ object TtsSpeaker {
      * сразу» (или одним голосом), и он тем заметнее, что у Edge голоса по полу
      * настоящие. Кто хочет один конкретный голос — задаёт его ролью.
      */
-    private fun edgeVoiceFor(gender: String?, speakerSlot: Int): String {
+    private fun edgeVoiceFor(gender: String?, speakerSlot: Int, language: String? = null): String {
         val p = prefs()
-        val presetByGender = when (gender) {
-            "female" -> p.voiceFemale().get()
-            "male" -> p.voiceMale().get()
-            else -> ""
-        }.let { parseVoiceSpec(it).second }
-        if (!presetByGender.isNullOrBlank() && isEdgeVoiceName(presetByGender)) {
-            return presetByGender
+        // Явный язык (langHint перевода) перекрывает пресеты: голос из
+        // настроек пола языка текста иначе подменит «постановку» чужим.
+        if (language.isNullOrBlank()) {
+            val presetByGender = when (gender) {
+                "female" -> p.voiceFemale().get()
+                "male" -> p.voiceMale().get()
+                else -> ""
+            }.let { parseVoiceSpec(it).second }
+            if (!presetByGender.isNullOrBlank() && isEdgeVoiceName(presetByGender)) {
+                return presetByGender
+            }
+            if (gender == null) {
+                return p.edgeVoice().get().takeIf { it.isNotBlank() } ?: EdgeTts.DEFAULT_VOICE
+            }
         }
-        if (gender == null) {
-            return p.edgeVoice().get().takeIf { it.isNotBlank() } ?: EdgeTts.DEFAULT_VOICE
-        }
-        val lang = edgeLanguage()
-        val pool = EDGE_GENDER_VOICES[lang]?.get(gender)
+        val lang = language?.takeIf { it.isNotBlank() } ?: edgeLanguage()
+        // gender может быть null только при явном language (hint перевода):
+        // берём первый голос языка независимо от пола, а не общий дефолт.
+        val pool = (if (gender != null) EDGE_GENDER_VOICES[lang]?.get(gender) else null)
             ?: EDGE_GENDER_VOICES[lang]?.values?.firstOrNull()
-            ?: EDGE_MULTILINGUAL_VOICES[gender]?.let(::listOf)
+            ?: EDGE_MULTILINGUAL_VOICES[gender ?: "female"]?.let(::listOf)
             ?: listOf(EdgeTts.DEFAULT_VOICE)
         return pool.getOrNull(speakerSlot.coerceAtLeast(0) % pool.size) ?: EdgeTts.DEFAULT_VOICE
     }
@@ -1654,6 +1675,21 @@ object TtsSpeaker {
         "en" to mapOf(
             "female" to listOf("en-US-AriaNeural", "en-US-JennyNeural", "en-US-MichelleNeural"),
             "male" to listOf("en-US-GuyNeural", "en-US-EricNeural", "en-US-ChristopherNeural"),
+        ),
+        // Голоса под ручную пару языков перевода (ja↔ru и т.п.): переведённый
+        // текст читается РОДНЫМ голосом целевого языка, а не мультиязычным
+        // фолбэком — тот ставил русскую «постановку» на любой текст.
+        "ja" to mapOf(
+            "female" to listOf("ja-JP-NanamiNeural", "ja-JP-AoiNeural"),
+            "male" to listOf("ja-JP-KeitaNeural", "ja-JP-NaokiNeural"),
+        ),
+        "ko" to mapOf(
+            "female" to listOf("ko-KR-SunHiNeural"),
+            "male" to listOf("ko-KR-InJoonNeural", "ko-KR-BongJinNeural"),
+        ),
+        "zh" to mapOf(
+            "female" to listOf("zh-CN-XiaoxiaoNeural", "zh-CN-XiaoyiNeural"),
+            "male" to listOf("zh-CN-YunxiNeural", "zh-CN-YunjianNeural"),
         ),
     )
 

@@ -102,5 +102,20 @@ object VoiceIntonationDictionary {
         rules.firstOrNull { it.matches(sentence) }
 
     fun matchRule(prefs: OcrPreferences, sentence: String): VoiceIntonationRule? =
-        matchRule(load(prefs), sentence)
+        matchRule(load(prefs).ifEmpty { DEFAULT_RULES }, sentence)
+
+    /**
+     * Встроенные интонации на знаки препинания: применяются, только если свой
+     * словарь пуст. Множители маленькие (4–12 %) — лёгкая «живость» («крик»
+     * чуть выше и быстрее, вопрос чуть выше, многоточие чуть медленнее и
+     * ниже), а не чтение театром. Порядок важен: «!!» проверяется раньше «!».
+     */
+    private val DEFAULT_RULES: List<VoiceIntonationRule> = listOf(
+        VoiceIntonationRule(pattern = "!!", pitch = 1.12f, rate = 1.08f),
+        VoiceIntonationRule(pattern = "!?", pitch = 1.10f, rate = 1.05f),
+        VoiceIntonationRule(pattern = "?!", pitch = 1.10f, rate = 1.05f),
+        VoiceIntonationRule(pattern = "!", pitch = 1.07f, rate = 1.04f),
+        VoiceIntonationRule(pattern = "?", pitch = 1.05f, rate = 1.0f),
+        VoiceIntonationRule(pattern = "…", pitch = 0.97f, rate = 0.93f),
+    )
 }

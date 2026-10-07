@@ -79,6 +79,35 @@ class SpeechMarkupTest {
     }
 
     @Test
+    fun `fullwidth japanese punctuation becomes speech-friendly ascii`() {
+        // Google Lens часто отдаёт ＂!＂, ＂?＂, ＂:＂ полноширинными — TTS
+        // проговаривал их словами («восклицательный знак»), а не интонацией.
+        SpeechMarkup.strip("すごい！") shouldBe "すごい!"
+        SpeechMarkup.strip("そ、そう…") shouldBe "そ,そう…"
+        SpeechMarkup.strip("ええっ!?（小声）") shouldBe "ええっ!?(小声)"
+        SpeechMarkup.strip("АКИ： БЕГИ！") shouldBe "АКИ: БЕГИ!"
+    }
+
+    @Test
+    fun `cjk brackets and sound marks are not spoken`() {
+        SpeechMarkup.strip("「帰れ！」") shouldBe "帰れ!"
+        SpeechMarkup.strip("『да』") shouldBe "да"
+        SpeechMarkup.strip("アー……") shouldBe "ア……"
+        SpeechMarkup.strip("キターー！！") shouldBe "キタ!!"
+    }
+
+    @Test
+    fun `fullwidth letters and digits normalize too`() {
+        SpeechMarkup.strip("１，２，３") shouldBe "1,2,3"
+        SpeechMarkup.strip("Полноширинный（текст）и；точки。") shouldBe "Полноширинный(текст)и;точки."
+    }
+
+    @Test
+    fun `speaker name is found behind a fullwidth colon`() {
+        SpeechMarkup.speakerNameFromText(SpeechMarkup.strip("АКИ： БЕГИ！")) shouldBe "АКИ"
+    }
+
+    @Test
     fun `edge ssml chunks count escaped bytes without splitting text`() {
         val source = "&".repeat(1_000) + "尾"
         val chunks = EdgeTts.chunkForSsml(source, limit = 100)

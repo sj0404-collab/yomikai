@@ -251,6 +251,23 @@ class OcrPreferences(
     // озвучку независимо от настроек.
     fun translateTarget() = preferenceStore.getString("pref_translate_target", "ru")
 
+    /**
+     * Язык источника для перевода авточтения («auto» — переводчик определяет
+     * сам, как было раньше). Ручной выбор помогает, когда кадр смешанный или
+     * переводчик путается на коротких репликах: «ja» — всегда с японского.
+     */
+    fun autoReadTranslateSource() = preferenceStore.getString("pref_autoread_translate_source", "auto")
+
+    /**
+     * «Знание о книге» на кадрах авточтения: запомненные правила порядка
+     * чтения, только-баллонов и советы ассистенту. Каждая порция знаний —
+     * это чтение файла книги и разбор JSON на КАЖДЫЙ кадр, поэтому по
+     * просьбе пользователя по умолчанию ВЫКЛЮЧЕНО (максимум скорости);
+     * включается переключателем в меню OCR читалки, когда правила для книги
+     * реально выучены. Словарь голосовых ролей отсюда не зависит — он свой.
+     */
+    fun bookKnowledgeEnabled() = preferenceStore.getBoolean("pref_book_knowledge_enabled", false)
+
     // ---- Офлайн-распознавание (Tesseract, модели в APK) ----
     // Языки распознавания: eng+rus | rus | eng (оба .traineddata лежат в APK)
     fun tessLangs() = preferenceStore.getString("pref_tess_langs", "eng+rus")

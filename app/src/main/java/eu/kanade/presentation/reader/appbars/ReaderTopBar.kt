@@ -11,7 +11,9 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -281,5 +283,84 @@ private fun OcrModelQuickSwitcher() {
                 onClick = { modePref.set(value) },
             )
         }
+
+        // v1.9.141: ПЕРЕВОД И «ЗНАНИЕ О КНИГЕ» — быстрые переключатели прямо
+        // в меню OCR читалки (по требованию пользователя), без ухода в
+        // настройки. Перевод: ручная пара языков («с японского на русский»
+        // и наоборот) + голос целевого языка. Знание о книге (выкл. по
+        // умолчанию) — файловые правила порядка чтения/баллонов: каждый
+        // кадр читал и разбирал файл книги, что жрало время.
+        androidx.compose.material3.HorizontalDivider()
+        val translatePref = prefs.autoReadTranslate()
+        val translateOn by translatePref.changes().collectAsState(initial = translatePref.get())
+        DropdownMenuItem(
+            text = {
+                androidx.compose.foundation.layout.Column {
+                    Text("Перевод перед озвучкой")
+                    Text(
+                        "читает сразу переведённым текстом голосом целевого языка",
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            trailingIcon = { Switch(checked = translateOn, onCheckedChange = null) },
+            onClick = { translatePref.set(!translateOn) },
+        )
+        val srcPref = prefs.autoReadTranslateSource()
+        val tgtPref = prefs.translateTarget()
+        val srcLang by srcPref.changes().collectAsState(initial = srcPref.get())
+        val tgtLang by tgtPref.changes().collectAsState(initial = tgtPref.get())
+        val srcLangs = listOf("auto", "ja", "en", "ko", "zh", "ru")
+        val tgtLangs = listOf("ru", "en", "uk", "ja", "ko", "zh")
+        var srcOpen by remember { mutableStateOf(false) }
+        var tgtOpen by remember { mutableStateOf(false) }
+        Box {
+            DropdownMenuItem(
+                text = { Text("Источник перевода: $srcLang") },
+                onClick = { srcOpen = true },
+            )
+            DropdownMenu(expanded = srcOpen, onDismissRequest = { srcOpen = false }) {
+                srcLangs.forEach { lang ->
+                    DropdownMenuItem(
+                        text = { Text(if (lang == "auto") "auto (определять самим)" else lang) },
+                        leadingIcon = { RadioButton(selected = srcLang == lang, onClick = null) },
+                        onClick = { srcPref.set(lang); srcOpen = false },
+                    )
+                }
+            }
+        }
+        Box {
+            DropdownMenuItem(
+                text = { Text("Язык перевода: $tgtLang") },
+                onClick = { tgtOpen = true },
+            )
+            DropdownMenu(expanded = tgtOpen, onDismissRequest = { tgtOpen = false }) {
+                tgtLangs.forEach { lang ->
+                    DropdownMenuItem(
+                        text = { Text(lang) },
+                        leadingIcon = { RadioButton(selected = tgtLang == lang, onClick = null) },
+                        onClick = { tgtPref.set(lang); tgtOpen = false },
+                    )
+                }
+            }
+        }
+        androidx.compose.material3.HorizontalDivider()
+        val bookPref = prefs.bookKnowledgeEnabled()
+        val bookOn by bookPref.changes().collectAsState(initial = bookPref.get())
+        DropdownMenuItem(
+            text = {
+                androidx.compose.foundation.layout.Column {
+                    Text("Знание о книге")
+                    Text(
+                        "запомненные правила порядка чтения и баллонов · выкл = быстрее",
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            trailingIcon = { Switch(checked = bookOn, onCheckedChange = null) },
+            onClick = { bookPref.set(!bookOn) },
+        )
     }
 }
