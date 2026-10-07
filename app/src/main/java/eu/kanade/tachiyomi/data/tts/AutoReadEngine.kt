@@ -2436,6 +2436,10 @@ class AutoReadEngine(
         private val WHITESPACE_RE = Regex("\\s+")
         private val REPEATED_CHAR_RE = Regex("(.)\\1{2,}")
         private val TWO_LETTER_SPLIT_RE = Regex("^[\\p{L}][\\s—–-]+[\\p{L}][.!?…]*$")
+        // Короткое междометие/выкрик с сильной пунктуацией («ГХ!!», «А!»).
+        // Букв 1-2, дальше только сильная пунктуация — это реплика, а не
+        // мусор; до v1.9.140 такие строки отбрасывались (нет 3-букв. слова).
+        private val STRONG_SHORT_RE = Regex("^[\\p{L}]{1,2}[!?…~]{1,4}$")
         private val CYRILLIC_WORD_RE = Regex("[\\u0400-\\u04FF]{3,}")
         private val LATIN_WORD_RE = Regex("[A-Za-z]{3,}")
         private val CHAPTER_HEADER_RE =
@@ -2988,6 +2992,12 @@ class AutoReadEngine(
                 if (language != "ru") return false
                 val compact = row.filter(Char::isLetter).lowercase()
                 if (isShortRussianWord(compact)) return true
+                // Короткий выкрик с сильной пунктуацией («ГХ!!», «А!») —
+                // тоже реплика. Буквы обязаны быть кириллицей: японские
+                // SFX («ガッ») при русском языке по-прежнему отбрасываем.
+                if (STRONG_SHORT_RE.matches(row) &&
+                        compact.all { it in '\u0400'..'\u04FF' }
+                ) return true
                 return compact.length == 2 &&
                     compact.all { it in '\u0400'..'\u04FF' } &&
                     TWO_LETTER_SPLIT_RE.matches(row)
@@ -2999,7 +3009,14 @@ class AutoReadEngine(
                     if (cyr == 0) return false
                     if (cyr.toFloat() / letters < 0.6f) return false
                     // Должно быть хотя бы одно «слово» из 3+ кириллических букв
-                    return CYRILLIC_WORD_RE.containsMatchIn(row)
+                    if (CYRILLIC_WORD_RE.containsMatchIn(row)) return true
+                    // Строка из коротких слогов, порванных дефисом переноса
+                    // («НИ-КА НА»): без дефисов это цельное слово — строку
+                    // нельзя терять, иначе после склейки соседних строк её
+                    // текст исчезает из реплики («ВЗГЛЯЭТОТ МЕЧ!» вместо
+                    // «ВЗГЛЯНИ-КА НА ЭТОТ МЕЧ!»).
+                    return row.contains('-') &&
+                        CYRILLIC_WORD_RE.containsMatchIn(row.replace("-", ""))
                 }
                 "en" -> {
                     val lat = row.count { it in 'a'..'z' || it in 'A'..'Z' }
