@@ -1933,17 +1933,20 @@ class AutoReadEngine(
         // Флаг фактического завершения фразы.
         val done = MutableStateFlow(false)
         val t0 = System.currentTimeMillis()
-        TtsSpeaker.speakAs(context, text, gender, speakerSlot, langHint = langHint) { speaking ->
-            if (speaking && !started.value) {
-                started.value = true
-                logcat(LogPriority.DEBUG) { "TTS started (${System.currentTimeMillis() - t0}ms): ${spoken.take(60)}" }
-            }
-            if (!speaking && started.value) {
-                done.value = true
-                logcat(LogPriority.DEBUG) { "TTS done in ${System.currentTimeMillis() - t0}ms" }
-                OcrHistoryStore.addAutoRead(true, "озвучено (${System.currentTimeMillis() - t0} мс)", spoken.take(60))
-            }
-        }
+        TtsSpeaker.speakAs(
+            context, text, gender, speakerSlot, langHint = langHint,
+            onState = { speaking ->
+                if (speaking && !started.value) {
+                    started.value = true
+                    logcat(LogPriority.DEBUG) { "TTS started (${System.currentTimeMillis() - t0}ms): ${spoken.take(60)}" }
+                }
+                if (!speaking && started.value) {
+                    done.value = true
+                    logcat(LogPriority.DEBUG) { "TTS done in ${System.currentTimeMillis() - t0}ms" }
+                    OcrHistoryStore.addAutoRead(true, "озвучено (${System.currentTimeMillis() - t0} мс)", spoken.take(60))
+                }
+            },
+        )
         val start = System.currentTimeMillis()
         // Фазы ожидания построены на потоке, а не на опросе по таймеру.
         // Раньше здесь стоял delay(20) на старт и delay(40) на всю фразу: одна
