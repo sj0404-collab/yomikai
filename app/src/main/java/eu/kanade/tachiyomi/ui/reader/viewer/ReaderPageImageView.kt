@@ -829,6 +829,14 @@ open class ReaderPageImageView @JvmOverloads constructor(
             boxPaint.color = markColor
             for (regionIndex in entry.regions.indices) {
                 val region = entry.regions[regionIndex]
+                // v1.9.138: чистка пометок-шума с экрана. Регионы с пустым
+                // текстом и вырожденные полоски (нулевая высота на стыке
+                // кадров / микропятна) дают на странице «линии + кружки-номера
+                // без смысла» — рисовать их не надо.
+                if (region.text.isBlank()) continue
+                val hFrac = (region.boundingBox.bottom - region.boundingBox.top)
+                val wFrac = (region.boundingBox.right - region.boundingBox.left)
+                if (hFrac < 0.012f || wFrac < 0.02f) continue
                 val fileBox = entry.regionFileBoundingBox(region) ?: continue
                 val fileRect = RectF(
                     fileBox.left * entry.sourceWidth,

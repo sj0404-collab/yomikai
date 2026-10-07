@@ -2992,7 +2992,23 @@ class AutoReadEngine(
             // «← том 3 глава 5 →». Это шапка/футер манга-ридера, а не реплика;
             // раньше авточтение постоянно зачитывало эти подписи и стрелки.
             if (isSiteChromeNoise(text)) return false
-            val words = text.split(WHITESPACE_RE)
+            // v1.9.138: мусор SFX-кадра, который GLens отдаёт как «реплику»:
+            //  • одиночная заглавная кириллическая СОГЛАСНАЯ («В», «Б») —
+            //    почти всегда виньетка на арте, а не реплика;
+            //  • слово(а) с буквой, повторённой 3+ раз («цшшшш», «щщщ»);
+            //    смех «хаха/хи-хи» тут не задевается: у него максимум ×2.
+            val compact = text.filter(Char::isLetterOrDigit)
+            if (compact.length == 1) {
+                val c = compact[0]
+                if (c in 'А'..'Я' && c !in "АИОУЯЁЕЮЫЭ") return false
+            }
+            val words = text.split(WHITESPACE_RE).filter { it.isNotBlank() }
+            val echoGarbage = words.count { w ->
+                val letters = w.filter(Char::isLetter)
+                letters.length >= 3 &&
+                    letters.groupingBy { it }.eachCount().values.any { cnt -> cnt >= 3 }
+            }
+            if (words.isNotEmpty() && echoGarbage == words.size) return false
             return words.any { w -> w.count { it.isLetter() } >= 3 } ||
                 // Короткие настоящие русские слова (я, и, но, не…) — читаем.
                 (language == "ru" && words.any { isShortRussianWord(it.filter(Char::isLetter)) }) ||

@@ -320,9 +320,13 @@ class ReaderActivity : BaseActivity() {
                     when (val viewer = viewModel.state.value.viewer) {
                         is eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer -> {
                             // Пейсинг: кадр авточтения занят (скан/OCR/речь) —
-                            // прокрутка ждёт, иначе при ×N глаз убегал от голоса.
+                            // прокрутка ЗАМЕДЛЯЕТСЯ до трети скорости (v1.9.138:
+                            // не полный стоп — лента чуть ползёт, глаз не бежит
+                            // впереди голоса, но и картинка не застывает).
                             if (autoReadActive && autoReadFrameBusy) {
-                                kotlinx.coroutines.delay(140)
+                                val slow = (speed / 3f).toInt().coerceAtLeast(1)
+                                viewer.recycler.scrollBy(0, slow)
+                                kotlinx.coroutines.delay(24)
                             } else {
                                 // ~60 Гц; скорость 1..10 → 1..10 px за кадр
                                 viewer.recycler.scrollBy(0, speed.toInt().coerceAtLeast(1))
