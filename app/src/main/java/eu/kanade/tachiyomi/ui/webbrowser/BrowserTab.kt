@@ -103,6 +103,7 @@ import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.FullscreenExit
+import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.runtime.rememberCoroutineScope
 import eu.kanade.tachiyomi.util.ocr.toOcrImage
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -505,6 +506,15 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
     }
 
     @Composable
+    /** Режим OCR в браузере: auto / online (Google Lens) / offline (Paddle кирилл.). */
+    private fun browserOcrMode(context: Context): String =
+        context.getSharedPreferences("browser_ocr", 0).getString("engine_mode", "auto") ?: "auto"
+
+    private fun setBrowserOcrMode(context: Context, mode: String) {
+        context.getSharedPreferences("browser_ocr", 0).edit()
+            .putString("engine_mode", mode).apply()
+    }
+
     override fun Content() {
         var urlBar by urlState
         val canGoBack by canGoBackState
@@ -539,6 +549,8 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
         }
 
         var isAutoRead by autoReadActive
+        // «Прочитать страницу» — один проход авточтения без перехода дальше.
+        var oneShotRead by remember { mutableStateOf(false) }
         val ctx = androidx.compose.ui.platform.LocalContext.current
         WebStore.load(ctx)
         // v1.9.44: вкладки/активная восстанавливаются СИНХРОННО до первого кадра —
@@ -605,6 +617,29 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
         val scope = rememberCoroutineScope()
         var saving by remember { mutableStateOf(false) }
         var saveMsg by remember { mutableStateOf<String?>(null) }
+
+        /** «Скриншот сейчас» (как в читалке манги): текущий кадр WebView в PNG. */
+        fun saveScreenshotNow() {
+            val bmp = captureWebView()
+            if (bmp == null) {
+                ctx.toast("Не удалось захватить кадр")
+                return
+            }
+            try {
+                val dir = java.io.File(
+                    ctx.getExternalFilesDir(android.os.Environment.DIRECTORY_PICTURES)
+                        ?: ctx.filesDir,
+                    "screenshots",
+                ).apply { mkdirs() }
+                val out = java.io.File(dir, "web-${System.currentTimeMillis()}.png")
+                out.outputStream().use { stream ->
+                    bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
+                }
+                ctx.toast("Скриншот сохранён: ${out.absolutePath}")
+            } catch (e: Exception) {
+                ctx.toast("Не удалось сохранить скриншот: ${e.javaClass.simpleName}")
+            }
+        }
 
         fun manualScan() {
             imageLongPress = { manualScan() }
@@ -753,6 +788,9 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
                 )
                 while (!finished && isAutoRead) delay(120)
                 if (!isAutoRead) break
+
+                // «Прочитать страницу»: только текущий кадр, дальше не идём.
+                if (oneShotRead) { oneShotRead = false; isAutoRead = false; break }
 
                 val prefs = Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
                 if (!prefs.autoReadAutoAdvance().get()) { isAutoRead = false; break }
@@ -1041,6 +1079,88 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
                                     manualScan()
                                 }) {
                                     Icon(Icons.Outlined.DocumentScanner, contentDescription = "OCR")
+                                }
+                            }
+
+                            // ---- Те же кнопки, что в нативной читалке манги ----
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    if (isAuto) "Стоп автопрокрутки  " else "Автопрокрутка  ",
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
+                                SmallFloatingActionButton(onClick = {
+                                    isAuto = !isAuto
+                                }) {
+                                    Icon(
+                                        if (isAuto) Icons.Outlined.Stop else Icons.Outlined.PlayArrow,
+                                        contentDescription = "Автопрокрутка",
+                                        tint = if (isAuto) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Прочитать страницу  ", style = MaterialTheme.typography.labelMedium)
+                                SmallFloatingActionButton(onClick = {
+                                    menuOpen = false
+                                    isAuto = false
+                                    oneShotRead = true
+                                    isAutoRead = true
+                                }) {
+                                    Icon(Icons.Outlined.RecordVoiceOver, contentDescription = "Прочитать страницу")
+                                }
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Стоп чтения  ", style = MaterialTheme.typography.labelMedium)
+                                SmallFloatingActionButton(onClick = {
+                                    oneShotRead = false
+                                    isAutoRead = false
+                                    readEngine.stop()
+                                }) {
+                                    Icon(Icons.Outlined.Stop, contentDescription = "Стоп чтения")
+                                }
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Скриншот сейчас  ", style = MaterialTheme.typography.labelMedium)
+                                SmallFloatingActionButton(onClick = {
+                                    menuOpen = false
+                                    saveScreenshotNow()
+                                }) {
+                                    Icon(Icons.Outlined.PhotoCamera, contentDescription = "Скриншот")
+                                }
+                            }
+                            // Движок OCR: не только онлайн — кликом листается Авто/Онлайн/Офлайн.
+                            var ocrMode by remember { mutableStateOf(browserOcrMode(ctx)) }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                val ocrLabel = when (ocrMode) {
+                                    "online" -> "OCR: Онлайн (Google Lens)  "
+                                    "offline" -> "OCR: Офлайн (Paddle кирилл.)  "
+                                    else -> "OCR: Авто  "
+                                }
+                                Text(ocrLabel, style = MaterialTheme.typography.labelMedium)
+                                SmallFloatingActionButton(onClick = {
+                                    ocrMode = when (ocrMode) {
+                                        "online" -> "offline"
+                                        "offline" -> "auto"
+                                        else -> "online"
+                                    }
+                                    setBrowserOcrMode(ctx, ocrMode)
+                                }) {
+                                    Icon(Icons.Outlined.Tune, contentDescription = "Движок OCR")
+                                }
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    if (voiceIcons) "Значки озвучки: вкл  " else "Значки озвучки: выкл  ",
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
+                                SmallFloatingActionButton(onClick = {
+                                    voicePrefs.voiceIcons().set(!voiceIcons)
+                                }) {
+                                    Icon(
+                                        Icons.Outlined.RecordVoiceOver,
+                                        contentDescription = "Значки озвучки",
+                                        tint = if (voiceIcons) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                    )
                                 }
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1566,9 +1686,8 @@ private suspend fun ocrWithPreprocess(context: android.content.Context, src: and
         }
         return try {
             val ocr = Injekt.get<mihon.domain.ocr.interactor.ScanPageOcr>()
-            // v1.9.44: в вебе по умолчанию ОНЛАЙН OCR (Google Lens, ключ встроен) —
-            // качество выше и не тянется 2-МБ офлайн-модель; без сети — локальный
-            // CYRILLIC (кириллический).
+            // v1.9.49: режим выбирается в меню браузера («OCR: Авто/Онлайн/Офлайн»):
+            // пользователь может жёстко просить PaddleOCR офлайн, не только онлайн.
             val prefsO = Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
             val online = runCatching {
                 val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
@@ -1576,13 +1695,20 @@ private suspend fun ocrWithPreprocess(context: android.content.Context, src: and
                 net != null && (cm.getNetworkCapabilities(net)
                     ?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) ?: false)
             }.getOrDefault(false)
-            val want = if (online) mihon.domain.ocr.model.OcrModel.GLENS else mihon.domain.ocr.model.OcrModel.CYRILLIC
+            val mode = context.getSharedPreferences("browser_ocr", 0)
+                .getString("engine_mode", "auto") ?: "auto"
+            val want = when {
+                mode == "offline" -> mihon.domain.ocr.model.OcrModel.CYRILLIC
+                mode == "online" -> mihon.domain.ocr.model.OcrModel.GLENS
+                online -> mihon.domain.ocr.model.OcrModel.GLENS
+                else -> mihon.domain.ocr.model.OcrModel.CYRILLIC
+            }
             prefsO.ocrModel().set(want)
             val pgIdx = (System.currentTimeMillis() % 1_000_000L).toInt()
             var regions = withTimeout(60_000) {
                 ocr.await(chapterId = -1L, pageIndex = pgIdx, image = bmp.toOcrImage())
             }.let(::ocrFixedRegions)
-            if (regions.isEmpty() && want == mihon.domain.ocr.model.OcrModel.GLENS) {
+            if (regions.isEmpty() && (want == mihon.domain.ocr.model.OcrModel.GLENS || mode == "online")) {
                 // Онлайн не ответил (лимит/сеть) — откат на офлайн-кириллицу.
                 prefsO.ocrModel().set(mihon.domain.ocr.model.OcrModel.CYRILLIC)
                 regions = withTimeout(180_000) {
