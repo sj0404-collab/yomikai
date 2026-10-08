@@ -90,14 +90,26 @@ data class BookChapter(
                 }
             } else {
                 // Текстовые главы
-                if (volume != null) append("Том $volume")
-                if (chapter != null) {
-                    if (isNotEmpty()) append(", ")
-                    append("Глава $chapter")
+                // Если имя уже начинается с «Глава N: …» / «Том N» / «Пролог…» —
+                // это название вытащено из текста главы: добавлять ещё один
+                // префикс «Глава X:» к нему не нужно (иначе «Глава 1: Глава 1: …»).
+                val selfTitled = name.trim().let {
+                    it.startsWith("Глава") || it.startsWith("Том") ||
+                        it.startsWith("Пролог") || it.startsWith("Эпилог") ||
+                        it.startsWith("Интерлюдия")
                 }
-                if (subChapter != null) append(".$subChapter")
-                if (isNotEmpty()) append(": ")
-                append(name.ifBlank { "Текст" })
+                if (selfTitled) {
+                    append(name)
+                } else {
+                    if (volume != null) append("Том $volume")
+                    if (chapter != null) {
+                        if (isNotEmpty()) append(", ")
+                        append("Глава $chapter")
+                    }
+                    if (subChapter != null) append(".$subChapter")
+                    if (isNotEmpty()) append(": ")
+                    append(name.ifBlank { "Текст" })
+                }
             }
         }
 

@@ -72,6 +72,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -1059,6 +1060,28 @@ data class BooksReaderScreen(
             if (segments.isNotEmpty()) {
                 val target = (currentSentenceIndex + headerCount).coerceIn(0, segments.lastIndex + headerCount)
                 listState.animateScrollToItem(target)
+            }
+        }
+
+        // Ручной скролл двигает счётчик «Предложение i/N»: раньше он залипал
+        // на последней ОЗВУЧЕННОЙ позиции. Теперь ориентир — первый видимый
+        // текстовый элемент (иллюстрации цепляются к предложению после них).
+        LaunchedEffect(listState, viewItems.size, segments.size) {
+            snapshotFlow { listState.firstVisibleItemIndex }.collect { visIdx ->
+                if (isPageBased || segments.isEmpty()) return@collect
+                var found: Int? = null
+                var k = visIdx
+                while (k >= 0) {
+                    val vi = viewItems.getOrNull(k) ?: break
+                    if (vi is BookTextItem) {
+                        found = vi.index
+                        break
+                    }
+                    k--
+                }
+                if (found != null && found != currentSentenceIndex) {
+                    currentSentenceIndex = found
+                }
             }
         }
 

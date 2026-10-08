@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.books
 
 import android.graphics.BitmapFactory
+import android.media.MediaPlayer
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -20,10 +21,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.DeleteOutline
-import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Headphones
+import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
@@ -33,10 +36,12 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -44,7 +49,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,19 +62,30 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.books.AudiobookMaker
+import eu.kanade.tachiyomi.data.books.BookParser
+import eu.kanade.tachiyomi.data.books.BookTtsScript
 import eu.kanade.tachiyomi.data.books.BooksStore
+import kotlinx.coroutines.launch
+import mihon.domain.ocr.service.OcrPreferences
 import tachiyomi.core.common.util.lang.withIOContext
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 /**
- * Детальный экран книги — как страница манги у манги: обложка, название,
- * автор, прогресс, время чтения и ПОЛНОЕ описание, а ниже действия:
- *  • «Продолжить» — открыть читалку с сохранённого места;
- *  • «Создать аудиокнигу» — прогнать все главы выбранным движком TTS с
- *    ролевыми голосами и сложить mp3/wav-файлы в audiobooks/<Название>;
- *  • «Удалить из приложения» — книга пропадает из библиотеки (файл остаётся);
- *  • «Удалить из телефона» — файл стирается физически.
+ * Детальный экран книги — как страница манги: обложка, название, автор,
+ * прогресс, время чтения и ПОЛНОЕ описание. Плюс секции:
+ *  • «Создать аудиокнигу» — с выбором ДИАПАЗОНА (от главы/предложения До
+ *    главы/предложения) и опцией склейки всех фрагментов в один файл. В
+ *    процессе видно: движок и голос, полный ролевой состав, текущую главу
+ *    и предложение, время генерации каждой главы и её аудиохронометраж.
+ *  • Список готовых аудиофайлов книги (главы и full-файл склейки) с
+ *    встроенным плеером — послушать можно в любой момент, даже когда
+ *    генерация ещё идёт (как «живое выступление»).
+ *  • «Удалить из приложения» / «Удалить из телефона» с подтверждением.
  */
 data class BooksBookScreen(private val bookFileName: String) : Screen {
+
+    private data class ChapterPick(val title: String, val segments: Int)
 
     private fun formatReadTime(seconds: Long): String {
         if (seconds < 60) return "<1 мин"
@@ -82,6 +97,13 @@ data class BooksBookScreen(private val bookFileName: String) : Screen {
         } else {
             "$minutes мин"
         }
+    }
+
+    private fun fmtHms(s: Long): String {
+        val h = s / 3600
+        val m = (s % 3600) / 60
+        val sec = s % 60
+        return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
     }
 
     private fun formatAgo(ts: Long): String {
@@ -113,7 +135,22 @@ data class BooksBookScreen(private val bookFileName: String) : Screen {
         var lastOpened by remember { mutableStateOf(0L) }
         var sizeBytes by remember { mutableStateOf(0L) }
         var ext by remember { mutableStateOf("") }
-        var showAudiobookDialog by remember { mutableStateOf(false) }
+
+        // Аудиокнига: диалоги и выбор диапазона.
+        var showSetupDialog by remember { mutableStateOf(false) }
+        var showProgressDialog by remember { mutableStateOf(false) }
+        var chapterPicks by remember { mutableStateOf<List<ChapterPick>>(emptyList()) }
+        var fromChapter by remember { mutableIntStateOf(1) }
+        var fromSentence by remember { mutableIntStateOf(1) }
+        var toChapter by remember { mutableIntStateOf(0) }
+        var toSentence by remember { mutableIntStateOf(0) }
+
+        // Готовые аудиофайлы книги + встроенный плеер.
+        var audioFiles by remember { mutableStateOf<List<UniFile>>(emptyList()) }
+        var audioDurations by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
+        var player by remember { mutableStateOf<MediaPlayer?>(null) }
+        var playingName by remember { mutableStateOf<String?>(null) }
+
         var showHideDialog by remember { mutableStateOf(false) }
         var showDeleteDialog by remember { mutableStateOf(false) }
 
@@ -135,6 +172,63 @@ data class BooksBookScreen(private val bookFileName: String) : Screen {
                     ext = bookFileName.substringAfterLast('.', "").uppercase()
                 }
                 file = found
+            }
+        }
+
+        // Обновляем список готовых глав и их хронометраж после записи
+        // каждой главы и по концу генерации.
+        val makerState = AudiobookMaker.state
+        LaunchedEffect(title, makerState.chapter, makerState.done, makerState.cancelled) {
+            if (title.isBlank()) return@LaunchedEffect
+            val files = withIOContext { AudiobookMaker.listFiles(context, title) }.orEmpty()
+            audioFiles = files
+            audioDurations = withIOContext {
+                files.associate { f ->
+                    (f.name ?: "") to AudiobookMaker.audioSecondsOf(context, f)
+                }
+            }
+        }
+
+        // Останавливаем плеер при уходе с экрана.
+        DisposableEffect(Unit) {
+            onDispose {
+                player?.let { p ->
+                    runCatching { if (p.isPlaying) p.stop() }
+                    p.release()
+                }
+            }
+        }
+
+        fun playFile(f: UniFile) {
+            val name = f.name ?: return
+            if (playingName == name) {
+                player?.let { p ->
+                    runCatching { if (p.isPlaying) p.stop() }
+                    p.release()
+                }
+                player = null
+                playingName = null
+                return
+            }
+            player?.let { p ->
+                runCatching { if (p.isPlaying) p.stop() }
+                p.release()
+            }
+            scope.launch {
+                runCatching {
+                    val mp = withIOContext {
+                        MediaPlayer().apply {
+                            setDataSource(context, f.uri)
+                            prepare()
+                        }
+                    }
+                    player = mp
+                    playingName = name
+                    mp.setOnCompletionListener {
+                        playingName = null
+                    }
+                    mp.start()
+                }
             }
         }
 
@@ -168,7 +262,6 @@ data class BooksBookScreen(private val bookFileName: String) : Screen {
                     .padding(16.dp),
             ) {
                 Row {
-                    // Обложка крупно, как у манги.
                     if (coverBitmap != null) {
                         Image(
                             bitmap = coverBitmap.asImageBitmap(),
@@ -258,7 +351,6 @@ data class BooksBookScreen(private val bookFileName: String) : Screen {
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // Действия.
                 FilledTonalButton(
                     onClick = { navigator.push(BooksReaderScreen(bookFileName, title)) },
                     modifier = Modifier.fillMaxWidth(),
@@ -270,23 +362,41 @@ data class BooksBookScreen(private val bookFileName: String) : Screen {
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = {
-                        // Обновляем состояние и начинаем генерацию ЕСЛИ другая не идёт.
-                        AudiobookMaker.state.let { st ->
-                            if (!st.running) {
-                                file?.let { AudiobookMaker.start(context, it, title) }
+                        if (makerState.running) {
+                            showProgressDialog = true
+                        } else {
+                            // Подготовим главы для выбора диапазона.
+                            scope.launch {
+                                if (chapterPicks.isEmpty()) {
+                                    chapterPicks = withIOContext {
+                                        val f = file ?: return@withIOContext emptyList()
+                                        runCatching {
+                                            BookParser.parse(f, f.uri.toString(), context)
+                                        }.getOrNull()?.chapters.orEmpty()
+                                            .filter { !it.isPageBased && it.resolvedText.isNotBlank() }
+                                            .map { ch ->
+                                                ChapterPick(
+                                                    title = ch.displayTitle.take(60),
+                                                    segments = BookTtsScript.split(ch.resolvedText).size,
+                                                )
+                                            }
+                                    }
+                                    toChapter = chapterPicks.size
+                                    toSentence = chapterPicks.lastOrNull()?.segments ?: 0
+                                }
+                                showSetupDialog = true
                             }
                         }
-                        showAudiobookDialog = true
                     },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Icon(Icons.Outlined.Headphones, contentDescription = null)
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        if (AudiobookMaker.state.running) {
+                        if (makerState.running) {
                             "Аудиокнига создаётся…"
                         } else {
-                            "Создать аудиокнигу"
+                            "Создать аудиокнигу…"
                         },
                     )
                 }
@@ -319,7 +429,60 @@ data class BooksBookScreen(private val bookFileName: String) : Screen {
                     }
                 }
 
-                // Полное описание — как у манги.
+                // Готовые аудиофайлы книги — можно проиграть в любой момент,
+                // пока идёт или завершилась генерация (эффект «спектакля»).
+                if (audioFiles.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    HorizontalDivider()
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        "Аудиокнига · ${audioFiles.size} файлов",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    audioFiles.forEach { f ->
+                        val name = f.name.orEmpty()
+                        val dur = audioDurations[name] ?: 0L
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp),
+                        ) {
+                            IconButton(onClick = { playFile(f) }, modifier = Modifier.size(32.dp)) {
+                                Icon(
+                                    if (playingName == name) {
+                                        Icons.Outlined.Stop
+                                    } else {
+                                        Icons.Outlined.PlayArrow
+                                    },
+                                    contentDescription = if (playingName == name) "Стоп" else "Играть",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                            Text(
+                                name,
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                                color = if (playingName == name) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
+                            )
+                            if (dur > 0) {
+                                Text(
+                                    fmtHms(dur),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+
                 description?.takeIf { it.isNotBlank() }?.let { desc ->
                     Spacer(modifier = Modifier.height(16.dp))
                     HorizontalDivider()
@@ -337,11 +500,157 @@ data class BooksBookScreen(private val bookFileName: String) : Screen {
 
         // ---- Диалоги ----
 
-        if (showAudiobookDialog) {
+        // 1) Настройка генерации: диапазон + склейка + кто озвучивает.
+        if (showSetupDialog) {
+            val prefs = runCatching { Injekt.get<OcrPreferences>() }.getOrNull()
+            val isEdge = prefs?.bookTtsEngine()?.get() == "edge"
+            val voiceLbl = prefs?.bookVoiceLabel()?.get().orEmpty().ifBlank { "по умолчанию" }
+            val roles = prefs?.bookRoleVoices()?.get() ?: true
+            var mergeOne by remember { mutableStateOf(true) }
+
+            @Composable
+            fun stepperRow(
+                label: String,
+                value: Int,
+                max: Int,
+                onChange: (Int) -> Unit,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.width(90.dp),
+                    )
+                    TextButton(onClick = { if (value > 1) onChange(value - 1) }) { Text("−") }
+                    Text(
+                        "$value / $max",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    TextButton(onClick = { if (value < max) onChange(value + 1) }) { Text("+") }
+                }
+            }
+
+            AlertDialog(
+                onDismissRequest = { showSetupDialog = false },
+                title = { Text("Создать аудиокнигу") },
+                text = {
+                    Column {
+                        Text(
+                            "«$title»",
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        // КТО озвучивает — видно заранее.
+                        Text(
+                            "Движок: " + if (isEdge) "Edge TTS (онлайн)" else "Системный TTS",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
+                            "Голос: $voiceLbl" + if (roles) " · роли: вкл" else " · роли: выкл",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        if (chapterPicks.isEmpty()) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    "Считаю главы и предложения…",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        } else {
+                            // Диапазон глав/предложений (можно пропустить оглавление).
+                            stepperRow("С главы", fromChapter, chapterPicks.size) {
+                                fromChapter = it
+                                if (toChapter < it) toChapter = it
+                            }
+                            stepperRow(
+                                "  с предложения",
+                                fromSentence,
+                                chapterPicks.getOrNull(fromChapter - 1)?.segments?.coerceAtLeast(1) ?: 1,
+                            ) { fromSentence = it }
+                            stepperRow("До главы", toChapter.coerceIn(1, chapterPicks.size), chapterPicks.size) {
+                                toChapter = it
+                            }
+                            stepperRow(
+                                "  до предложения",
+                                toSentence,
+                                chapterPicks.getOrNull(toChapter - 1)?.segments?.coerceAtLeast(1) ?: 1,
+                            ) { toSentence = it }
+                            Text(
+                                chapterPicks.getOrNull(fromChapter - 1)?.title.orEmpty(),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(checked = mergeOne, onCheckedChange = { mergeOne = it })
+                                Text(
+                                    "Склеить в один файл full.mp3/wav",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showSetupDialog = false
+                            file?.let { f ->
+                                AudiobookMaker.start(
+                                    context = context,
+                                    book = f,
+                                    title = title,
+                                    fromChapter = if (fromChapter <= 1 && fromSentence <= 1) -1 else fromChapter,
+                                    fromSentence = if (fromSentence <= 1) -1 else fromSentence,
+                                    toChapter = if (toChapter <= 0 || toChapter >= chapterPicks.size) {
+                                        if (toChapter >= chapterPicks.size &&
+                                            toSentence >= (chapterPicks.lastOrNull()?.segments ?: 0)
+                                        ) {
+                                            -1
+                                        } else {
+                                            toChapter
+                                        }
+                                    } else {
+                                        toChapter
+                                    },
+                                    toSentence = if (toSentence <= 0 ||
+                                        toSentence >= (
+                                            chapterPicks.getOrNull(toChapter - 1)?.segments ?: Int.MAX_VALUE
+                                            )
+                                    ) {
+                                        -1
+                                    } else {
+                                        toSentence
+                                    },
+                                    mergeOneFile = mergeOne,
+                                )
+                            }
+                            showProgressDialog = true
+                        },
+                        enabled = chapterPicks.isNotEmpty(),
+                    ) { Text("Начать") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showSetupDialog = false }) { Text("Отмена") }
+                },
+            )
+        }
+
+        // 2) Прогресс генерации: кто, этап, цикл, время глав.
+        if (showProgressDialog) {
             val st = AudiobookMaker.state
             AlertDialog(
                 onDismissRequest = {
-                    if (!st.running) showAudiobookDialog = false
+                    if (!st.running) showProgressDialog = false
                 },
                 title = { Text(if (st.running) "Создаю аудиокнигу…" else "Аудиокнига") },
                 text = {
@@ -349,7 +658,27 @@ data class BooksBookScreen(private val bookFileName: String) : Screen {
                         Text(
                             "«${st.bookTitle.ifBlank { title }}»",
                             style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
                         )
+                        Text(
+                            "${st.engineLabel} · ${st.voiceLabel}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        if (st.rolesLine.isNotBlank()) {
+                            Text(
+                                st.rolesLine,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (st.rangeLabel.isNotBlank()) {
+                            Text(
+                                "Диапазон: ${st.rangeLabel}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                         Spacer(modifier = Modifier.height(8.dp))
                         when {
                             st.running -> {
@@ -363,17 +692,38 @@ data class BooksBookScreen(private val bookFileName: String) : Screen {
                                     },
                                     modifier = Modifier.fillMaxWidth().height(6.dp),
                                 )
-                                Spacer(modifier = Modifier.height(8.dp))
+                                Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    "Глава ${st.chapter} из ${st.chaptersTotal}",
+                                    "Глава ${st.chapter} из ${st.chaptersTotal}" +
+                                        if (st.segmentsInChapter > 0) {
+                                            " · предложение ${st.segmentInChapter}/${st.segmentsInChapter}"
+                                        } else {
+                                            ""
+                                        },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+                                Text(
+                                    "Прошло: ${fmtHms(st.elapsedSeconds)}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                if (st.logLines.isNotEmpty()) {
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    HorizontalDivider()
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    st.logLines.takeLast(3).forEach { line ->
+                                        Text(
+                                            line,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    "Голоса и движок берутся из настроек ⚙ читалки. " +
-                                        "Не закрывайте диалога — идёт запись в " +
-                                        "${st.outDirLabel}…",
+                                    "Можно не ждать: готовые главы уже послушать " +
+                                        "на этой странице ниже. Запись в ${st.outDirLabel}…",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -387,16 +737,24 @@ data class BooksBookScreen(private val bookFileName: String) : Screen {
                             }
                             st.cancelled -> {
                                 Text(
-                                    "Генерация отменена. Готовые главы остались в папке.",
+                                    "Отменено. Готовые главы остались в папке.",
                                     style = MaterialTheme.typography.bodySmall,
                                 )
                             }
                             st.done -> {
                                 Text(
-                                    "Готово! Файлы глав лежат в:\n" +
-                                        "audiobooks/${st.outDirLabel.trimStart('/')}",
+                                    "Готово за ${fmtHms(st.elapsedSeconds)}!" +
+                                        (st.mergedFileName?.let { "\nОбщий файл: $it" }.orEmpty()) +
+                                        "\nПапка: ${st.outDirLabel}",
                                     style = MaterialTheme.typography.bodySmall,
                                 )
+                                st.logLines.takeLast(4).forEach { line ->
+                                    Text(
+                                        line,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
                             }
                             else -> {
                                 CircularProgressIndicator(modifier = Modifier.size(24.dp))
@@ -406,7 +764,7 @@ data class BooksBookScreen(private val bookFileName: String) : Screen {
                 },
                 confirmButton = {
                     if (!st.running) {
-                        TextButton(onClick = { showAudiobookDialog = false }) { Text("Закрыть") }
+                        TextButton(onClick = { showProgressDialog = false }) { Text("Закрыть") }
                     } else {
                         TextButton(onClick = { AudiobookMaker.cancel() }) { Text("Отмена") }
                     }
