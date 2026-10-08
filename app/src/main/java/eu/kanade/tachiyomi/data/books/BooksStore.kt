@@ -53,14 +53,38 @@ object BooksStore {
         return UniFile.fromFile(folder)
     }
 
-    /** Список книг (исключая скрытые файлы), отсортированные по имени. */
+    /** Список книг (без папок, без скрытых «из приложения»), по имени. */
     fun listBooks(context: Context): List<UniFile> {
+        val hidden = hiddenSet(context)
         return booksDirectory(context)?.listFiles()
-            ?.filter { !it.name.orEmpty().startsWith('.') }
+            ?.filter {
+                it.isFile() &&
+                    !it.name.orEmpty().startsWith('.') &&
+                    !hidden.contains(it.uri.toString())
+            }
             ?.sortedBy { it.name.orEmpty().lowercase() }
             .orEmpty()
             .toList()
     }
+
+    // ---------- «Удалить из приложения» (файл остаётся на телефоне) ----------
+
+    private const val HIDDEN_PREFS = "book_hidden"
+
+    private fun hiddenSet(context: Context): Set<String> =
+        context.getSharedPreferences(HIDDEN_PREFS, Context.MODE_PRIVATE)
+            .getStringSet("uris", emptySet()).orEmpty()
+
+    /** Скрыть книгу из библиотеки (файл на телефоне остаётся). */
+    fun hideFromLibrary(context: Context, book: UniFile) {
+        context.getSharedPreferences(HIDDEN_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putStringSet("uris", hiddenSet(context) + book.uri.toString())
+            .apply()
+    }
+
+    fun isHidden(context: Context, book: UniFile): Boolean =
+        hiddenSet(context).contains(book.uri.toString())
 
     /**
      * Копирует выбранный пользователем файл (SAF URI) в каталог книг.

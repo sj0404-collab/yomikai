@@ -70,6 +70,7 @@ import cafe.adriel.voyager.core.screen.Screen
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.tachiyomi.data.books.BooksStore
+import eu.kanade.tachiyomi.ui.books.BooksBookScreen
 import eu.kanade.tachiyomi.ui.books.BooksReaderScreen
 import kotlinx.coroutines.launch
 import tachiyomi.core.common.util.lang.withIOContext
@@ -328,12 +329,8 @@ object BooksLibraryScreen : Screen {
                                     item = sortedBooks[index],
                                     coverBitmap = sortedBooks[index].coverPath?.let { coverBitmap(it) },
                                     onOpen = {
-                                        navigator.push(
-                                            BooksReaderScreen(
-                                                sortedBooks[index].fileName,
-                                                sortedBooks[index].displayTitle,
-                                            ),
-                                        )
+                                        // Тап по книге — детальный экран, как у манги.
+                                        navigator.push(BooksBookScreen(sortedBooks[index].fileName))
                                     },
                                     onShowInfo = { showInfoDialog = sortedBooks[index] },
                                 )
@@ -372,9 +369,7 @@ object BooksLibraryScreen : Screen {
                                     item = item,
                                     coverBitmap = item.coverPath?.let { coverBitmap(it) },
                                     onOpen = {
-                                        navigator.push(
-                                            BooksReaderScreen(item.fileName, item.displayTitle),
-                                        )
+                                        navigator.push(BooksBookScreen(item.fileName))
                                     },
                                     onShowInfo = { showInfoDialog = item },
                                     onShowDelete = { showDeleteDialog = item },
