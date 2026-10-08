@@ -505,7 +505,6 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
         return wv
     }
 
-    @Composable
     /** Режим OCR в браузере: auto / online (Google Lens) / offline (Paddle кирилл.). */
     private fun browserOcrMode(context: Context): String =
         context.getSharedPreferences("browser_ocr", 0).getString("engine_mode", "auto") ?: "auto"
@@ -515,6 +514,7 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
             .putString("engine_mode", mode).apply()
     }
 
+    @Composable
     override fun Content() {
         var urlBar by urlState
         val canGoBack by canGoBackState
