@@ -908,9 +908,19 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
                 // скоростью, что выбрана для автопрокрутки браузера. Если сайт
                 // крутится внутренним контейнером — JS-догон раз в цикл.
                 val posBefore = readScrollPos(wv)
-                val speedPx = (speed * 3).roundToInt().coerceAtLeast(1)
+                // Темп скролла следует за темпом речи: быстрая скорость чтения
+                // — быстрый скролл, как в нативной читалке манги. Кроме того,
+                // за один кадр прокручиваем НЕ БОЛЬШЕ 40% высоты вьюпорта:
+                // иначе голос "не поспевает" и строки проскакивают непрочитанными.
+                val rateNow = voicePrefs.speechRate().get().takeIf { it > 0f } ?: 1f
+                val speedPx = ((speed * 3 * rateNow).roundToInt()).coerceAtLeast(1)
+                val maxAdvancePx = (wv.height * 0.4f).roundToInt().coerceAtLeast(64)
+                var advancedPx = 0
                 while (!finished && isAutoRead) {
-                    wv.scrollBy(0, speedPx)
+                    if (advancedPx < maxAdvancePx) {
+                        wv.scrollBy(0, speedPx)
+                        advancedPx += speedPx
+                    }
                     delay(16)
                 }
                 if (!isAutoRead) break
@@ -1169,6 +1179,24 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
                                         tint = if (isAutoRead) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                                     )
                                 }
+                            }
+                            // Скорость авточтения: 50%…200%, −/+ (п.1).
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                var rateUi by remember {
+                                    mutableStateOf(voicePrefs.speechRate().get())
+                                }
+                                Text(
+                                    "Скорость: ${(rateUi * 100).roundToInt()}%  ",
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
+                                TextButton(onClick = {
+                                    rateUi = (rateUi - 0.25f).coerceAtLeast(0.5f)
+                                    voicePrefs.speechRate().set(rateUi)
+                                }) { Text("−") }
+                                TextButton(onClick = {
+                                    rateUi = (rateUi + 0.25f).coerceAtMost(2.0f)
+                                    voicePrefs.speechRate().set(rateUi)
+                                }) { Text("+") }
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("Скан OCR  ", style = MaterialTheme.typography.labelMedium)

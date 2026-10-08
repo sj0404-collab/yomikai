@@ -86,6 +86,30 @@ object BooksStore {
     fun isHidden(context: Context, book: UniFile): Boolean =
         hiddenSet(context).contains(book.uri.toString())
 
+    // ---------- Источник книги (выбрано пользователем в карточке) ----------
+
+    private const val SOURCE_PREFS = "book_sources"
+    private const val AMBIENCE_PREFS = "book_ambience"
+
+    fun bookSource(context: Context, book: UniFile): String =
+        context.getSharedPreferences(SOURCE_PREFS, Context.MODE_PRIVATE)
+            .getString(book.uri.toString(), "").orEmpty()
+
+    fun setBookSource(context: Context, book: UniFile, source: String) {
+        context.getSharedPreferences(SOURCE_PREFS, Context.MODE_PRIVATE)
+            .edit().putString(book.uri.toString(), source).apply()
+    }
+
+    /** Настроение фоновой музыки аудиокниги (BookAmbience.Mood или ""/"OFF"). */
+    fun ambienceMood(context: Context, book: UniFile): String =
+        context.getSharedPreferences(AMBIENCE_PREFS, Context.MODE_PRIVATE)
+            .getString(book.uri.toString(), "").orEmpty()
+
+    fun setAmbienceMood(context: Context, book: UniFile, mood: String) {
+        context.getSharedPreferences(AMBIENCE_PREFS, Context.MODE_PRIVATE)
+            .edit().putString(book.uri.toString(), mood).apply()
+    }
+
     /**
      * Копирует выбранный пользователем файл (SAF URI) в каталог книг.
      */

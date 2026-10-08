@@ -4,6 +4,7 @@ import android.graphics.BitmapFactory
 import android.media.MediaPlayer
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -45,6 +46,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -62,10 +64,12 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.books.AudiobookMaker
+import eu.kanade.tachiyomi.data.books.BookAmbience
 import eu.kanade.tachiyomi.data.books.BookParser
 import eu.kanade.tachiyomi.data.books.BookTtsScript
 import eu.kanade.tachiyomi.data.books.BooksStore
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import mihon.domain.ocr.service.OcrPreferences
 import tachiyomi.core.common.util.lang.withIOContext
 import uy.kohesive.injekt.Injekt
@@ -104,6 +108,20 @@ data class BooksBookScreen(private val bookFileName: String) : Screen {
         val m = (s % 3600) / 60
         val sec = s % 60
         return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
+    }
+
+    private fun ambienceTitle(key: String): String = when (key) {
+        "CALM" -> "Спокойная"
+        "DARK" -> "Тёмная"
+        "BRIGHT" -> "Светлая"
+        "NEUTRAL" -> "Нейтральная"
+        else -> "выкл"
+    }
+
+    private fun fmtBytes(bytes: Long): String = when {
+        bytes >= 1048576 -> "%.1f МБ".format(bytes / 1048576f)
+        bytes >= 1024 -> "%.1f КБ".format(bytes / 1024f)
+        else -> "$bytes Б"
     }
 
     private fun formatAgo(ts: Long): String {
@@ -150,6 +168,14 @@ data class BooksBookScreen(private val bookFileName: String) : Screen {
         var audioDurations by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
         var player by remember { mutableStateOf<MediaPlayer?>(null) }
         var playingName by remember { mutableStateOf<String?>(null) }
+        var deleteAudioCandidate by remember { mutableStateOf<UniFile?>(null) }
+
+        // Фоновая музыка (эмбиенс) под аудиокнигу + источник книги.
+        var ambience by remember { mutableStateOf<MediaPlayer?>(null) }
+        var ambienceMoodKey by remember { mutableStateOf("") }
+        var showAmbienceDialog by remember { mutableStateOf(false) }
+        var bookSource by remember { mutableStateOf("") }
+        var showSourceDialog by remember { mutableStateOf(false) }
 
         var showHideDialog by remember { mutableStateOf(false) }
         var showDeleteDialog by remember { mutableStateOf(false) }
@@ -170,6 +196,8 @@ data class BooksBookScreen(private val bookFileName: String) : Screen {
                     lastOpened = BooksStore.lastOpened(context, found)
                     sizeBytes = runCatching { found.length() }.getOrDefault(0L)
                     ext = bookFileName.substringAfterLast('.', "").uppercase()
+                    ambienceMoodKey = BooksStore.ambienceMood(context, found)
+                    bookSource = BooksStore.bookSource(context, found)
                 }
                 file = found
             }
@@ -196,6 +224,40 @@ data class BooksBookScreen(private val bookFileName: String) : Screen {
                     runCatching { if (p.isPlaying) p.stop() }
                     p.release()
                 }
+                ambience?.let { a ->
+                    runCatching { if (a.isPlaying) a.stop() }
+                    a.release()
+                }
+            }
+        }
+
+        fun stopAmbience() {
+            ambience?.let { a ->
+                runCatching { if (a.isPlaying) a.stop() }
+                a.release()
+            }
+            ambience = null
+        }
+
+        fun startAmbience() {
+            stopAmbience()
+            val key = ambienceMoodKey
+            if (key.isBlank() || key == "OFF") return
+            val mood = runCatching { BookAmbience.Mood.valueOf(key) }.getOrNull() ?: return
+            scope.launch {
+                val loop = withIOContext { runCatching { BookAmbience.fileFor(context, mood) }.getOrNull() }
+                val mp = loop?.let { file ->
+                    runCatching {
+                        MediaPlayer().apply {
+                            setDataSource(file.absolutePath)
+                            isLooping = true
+                            setVolume(0.22f, 0.22f)
+                            prepare()
+                        }
+                    }.getOrNull()
+                } ?: return@launch
+                ambience = mp
+                runCatching { mp.start() }
             }
         }
 
@@ -208,6 +270,7 @@ data class BooksBookScreen(private val bookFileName: String) : Screen {
                 }
                 player = null
                 playingName = null
+                stopAmbience()
                 return
             }
             player?.let { p ->
@@ -226,8 +289,10 @@ data class BooksBookScreen(private val bookFileName: String) : Screen {
                     playingName = name
                     mp.setOnCompletionListener {
                         playingName = null
+                        stopAmbience()
                     }
                     mp.start()
+                    startAmbience()
                 }
             }
         }
@@ -341,6 +406,46 @@ data class BooksBookScreen(private val bookFileName: String) : Screen {
                     }
                 }
 
+                // Источник книги (п.8): пользователь выбирает, откуда эта
+                // книга, плюс видно, где она лежит на телефоне.
+                file?.let { f ->
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .clickable { showSourceDialog = true }
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Источник: ${bookSource.ifBlank { "не выбран" }}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (bookSource.isBlank()) {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                } else {
+                                    MaterialTheme.colorScheme.primary
+                                },
+                            )
+                            Text(
+                                "Каталог: " + (f.uri.lastPathSegment ?: f.uri.toString())
+                                    .substringBefore('/'),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Text(
+                            "Изменить",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+
                 if (progress > 0) {
                     Spacer(modifier = Modifier.height(10.dp))
                     LinearProgressIndicator(
@@ -440,9 +545,37 @@ data class BooksBookScreen(private val bookFileName: String) : Screen {
                         style = MaterialTheme.typography.titleSmall,
                     )
                     Spacer(modifier = Modifier.height(6.dp))
+                    // Выбор фоновой музыки под аудиокнигу (п.5).
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .clickable { showAmbienceDialog = true }
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                    ) {
+                        Text(
+                            "🎵 Фон: " + ambienceTitle(ambienceMoodKey),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (ambienceMoodKey.isBlank() || ambienceMoodKey == "OFF") {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            },
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            "Изменить",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
                     audioFiles.forEach { f ->
                         val name = f.name.orEmpty()
                         val dur = audioDurations[name] ?: 0L
+                        val bytes = runCatching { f.length() }.getOrDefault(0L)
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
@@ -472,11 +605,31 @@ data class BooksBookScreen(private val bookFileName: String) : Screen {
                                     MaterialTheme.colorScheme.onSurface
                                 },
                             )
-                            if (dur > 0) {
-                                Text(
-                                    fmtHms(dur),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            Column(horizontalAlignment = Alignment.End) {
+                                if (dur > 0) {
+                                    Text(
+                                        fmtHms(dur),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                if (bytes > 0) {
+                                    Text(
+                                        fmtBytes(bytes),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                            // Удаление конкретного аудиофайла (п.4).
+                            IconButton(
+                                onClick = { deleteAudioCandidate = f },
+                                modifier = Modifier.size(28.dp),
+                            ) {
+                                Icon(
+                                    Icons.Outlined.DeleteOutline,
+                                    contentDescription = "Удалить файл",
+                                    tint = MaterialTheme.colorScheme.error,
                                 )
                             }
                         }
@@ -648,6 +801,19 @@ data class BooksBookScreen(private val bookFileName: String) : Screen {
         // 2) Прогресс генерации: кто, этап, цикл, время глав.
         if (showProgressDialog) {
             val st = AudiobookMaker.state
+            // Живой таймер: инкрементируется каждую секунду, пока идёт
+            // генерация (раньше «Прошло: 0:00» замирало между глава).
+            var liveSeconds by remember(st.startedAtMillis) {
+                mutableLongStateOf(st.elapsedSeconds)
+            }
+            LaunchedEffect(st.running, st.startedAtMillis) {
+                liveSeconds = st.elapsedSeconds
+                while (st.running && st.startedAtMillis > 0) {
+                    delay(1000)
+                    liveSeconds = (System.currentTimeMillis() - st.startedAtMillis) / 1000
+                }
+            }
+            val shownSeconds = if (st.running) liveSeconds else st.elapsedSeconds
             AlertDialog(
                 onDismissRequest = {
                     if (!st.running) showProgressDialog = false
@@ -704,7 +870,7 @@ data class BooksBookScreen(private val bookFileName: String) : Screen {
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                                 Text(
-                                    "Прошло: ${fmtHms(st.elapsedSeconds)}",
+                                    "Прошло: ${fmtHms(shownSeconds)}",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -768,6 +934,151 @@ data class BooksBookScreen(private val bookFileName: String) : Screen {
                     } else {
                         TextButton(onClick = { AudiobookMaker.cancel() }) { Text("Отмена") }
                     }
+                },
+            )
+        }
+
+        // 3) Подтверждение удаления одного аудиофайла (п.4).
+        deleteAudioCandidate?.let { victim ->
+            AlertDialog(
+                onDismissRequest = { deleteAudioCandidate = null },
+                title = { Text("Удалить аудиофайл?") },
+                text = {
+                    Text(
+                        "Файл «${victim.name.orEmpty()}» будет удалён из папки книги безвозвратно.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            val n = victim.name.orEmpty()
+                            if (playingName == n) {
+                                player?.let { pl ->
+                                    runCatching { if (pl.isPlaying) pl.stop() }
+                                    pl.release()
+                                }
+                                player = null
+                                playingName = null
+                            }
+                            scope.launch {
+                                withIOContext { runCatching { victim.delete() } }
+                                audioFiles = audioFiles.filterNot { it.name == n }
+                                audioDurations = audioDurations - n
+                            }
+                            deleteAudioCandidate = null
+                        },
+                    ) { Text("Удалить", color = MaterialTheme.colorScheme.error) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { deleteAudioCandidate = null }) { Text("Отмена") }
+                },
+            )
+        }
+
+        // 4) Выбор фоновой музыки под аудиокнигу (п.5).
+        if (showAmbienceDialog) {
+            val options = listOf(
+                "" to "Выключена",
+                "NEUTRAL" to "Нейтральная",
+                "CALM" to "Спокойная (роман, раздумья)",
+                "DARK" to "Тёмная (мистика, триллер)",
+                "BRIGHT" to "Светлая (фэнтези, приключения)",
+            )
+            AlertDialog(
+                onDismissRequest = { showAmbienceDialog = false },
+                title = { Text("Фоновая музыка") },
+                text = {
+                    Column {
+                        Text(
+                            "Крутится петлей под аудиокнигой и озвучкой.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        options.forEach { (key, label) ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable {
+                                        ambienceMoodKey = key
+                                        file?.let {
+                                            BooksStore.setAmbienceMood(context, it, key)
+                                        }
+                                        if (playingName != null) startAmbience()
+                                        showAmbienceDialog = false
+                                    }
+                                    .padding(vertical = 10.dp, horizontal = 8.dp),
+                            ) {
+                                Text(
+                                    (if (ambienceMoodKey == key) "● " else "○ ") + label,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (ambienceMoodKey == key) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    },
+                                )
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showAmbienceDialog = false }) { Text("Закрыть") }
+                },
+            )
+        }
+
+        // 5) Выбор источника книги (п.8).
+        if (showSourceDialog) {
+            val presets = listOf(
+                "", "Мои файлы", "RanobeLib", "ReadManga",
+                "Ranobes", "Litnet", "Webnovel", "Author.Today",
+            )
+            AlertDialog(
+                onDismissRequest = { showSourceDialog = false },
+                title = { Text("Источник книги") },
+                text = {
+                    Column {
+                        Text(
+                            "Запомним, откуда эта книга — видно в карточке.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        presets.forEach { preset ->
+                            val label = preset.ifBlank { "Не выбран" }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable {
+                                        bookSource = preset
+                                        file?.let {
+                                            BooksStore.setBookSource(context, it, preset)
+                                        }
+                                        showSourceDialog = false
+                                    }
+                                    .padding(vertical = 10.dp, horizontal = 8.dp),
+                            ) {
+                                Text(
+                                    (if (bookSource == preset) "● " else "○ ") + label,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (bookSource == preset) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    },
+                                )
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showSourceDialog = false }) { Text("Закрыть") }
                 },
             )
         }

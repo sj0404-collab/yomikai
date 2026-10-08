@@ -10,7 +10,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.tts.EdgeTts
+import eu.kanade.tachiyomi.data.tts.LocalVoiceAdvisor
 import eu.kanade.tachiyomi.data.tts.VoiceHelper
+import eu.kanade.tachiyomi.data.tts.VoiceKind
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -43,6 +45,7 @@ object AudiobookMaker {
 
     data class State(
         val running: Boolean = false,
+        val startedAtMillis: Long = 0,
         val bookTitle: String = "",
         // кто озвучивает
         val engineLabel: String = "",
@@ -98,7 +101,7 @@ object AudiobookMaker {
     ) {
         if (state.running) return
         val appContext = context.applicationContext
-        state = State(running = true, bookTitle = title)
+        state = State(running = true, startedAtMillis = System.currentTimeMillis(), bookTitle = title)
         job = makerScope.launch {
             try {
                 generate(
@@ -203,6 +206,10 @@ object AudiobookMaker {
         val char2Spec = prefs?.bookVoiceChar2()?.get().orEmpty()
         val systemPkg = prefs?.systemTtsEngine()?.get().orEmpty()
         val systemVoiceSpec = prefs?.bookVoiceSpec()?.get().orEmpty()
+        // Имена системных голосов персонажей из настроек выглядят как
+        // «pkg::voiceName» (см. диалоги выбора голоса).
+        val char1SysName = char1Spec.takeIf { it.contains("::") }?.substringAfter("::").orEmpty()
+        val char2SysName = char2Spec.takeIf { it.contains("::") }?.substringAfter("::").orEmpty()
 
         val engineLabel = if (isEdge) {
             "Edge TTS (онлайн, Microsoft)"
@@ -238,6 +245,24 @@ object AudiobookMaker {
             throw IllegalStateException(
                 "Системный TTS недоступен. Выберите движок «Edge TTS» в ⚙ читалки.",
             )
+        }
+        // vNEW: у системного движка персонажи УЖЕ НЕ одноголоска: берём реальные
+        // разные голоса — выбранные в настройках (pkg::name) или авто-муж/жен.
+        // Рассказчик — выбранный голос; персонаж 1/2 — свои голоса.
+        val narratorSysVoiceName: String? = if (systemTts != null) {
+            systemTts.voice?.name
+        } else {
+            null
+        }
+        val char1SysVoice: android.speech.tts.Voice? = if (!isEdge && systemTts != null) {
+            VoiceHelper.pick(systemTts, VoiceKind.MALE, char1SysName.ifBlank { null })
+        } else {
+            null
+        }
+        val char2SysVoice: android.speech.tts.Voice? = if (!isEdge && systemTts != null) {
+            VoiceHelper.pick(systemTts, VoiceKind.FEMALE, char2SysName.ifBlank { null })
+        } else {
+            null
         }
 
         // Файл склейки, если просили «все главы одним аудио».
@@ -292,7 +317,12 @@ object AudiobookMaker {
                     if (job?.isActive == false) throw CancellationException("отменено пользователем")
                     state = state.copy(segmentInChapter = segIdx + 1)
                     if (isEdge) {
-                        val voice = pickEdgeVoice(seg, roleVoices, narratorEdge, char1Spec, char2Spec)
+                        // AI-советник (voice_rules.json) может переопределить
+                        // голос реплики по содержанию текста — «AI помогает
+                        // с выбором голосов локально», без сети.
+                        val aiVoice = LocalVoiceAdvisor.recommend(seg.text, null).voiceName
+                        val voice = aiVoice
+                            ?: pickEdgeVoice(seg, roleVoices, narratorEdge, char1Spec, char2Spec)
                         val ratePercent = ((speechRate - 1.0f) * 100).toInt()
                         val baseHz = ((pitch - 1.0f) * 100).toInt()
                         val roleHz = if (roleVoices) {
@@ -322,7 +352,27 @@ object AudiobookMaker {
                         } else {
                             1.0f
                         }
-                        val bytes = synthesizeWav(context, tts, seg.text, pitch * factor)
+                        // Персонаж — СВОИМ голосом (муж/жен или выбранный),
+                        // нарратив — голосом рассказчика. Одноголоски нет:
+                        // раньше системный движок говорил всё одним голосом и
+                        // только тон крутили. Переключение делаем на главном
+                        // потоке внутри synthesizeWav — там же setPitch.
+                        val aiName = LocalVoiceAdvisor.recommend(seg.text, null).voiceName
+                        val aiVoice = aiName?.let { n ->
+                            tts.voices?.firstOrNull { it.name == n }
+                        }
+                        val charVoiceName =
+                            when {
+                                aiVoice != null -> aiVoice.name
+                                roleVoices && seg.role == BookSpeechRole.CHARACTER ->
+                                    (if (seg.speaker % 2 == 0) char1SysVoice else char2SysVoice)?.name
+                                else -> null
+                            }
+                        val bytes = synthesizeWav(
+                            context, tts, seg.text, pitch * factor,
+                            voiceName = charVoiceName,
+                            restoreVoiceName = narratorSysVoiceName,
+                        )
                         if (bytes != null) {
                             if (firstWavHeader) {
                                 chapterBytes.write(bytes)
@@ -410,12 +460,17 @@ object AudiobookMaker {
         tts: TextToSpeech,
         text: String,
         pitchFactor: Float,
+        voiceName: String? = null,
+        restoreVoiceName: String? = null,
     ): ByteArray? = withContext(Dispatchers.IO) {
         val tmp = File(context.cacheDir, "abmk_${System.nanoTime()}.wav")
         val utteranceId = "abmk_${System.nanoTime()}"
         val done = CompletableDeferred<Boolean>()
         withContext(Dispatchers.Main) {
             runCatching {
+                if (voiceName != null) {
+                    tts.voices?.firstOrNull { it.name == voiceName }?.let { tts.voice = it }
+                }
                 tts.setPitch(pitchFactor.coerceIn(0.5f, 2.0f))
                 tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     @Deprecated("deprecated")
@@ -431,6 +486,15 @@ object AudiobookMaker {
             }.onFailure { done.complete(false) }
         }
         val ok = done.await()
+        // Голос рассказчика назад — тоже на главном потоке, после onDone.
+        if (restoreVoiceName != null && voiceName != null) {
+            withContext(Dispatchers.Main) {
+                runCatching {
+                    tts.voices?.firstOrNull { it.name == restoreVoiceName }
+                        ?.let { tts.voice = it }
+                }
+            }
+        }
         if (!ok || !tmp.isFile) {
             tmp.delete()
             return@withContext null

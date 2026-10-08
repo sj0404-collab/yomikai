@@ -93,6 +93,18 @@ object BookParser {
     private val ZIP_EMPTY_MAGIC = byteArrayOf(0x50, 0x4B, 0x05, 0x06) // PK\x05\x06
     private val ZIP_SPANNED_MAGIC = byteArrayOf(0x50, 0x4B, 0x07, 0x08) // PK\x07\x08
 
+    /**
+     * Служебный мусор выгрузок сайтов-ранобэ: префикс рейтинга «0 9.25 (4) »
+     * перед заголовком главы. Раньше он показывался в тексте и ЧИТАЛСЯ вслух.
+     */
+    private val RATING_JUNK = Regex(
+        "^\\s*\\d+\\s+\\d+(?:\\.\\d+)?\\s*\\(\\d+\\)\\s*",
+        RegexOption.MULTILINE,
+    )
+
+    private fun stripRatingJunk(text: String): String =
+        if (text.isEmpty()) text else RATING_JUNK.replace(text, "")
+
     fun parse(bookFile: UniFile, bookId: String = bookFile.uri.toString(), context: Context? = null): ParsedBook {
         val input = bookFile.openInputStream() ?: throw UnsupportedBookException("Не удалось открыть файл книги")
         val bytes = input.use { stream ->
@@ -118,7 +130,7 @@ object BookParser {
         val format = detectFormat(ext, bytes)
 
         return try {
-            when (format) {
+            val parsed = when (format) {
                 "pdf" -> parsePdf(bytes, name, bookId)
                 "fb2" -> parseFb2(bytes, name, bookId)
                 "html" -> parseHtml(bytes, name, bookId)
@@ -134,6 +146,9 @@ object BookParser {
                     parsePlain(bytes, name, bookId)
                 }
             }
+            parsed.copy(
+                chapters = parsed.chapters.map { it.copy(text = stripRatingJunk(it.text)) },
+            )
         } catch (e: UnsupportedBookException) {
             throw e
         } catch (e: ZipException) {
