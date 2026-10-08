@@ -54,7 +54,9 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.Surface
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
@@ -1059,6 +1061,11 @@ data class BooksReaderScreen(
         Box(modifier = Modifier.fillMaxSize()) {
             Column(modifier = Modifier.fillMaxSize()) {
                 AnimatedVisibility(visible = !fullscreen) {
+                    // БЕЗ обёртки Column все дети AnimatedVisibility (топ-бар,
+                    // список глав, настройки) меряются как сложённые в точке
+                    // 0,0 и ОТРИСОВЫВАЮТСЯ ВНАХЛЁСТ — топ-бар оказывался под
+                    // полупрозрачным списком, и кнопки не нажимались.
+                    Column {
                     TopAppBar(
                         title = {
                             Text(
@@ -1086,37 +1093,7 @@ data class BooksReaderScreen(
                         },
                     )
 
-                    // --- Chapter list ---
-                    AnimatedVisibility(visible = showChapterList) {
-                        LazyColumn(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(200.dp)
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                        ) {
-                            itemsIndexed(chapters, key = { _, ch -> ch.id }) { index, chapter ->
-                                Text(
-                                    text = chapter.displayTitle,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    color = if (index == currentChapterIndex)
-                                        MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            currentChapterIndex = index
-                                            currentSentenceIndex = 0
-                                            pdfPageIndex = 0
-                                            isPlaying = false
-                                        }
-                                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                                )
-                                HorizontalDivider()
-                            }
-                        }
-                    }
+                    // (Оглавление рисуется оверлеем в конце Box — см. ниже.)
 
                     // --- Settings panel ---
                     //
@@ -1326,6 +1303,7 @@ data class BooksReaderScreen(
                                 },
                             )
                         }
+                    }
                     }
                 }
 
@@ -1707,6 +1685,95 @@ data class BooksReaderScreen(
                             contentDescription = if (isPlaying) "Пауза" else "Читать",
                             modifier = Modifier.size(28.dp),
                         )
+                    }
+                }
+            }
+
+            // --- Оглавление поверх: тома и главы, собственная панель, ---
+            // --- задник-«скрап» по тапу закрывает, топ-бар доступен. ---
+            if (showChapterList) {
+                val tocState = rememberLazyListState()
+                LaunchedEffect(Unit) {
+                    if (chapters.size > 1) {
+                        tocState.scrollToItem((currentChapterIndex - 2).coerceAtLeast(0))
+                    }
+                }
+                Box(modifier = Modifier.fillMaxSize()) {
+                    // Прозрачный «скрап» по всему экрану: тап мимо — закрыть.
+                    // Топ-бар он не трогает (он в другом слое выше его? нет —
+                    // ниже: об этом ниже), но оглавление полупрозрачным
+                    // НЕ делаем — кнопки верха не будут перекрыты его текстом.
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.35f))
+                            .clickable { showChapterList = false },
+                    )
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface,
+                        tonalElevation = 3.dp,
+                        shadowElevation = 8.dp,
+                        shape = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp),
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .fillMaxWidth()
+                            .padding(top = if (fullscreen) 28.dp else 92.dp)
+                            .heightIn(max = 480.dp),
+                    ) {
+                        Column {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(start = 16.dp, end = 4.dp),
+                            ) {
+                                Text(
+                                    text = "Оглавление · ${chapters.size} глав",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                IconButton(onClick = { showChapterList = false }) {
+                                    Icon(Icons.Outlined.Close, contentDescription = "Закрыть оглавление")
+                                }
+                            }
+                            HorizontalDivider()
+                            LazyColumn(state = tocState) {
+                                itemsIndexed(chapters, key = { _, ch -> ch.id }) { index, chapter ->
+                                    // Заголовок тома, когда номер тома меняется.
+                                    val vol = chapter.volume
+                                    if (vol != null &&
+                                        (index == 0 || chapters[index - 1].volume != vol)
+                                    ) {
+                                        Text(
+                                            text = "Том $vol",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(
+                                                start = 16.dp, top = 10.dp, bottom = 2.dp,
+                                            ),
+                                        )
+                                    }
+                                    Text(
+                                        text = chapter.displayTitle,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                        color = if (index == currentChapterIndex)
+                                            MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                currentChapterIndex = index
+                                                currentSentenceIndex = 0
+                                                pdfPageIndex = 0
+                                                isPlaying = false
+                                                showChapterList = false
+                                            }
+                                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                                    )
+                                    HorizontalDivider()
+                                }
+                            }
+                        }
                     }
                 }
             }

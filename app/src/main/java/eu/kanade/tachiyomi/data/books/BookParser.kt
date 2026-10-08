@@ -778,12 +778,39 @@ object BookParser {
         // «·часть N», иначе 165 глав выглядят одинаково.
         val seen = mutableMapOf<String, Int>()
         val named = rawChapters.map { raw ->
-            val base = raw.title.trim().ifBlank { "Глава ${raw.index + 1}" }
+            val base = raw.title.trim().takeIf { it.isNotBlank() }
+                ?: chapterTitleFromText(raw.text)
+                ?: "Глава ${raw.index + 1}"
             val dupes = ((seen[base] ?: 0) + 1).also { seen[base] = it }
             raw.copy(title = if (dupes > 1) "$base · часть $dupes" else base)
         }
         val chapters = materializeEpubChapters(named, images, bookId, context, metadata.author)
         return ParsedBook(metadata = metadata, chapters = chapters)
+    }
+
+    /**
+     * Имя главы из первых строк текста: конвертеры пишут «Глава 73. …» самим
+     * текстом, а <title>/заголовки отсутствуют. Перед именем может стоять
+     * служебный блок оценки вида «0 8.67 (3)» — откидываем. Ограничение 80
+     * символов, чтобы строки-простыни не становились именами.
+     */
+    private val TITLE_LINE_PREFIX = Regex(
+        "^\\s*(?:[\\d.,()\\s]+)?" +
+            "(Глава\\s*\\d+\\.?[^\\n]{0,70}|Том\\s*\\d+\\.?[^\\n]{0,70}|" +
+            "Пролог[^\\n]{0,60}|Эпилог[^\\n]{0,60}|Интерлюдия[^\\n]{0,60})",
+    )
+
+    private fun chapterTitleFromText(text: String): String? {
+        text.lineSequence().take(3).forEach { line ->
+            val trimmed = line.trim()
+            if (trimmed.isBlank() || trimmed.startsWith('⟦')) return@forEach
+            val m = TITLE_LINE_PREFIX.find(trimmed)
+            if (m != null) {
+                val name = m.groupValues[1].trim()
+                if (name.length >= 5) return name
+            }
+        }
+        return null
     }
 
     /** Сырая глава EPUB: текст ещё с токенами ⟦entry⟧ вместо путей картинок. */
