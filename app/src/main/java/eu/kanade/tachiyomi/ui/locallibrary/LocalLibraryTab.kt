@@ -163,6 +163,10 @@ data object LocalLibraryTab : Tab {
                 }
         }
 
+        // Открытая книга («Книги» → читалка) — вкладки библиотеки над ней
+        // прячем: экран чтения должен быть без шапки библиотеки.
+        var booksReaderOpen by remember { mutableStateOf(false) }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -170,6 +174,7 @@ data object LocalLibraryTab : Tab {
         ) {
             // Переключатель содержимого: «Манга» (архивы по папкам) /
             // «Книги» (любые форматы) / «Настройки» (OCR, голоса, словари).
+            if (!booksReaderOpen) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
@@ -204,6 +209,7 @@ data object LocalLibraryTab : Tab {
                     },
                     label = { Text("Настройки") },
                 )
+            }
             }
             when {
                 settingsSection -> {
@@ -411,8 +417,14 @@ data object LocalLibraryTab : Tab {
             }
             } else {
                 // «Книги»: библиотека файлов любых форматов внутри локальной
-                // библиотеки. Свой Navigator для открытия книги-читалки.
-                Navigator(screen = BooksLibraryScreen)
+                // библиотеки. Свой Navigator для открытия книги-читалки;
+                // когда он не на корне (открыта читалка) — шапка прячется.
+                Navigator(screen = BooksLibraryScreen) { inner ->
+                    LaunchedEffect(inner.lastItem) {
+                        booksReaderOpen = inner.lastItem !is BooksLibraryScreen
+                    }
+                    DefaultNavigatorScreenTransition(navigator = inner)
+                }
             }
             }
         }

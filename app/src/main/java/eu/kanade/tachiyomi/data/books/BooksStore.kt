@@ -34,6 +34,8 @@ object BooksStore {
     }
 
     private const val PROGRESS_PREFS = "yomikai_books_progress"
+    private const val BOOKMARKS_PREFS = "book_bookmarks"
+    private const val HISTORY_PREFS = "book_history"
     private const val METADATA_PREFS = "yomikai_books_metadata"
     private const val COVER_DIR = "book_covers"
 
@@ -178,6 +180,107 @@ object BooksStore {
             sentence = parts[1].toIntOrNull()?.coerceAtLeast(0) ?: 0,
             percent = parts[2].toIntOrNull()?.coerceIn(0, 100) ?: 0,
         )
+    }
+
+    // ---------- Закладки и история чтения ----------
+
+    /** Закладка: место в книге, к которому читатель хочет вернуться. */
+    data class Bookmark(
+        val chapter: Int,
+        val sentence: Int,
+        val label: String,
+        val timestamp: Long,
+    )
+
+    /**
+     * Хранение — SharedPreferences, ключ = URI книги.
+     * Строки разделяются «^^^», поля внутри — «|».
+     */
+    fun loadBookmarks(context: Context, book: UniFile): List<Bookmark> {
+        val raw = context.getSharedPreferences(BOOKMARKS_PREFS, Context.MODE_PRIVATE)
+            .getString(book.uri.toString(), null) ?: return emptyList()
+        return raw.split("^^^").mapNotNull { row ->
+            val parts = row.split('|')
+            if (parts.size < 4) return@mapNotNull null
+            Bookmark(
+                chapter = parts[0].toIntOrNull() ?: return@mapNotNull null,
+                sentence = parts[1].toIntOrNull() ?: 0,
+                label = parts[2],
+                timestamp = parts[3].toLongOrNull() ?: 0L,
+            )
+        }.sortedByDescending { it.timestamp }
+    }
+
+    fun addBookmark(context: Context, book: UniFile, bookmark: Bookmark) {
+        val list = loadBookmarks(context, book).filterNot {
+            it.chapter == bookmark.chapter && it.sentence == bookmark.sentence
+        } + bookmark
+        saveBookmarks(context, book, list)
+    }
+
+    fun removeBookmark(context: Context, book: UniFile, bookmark: Bookmark) {
+        saveBookmarks(
+            context, book,
+            loadBookmarks(context, book).filterNot { it.timestamp == bookmark.timestamp },
+        )
+    }
+
+    private fun saveBookmarks(context: Context, book: UniFile, list: List<Bookmark>) {
+        val value = list.joinToString("^^^") {
+            "${it.chapter}|${it.sentence}|${it.label.replace("^^^", " ").replace("|", " ")}|${it.timestamp}"
+        }
+        context.getSharedPreferences(BOOKMARKS_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(book.uri.toString(), value)
+            .apply()
+    }
+
+    /**
+     * Контрольная точка истории: куда читал(а) и когда. Храним последние 30
+     * позиций — список «вернуться назад по следам чтения».
+     */
+    data class HistoryPoint(
+        val timestamp: Long,
+        val chapter: Int,
+        val sentence: Int,
+        val chapterTitle: String,
+    )
+
+    fun loadHistory(context: Context, book: UniFile): List<HistoryPoint> {
+        val raw = context.getSharedPreferences(HISTORY_PREFS, Context.MODE_PRIVATE)
+            .getString(book.uri.toString(), null) ?: return emptyList()
+        return raw.split("^^^").mapNotNull { row ->
+            val parts = row.split('|')
+            if (parts.size < 4) return@mapNotNull null
+            HistoryPoint(
+                timestamp = parts[0].toLongOrNull() ?: 0L,
+                chapter = parts[1].toIntOrNull() ?: return@mapNotNull null,
+                sentence = parts[2].toIntOrNull() ?: 0,
+                chapterTitle = parts[3],
+            )
+        }
+    }
+
+    /** Кладёт точку истории; подряд идущие дубли той же главы заменяются. */
+    fun pushHistory(context: Context, book: UniFile, point: HistoryPoint) {
+        val list = loadHistory(context, book).toMutableList()
+        val last = list.lastOrNull()
+        if (last != null &&
+            last.chapter == point.chapter &&
+            last.sentence == point.sentence
+        ) {
+            return
+        }
+        list += point
+        while (list.size > 30) list.removeAt(0)
+        val value = list.joinToString("^^^") {
+            "${it.timestamp}|${it.chapter}|${it.sentence}|" +
+                it.chapterTitle.replace("^^^", " ").replace("|", " ")
+        }
+        context.getSharedPreferences(HISTORY_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(book.uri.toString(), value)
+            .apply()
     }
 
     // ---------- Метаданные ----------

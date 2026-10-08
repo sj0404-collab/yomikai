@@ -538,6 +538,11 @@ class OcrPreferences(
     /** Отображаемое имя голоса для UI. */
     fun bookVoiceLabel() = preferenceStore.getString("pref_book_voice_label", "")
 
+    /** Голоса персонажей ролевой озвучки книг (пусто — палитра по умолчанию). */
+    fun bookVoiceChar1() = preferenceStore.getString("pref_book_voice_char1", "")
+
+    fun bookVoiceChar2() = preferenceStore.getString("pref_book_voice_char2", "")
+
     /** Имя TTS-голоса для книг, "" = голос по умолчанию. (legacy) */
     fun bookVoiceName() = preferenceStore.getString("pref_book_voice_name", "")
 

@@ -632,7 +632,7 @@ object BookParser {
         return ParsedBook(
             metadata = BookMetadata(title = title, author = author, description = description),
             chapters = chapters.mapIndexed { idx, (chName, text) ->
-                BookChapter.create(idx, bookId, chName, text = text)
+                BookChapter.create(idx, bookId, chName.ifBlank { "Глава ${idx + 1}" }, text = text)
             },
         )
     }
@@ -689,7 +689,9 @@ object BookParser {
     private fun flush(title: String, sb: StringBuilder, out: MutableList<Pair<String, String>>) {
         val text = sb.toString().trim()
         if (text.isNotBlank()) {
-            out += (title.ifBlank { "Глава ${out.size + 1}" }) to text
+            // Имя главы — только из заголовка в тексте. «Глава 1» больше не
+            // выдумываем: из-за него все безыменные главы были одинаковыми.
+            out += title to text
         }
         sb.setLength(0)
     }
@@ -771,7 +773,16 @@ object BookParser {
             }
         }
         if (rawChapters.isEmpty()) throw UnsupportedBookException("В EPUB нет текстовых глав")
-        val chapters = materializeEpubChapters(rawChapters, images, bookId, context, metadata.author)
+        // Имена: пустое → «Глава N» по месту в spine; одинаковое имя у разных
+        // документов (бывает у конвертеров с одинаковым <title>) — суффикс
+        // «·часть N», иначе 165 глав выглядят одинаково.
+        val seen = mutableMapOf<String, Int>()
+        val named = rawChapters.map { raw ->
+            val base = raw.title.trim().ifBlank { "Глава ${raw.index + 1}" }
+            val dupes = ((seen[base] ?: 0) + 1).also { seen[base] = it }
+            raw.copy(title = if (dupes > 1) "$base · часть $dupes" else base)
+        }
+        val chapters = materializeEpubChapters(named, images, bookId, context, metadata.author)
         return ParsedBook(metadata = metadata, chapters = chapters)
     }
 
@@ -985,6 +996,20 @@ object BookParser {
      * и процентно-кодированные варианты, и абсолютные пути «/OPS/x» — у
      * разных сборщиков по-разному, и раньше глава просто молча пропадала.
      */
+    /** Кэш «имя записи нижним регистром → настоящее имя» по каждому zip. */
+    private val zipLowerIndex = java.util.WeakHashMap<ZipFile, Map<String, String>>()
+
+    private fun lowerIndexOf(zip: ZipFile): Map<String, String> =
+        zipLowerIndex.getOrPut(zip) {
+            buildMap {
+                val en = zip.entries()
+                while (en.hasMoreElements()) {
+                    val entry = en.nextElement().name
+                    putIfAbsent(entry.lowercase(), entry)
+                }
+            }
+        }
+
     private fun epubEntryOf(zip: ZipFile, base: String, rawHref: String): ZipEntry? {
         val raw = decodeHref(rawHref.substringBefore('#')).trim().trimStart('/')
         if (raw.isBlank()) return null
@@ -997,6 +1022,12 @@ object BookParser {
         variants += raw
         for (v in variants) {
             zip.getEntry(v)?.let { return it }
+        }
+        // Последний шанс: несовпадение регистра (в zip лежит «OPS/Images/…»,
+        // а в манифесте «ops/images/…» — бывает у самодельных EPUB).
+        val lower = lowerIndexOf(zip)
+        for (v in variants) {
+            lower[v.lowercase()]?.let { zip.getEntry(it) }?.let { return it }
         }
         return null
     }
@@ -1037,12 +1068,16 @@ object BookParser {
                         src.startsWith("https://", ignoreCase = true) -> null
                     bag.size >= MAX_CHAPTER_IMAGES -> null
                     else -> {
+                        // Картинка может быть относительно документа («../img/…»),
+                        // относительно OPF-базы или голым href: перебираем.
                         val joined = if (src.startsWith('/')) src else "$docDir/$src"
-                        val entryName = normalizeZipPath(joined)
-                        val imgEntry = zip.getEntry(entryName)
+                        val imgEntry = zip.getEntry(normalizeZipPath(joined))
+                            ?: epubEntryOf(zip, base, joined)
+                            ?: epubEntryOf(zip, "", src)
                         if (imgEntry == null) {
                             null
                         } else {
+                            val entryName = imgEntry.name
                             val bytes = bag.getOrPut(entryName) {
                                 runCatching { zip.getInputStream(imgEntry).readBytes() }
                                     .getOrDefault(ByteArray(0))
@@ -1064,7 +1099,11 @@ object BookParser {
             if (t.isNullOrBlank()) return null
             return (docTitle ?: name) to t
         }
-        return (docTitle ?: chunk.first().first) to chunk.joinToString("\n\n") { it.second }
+        // Честное имя: <title> файла, иначе первый заголовок внутри, иначе
+        // пусто — нумеровать по месту в spine будет parseEpubZip (иначе все
+        // безыменные документы получали одинаковое «Глава 1»).
+        val heading = chunk.first().first.takeIf { it.isNotBlank() }
+        return (docTitle ?: heading ?: "") to chunk.joinToString("\n\n") { it.second }
     }
 
     // ---------- DOCX ----------
