@@ -287,6 +287,109 @@ data object BrowserTab : Tab {
         }
     }
 
+    /**
+     * Реклама/поповеры поверх изображения («+ алмазы», «Telegram-канал»,
+     * «Перейти», крестик) — НЕ текст книги, но они лежат прямо на странице,
+     * и OCR читал их вместе с мангой. DOM ищет такие узлы: явно-рекламные
+     * по id/class/src (adv/banner/promo/telegram/ins) и фиксированные/липкие
+     * оверлеи в нижней половине экрана. Возвращает прямоугольники в долях
+     * вьюпорта (0..1) в том же формате, что detectBookZone.
+     */
+    private suspend fun detectOverlayJunkRects(): List<android.graphics.RectF> {
+        val wv = sharedWebView ?: return emptyList()
+        val js = """
+            (function() {
+                var vh = window.innerHeight, vw = window.innerWidth;
+                var out = [];
+                function push(r) {
+                    var l = Math.max(0, r.left) / vw, t = Math.max(0, r.top) / vh;
+                    var rr = Math.min(vw, r.right) / vw, bb = Math.min(vh, r.bottom) / vh;
+                    if (rr - l < 0.02 || bb - t < 0.015) return;
+                    out.push(l.toFixed(4) + "," + t.toFixed(4) + "," + rr.toFixed(4) + "," + bb.toFixed(4));
+                }
+                // 1) явно рекламные узлы по именам (MangaLib и аналоги).
+                var junk = document.querySelectorAll(
+                    '[id*="adv"],[class*="adv"],[id*="banner"],[class*="banner"],' +
+                    '[class*="promo"],[class*="adsbygoogle"],[class*="adb"],' +
+                    'iframe[src*="ads"],iframe[src*="doubleclick"],' +
+                    '[class*="telegram"],[id*="telegram"],ins'
+                );
+                for (var i = 0; i < junk.length; i++) {
+                    var r = junk[i].getBoundingClientRect();
+                    if (r.width < 24 || r.height < 16) continue;
+                    if (r.bottom < 0 || r.top > vh) continue;
+                    if (r.width * r.height > vw * vh * 0.5) continue;
+                    push(r);
+                }
+                // 2) фиксированные/липкие слои в нижних 75% экрана: баннер
+                // крепится поверх изображения, а не панель ридера.
+                var all = document.querySelectorAll('body *');
+                for (var k = 0; k < all.length && k < 2500; k++) {
+                    var el = all[k];
+                    var cs = window.getComputedStyle(el);
+                    if (cs.position !== 'fixed' && cs.position !== 'sticky') continue;
+                    if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity) < 0.05) continue;
+                    var z = parseInt(cs.zIndex || '0', 10);
+                    if (z < 10) continue;
+                    var r2 = el.getBoundingClientRect();
+                    if (r2.height < 12 || r2.height > vh * 0.35) continue;
+                    if (r2.bottom < 0 || r2.top > vh) continue;
+                    var area = r2.width * r2.height, frac = area / (vw * vh);
+                    if (frac < 0.004 || frac > 0.5) continue;
+                    if (r2.top < vh * 0.25) continue; // верхняя панель ридера — не трогаем
+                    push(r2);
+                }
+                return out.join(";");
+            })()
+        """.trimIndent()
+        return kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+            try {
+                wv.post {
+                    wv.evaluateJavascript(js) { raw ->
+                        val body = raw?.trim('"').orEmpty()
+                        val rects = body.split(';')
+                            .mapNotNull { part ->
+                                val nums = part.split(',').mapNotNull { it.toFloatOrNull() }
+                                if (nums.size == 4 && nums[3] > nums[1] && nums[2] > nums[0]) {
+                                    android.graphics.RectF(nums[0], nums[1], nums[2], nums[3])
+                                } else {
+                                    null
+                                }
+                            }
+                            .take(24)
+                        if (cont.isActive) cont.resume(rects) {}
+                    }
+                }
+            } catch (e: Exception) {
+                if (cont.isActive) cont.resume(emptyList()) {}
+            }
+        }
+    }
+
+    /** Залить рекламные прямоугольники чёрным, чтобы OCR их не видел. */
+    private fun blankJunkRects(
+        src: android.graphics.Bitmap,
+        junk: List<android.graphics.RectF>,
+    ): android.graphics.Bitmap {
+        if (junk.isEmpty()) return src
+        val out = android.graphics.Bitmap.createBitmap(
+            src.width, src.height, android.graphics.Bitmap.Config.ARGB_8888,
+        )
+        val canvas = android.graphics.Canvas(out)
+        canvas.drawBitmap(src, 0f, 0f, null)
+        val paint = android.graphics.Paint().apply { color = android.graphics.Color.BLACK }
+        junk.forEach { r ->
+            canvas.drawRect(
+                (r.left * src.width).coerceIn(0f, src.width.toFloat()),
+                (r.top * src.height).coerceIn(0f, src.height.toFloat()),
+                (r.right * src.width).coerceIn(0f, src.width.toFloat()),
+                (r.bottom * src.height).coerceIn(0f, src.height.toFloat()),
+                paint,
+            )
+        }
+        return out
+    }
+
     /** Кадр, обрезанный до зоны книги (если зона найдена). */
     private fun cropToZone(src: android.graphics.Bitmap, zone: android.graphics.RectF?): android.graphics.Bitmap {
         if (zone == null) return src
@@ -663,22 +766,28 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
                 ocrRegions = emptyList()
                 ocrFrame = raw // результат появится ПРЯМО НА КАДРЕ
                 try {
-                    val l = rect.left.toInt().coerceIn(0, raw.width - 1)
-                    val t = rect.top.toInt().coerceIn(0, raw.height - 1)
-                    val r = rect.right.toInt().coerceIn(l + 1, raw.width)
-                    val b = rect.bottom.toInt().coerceIn(t + 1, raw.height)
+                    // Реклама поверх картинки («+ алмазы», «Перейти») к книге
+                    // не относится — вычищаем её из кадра до OCR.
+                    val junk = detectOverlayJunkRects()
+                    // (ocrFrame оставляем исходным кадром — результат
+                    // показываем на нём, а не на вычищенном.)
+                    val clean = if (junk.isNotEmpty()) blankJunkRects(raw, junk) else raw
+                    val l = rect.left.toInt().coerceIn(0, clean.width - 1)
+                    val t = rect.top.toInt().coerceIn(0, clean.height - 1)
+                    val r = rect.right.toInt().coerceIn(l + 1, clean.width)
+                    val b = rect.bottom.toInt().coerceIn(t + 1, clean.height)
                     val cropped = if (r - l < 40 || b - t < 40) {
-                        raw
+                        clean
                     } else {
-                        android.graphics.Bitmap.createBitmap(raw, l, t, r - l, b - t)
+                        android.graphics.Bitmap.createBitmap(clean, l, t, r - l, b - t)
                     }
                     // v1.9.42: оверлей покажет сам фрагмент: текст ляжет точно
                     // на свои рамки (раньше координаты области растягивались на
                     // весь экран и «плывали» по странице).
-                    if (cropped !== raw) ocrFrame = cropped
+                    if (cropped !== clean) ocrFrame = cropped
                     val prefsN = Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
                     var result = ocrWithPreprocess(ctx, cropped)
-                    if (result.first.isBlank() && cropped !== raw) {
+                    if (result.first.isBlank() && cropped !== clean) {
                         // v1.9.41: ретрай на увеличении — мелкий/бледный текст
                         val up = android.graphics.Bitmap.createScaledBitmap(
                             cropped,
@@ -769,15 +878,23 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
             if (!isAutoRead) { readEngine.stop(); return@LaunchedEffect }
             readEngine.clearHistory()
             var stuckCounter = 0
+            // Рекламные прямоугольники DOM-ом обновляем каждые ~4 кадра,
+            // чтобы не просить JS на каждом тике.
+            var junkFrameSkip = 0
+            var cachedJunk: List<android.graphics.RectF> = emptyList()
             while (isAutoRead) {
                 val wv = sharedWebView
-                val raw = captureWebView()
-                if (wv == null || raw == null) { delay(500); continue }
+                val raw0 = captureWebView()
+                if (wv == null || raw0 == null) { delay(500); continue }
 
                 // Только страница книги: зона крупных картинок, без UI сайта
                 val zone = detectBookZone()
                 readEngine.highlightZone = zone
-                val bmp = cropToZone(raw, zone)
+                if (junkFrameSkip % 4 == 0) {
+                    cachedJunk = detectOverlayJunkRects()
+                }
+                junkFrameSkip++
+                val bmp = cropToZone(blankJunkRects(raw0, cachedJunk), zone)
 
                 var finished = false
                 readEngine.readFrame(
@@ -786,7 +903,16 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
                     pageIndex = wv.scrollY,
                     onPageFinished = { finished = true },
                 )
-                while (!finished && isAutoRead) delay(120)
+                // vNEW: скролл идёт НЕПРЕРЫВНО ПОКА читаем кадр (как в нативной
+                // читалке манги — без рывков «прочитал→прыгнул»), с той же
+                // скоростью, что выбрана для автопрокрутки браузера. Если сайт
+                // крутится внутренним контейнером — JS-догон раз в цикл.
+                val posBefore = readScrollPos(wv)
+                val speedPx = (speed * 3).roundToInt().coerceAtLeast(1)
+                while (!finished && isAutoRead) {
+                    wv.scrollBy(0, speedPx)
+                    delay(16)
+                }
                 if (!isAutoRead) break
 
                 // «Прочитать страницу»: только текущий кадр, дальше не идём.
@@ -795,44 +921,16 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
                 val prefs = Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
                 if (!prefs.autoReadAutoAdvance().get()) { isAutoRead = false; break }
 
-                // v1.9.40: УМНЫЙ скролл на 60% высоты кадра (перекрытие 40%):
-                // сайт может скроллиться внутренним контейнером (window.scrollY
-                // стоит на месте) — раньше авточтение «не прокручивало» именно так.
-                val posBefore = readScrollPos(wv)
-                // v1.9.44: текст найден — шаг 60%; кадр пуст — мелкий шаг 35%,
-                // чтобы не проскочить текст и не «листать впустую».
-                val hadText = readEngine.lastFrameHadText
-                val step = (wv.height * (if (hadText) 0.6f else 0.35f)).roundToInt().coerceAtLeast(1)
-                // Плавная прокрутка: косинусная фаза (мягкий разгон/торможение)
-                // вместо отрезков 24px/28мс — на линейных сегментах кадр
-                // визуально «ёрзал»; тик 16мс под vsync, сумма шага неизменна.
-                suspend fun smoothAdvance(total: Int, scroll: suspend (Int) -> Unit) {
-                    val durMs = (total / 2.5f).toLong().coerceIn(200L, 900L)
-                    val t0 = android.os.SystemClock.elapsedRealtime()
-                    var sent = 0
-                    while (isAutoRead) {
-                        val t = (android.os.SystemClock.elapsedRealtime() - t0).toFloat() / durMs
-                        if (t >= 1f) break
-                        val eased = 0.5f * (1f - kotlin.math.cos(t * kotlin.math.PI.toFloat()))
-                        val target = (total * eased).toInt()
-                        val d = target - sent
-                        if (d > 0) { scroll(d); sent += d }
-                        delay(16)
-                    }
-                    val rest = total - sent
-                    if (rest > 0) scroll(rest)
-                }
-                smoothAdvance(step) { d -> scrollJs(wv, d) }
-                delay(150)
+                // scrollBy не сдвинул (контейнер внутри страницы) — добиваем JS.
                 var posAfter = readScrollPos(wv)
                 if (posAfter - posBefore <= 0f) {
-                    // JS не сдвинул (нет контейнера) — старый путь scrollBy
-                    smoothAdvance(step) { d -> wv.scrollBy(0, d) }
-                    delay(150)
+                    scrollJs(wv, (wv.height * 0.5f).roundToInt().coerceAtLeast(1))
+                    delay(220)
                     posAfter = readScrollPos(wv)
                 }
-                // Пустой кадр — не ждём дорисовку, идём дальше сразу
-                if (hadText) delay(350)
+                // Пустой кадр (без текста) не задерживает чтение: только лёгкая
+                // пауза после текстового, чтобы глаз не рыскал.
+                if (readEngine.lastFrameHadText) delay(140)
 
                 if (posAfter - posBefore <= 0f) {
                     // Не сдвинулись — конец страницы (или контент короче экрана)
