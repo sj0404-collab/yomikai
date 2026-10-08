@@ -36,6 +36,9 @@ object BooksStore {
     private const val PROGRESS_PREFS = "yomikai_books_progress"
     private const val BOOKMARKS_PREFS = "book_bookmarks"
     private const val HISTORY_PREFS = "book_history"
+    private const val LASTREAD_PREFS = "book_lastread"
+    private const val READTIME_PREFS = "book_readtime"
+    private const val ADDEDAT_PREFS = "book_addedat"
     private const val METADATA_PREFS = "yomikai_books_metadata"
     private const val COVER_DIR = "book_covers"
 
@@ -106,6 +109,10 @@ object BooksStore {
                 }
                 val finalFile = dir.findFile(candidate)
                 if (finalFile?.exists() == true) {
+                    context.getSharedPreferences(ADDEDAT_PREFS, Context.MODE_PRIVATE)
+                        .edit()
+                        .putLong(finalFile.uri.toString(), System.currentTimeMillis())
+                        .apply()
                     ImportResult.Success(finalFile)
                 } else {
                     ImportResult.Failure("Файл не появился после добавления — проверьте хранилище")
@@ -144,6 +151,10 @@ object BooksStore {
             val out = target.openOutputStream()
                 ?: return ImportResult.Failure("Не удалось открыть файл для записи")
             out.use { it.write(content) }
+            context.getSharedPreferences(ADDEDAT_PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putLong(target.uri.toString(), System.currentTimeMillis())
+                .apply()
             return ImportResult.Success(target)
         } catch (e: Exception) {
             return ImportResult.Failure("Ошибка добавления: ${e.message ?: e.javaClass.simpleName}")
@@ -160,10 +171,19 @@ object BooksStore {
     }
 
     fun clear(context: Context, book: UniFile) {
+        val key = book.uri.toString()
         context.getSharedPreferences(PROGRESS_PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .remove(book.uri.toString())
-            .apply()
+            .edit().remove(key).apply()
+        context.getSharedPreferences(BOOKMARKS_PREFS, Context.MODE_PRIVATE)
+            .edit().remove(key).apply()
+        context.getSharedPreferences(HISTORY_PREFS, Context.MODE_PRIVATE)
+            .edit().remove(key).apply()
+        context.getSharedPreferences(LASTREAD_PREFS, Context.MODE_PRIVATE)
+            .edit().remove(key).apply()
+        context.getSharedPreferences(READTIME_PREFS, Context.MODE_PRIVATE)
+            .edit().remove(key).apply()
+        context.getSharedPreferences(ADDEDAT_PREFS, Context.MODE_PRIVATE)
+            .edit().remove(key).apply()
         // Также очищаем кэш метаданных и обложки
         clearMetadata(context, book)
         clearCover(context, book)
@@ -180,6 +200,46 @@ object BooksStore {
             sentence = parts[1].toIntOrNull()?.coerceAtLeast(0) ?: 0,
             percent = parts[2].toIntOrNull()?.coerceIn(0, 100) ?: 0,
         )
+    }
+
+    // ---------- «Продолжить чтение»: последнее открытие, время чтения ----------
+
+    /** Книга была открыта в читалке (для сортировки «Недавние» и карточки). */
+    fun markOpened(context: Context, book: UniFile) {
+        context.getSharedPreferences(LASTREAD_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putLong(book.uri.toString(), System.currentTimeMillis())
+            .apply()
+    }
+
+    fun lastOpened(context: Context, book: UniFile): Long =
+        context.getSharedPreferences(LASTREAD_PREFS, Context.MODE_PRIVATE)
+            .getLong(book.uri.toString(), 0L)
+
+    /** Накопление времени чтения голосом (секунды суммируются). */
+    fun addReadSeconds(context: Context, book: UniFile, seconds: Int) {
+        val prefs = context.getSharedPreferences(READTIME_PREFS, Context.MODE_PRIVATE)
+        val key = book.uri.toString()
+        prefs.edit()
+            .putLong(key, (prefs.getLong(key, 0L) + seconds).coerceAtLeast(0))
+            .apply()
+    }
+
+    fun readSeconds(context: Context, book: UniFile): Long =
+        context.getSharedPreferences(READTIME_PREFS, Context.MODE_PRIVATE)
+            .getLong(book.uri.toString(), 0L)
+
+    /** Когда книга попала в библиотеку (для сортировки «Новые»). */
+    fun addedAt(context: Context, book: UniFile): Long {
+        val prefs = context.getSharedPreferences(ADDEDAT_PREFS, Context.MODE_PRIVATE)
+        val key = book.uri.toString()
+        val saved = prefs.getLong(key, 0L)
+        if (saved > 0) return saved
+        val fallback = runCatching { book.lastModified() }.getOrDefault(0L)
+        if (fallback > 0) {
+            prefs.edit().putLong(key, fallback).apply()
+        }
+        return fallback
     }
 
     // ---------- Закладки и история чтения ----------

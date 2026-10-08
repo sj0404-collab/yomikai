@@ -409,6 +409,8 @@ data class BooksReaderScreen(
                         ?: throw IllegalStateException("Файл книги не найден")
                     val parsed = BookParser.parse(bk, bk.uri.toString(), context)
                     val saved = BooksStore.load(context, bk)
+                    // «Недавно читалось» — карточка продолжения в библиотеке.
+                    BooksStore.markOpened(context, bk)
                     withContext(Dispatchers.Main) {
                         chapters = parsed.chapters
                         currentChapterIndex = saved.chapter.coerceIn(0, parsed.chapters.lastIndex.coerceAtLeast(0))
@@ -970,6 +972,8 @@ data class BooksReaderScreen(
                             context, bk,
                             BooksStore.Snapshot(currentChapterIndex, currentSentenceIndex, prev),
                         )
+                        // Накопление времени чтения для библиотеки.
+                        BooksStore.addReadSeconds(context, bk, 15)
                     }
                 }
             }
