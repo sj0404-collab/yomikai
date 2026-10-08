@@ -118,6 +118,14 @@ CURR=$(adb shell dumpsys activity activities | grep -m1 "topResumedActivity" || 
 say "На вершине: $CURR"
 echo "$CURR" | grep -q "app.yomikai" && pass "Главный экран поднялся" || fails "Приложение не поднялось"
 
+# Диалог «New version available!» может перекрыть UI сразу после старта
+# (когда smoke идёт уже после публикации своего же релиза) — закрываем
+# «Not now», иначе все последующие тапы по вкладкам попадают в диалог.
+if $UAPY tapnode "Not now|Не сейчас|Позже|Later" 3; then
+  say "Закрыл диалог обновления (Not now)"
+  sleep 3
+fi
+
 # 6) Проброс HTTP-агента и проверка сервера
 adb forward tcp:8765 tcp:8765 >/dev/null 2>&1
 AI_OK=0
