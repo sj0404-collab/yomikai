@@ -42,6 +42,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.DocumentScanner
+import androidx.compose.material.icons.outlined.GraphicEq
+import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
@@ -144,6 +147,7 @@ class OcrOverlayService : Service() {
 
         /** Действие: начать чтение рамки с уже полученным разрешением. */
         private const val ACTION_START_READING = "eu.kanade.tachiyomi.ocr.START_READING"
+        private const val ACTION_SCAN_ONCE = "eu.kanade.tachiyomi.ocr.SCAN_ONCE"
         private const val EXTRA_RESULT_CODE = "resultCode"
         private const val EXTRA_RESULT_DATA = "resultData"
 
@@ -223,6 +227,17 @@ class OcrOverlayService : Service() {
          * Разрешение добывает [OcrCaptureActivity]: сервис не может
          * показать системный диалог и получить его результат.
          */
+        /** Тот же маршрут, что [startReading], но цель — разовый скан. */
+        fun scanOnceNow(context: Context, resultCode: Int, data: Intent) {
+            startWith(
+                context,
+                intentFor(context)
+                    .setAction(ACTION_SCAN_ONCE)
+                    .putExtra(EXTRA_RESULT_CODE, resultCode)
+                    .putExtra(EXTRA_RESULT_DATA, data),
+            )
+        }
+
         fun startReading(context: Context, resultCode: Int, data: Intent) {
             startWith(
                 context,
@@ -254,6 +269,15 @@ class OcrOverlayService : Service() {
 
     /** Показывается ли рамка зафиксированной области: нужно подписи кнопки. */
     private val frameVisibleState = mutableStateOf(false)
+
+    /** Согласие на захват экрана УЖЕ есть: тип FGS можно усилить. */
+    private var projectionGranted = false
+
+    /** Следующее собрание захвата — разовый скан (без цикла автолистания). */
+    private var pendingScanOnce = false
+
+    /** Текущая скорость озвучки в панели (−/+ как у читалки). */
+    private val speechRateUi = mutableStateOf(0f)
 
     private val readEngine by lazy { AutoReadEngine(applicationContext) }
     private var stt: GameSttManager? = null
@@ -327,6 +351,11 @@ class OcrOverlayService : Service() {
      * [MediaProjection] из [MediaProjectionManager.getMediaProjection].
      */
     fun startReading(projection: android.media.projection.MediaProjection) {
+        // Согласие получено: с этого момента foreground-тип mediaProjection
+        // легален — усиливаем тип (на Android 14 тип за неприкосновенность
+        // потока проекции требует именно эту последовательность).
+        projectionGranted = true
+        runCatching { ensureForeground() }
         val rect = fixedRegionRect()
         if (rect == null) {
             toast("Сначала задайте область рамки")
@@ -426,6 +455,9 @@ class OcrOverlayService : Service() {
                     }.getOrNull()
                     if (projection == null) {
                         toast("Не удалось начать захват экрана")
+                    } else if (pendingScanOnce) {
+                        pendingScanOnce = false
+                        scanOnceWith(projection)
                     } else {
                         startReading(projection)
                     }
@@ -541,15 +573,28 @@ class OcrOverlayService : Service() {
             .setSmallIcon(android.R.drawable.ic_menu_view)
             .setOngoing(true)
         if (contentIntent != null) b.setContentIntent(contentIntent)
+        // ИСПРАВЛЕНИЕ КРАША (Android 14+): тип mediaProjection в startForeground
+        // допустим ТОЛЬКО после того, как пользователь дал согласие на захват
+        // экрана в этой жизни процесса. Иначе система бросает SecurityException
+        // — сервис падал СРАЗУ при включении оверлея, ещё до показа пузыря.
+        // Усиление до mediaProjection делается отдельно (см. startReading /
+        // scanOnceWith), когда разрешение уже есть.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // Тип mediaProjection обязателен: без него на Android 14+ система
-            // не отдаст MediaProjection и захват рамки не запустится.
-            startForeground(
-                NOTIF_ID,
-                b.build(),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK or
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
-            )
+            runCatching {
+                startForeground(
+                    NOTIF_ID,
+                    b.build(),
+                    if (projectionGranted) {
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK or
+                            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                    } else {
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                    },
+                )
+            }.recoverCatching {
+                // Если даже mediaPlayback не принял — главное не уронить сервис.
+                startForeground(NOTIF_ID, b.build())
+            }
         } else {
             startForeground(NOTIF_ID, b.build())
         }
@@ -1046,14 +1091,42 @@ class OcrOverlayService : Service() {
         val reading = readingState.value
         val speaking = speakingState.value
         val listening = sttState.value
+        val rate = speechRateUi.value.takeIf { it > 0f }
+            ?: prefs.speechRate().get().also { speechRateUi.value = it }
+        val ownEngine = prefs.overlayOwnEngine().get()
+        val engineTitle = mihon.data.ocr.OcrPlugins.byModel(
+            if (ownEngine) prefs.appOcrEngine().get() else prefs.ocrModel().get(),
+        ).title
         return listOf(
+            // Порядок пунктов — как в меню читалки: OCR скан, авточтение,
+            // стоп, голоса; ниже специфика оверлея (область/буфер/текст).
             OcrMenuRow(
-                label = if (reading) "Стоп-чтение" else "Читать рамку",
+                label = "OCR скан",
                 action = OcrMenuAction(
-                    icon = if (reading) Icons.Outlined.StopCircle else Icons.Outlined.PlayArrow,
+                    icon = Icons.Outlined.DocumentScanner,
+                    contentDescription = "Разовый скан области",
+                    onClick = { scanOnce() },
+                ),
+            ),
+            OcrMenuRow(
+                label = if (reading) "Авточтение: идёт…" else "Авточтение",
+                action = OcrMenuAction(
+                    icon = if (reading) Icons.Outlined.GraphicEq else Icons.Outlined.PlayArrow,
                     active = reading,
-                    contentDescription = if (reading) "Остановить чтение рамки" else "Читать рамку",
+                    contentDescription = if (reading) "Остановить авточтение" else "Начать авточтение рамки",
                     onClick = ::toggleFrameReading,
+                ),
+            ),
+            OcrMenuRow(
+                label = "Стоп чтения",
+                action = OcrMenuAction(
+                    icon = Icons.Outlined.StopCircle,
+                    active = reading,
+                    contentDescription = "Остановить чтение и озвучку",
+                    onClick = {
+                        stopReading()
+                        runCatching { readEngine.stop() }
+                    },
                 ),
             ),
             OcrMenuRow(
@@ -1063,6 +1136,35 @@ class OcrOverlayService : Service() {
                     active = speaking,
                     contentDescription = if (speaking) "Остановить озвучку" else "Озвучить текст",
                     onClick = ::toggleSpeak,
+                ),
+            ),
+            OcrMenuRow(
+                label = "Скорость: ${(rate * 100).roundToInt()}%",
+                action = OcrMenuAction(
+                    glyph = "−",
+                    contentDescription = "Медленнее",
+                    onClick = { changeSpeechRate(-0.25f) },
+                ),
+                secondary = OcrMenuAction(
+                    glyph = "+",
+                    contentDescription = "Быстрее",
+                    onClick = { changeSpeechRate(+0.25f) },
+                ),
+                tertiary = OcrMenuAction(
+                    glyph = "1×",
+                    contentDescription = "Нормальная скорость",
+                    onClick = {
+                        prefs.speechRate().set(1f)
+                        speechRateUi.value = 1f
+                    },
+                ),
+            ),
+            OcrMenuRow(
+                label = "Движок: $engineTitle",
+                action = OcrMenuAction(
+                    icon = Icons.Outlined.Memory,
+                    contentDescription = "Сменить движок OCR оверлея",
+                    onClick = ::cycleOverlayEngine,
                 ),
             ),
             OcrMenuRow(
@@ -1203,6 +1305,58 @@ class OcrOverlayService : Service() {
      * Чтение рамки: без Службы доступности листать нечем, поэтому сразу
      * отводим читателя в настройки, а не ограничиваемся тостом.
      */
+    /** Разовый скан области: один кадр → распознать → показать и озвучить. */
+    private fun scanOnce() {
+        if (isReading) stopReading()
+        pendingScanOnce = true
+        OcrCaptureActivity.request(applicationContext)
+    }
+
+    private fun scanOnceWith(projection: android.media.projection.MediaProjection) {
+        projectionGranted = true
+        runCatching { ensureForeground() }
+        val dm = resources.displayMetrics
+        val rect = fixedRegionRect() ?: Rect(0, 0, dm.widthPixels, dm.heightPixels)
+        val engine = OverlayCaptureEngine(applicationContext, projection)
+        val reader = OverlayAutoReader(applicationContext, engine)
+        serviceScope.launch {
+            try {
+                uiHandler.post { toast("Скан: ${reader.engineTitle()}") }
+                val text = runCatching { reader.readOnce(rect) }.getOrNull()
+                uiHandler.post {
+                    if (text.isNullOrBlank()) {
+                        toast("Текст не распознан")
+                    } else {
+                        setBubble(text)
+                        expandNow()
+                        speakText(text)
+                    }
+                }
+            } finally {
+                runCatching { engine.stop() }
+                runCatching { projection.stop() }
+            }
+        }
+    }
+
+    /** Скорость озвучки (−/+) — как слайдер скорости в читалке. */
+    private fun changeSpeechRate(delta: Float) {
+        val next = (prefs.speechRate().get() + delta).coerceIn(0.5f, 2.0f)
+        prefs.speechRate().set(next)
+        speechRateUi.value = next
+    }
+
+    /** Движок OCR оверлея по кругу (ONNX/онлайн/…): не уходим в настройки. */
+    private fun cycleOverlayEngine() {
+        val models = mihon.domain.ocr.model.OcrModel.values().toList()
+        if (models.isEmpty()) return
+        val idx = models.indexOf(prefs.appOcrEngine().get()).coerceAtLeast(0)
+        val next = models[(idx + 1) % models.size]
+        prefs.appOcrEngine().set(next)
+        prefs.overlayOwnEngine().set(true)
+        toast("Движок оверлея: ${mihon.data.ocr.OcrPlugins.byModel(next).title}")
+    }
+
     private fun toggleFrameReading() {
         if (isReading) {
             stopReading()
