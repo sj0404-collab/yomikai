@@ -708,9 +708,16 @@ class OcrOverlayService : Service() {
                         ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
                     },
                 )
-            }.recoverCatching {
-                // Если даже mediaPlayback не принял — главное не уронить сервис.
+            }.recoverCatching { e ->
+                // Если даже mediaPlayback не принял — главное не уронить сервис,
+                // но причину пишем в лог: без foreground-статуса окно оверлея
+                // на части прошивок добавить не дают.
+                logcat(LogPriority.ERROR, e) {
+                    "OcrOverlay: foreground с типом не поднялся, пробую без типа"
+                }
                 startForeground(NOTIF_ID, b.build())
+            }.onFailure { e ->
+                logcat(LogPriority.ERROR, e) { "OcrOverlay: startForeground не удался вовсе" }
             }
         } else {
             startForeground(NOTIF_ID, b.build())
@@ -1125,12 +1132,49 @@ class OcrOverlayService : Service() {
         // (от верха всего дисплея) — прижимаем её к области приложения.
         clampToScreen(p)
         params = p
-
+        // root ставим сразу, чтобы повторный onStartCommand не собрал второе окно,
+        // но при провале addView обязательно обнуляем: иначе сервис с START_STICKY
+        // перезапускался бы с root != null и больше никогда не пытался показать
+        // кнопку — ровно то, что видел читатель.
         root = layout
-        runCatching { wm.addView(layout, p) }.onFailure {
-            toast("Нет разрешения показывать поверх приложений")
-            stopSelf()
-        }
+        addPanelWindow(layout, p, attempt = 0)
+    }
+
+    /**
+     * Добавляет окно кнопки, повторяя попытку, если foreground-сервис ещё не
+     * успел встать в системе.
+     *
+     * Раньше любой сбой addView прятался за тостом «Нет разрешения показывать
+     * поверх приложений»: даже когда право выдано, а причина была другая, понять
+     * это было нельзя. Теперь настоящая причина (класс и текст исключения) идёт
+     * в лог и в тост, а сбой не оставляет сервис без окна навсегда.
+     */
+    private fun addPanelWindow(
+        layout: FrameLayout,
+        p: WindowManager.LayoutParams,
+        attempt: Int,
+    ) {
+        runCatching { wm.addView(layout, p) }
+            .onSuccess { updatePanelVisibility() }
+            .onFailure { e ->
+                logcat(LogPriority.ERROR, e) {
+                    "OcrOverlay: не удалось добавить окно кнопки " +
+                        "(тип ${p.type}, попытка $attempt)"
+                }
+                if (attempt < 2 && canDrawOverlays(this)) {
+                    // Разрешение есть — вероятно, сервис стартовал мгновение
+                    // назад: даём системе 400 мс и пробуем снова.
+                    uiHandler.postDelayed({ addPanelWindow(layout, p, attempt + 1) }, 400L)
+                } else {
+                    params = null
+                    root = null
+                    val detail = e.javaClass.simpleName +
+                        (e.message?.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty())
+                    toast("Не удалось показать кнопку — $detail")
+                    if (!canDrawOverlays(this)) requestPermission(this)
+                    stopSelf()
+                }
+            }
     }
 
     // ---------- Панель: тот же вид, что меню читалки ----------
