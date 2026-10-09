@@ -77,6 +77,7 @@ import eu.kanade.presentation.reader.components.OcrMenuAction
 import eu.kanade.presentation.reader.components.OcrMenuActionButton
 import eu.kanade.presentation.reader.components.OcrMenuRow
 import eu.kanade.tachiyomi.data.tts.AutoReadEngine
+import eu.kanade.tachiyomi.data.tts.VoicePreset
 import eu.kanade.tachiyomi.util.view.setComposeContent
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -113,6 +114,12 @@ class OcrOverlayService : Service() {
         private const val ACTION_STT_STOP = "eu.kanade.tachiyomi.ocr.OVERLAY_STT_STOP"
         private const val ACTION_REFRESH = "eu.kanade.tachiyomi.ocr.OVERLAY_REFRESH"
         private const val ACTION_SELECT_REGION = "eu.kanade.tachiyomi.ocr.OVERLAY_SELECT_REGION"
+
+        /** Действия из шторки: показать/скрыть кнопку, сменить движок и голос. */
+        private const val ACTION_SHOW = "eu.kanade.tachiyomi.ocr.OVERLAY_SHOW"
+        private const val ACTION_HIDE = "eu.kanade.tachiyomi.ocr.OVERLAY_HIDE"
+        private const val ACTION_CYCLE_ENGINE = "eu.kanade.tachiyomi.ocr.OVERLAY_CYCLE_ENGINE"
+        private const val ACTION_CYCLE_VOICE = "eu.kanade.tachiyomi.ocr.OVERLAY_CYCLE_VOICE"
         private const val EXTRA_TEXT = "text"
         private const val BASE_W_DP = 320f
         private const val BASE_H_DP = 340f
@@ -326,6 +333,9 @@ class OcrOverlayService : Service() {
     private var selectorRoot: FrameLayout? = null
     private var selectorDraw: RegionDrawView? = null
 
+    /** Кнопку скрыли из шторки вручную — не показывать, пока не включат обратно. */
+    private var overlayHiddenByUser = false
+
     // ---- Чтение рамки поверх чужого приложения ----
     private var capture: OverlayCaptureEngine? = null
     private var autoReader: OverlayAutoReader? = null
@@ -521,6 +531,19 @@ class OcrOverlayService : Service() {
                 applyClipboardWatch()
                 applyFrame()
             }
+            ACTION_SHOW -> {
+                overlayHiddenByUser = false
+                updatePanelVisibility()
+                refreshNotification()
+            }
+            ACTION_HIDE -> {
+                overlayHiddenByUser = true
+                collapseNow()
+                updatePanelVisibility()
+                refreshNotification()
+            }
+            ACTION_CYCLE_ENGINE -> cycleOverlayEngine()
+            ACTION_CYCLE_VOICE -> cycleVoice()
             ACTION_START_READING -> {
                 val code = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
                 val data: Intent? = intent.getParcelableExtra(EXTRA_RESULT_DATA)
@@ -612,7 +635,7 @@ class OcrOverlayService : Service() {
 
     private fun updatePanelVisibility() {
         val view = root ?: return
-        val shown = !isOwnAppInForeground()
+        val shown = !isOwnAppInForeground() && !overlayHiddenByUser
         val wanted = if (shown) View.VISIBLE else View.GONE
         if (view.visibility != wanted) view.visibility = wanted
         // Скрытая панель — это всё ещё окно. Раньше оно оставалось «ловящим»
@@ -648,6 +671,49 @@ class OcrOverlayService : Service() {
                 NotificationChannel(CHANNEL_ID, "OCR-оверлей", NotificationManager.IMPORTANCE_LOW),
             )
         }
+        val notification = buildNotification()
+        // ИСПРАВЛЕНИЕ КРАША (Android 14+): тип mediaProjection в startForeground
+        // допустим ТОЛЬКО после того, как пользователь дал согласие на захват
+        // экрана в этой жизни процесса. Иначе система бросает SecurityException
+        // — сервис падал СРАЗУ при включении оверлея, ещё до показа пузыря.
+        // Усиление до mediaProjection делается отдельно (см. startReading /
+        // scanOnceWith), когда разрешение уже есть.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            runCatching {
+                startForeground(
+                    NOTIF_ID,
+                    notification,
+                    if (projectionGranted) {
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK or
+                            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                    } else {
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                    },
+                )
+            }.recoverCatching { e ->
+                // Если даже mediaPlayback не принял — главное не уронить сервис,
+                // но причину пишем в лог: без foreground-статуса окно оверлея
+                // на части прошивок добавить не дают.
+                logcat(LogPriority.ERROR, e) {
+                    "OcrOverlay: foreground с типом не поднялся, пробую без типа"
+                }
+                startForeground(NOTIF_ID, notification)
+            }.onFailure { e ->
+                logcat(LogPriority.ERROR, e) { "OcrOverlay: startForeground не удался вовсе" }
+            }
+        } else {
+            startForeground(NOTIF_ID, notification)
+        }
+    }
+
+    /**
+     * Постоянное уведомление оверлея с быстрыми действиями прямо в шторке:
+     * включить и скрыть кнопку, сменить движок OCR, сменить голос озвучки.
+     *
+     * Кнопки действий — это PendingIntent на этот же сервис: onStartCommand
+     * разбирает их как обычные команды, поэтому сервис не поднимается заново.
+     */
+    private fun buildNotification(): Notification {
         val launch = packageManager.getLaunchIntentForPackage(packageName)
         val contentIntent = launch?.let {
             PendingIntent.getActivity(
@@ -665,43 +731,49 @@ class OcrOverlayService : Service() {
         }
         val b = builder
             .setContentTitle("OCR-кнопка")
-            .setContentText("Плавающая кнопка поверх приложений")
+            .setContentText("Движок: ${engineShortTitle()} • Голос: ${voiceShortTitle()}")
             .setSmallIcon(android.R.drawable.ic_menu_view)
             .setOngoing(true)
+            .setOnlyAlertOnce(true)
         if (contentIntent != null) b.setContentIntent(contentIntent)
-        // ИСПРАВЛЕНИЕ КРАША (Android 14+): тип mediaProjection в startForeground
-        // допустим ТОЛЬКО после того, как пользователь дал согласие на захват
-        // экрана в этой жизни процесса. Иначе система бросает SecurityException
-        // — сервис падал СРАЗУ при включении оверлея, ещё до показа пузыря.
-        // Усиление до mediaProjection делается отдельно (см. startReading /
-        // scanOnceWith), когда разрешение уже есть.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            runCatching {
-                startForeground(
-                    NOTIF_ID,
-                    b.build(),
-                    if (projectionGranted) {
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK or
-                            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-                    } else {
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
-                    },
-                )
-            }.recoverCatching { e ->
-                // Если даже mediaPlayback не принял — главное не уронить сервис,
-                // но причину пишем в лог: без foreground-статуса окно оверлея
-                // на части прошивок добавить не дают.
-                logcat(LogPriority.ERROR, e) {
-                    "OcrOverlay: foreground с типом не поднялся, пробую без типа"
-                }
-                startForeground(NOTIF_ID, b.build())
-            }.onFailure { e ->
-                logcat(LogPriority.ERROR, e) { "OcrOverlay: startForeground не удался вовсе" }
-            }
-        } else {
-            startForeground(NOTIF_ID, b.build())
+        b.addAction(notifAction(android.R.drawable.ic_menu_view, "Включить", ACTION_SHOW))
+        b.addAction(notifAction(android.R.drawable.ic_menu_close_clear_cancel, "Скрыть", ACTION_HIDE))
+        b.addAction(notifAction(android.R.drawable.ic_menu_manage, "Движок", ACTION_CYCLE_ENGINE))
+        b.addAction(notifAction(android.R.drawable.ic_media_play, "Голос", ACTION_CYCLE_VOICE))
+        return b.build()
+    }
+
+    private fun notifAction(iconRes: Int, title: String, action: String): Notification.Action {
+        val pi = PendingIntent.getService(
+            this,
+            action.hashCode(),
+            Intent(this, OcrOverlayService::class.java).setAction(action),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        return Notification.Action.Builder(
+            android.graphics.drawable.Icon.createWithResource(this, iconRes),
+            title,
+            pi,
+        ).build()
+    }
+
+    /** Перерисовывает уведомление после смены движка, голоса или видимости. */
+    private fun refreshNotification() {
+        runCatching {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.notify(NOTIF_ID, buildNotification())
         }
     }
+
+    private fun engineShortTitle(): String = runCatching {
+        val own = prefs.overlayOwnEngine().get()
+        val model = if (own) prefs.appOcrEngine().get() else prefs.ocrModel().get()
+        mihon.data.ocr.OcrPlugins.byModel(model).title
+    }.getOrDefault("—")
+
+    private fun voiceShortTitle(): String = runCatching {
+        VoicePreset.Gender3.fromId(prefs.voicePresetGender().get()).title
+    }.getOrDefault("Авто")
 
     // ---------- Озвучка (тот же движок, что в читалке) ----------
 
@@ -1512,6 +1584,20 @@ class OcrOverlayService : Service() {
         prefs.appOcrEngine().set(next)
         prefs.overlayOwnEngine().set(true)
         toast("Движок оверлея: ${mihon.data.ocr.OcrPlugins.byModel(next).title}")
+        refreshNotification()
+    }
+
+    /** Голос озвучки оверлея по кругу: авто → мужской → женский → средний. */
+    private fun cycleVoice() {
+        val entries = VoicePreset.Gender3.entries
+        if (entries.isEmpty()) return
+        val current = VoicePreset.Gender3.fromId(
+            runCatching { prefs.voicePresetGender().get() }.getOrNull(),
+        )
+        val next = entries[(current.ordinal + 1) % entries.size]
+        runCatching { prefs.voicePresetGender().set(next.id) }
+        toast("Голос: ${next.title}")
+        refreshNotification()
     }
 
     private fun toggleFrameReading() {
