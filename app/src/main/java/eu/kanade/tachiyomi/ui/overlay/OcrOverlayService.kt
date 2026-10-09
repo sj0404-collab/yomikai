@@ -958,6 +958,15 @@ class OcrOverlayService : Service() {
         regionLabelState.value = regionModeLabel()
 
         val layout = FrameLayout(this)
+        // Владельцы жизненного цикла ставим НА КОРЕНЬ ОКНА (layout), а не
+        // только на ComposeView: composer ищет findViewTreeLifecycleOwner
+        // идя ВВЕРХ по дереву от attach-точки, упирается в этот FrameLayout
+        // и, не найдя владельца там, бросал FATAL "ViewTreeLifecycleOwner
+        // not found" при старте оверлея (и в любом месте, где панель
+        // показывалась заново).
+        layout.setViewTreeLifecycleOwner(panelLifecycleOwner)
+        layout.setViewTreeSavedStateRegistryOwner(panelSavedStateOwner)
+        layout.setViewTreeViewModelStoreOwner(panelViewModelOwner)
 
         // Панель рисуется тем же компонентом, что и плавающее меню читалки:
         // одинаковая карточка, одинаковые круглые кнопки, одинаковый FAB.
