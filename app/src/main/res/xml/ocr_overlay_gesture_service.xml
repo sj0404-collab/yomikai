@@ -11,5 +11,6 @@
     android:accessibilityFlags="flagDefault"
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="false"
+    android:isAccessibilityTool="true"
     android:notificationTimeout="200"
     android:description="@string/ocr_overlay_gesture_service_desc" />

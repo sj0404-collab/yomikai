@@ -13,6 +13,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.PixelFormat
@@ -332,15 +333,76 @@ class OcrOverlayService : Service() {
     private var readJob: kotlinx.coroutines.Job? = null
     private var readProjection: android.media.projection.MediaProjection? = null
 
+    /**
+     * Геометрия экрана в координатах окон оверлея.
+     *
+     * [content] — то, что занимает приложение: без строки состояния сверху
+     * (часы, уведомления) и панели навигации снизу. Именно эта область идёт
+     * в захват и в рамку: раньше координаты считались от всего дисплея, и в
+     * кадр попадала «шторка» с часами, а свайп из нижней кромки забирала
+     * система, поэтому чужое приложение не листалось.
+     */
+    private class ScreenGeom(val content: Rect, val full: Rect)
+
+    // Геометрия спрашивается и на каждом кадре перетаскивания кнопки, а
+    // currentWindowMetrics — не бесплатный вызов. Кэшируем до смены
+    // конфигурации (поворот, смена панелей).
+    private var geomCache: ScreenGeom? = null
+
+    private fun screenGeom(): ScreenGeom = geomCache ?: computeScreenGeom().also { geomCache = it }
+
+    private fun computeScreenGeom(): ScreenGeom {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            runCatching {
+                val metrics = wm.currentWindowMetrics
+                val bounds = metrics.bounds
+                val bars = metrics.windowInsets.getInsets(
+                    android.view.WindowInsets.Type.systemBars() or
+                        android.view.WindowInsets.Type.displayCutout(),
+                )
+                val content = Rect(
+                    bounds.left + bars.left,
+                    bounds.top + bars.top,
+                    bounds.right - bars.right,
+                    bounds.bottom - bars.bottom,
+                )
+                if (content.width() > 0 && content.height() > 0) {
+                    return ScreenGeom(content, Rect(bounds))
+                }
+            }
+        }
+        // Старые версии: берём реальный размер дисплея и вычитаем системные
+        // панели, высоту которых знают ресурсы системы.
+        val metrics = android.util.DisplayMetrics()
+        @Suppress("DEPRECATION")
+        (getSystemService(Context.WINDOW_SERVICE) as WindowManager)
+            .defaultDisplay
+            .getRealMetrics(metrics)
+        val full = Rect(0, 0, metrics.widthPixels, metrics.heightPixels)
+        val top = systemBarHeight("status_bar_height")
+        val bottom = systemBarHeight("navigation_bar_height")
+        val content = Rect(full.left, full.top + top, full.right, full.bottom - bottom)
+        return if (content.width() > 0 && content.height() > 0) {
+            ScreenGeom(content, full)
+        } else {
+            ScreenGeom(Rect(full), Rect(full))
+        }
+    }
+
+    private fun systemBarHeight(name: String): Int {
+        val id = resources.getIdentifier(name, "dimen", "android")
+        return if (id > 0) resources.getDimensionPixelSize(id) else 0
+    }
+
     /** Прямоугольник зафиксированной области в пикселях экрана. */
     private fun fixedRegionRect(): Rect? {
         val region = parseRegion() ?: return null
-        val dm = resources.displayMetrics
+        val content = screenGeom().content
         return Rect(
-            (region.l * dm.widthPixels).toInt(),
-            (region.t * dm.heightPixels).toInt(),
-            (region.r * dm.widthPixels).toInt(),
-            (region.b * dm.heightPixels).toInt(),
+            content.left + (region.l * content.width()).toInt(),
+            content.top + (region.t * content.height()).toInt(),
+            content.left + (region.r * content.width()).toInt(),
+            content.top + (region.b * content.height()).toInt(),
         ).takeIf { it.width() > 0 && it.height() > 0 }
     }
 
@@ -415,8 +477,38 @@ class OcrOverlayService : Service() {
         wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         runCatching { panelLifecycleOwner.registry.currentState = Lifecycle.State.RESUMED }
         (applicationContext as? Application)?.registerActivityLifecycleCallbacks(ownActivityWatcher)
+        // Сервис стартует, когда наша activity уже на экране: колбэк
+        // onActivityResumed она не получит, и панель ринулась бы поверх
+        // собственных настроек. Считаем активность активной сами один раз,
+        // дальше счётчик ведут обычные колбэки.
+        if (ownActivitiesResumed == 0 && isOwnAppForeground()) ownActivitiesResumed = 1
     }
 
+    /**
+     * Наше приложение (любая его activity) сейчас на переднем плане.
+     *
+     * `runningAppProcesses` отдаёт процессы без спец-разрешений, а важность
+     * собственного процесса — точный признак: `IMPORTANCE_FOREGROUND`
+     * выставляется, только когда на экране activity приложения.
+     */
+    private fun isOwnAppForeground(): Boolean = runCatching {
+        val am = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        val myPid = android.os.Process.myPid()
+        am.runningAppProcesses.orEmpty().any {
+            it.pid == myPid &&
+                it.importance <= android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+        }
+    }.getOrDefault(false)
+
+    /**
+     * Поворот или смена системных панелей меняет границы области приложения:
+     * сбрасываем кэш геометрии и пересобираем рамку с новыми координатами.
+     */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        geomCache = null
+        applyFrame()
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (!canDrawOverlays(this)) {
@@ -541,8 +633,32 @@ class OcrOverlayService : Service() {
 
     private fun updatePanelVisibility() {
         val view = root ?: return
-        val wanted = if (ownActivitiesResumed > 0) View.GONE else View.VISIBLE
+        val shown = ownActivitiesResumed == 0
+        val wanted = if (shown) View.VISIBLE else View.GONE
         if (view.visibility != wanted) view.visibility = wanted
+        // Скрытая панель — это всё ещё окно. Раньше оно оставалось «ловящим»
+        // касания, и угловая область экрана не отдавала жесты приложению,
+        // поверх которого висит оверлей (и читалке, когда оверлей спрятан).
+        // Пока панель не видна, окно обязано пропускать всё сквозь.
+        setWindowTouchable(shown)
+    }
+
+    /**
+     * Включает/выключает перехват касаний окном панели.
+     *
+     * Флаг NOT_TOUCHABLE снимается только когда панель реально показана: иначе
+     * невидимое окно съедало бы жесты приложения под ним.
+     */
+    private fun setWindowTouchable(touchable: Boolean) {
+        val lp = params ?: return
+        val notTouchable = lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0
+        if (touchable == !notTouchable) return
+        lp.flags = if (touchable) {
+            lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+        } else {
+            lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        }
+        runCatching { root?.let { wm.updateViewLayout(it, lp) } }
     }
 
 
@@ -793,10 +909,12 @@ class OcrOverlayService : Service() {
     /** Полноэкранный селектор: потяните пальцем прямоугольник области. */
     private fun openSelector() {
         if (selectorRoot != null) return
-        val dm = resources.displayMetrics
+        val geom = screenGeom()
+        val content = geom.content
         val layout = FrameLayout(this)
         layout.setBackgroundColor(0x88000000.toInt())
         val draw = RegionDrawView(this)
+        draw.setContent(content)
         layout.addView(draw, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         selectorDraw = draw
 
@@ -805,7 +923,9 @@ class OcrOverlayService : Service() {
         hint.setTextColor(0xFFFFFFFF.toInt())
         hint.textSize = 14f
         hint.gravity = Gravity.CENTER
-        hint.setPadding(0, dp(48f), 0, 0)
+        // Подсказка уходит под строку состояния, а не под часы: выбор области
+        // — тоже рамка внутри приложения.
+        hint.setPadding(0, content.top + dp(48f), 0, 0)
         layout.addView(hint, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
 
         var downX = 0f
@@ -829,7 +949,7 @@ class OcrOverlayService : Service() {
                     if (!moved) {
                         closeSelector()
                     } else {
-                        val r = draw.normalized(dm.widthPixels, dm.heightPixels)
+                        val r = draw.normalized()
                         if (r != null) {
                             prefs.overlayFixedRegion().set("${r.l},${r.t},${r.r},${r.b}")
                             prefs.overlayRegionMode().set("fixed")
@@ -880,11 +1000,11 @@ class OcrOverlayService : Service() {
             return
         }
         val region = parseRegion() ?: return
-        val dm = resources.displayMetrics
-        val x = (region.l * dm.widthPixels).toInt()
-        val y = (region.t * dm.heightPixels).toInt()
-        val w = ((region.r - region.l) * dm.widthPixels).toInt().coerceAtLeast(dp(24f))
-        val h = ((region.b - region.t) * dm.heightPixels).toInt().coerceAtLeast(dp(24f))
+        val content = screenGeom().content
+        val x = content.left + (region.l * content.width()).toInt()
+        val y = content.top + (region.t * content.height()).toInt()
+        val w = ((region.r - region.l) * content.width()).toInt().coerceAtLeast(dp(24f))
+        val h = ((region.b - region.t) * content.height()).toInt().coerceAtLeast(dp(24f))
         val thickness = dp(3f)
         val color = 0xFF4A7EAF.toInt()
 
@@ -1001,6 +1121,9 @@ class OcrOverlayService : Service() {
         val positionPrefs = getSharedPreferences(POSITION_PREFS, Context.MODE_PRIVATE)
         p.x = positionPrefs.getInt(KEY_POS_X, dp(20f))
         p.y = positionPrefs.getInt(KEY_POS_Y, dp(140f))
+        // Сохранённая позиция могла остаться в старой системе координат
+        // (от верха всего дисплея) — прижимаем её к области приложения.
+        clampToScreen(p)
         params = p
 
         root = layout
@@ -1057,7 +1180,7 @@ class OcrOverlayService : Service() {
 
     /** Высота окна с раскрытой панелью, px. */
     private fun maxWindowHeightPx(): Int =
-        (resources.displayMetrics.heightPixels * MAX_PANEL_SCREEN_FRACTION).toInt()
+        (screenGeom().content.height() * MAX_PANEL_SCREEN_FRACTION).toInt()
 
     /** Высота, доступная карточке: из окна вычитаем кнопку и отступы, dp. */
     private fun maxPanelCardHeight(): Int {
@@ -1325,8 +1448,9 @@ class OcrOverlayService : Service() {
     private fun scanOnceWith(projection: android.media.projection.MediaProjection) {
         projectionGranted = true
         runCatching { ensureForeground() }
-        val dm = resources.displayMetrics
-        val rect = fixedRegionRect() ?: Rect(0, 0, dm.widthPixels, dm.heightPixels)
+        // Без заданной рамки сканируем всю область приложения, а не весь
+        // дисплей: часы и панель навигации в кадре не нужны.
+        val rect = fixedRegionRect() ?: screenGeom().content
         val engine = OverlayCaptureEngine(applicationContext, projection)
         val reader = OverlayAutoReader(applicationContext, engine)
         serviceScope.launch {
@@ -1438,15 +1562,19 @@ class OcrOverlayService : Service() {
      * до кнопки не достаёт большой палец.
      */
     private fun snapToCorner(lp: WindowManager.LayoutParams) {
-        val dm = resources.displayMetrics
+        val content = screenGeom().content
         val margin = dp(CORNER_MARGIN_DP)
-        val toLeft = lp.x + lp.width / 2 < dm.widthPixels / 2
-        lp.x = if (toLeft) margin else (dm.widthPixels - lp.width - margin)
-        val bottomZone = dm.heightPixels * 2 / 3
-        lp.y = if (lp.y < bottomZone) {
-            margin
+        val toLeft = lp.x + lp.width / 2 < content.left + content.width() / 2
+        lp.x = if (toLeft) {
+            content.left + margin
         } else {
-            (dm.heightPixels - lp.height - margin).coerceAtLeast(margin)
+            (content.right - lp.width - margin).coerceAtLeast(content.left + margin)
+        }
+        val bottomZone = content.top + content.height() * 2 / 3
+        lp.y = if (lp.y < bottomZone) {
+            content.top + margin
+        } else {
+            (content.bottom - lp.height - margin).coerceAtLeast(content.top + margin)
         }
     }
 
@@ -1475,9 +1603,15 @@ class OcrOverlayService : Service() {
 
 
     private fun clampToScreen(lp: WindowManager.LayoutParams) {
-        val dm = resources.displayMetrics
-        lp.x = lp.x.coerceIn(0, (dm.widthPixels - lp.width).coerceAtLeast(0))
-        lp.y = lp.y.coerceIn(0, (dm.heightPixels - lp.height).coerceAtLeast(0))
+        val content = screenGeom().content
+        lp.x = lp.x.coerceIn(
+            content.left,
+            (content.right - lp.width).coerceAtLeast(content.left),
+        )
+        lp.y = lp.y.coerceIn(
+            content.top,
+            (content.bottom - lp.height).coerceAtLeast(content.top),
+        )
     }
 
     private fun toast(msg: String) {
@@ -1513,6 +1647,10 @@ class OcrOverlayService : Service() {
     private inner class RegionDrawView(context: Context) : View(context) {
         private val rect = RectF()
         private var hasRect = false
+
+        /** Область приложения без системных панелей: за неё выделять нельзя. */
+        private var content: Rect = Rect()
+
         private val fill = Paint().apply {
             color = 0x334A7EAF
             style = Paint.Style.FILL
@@ -1523,22 +1661,39 @@ class OcrOverlayService : Service() {
             strokeWidth = 4f
         }
 
+        fun setContent(value: Rect) {
+            content = Rect(value)
+        }
+
         fun setRect(x1: Float, y1: Float, x2: Float, y2: Float) {
             // Координаты касания — экранные; окно селектора полноэкранное
-            // с (0,0) в левом верхнем углу, совпадает.
-            rect.set(minOf(x1, x2), minOf(y1, y2), maxOf(x1, x2), maxOf(y1, y2))
+            // с (0,0) в левом верхнем углу, совпадает. Границы прижимаем к
+            // области приложения, чтобы рамка не налезала на часы и панель
+            // навигации: иначе в захват попадала «шторка», а свайп из нижней
+            // кромки забирала система.
+            val left = if (content.width() > 0) content.left.toFloat() else 0f
+            val top = if (content.height() > 0) content.top.toFloat() else 0f
+            val right = if (content.width() > 0) content.right.toFloat() else width.toFloat()
+            val bottom = if (content.height() > 0) content.bottom.toFloat() else height.toFloat()
+            rect.set(
+                minOf(x1, x2).coerceIn(left, right),
+                minOf(y1, y2).coerceIn(top, bottom),
+                maxOf(x1, x2).coerceIn(left, right),
+                maxOf(y1, y2).coerceIn(top, bottom),
+            )
             hasRect = true
             invalidate()
         }
 
-        /** Нормализованные доли экрана 0..1 или null, если слишком маленькая. */
-        fun normalized(wPx: Int, hPx: Int): Region? {
-            if (!hasRect || rect.width() < 40 || rect.height() < 40) return null
+        /** Нормализованные доли области приложения 0..1 или null, если мала. */
+        fun normalized(): Region? {
+            if (!hasRect || content.width() <= 0 || content.height() <= 0) return null
+            if (rect.width() < 40 || rect.height() < 40) return null
             return Region(
-                (rect.left / wPx).coerceIn(0f, 1f),
-                (rect.top / hPx).coerceIn(0f, 1f),
-                (rect.right / wPx).coerceIn(0f, 1f),
-                (rect.bottom / hPx).coerceIn(0f, 1f),
+                ((rect.left - content.left) / content.width()).coerceIn(0f, 1f),
+                ((rect.top - content.top) / content.height()).coerceIn(0f, 1f),
+                ((rect.right - content.left) / content.width()).coerceIn(0f, 1f),
+                ((rect.bottom - content.top) / content.height()).coerceIn(0f, 1f),
             )
         }
 
