@@ -79,6 +79,7 @@ import eu.kanade.presentation.reader.components.OcrMenuRow
 import eu.kanade.tachiyomi.data.tts.AutoReadEngine
 import eu.kanade.tachiyomi.util.view.setComposeContent
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import logcat.LogPriority
 import mihon.domain.ocr.service.OcrPreferences
 import tachiyomi.core.common.util.system.logcat
