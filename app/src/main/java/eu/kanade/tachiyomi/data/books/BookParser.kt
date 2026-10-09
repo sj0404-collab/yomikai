@@ -102,8 +102,61 @@ object BookParser {
         RegexOption.MULTILINE,
     )
 
+    /**
+     * Тот же рейтинг В СЕРЕДИНЕ строки: «…не желает работать! 12 10 (4)
+     * Глава 1 : …» — читался вслух, пока искали его только в начале строки.
+     * Пробел слева поглощаем, оставляем один. «В 10:35 (2)» не задевается:
+     * там перед вторым числом нет первого \d+ с пробелом.
+     */
+    private val RATING_JUNK_INLINE = Regex(
+        "\\s\\d+\\s+\\d+(?:\\.\\d+)?\\s*\\(\\d+\\)",
+    )
+
+    /**
+     * Механическая шапка выгрузок «Перевод: wolfich Редактура:» в тексте и в
+     * названиях глав. Имя переводчика зажато между маркерами — реальный текст
+     * такой конструкции не имеет; удаляем «Перевод: ИМЯ Редактура:» целиком,
+     * оставляя то, что после второго двоеточия.
+     */
+    private val CREDITS_JUNK = Regex(
+        "Перевод:\\s+[\\p{L}0-9._'\\-()\\[\\]]{1,40}\\s+Редактура:",
+    )
+
     private fun stripRatingJunk(text: String): String =
-        if (text.isEmpty()) text else RATING_JUNK.replace(text, "")
+        if (text.isEmpty()) {
+            text
+        } else {
+            val noInline = RATING_JUNK_INLINE.replace(text, " ")
+            val noCredits = CREDITS_JUNK.replace(noInline, "")
+            RATING_JUNK.replace(noCredits, "")
+        }
+
+    // ----- Чистые названия глав («как в содержании», без мусора сайта) -----
+
+    /**
+     * Ведущий служебный мусор названия: «12 10 (4) Глава 1 …», «0 Глава 130…»,
+     * «8 Послесловие…» — голое число-префикс перед словом-разделителем главы.
+     */
+    private val TITLE_LEADING_JUNK = Regex(
+        "^\\s*(?:\\d+\\s+\\d+(?:\\.\\d+)?\\s*\\(\\d+\\)\\s*|" +
+            "\\d+(?:\\.\\d+)?\\s+(?=(?:Глава|Глава|Том|Chapter|Глав|Пролог|" +
+            "Эпилог|Интерлюдия|Послесловие|Иллюстрации|Бонус)\\b))",
+    )
+
+    /** Маркеры, после которых в названии идёт служебный текст — обрезаем. */
+    private val TITLE_CUT_AT = Regex(
+        "\\s(?=Перевод:|Редактура:|Предыдущая\\s+глава|Следующая\\s+глава|Содержание\\b)",
+    )
+
+    /** Чистый заголовок главы для оглавления/шапки: без рейтингов и кредитов. */
+    fun cleanChapterTitle(raw: String): String {
+        if (raw.isBlank()) return raw
+        var t = raw.trim()
+        t = TITLE_LEADING_JUNK.replaceFirst(t, "")
+        val cut = TITLE_CUT_AT.find(t)
+        if (cut != null) t = t.substring(0, cut.range.first)
+        return t.trim(' ', ',', ':', ';', '-', '–', '—', '=', '/', '.')
+    }
 
     fun parse(bookFile: UniFile, bookId: String = bookFile.uri.toString(), context: Context? = null): ParsedBook {
         val input = bookFile.openInputStream() ?: throw UnsupportedBookException("Не удалось открыть файл книги")
@@ -147,7 +200,13 @@ object BookParser {
                 }
             }
             parsed.copy(
-                chapters = parsed.chapters.map { it.copy(text = stripRatingJunk(it.text)) },
+                chapters = parsed.chapters.map {
+                    it.copy(
+                        name = cleanChapterTitle(stripRatingJunk(it.name))
+                            .ifBlank { it.name },
+                        text = stripRatingJunk(it.text),
+                    )
+                },
             )
         } catch (e: UnsupportedBookException) {
             throw e

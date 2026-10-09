@@ -1541,8 +1541,14 @@ data class BooksReaderScreen(
                         "Страница $pNum из $totalFilePages"
                     }
                 } else {
-                    "Глава ${currentChapterIndex + 1}/${chapters.size} · " +
-                        "Предложение ${currentSentenceIndex + 1}/${segments.size.coerceAtLeast(1)}"
+                    // Как в содержании визуальной читалки: глава N/M + процент
+                    // ПО КНИГЕ (а не «Предложение A/B» — пользователь путал
+                    // страницы с главами). Подстрочный счётчик предложений
+                    // остаётся полосой прогресса выше.
+                    val pct = (currentChapterIndex + 1).toFloat() /
+                        chapters.size.coerceAtLeast(1) * 100f
+                    "Глава ${currentChapterIndex + 1} из ${chapters.size} · " +
+                        "%.1f%%".format(pct).replace('.', ',')
                 }
                 if (!fullscreen) {
                     Text(
@@ -1781,7 +1787,7 @@ data class BooksReaderScreen(
                                     Text(
                                         text = chapter.displayTitle,
                                         style = MaterialTheme.typography.bodyMedium,
-                                        maxLines = 2,
+                                        maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                         color = if (index == currentChapterIndex)
                                             MaterialTheme.colorScheme.primary
