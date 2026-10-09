@@ -269,8 +269,12 @@ object AudiobookMaker {
         val ext = if (isEdge) "mp3" else "wav"
         val mergedName = if (mergeOneFile) "full.$ext" else null
         var mergedOut: java.io.OutputStream? = null
+        // WAV-склейка: копим байты глав в память и собираем файл ОДИН раз в
+        // конце с правильным RIFF/data-размером (старый баг: хедер первого
+        // сегмента отрезал остаток — 50 МБ игрались 30 секунд).
+        val mergedWav = if (!isEdge && mergeOneFile) java.io.ByteArrayOutputStream() else null
         var mergedHeaderDone = isEdge // для wav первый заголовок пишем один раз
-        if (mergedName != null) {
+        if (mergedName != null && isEdge) {
             mergedOut = withContext(Dispatchers.IO) {
                 outDir.findFile(mergedName)?.delete()
                 outDir.createFile(mergedName)?.openOutputStream()
@@ -311,9 +315,27 @@ object AudiobookMaker {
                     return@forEachIndexed
                 }
 
+                // Ускоряем генерацию: соседние сегменты с ОДИНАКОВЫМ голосом
+                // сливаем в один запрос к движку (до ~900 символов). Раньше
+                // шёл запрос на КАЖДОЕ предложение — 140 запросов на главу
+                // и минуты ожидания; границы голосов (нарратив/персонаж)
+                // при этом не размываются.
+                val grouped = mutableListOf<BookSpeechSegment>()
+                segments.forEach { seg ->
+                    val last = grouped.lastOrNull()
+                    if (last != null && last.role == seg.role && last.speaker == seg.speaker &&
+                        last.text.length + seg.text.length + 1 <= 900
+                    ) {
+                        val merged = last.copy(text = last.text + " " + seg.text)
+                        grouped[grouped.lastIndex] = merged
+                    } else {
+                        grouped.add(seg)
+                    }
+                }
+
                 val chapterBytes = java.io.ByteArrayOutputStream()
                 var firstWavHeader = true
-                segments.forEachIndexed { segIdx, seg ->
+                grouped.forEachIndexed { segIdx, seg ->
                     if (job?.isActive == false) throw CancellationException("отменено пользователем")
                     state = state.copy(segmentInChapter = segIdx + 1)
                     if (isEdge) {
@@ -385,31 +407,37 @@ object AudiobookMaker {
                     }
                 }
 
+                // Патч размеров: иначе глава игралась только до конца
+                // первого сегмента (плеер верит dataSize из хедера).
+                val chapterArr = chapterBytes.toByteArray().also { arr ->
+                    if (!isEdge) patchWavSizes(arr)
+                }
                 val fileName = "chapter-%03d.%s".format(chapterNo, ext)
                 val saved = withContext(Dispatchers.IO) {
                     outDir.findFile(fileName)?.delete()
                     val outFile = outDir.createFile(fileName)
                     outFile?.openOutputStream()?.use { out ->
-                        chapterBytes.writeTo(out)
+                        out.write(chapterArr)
                         outFile
                     }
                 }
                 // Те же байты — в общий файл, если включена склейка.
-                if (mergedOut != null && saved != null) {
-                    withContext(Dispatchers.IO) {
-                        if (isEdge || mergedHeaderDone) {
-                            val skip = if (!isEdge) WAV_HEADER else 0
-                            if (!isEdge) {
-                                val raw = chapterBytes.toByteArray()
-                                mergedOut!!.write(raw, skip.coerceAtMost(raw.size), raw.size - skip.coerceAtMost(raw.size))
-                            } else {
-                                chapterBytes.writeTo(mergedOut!!)
-                            }
-                        } else {
+                if (saved != null) {
+                    if (mergedOut != null) { // Edge: mp3 дописывается потоком
+                        withContext(Dispatchers.IO) {
                             chapterBytes.writeTo(mergedOut!!)
-                            mergedHeaderDone = true
+                            mergedOut!!.flush()
                         }
-                        mergedOut!!.flush()
+                    } else if (mergedWav != null) {
+                        // WAV: PCM глав — в общий буфер; первый пишем целиком
+                        // (с хедером), хедер фиксим в самом конце сборки.
+                        val skip = if (mergedHeaderDone) {
+                            (wavDataOffset(chapterArr)?.plus(8)) ?: WAV_HEADER
+                        } else {
+                            mergedHeaderDone = true
+                            0
+                        }
+                        mergedWav.write(chapterArr, skip.coerceAtMost(chapterArr.size), chapterArr.size - skip.coerceAtMost(chapterArr.size))
                     }
                 }
 
@@ -433,6 +461,20 @@ object AudiobookMaker {
             runCatching { mergedOut?.close() }
         }
 
+        // WAV-склейка: запись ОДНИМ файлом с корректными размерами.
+        if (mergedWav != null && mergedName != null) {
+            val arr = mergedWav.toByteArray()
+            if (arr.size > WAV_HEADER) {
+                patchWavSizes(arr)
+                withContext(Dispatchers.IO) {
+                    outDir.findFile(mergedName)?.delete()
+                    outDir.createFile(mergedName)?.openOutputStream()?.use { out ->
+                        out.write(arr)
+                    }
+                }
+            }
+        }
+
         state = state.copy(
             running = false,
             done = true,
@@ -452,6 +494,47 @@ object AudiobookMaker {
         val picked = if (seg.speaker % 2 == 0) char1 else char2
         return picked.takeIf { it.isNotBlank() && !it.contains("::") }
             ?: BookTtsScript.edgeVoiceFor(seg.role, seg.speaker, narrator)
+    }
+
+    /** Смещение чанка «data» в RIFF (у части движков есть LIST-чанки). */
+    private fun wavDataOffset(b: ByteArray): Int? {
+        if (b.size < 44) return null
+        var i = 12
+        while (i + 8 <= b.size && i < 512) {
+            if (b[i].toInt().toChar() == 'd' && b[i + 1].toInt().toChar() == 'a' &&
+                b[i + 2].toInt().toChar() == 't' && b[i + 3].toInt().toChar() == 'a'
+            ) {
+                return i
+            }
+            val size = getLeInt(b, i + 4)
+            if (size < 0 || size > b.size) return null
+            i += 8 + size + (size % 2)
+        }
+        return null
+    }
+
+    private fun getLeInt(b: ByteArray, off: Int): Int =
+        (b[off].toInt() and 0xFF) or
+            ((b[off + 1].toInt() and 0xFF) shl 8) or
+            ((b[off + 2].toInt() and 0xFF) shl 16) or
+            ((b[off + 3].toInt() and 0xFF) shl 24)
+
+    private fun putLeInt(b: ByteArray, off: Int, v: Int) {
+        b[off] = (v and 0xFF).toByte()
+        b[off + 1] = (v shr 8 and 0xFF).toByte()
+        b[off + 2] = (v shr 16 and 0xFF).toByte()
+        b[off + 3] = (v shr 24 and 0xFF).toByte()
+    }
+
+    /**
+     * Починка длин RIFF/data после склейки сегментов. Без этого хедер
+     * держал размер ПЕРВОГО сегмента: файл весил 50 МБ, а играл 30 секунд
+     * (плеер читает ровно dataSize из хедера и больше не видит).
+     */
+    private fun patchWavSizes(b: ByteArray) {
+        val dataOff = wavDataOffset(b) ?: return
+        putLeInt(b, 4, b.size - 8) // RIFF chunk size
+        putLeInt(b, dataOff + 4, b.size - dataOff - 8) // data chunk size
     }
 
     /** Синтез одного сегмента системным TTS в WAV-байты (ждём onDone). */

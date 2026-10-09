@@ -367,11 +367,28 @@ data object BrowserTab : Tab {
     }
 
     /** Залить рекламные прямоугольники чёрным, чтобы OCR их не видел. */
+    /**
+     * Суммарная площадь junk-прямоугольников (после зажима в 0..1). Если
+     * детектор ошибся и «рекламой» объявлен почти весь кадр (тёмные страницы
+     * ранобэ-читалок), возвращаем вход без изменений — раньше в OCR уходила
+     * сплошная ЧЁРНАЯ страница и распознавался мусор вроде «МАЙН/ТУ».
+     */
+    private fun junkAreaFraction(junk: List<android.graphics.RectF>): Float {
+        var area = 0f
+        junk.forEach { r ->
+            val w = (r.right.coerceIn(0f, 1f) - r.left.coerceIn(0f, 1f)).coerceAtLeast(0f)
+            val h = (r.bottom.coerceIn(0f, 1f) - r.top.coerceIn(0f, 1f)).coerceAtLeast(0f)
+            area += w * h
+        }
+        return area.coerceIn(0f, 1f)
+    }
+
     private fun blankJunkRects(
         src: android.graphics.Bitmap,
         junk: List<android.graphics.RectF>,
     ): android.graphics.Bitmap {
         if (junk.isEmpty()) return src
+        if (junkAreaFraction(junk) > 0.55f) return src // детектор промахнулся
         val out = android.graphics.Bitmap.createBitmap(
             src.width, src.height, android.graphics.Bitmap.Config.ARGB_8888,
         )
@@ -918,8 +935,13 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
                 var advancedPx = 0
                 while (!finished && isAutoRead) {
                     if (advancedPx < maxAdvancePx) {
-                        wv.scrollBy(0, speedPx)
-                        advancedPx += speedPx
+                        // Плавное торможение по мере приближения к лимиту кадра:
+                        // скролл ЗАМЕДЛЯЕТСЯ, пока реплика не досказана — как в
+                        // читалке манги, без резкого рывка/чёрного перехода.
+                        val remain = (maxAdvancePx - advancedPx).toFloat() / maxAdvancePx
+                        val step = (speedPx * (0.15f + 0.85f * remain)).roundToInt().coerceAtLeast(1)
+                        wv.scrollBy(0, step)
+                        advancedPx += step
                     }
                     delay(16)
                 }
