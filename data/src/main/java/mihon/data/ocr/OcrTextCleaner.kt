@@ -97,14 +97,41 @@ object OcrTextCleaner {
         RegexOption.IGNORE_CASE,
     )
 
+    /**
+     * Рекламные бары новелл-читалок («+ алмазы и промокоды в Telegram-канале
+     * Manga… Перейти», «ГЛАВЫ БЫСТРО В ДРУГИХ») OCR склеивает с реальной
+     * репликой через общую строку: целиком строку мы НЕ сносим — режем хвост
+     * от первого маркера. Реплика остаётся, реклама пропадает.
+     * «.» не переваривает \n — хвост режется ровно до конца строки.
+     */
+    private val PROMOTIONAL_ADBLOCK = Regex(
+        "\\s*\\+?\\s*алмазы\\s+и\\s+промокод\\p{L}{0,2}.*" +
+            "|\\s*\\+\\s*алмазы.*" +
+            "|телеграм(-|\\s)канал.*|telegram(-|\\s)канал.*|tg(-|\\s)канал.*" +
+            "|главы\\s+быстре?о?\\s+в\\s+других.*" +
+            "|быстрее?,?\\s+качественнее.*" +
+            "|читай(те)?\\s+на\\s+(?:сайте|сайте\\.\\S+).*" +
+            "|поддержать\\s+автора.*",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** Кнопки/навигация как САМОСТОЯТЕЛЬНАЯ строка — репликой не бывает. */
+    private val STANDALONE_AD_BUTTONS = setOf(
+        "перейти", "читать далее", "подробнее", "жми сюда", "далее",
+        "назад", "вперёд", "вперед", "меню глав",
+    )
+
     fun stripPromotionalText(text: String): String {
         if (text.isBlank()) return text
         return text.lineSequence()
             .map { line ->
-                line.replace(PROMOTIONAL_SLOGAN, "")
+                val cut = line
+                    .replace(PROMOTIONAL_ADBLOCK, "")
+                    .replace(PROMOTIONAL_SLOGAN, "")
                     .replace(PROMOTIONAL_SITE, "")
                     .replace(Regex("[ \\t]{2,}"), " ")
                     .trim()
+                if (cut.lowercase() in STANDALONE_AD_BUTTONS) "" else cut
             }
             .filter(String::isNotBlank)
             .joinToString("\n")
