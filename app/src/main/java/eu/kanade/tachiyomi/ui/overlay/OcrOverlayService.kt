@@ -1,7 +1,5 @@
 package eu.kanade.tachiyomi.ui.overlay
 
-import android.app.Activity
-import android.app.Application
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -64,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.setViewTreeLifecycleOwner
@@ -476,29 +475,16 @@ class OcrOverlayService : Service() {
         super.onCreate()
         wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         runCatching { panelLifecycleOwner.registry.currentState = Lifecycle.State.RESUMED }
-        (applicationContext as? Application)?.registerActivityLifecycleCallbacks(ownActivityWatcher)
-        // Сервис стартует, когда наша activity уже на экране: колбэк
-        // onActivityResumed она не получит, и панель ринулась бы поверх
-        // собственных настроек. Считаем активность активной сами один раз,
-        // дальше счётчик ведут обычные колбэки.
-        if (ownActivitiesResumed == 0 && isOwnAppForeground()) ownActivitiesResumed = 1
+        // «Наше приложение на переднем плане» берём у ProcessLifecycleOwner: он
+        // подписан на жизненный цикл всех activity с самого старта процесса и
+        // поэтому не теряет события. Самодельный счётчик с опросом
+        // runningAppProcesses терял переход в фон, если сервис стартовал ровно
+        // в момент запуска чужого приложения из списка оверлея: activity уже
+        // успевала уйти в onPause до регистрации колбэков, а importance ещё
+        // показывал foreground — счётчик навсегда залипал в «мы на экране», и
+        // кнопка не появлялась нигде.
+        ProcessLifecycleOwner.get().lifecycle.addObserver(processLifecycleObserver)
     }
-
-    /**
-     * Наше приложение (любая его activity) сейчас на переднем плане.
-     *
-     * `runningAppProcesses` отдаёт процессы без спец-разрешений, а важность
-     * собственного процесса — точный признак: `IMPORTANCE_FOREGROUND`
-     * выставляется, только когда на экране activity приложения.
-     */
-    private fun isOwnAppForeground(): Boolean = runCatching {
-        val am = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
-        val myPid = android.os.Process.myPid()
-        am.runningAppProcesses.orEmpty().any {
-            it.pid == myPid &&
-                it.importance <= android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
-        }
-    }.getOrDefault(false)
 
     /**
      * Поворот или смена системных панелей меняет границы области приложения:
@@ -603,37 +589,30 @@ class OcrOverlayService : Service() {
      * собственное окно, но можно не рисовать панель поверх него: иначе
      * настройки оверлея открывались поверх самих себя.
      *
-     * Раньше «мы на переднем плане» определялось через UsageStatsManager, и
-     * без разрешения «usage access» (оно в приложение не запрашивается)
-     * проверка всегда возвращала false — панель так и висела поверх наших
-     * же настроек. Теперь это обычные колбэки жизненного цикла Activity:
-     * ничего разрешать не нужно и ошибки быть не может.
+     * Состояние «наше приложение на переднем плане» держит ProcessLifecycleOwner.
+     * Он подписан на lifecycle всех activity с создания процесса, поэтому не
+     * теряет переход в фон. Раньше это был самодельный счётчик по
+     * ActivityLifecycleCallbacks с опросом runningAppProcesses: если сервис
+     * поднимался в момент запуска чужого приложения из списка оверлея, наша
+     * activity успевала уйти в onPause до регистрации колбэков, importance ещё
+     * показывал foreground, и счётчик залипал в «на экране» — кнопка исчезала
+     * навсегда.
+     *
+     * Реакция с задержкой: ProcessLifecycleOwner сообщает об уходе в фон через
+     * ON_STOP (примерно 700 мс после последнего onPause), зато не мигает на
+     * поворотах и системных диалогах.
      */
-    private var ownActivitiesResumed = 0
-
-    private val ownActivityWatcher = object : Application.ActivityLifecycleCallbacks {
-        override fun onActivityResumed(activity: Activity) {
-            if (activity.packageName != packageName) return
-            ownActivitiesResumed++
-            updatePanelVisibility()
-        }
-
-        override fun onActivityPaused(activity: Activity) {
-            if (activity.packageName != packageName) return
-            ownActivitiesResumed = (ownActivitiesResumed - 1).coerceAtLeast(0)
-            updatePanelVisibility()
-        }
-
-        override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
-        override fun onActivityStarted(activity: Activity) = Unit
-        override fun onActivityStopped(activity: Activity) = Unit
-        override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
-        override fun onActivityDestroyed(activity: Activity) = Unit
+    private val processLifecycleObserver = androidx.lifecycle.LifecycleEventObserver { _, _ ->
+        updatePanelVisibility()
     }
+
+    private fun isOwnAppInForeground(): Boolean =
+        ProcessLifecycleOwner.get().lifecycle.currentState
+            .isAtLeast(Lifecycle.State.STARTED)
 
     private fun updatePanelVisibility() {
         val view = root ?: return
-        val shown = ownActivitiesResumed == 0
+        val shown = !isOwnAppInForeground()
         val wanted = if (shown) View.VISIBLE else View.GONE
         if (view.visibility != wanted) view.visibility = wanted
         // Скрытая панель — это всё ещё окно. Раньше оно оставалось «ловящим»
@@ -1667,7 +1646,7 @@ class OcrOverlayService : Service() {
         // Цикл чтения живёт в serviceScope: без отмены задача продолжала бы
         // держать сервис и захват после его смерти.
         serviceScope.cancel()
-        (applicationContext as? Application)?.unregisterActivityLifecycleCallbacks(ownActivityWatcher)
+        runCatching { ProcessLifecycleOwner.get().lifecycle.removeObserver(processLifecycleObserver) }
         // Композиция панели держит ViewTreeLifecycleOwner: без перевода
         // жизненного цикла в DESTROYED она не освободится.
         runCatching { panelLifecycleOwner.registry.currentState = Lifecycle.State.DESTROYED }
