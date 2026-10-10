@@ -454,6 +454,17 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
     }
 
     /**
+     * Мгновенный шаг в пикселях — для ПОСТЕПЕННОЙ прокрутки авточтения
+     * (см. `ReaderActivity.smoothWebtoonScroll`): лента при выключенных
+     * анимациях листалась одним `scrollBy` на всю цель, и рамка «прыгала»
+     * рывком — скорость речи не успевала «разогнаться».
+     */
+    fun scrollByPx(px: Int) {
+        if (px == 0) return
+        recycler.scrollBy(0, px)
+    }
+
+    /**
      * Есть ли ниже ещё содержимое главы.
      *
      * Последний элемент адаптера — переход к следующей главе, поэтому конец
