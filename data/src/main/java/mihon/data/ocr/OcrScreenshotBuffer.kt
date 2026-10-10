@@ -84,9 +84,13 @@ object OcrScreenshotBuffer {
     private var imagesDir: File? = null
     private var initialized = false
 
+    /** Контекст приложения: удаление копий из галереи идёт через ContentResolver. */
+    private var appContext: Context? = null
+
     fun init(context: Context) {
         if (initialized) return
         initialized = true
+        appContext = context.applicationContext
         persistFile = File(context.filesDir, FILE_NAME)
         imagesDir = File(context.filesDir, IMAGE_DIR_NAME).apply { mkdirs() }
         load()
@@ -225,7 +229,53 @@ object OcrScreenshotBuffer {
             logcat(LogPriority.WARN, e) { "OcrScreenshotBuffer: read image failed for $path" }
             return null
         }
-        return publishToGallery(context, bytes, galleryDisplayName(entry.pageIndex, entry.timestamp))
+        val uri = publishToGallery(context, bytes, galleryDisplayName(entry.pageIndex, entry.timestamp))
+        // Запомнили опубликованную копию в ЗАПИСИ: иначе удаление скриншота
+        // оставляло бы её в галерее висеть («удалил только в приложении»).
+        if (uri != null) markGalleryUri(entry.id, uri.toString())
+        return uri
+    }
+
+    /**
+     * Запомнить, что запись опубликована в галерее под [uri]: удаление записи
+     * потом уберёт и эту копию. Журнал сразу персистится — перезапуск не
+     * должен «забывать» связь с галереей.
+     */
+    @Synchronized
+    fun markGalleryUri(id: Long, uri: String) {
+        val updated = _entries.value.map { if (it.id == id) it.copy(galleryUri = uri) else it }
+        if (updated == _entries.value) return
+        _entries.value = updated
+        _lastEntry.value?.let { last -> if (last.id == id) _lastEntry.value = updated.firstOrNull { it.id == id } }
+        version++
+        persist()
+    }
+
+    /**
+     * Удалить запись НАСОВСЕМ: внутренний JPEG + копию в галерее (если
+     * публиковалась) + саму запись. Ровно то, чего не хватало: кнопка
+     * удаления оставляла файл в `Pictures/Yomikai`.
+     */
+    @Synchronized
+    fun remove(id: Long) {
+        val entry = _entries.value.firstOrNull { it.id == id }
+        if (entry != null) deleteEverywhere(entry)
+        _entries.value = _entries.value.filter { it.id != id }
+        if (_lastEntry.value?.id == id) _lastEntry.value = null
+        version++
+        persist()
+    }
+
+    /** То же для набора записей (мультивыбор на вкладке «Скриншоты»). */
+    @Synchronized
+    fun removeAll(ids: Set<Long>) {
+        if (ids.isEmpty()) return
+        val doomed = _entries.value.filter { it.id in ids }
+        doomed.forEach { deleteEverywhere(it) }
+        _entries.value = _entries.value.filterNot { it.id in ids }
+        if (_lastEntry.value?.id in ids) _lastEntry.value = null
+        version++
+        persist()
     }
 
     /**
@@ -251,7 +301,7 @@ object OcrScreenshotBuffer {
 
     /** Очистить буфер. */
     fun clear() {
-        _entries.value.forEach { deleteImageFile(it) }
+        _entries.value.forEach { deleteEverywhere(it) }
         _entries.value = emptyList()
         _lastEntry.value = null
         version++
@@ -261,7 +311,7 @@ object OcrScreenshotBuffer {
     /** Очистить скриншоты одной главы. */
     fun clearChapter(chapterId: Long) {
         val (keep, remove) = _entries.value.partition { it.chapterId != chapterId }
-        remove.forEach { deleteImageFile(it) }
+        remove.forEach { deleteEverywhere(it) }
         _entries.value = keep
         if (_lastEntry.value?.chapterId == chapterId) _lastEntry.value = null
         version++
@@ -375,6 +425,29 @@ object OcrScreenshotBuffer {
             runCatching { File(path).delete() }.onFailure {
                 logcat(LogPriority.WARN, it) { "OcrScreenshotBuffer: delete image failed" }
             }
+        }
+    }
+
+    /**
+     * Полное удаление записи: внутренний файл + копия в галерее.
+     *
+     * `content://` убираем через ContentResolver (MediaStore), `file://`
+     * (Android 8–9) — файлом плюс перескан медиабазы, иначе галерея будет
+     * показывать «битую» миниатюру до перезагрузки.
+     */
+    private fun deleteEverywhere(entry: OcrScreenshotEntry) {
+        deleteImageFile(entry)
+        val uriString = entry.galleryUri ?: return
+        val uri = runCatching { Uri.parse(uriString) }.getOrNull() ?: return
+        val resolver = appContext?.contentResolver ?: return
+        if (uri.scheme == "content") {
+            runCatching { resolver.delete(uri, null, null) }
+                .onFailure { logcat(LogPriority.WARN, it) { "OcrScreenshotBuffer: gallery delete failed" } }
+        } else {
+            runCatching {
+                uri.path?.let { File(it).delete() }
+                MediaScannerConnection.scanFile(appContext, arrayOf(uri.path), null, null)
+            }.onFailure { logcat(LogPriority.WARN, it) { "OcrScreenshotBuffer: gallery file delete failed" } }
         }
     }
 

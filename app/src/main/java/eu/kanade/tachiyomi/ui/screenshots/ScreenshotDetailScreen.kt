@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.SwapHoriz
@@ -113,6 +114,15 @@ class ScreenshotDetailScreen(
                         }
                         IconButton(onClick = { saveScreenshotToGallery(scope, context, entry) }) {
                             Icon(Icons.Outlined.Download, contentDescription = "Сохранить в галерею")
+                        }
+                    }
+                    if (entry != null) {
+                        // Удалить насовсем: внутренний файл + копия в галерее.
+                        IconButton(onClick = {
+                            mihon.data.ocr.OcrScreenshotBuffer.remove(entry.id)
+                            navigator.pop()
+                        }) {
+                            Icon(Icons.Outlined.Delete, contentDescription = "Удалить насовсем")
                         }
                     }
                 },

@@ -43,6 +43,13 @@ data class OcrScreenshotEntry(
     val imageWidth: Int = 0,
     val imageHeight: Int = 0,
     val imagePath: String? = null,
+    /**
+     * Uri опубликованной копии в галерее (`Pictures/Yomikai`), если запись
+     * отправляли туда. Нужен, чтобы удаление скриншота убирало его «насовсем»:
+     * и приватный файл, и общедоступную копию (раньше копия в галерее
+     * оставалась висеть после удаления записи).
+     */
+    val galleryUri: String? = null,
     val scanRegion: String = "viewport",
     val sourceWidth: Int = 0,
     val sourceHeight: Int = 0,

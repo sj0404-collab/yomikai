@@ -19,7 +19,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.CameraAlt
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Share
@@ -34,8 +37,10 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -97,14 +102,74 @@ data object ScreenshotTab : Tab {
         val context = LocalContext.current
         val scope = rememberCoroutineScope()
         val entries by OcrScreenshotBuffer.entries.collectAsState()
-        var showClearDialog = remember { androidx.compose.runtime.mutableStateOf(false) }
+        var showClearDialog by remember { mutableStateOf(false) }
+        // Мультивыбор: тап по карточке в режиме выделения, «В архив»/«Удалить»
+        // применяются к набору (см. clearOnSelection в ниже по файлу).
+        var selected by remember { mutableStateOf(emptySet<Long>()) }
+        val selectionMode = selected.isNotEmpty()
+        androidx.activity.compose.BackHandler(enabled = selectionMode) {
+            selected = emptySet()
+        }
+        // «Отправить в архив» = опубликовать в галерею Pictures/Yomikai и убрать
+        // из буфера: запись переезжает в архив (удаляется насовсем из приложения,
+        // но остаётся файлом на телефоне).
+        fun archiveSelected() {
+            val ids = selected.toSet()
+            scope.launch(Dispatchers.IO) {
+                val published = ids.sumOf { id ->
+                    val entry = entries.firstOrNull { it.id == id }
+                    val publishedOk = entry
+                        ?.takeIf { it.imagePath != null }
+                        ?.let { OcrScreenshotBuffer.publishEntryToGallery(context.applicationContext, it) } != null
+                    if (publishedOk) 1 else 0
+                }
+                OcrScreenshotBuffer.removeAll(ids)
+                withContext(Dispatchers.Main) {
+                    context.toast(
+                        if (published > 0) {
+                            "В архив ушло скриншотов: $published (Pictures/Yomikai)"
+                        } else {
+                            "Не удалось опубликовать скриншоты — нечего архивировать"
+                        },
+                    )
+                }
+            }
+            selected = emptySet()
+        }
 
         Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
             TopAppBar(
-                title = { Text("Скриншоты") },
+                title = {
+                    Text(if (selectionMode) "Выбрано: ${selected.size}" else "Скриншоты")
+                },
+                navigationIcon = {
+                    if (selectionMode) {
+                        IconButton(onClick = { selected = emptySet() }) {
+                            Icon(Icons.Outlined.Close, contentDescription = "Снять выделение")
+                        }
+                    }
+                },
                 actions = {
-                    if (entries.isNotEmpty()) {
-                        IconButton(onClick = { showClearDialog.value = true }) {
+                    if (selectionMode) {
+                        // В архив — опубликовать выбранные в галерею.
+                        IconButton(onClick = { archiveSelected() }) {
+                            Icon(
+                                Icons.Outlined.Archive,
+                                contentDescription = "Отправить в архив",
+                            )
+                        }
+                        // Удалить насовсем: файлы буфера + копии в галерее.
+                        IconButton(onClick = {
+                            OcrScreenshotBuffer.removeAll(selected)
+                            selected = emptySet()
+                        }) {
+                            Icon(
+                                Icons.Outlined.Delete,
+                                contentDescription = "Удалить насовсем",
+                            )
+                        }
+                    } else if (entries.isNotEmpty()) {
+                        IconButton(onClick = { showClearDialog = true }) {
                             Icon(
                                 Icons.Outlined.DeleteSweep,
                                 contentDescription = "Очистить",
@@ -149,38 +214,43 @@ data object ScreenshotTab : Tab {
                     items(entries, key = { it.id }) { entry ->
                         ScreenshotCard(
                             entry = entry,
+                            selected = entry.id in selected,
                             onClick = {
-                                navigator.push(ScreenshotDetailScreen(entry.id))
+                                if (selectionMode) {
+                                    selected = if (entry.id in selected) selected - entry.id else selected + entry.id
+                                } else {
+                                    navigator.push(ScreenshotDetailScreen(entry.id))
+                                }
                             },
                             onShare = { shareScreenshot(context, it) },
                             onSaveToGallery = { saveScreenshotToGallery(scope, context, it) },
+                            onDelete = { OcrScreenshotBuffer.remove(entry.id) },
                         )
                     }
                 }
             }
         }
 
-        if (showClearDialog.value) {
+        if (showClearDialog) {
             AlertDialog(
-                onDismissRequest = { showClearDialog.value = false },
+                onDismissRequest = { showClearDialog = false },
                 title = { Text("Очистить скриншоты?") },
                 text = {
-                    // Честно про границы: удаляются только внутренние копии.
-                    // Опубликованные в Pictures/Yomikai — обычные файлы
-                    // телефона, и «Очистить» их не трогает.
-                    Text("Все ${entries.size} скриншотов будут удалены из приложения. " +
-                        "Копии в Pictures/Yomikai останутся.")
+                    // Удаляем насовсем: внутренние копии И опубликованные в
+                    // Pictures/Yomikai (запись помнит Uri публикации).
+                    Text("Все ${entries.size} скриншотов будут удалены насовсем — " +
+                        "и из приложения, и из галереи Pictures/Yomikai.")
                 },
                 confirmButton = {
                     TextButton(onClick = {
                         OcrScreenshotBuffer.clear()
-                        showClearDialog.value = false
+                        showClearDialog = false
                     }) {
                         Text("Очистить")
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showClearDialog.value = false }) {
+                    TextButton(onClick = { showClearDialog = false }) {
                         Text("Отмена")
                     }
                 },
@@ -195,6 +265,9 @@ private fun ScreenshotCard(
     onClick: () -> Unit,
     onShare: (File) -> Unit,
     onSaveToGallery: (OcrScreenshotEntry) -> Unit,
+    onDelete: () -> Unit = {},
+    /** Режим мультивыбора: карточка подсвечена и тапается как «флажок». */
+    selected: Boolean = false,
 ) {
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
     val imageFile = entry.imagePath?.let { File(it) }?.takeIf { it.exists() }
@@ -203,7 +276,13 @@ private fun ScreenshotCard(
             .fillMaxWidth()
             .padding(horizontal = 12.dp)
             .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .background(
+                if (selected) {
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                },
+            )
             .clickable(onClick = onClick)
             .padding(12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -274,6 +353,17 @@ private fun ScreenshotCard(
                         Icon(
                             Icons.Outlined.Download,
                             contentDescription = "Сохранить в галерею",
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                    // Удалить насовсем: приватный файл + копия в галерее.
+                    IconButton(
+                        onClick = onDelete,
+                        modifier = Modifier.size(36.dp),
+                    ) {
+                        Icon(
+                            Icons.Outlined.Delete,
+                            contentDescription = "Удалить насовсем",
                             modifier = Modifier.size(20.dp),
                         )
                     }
