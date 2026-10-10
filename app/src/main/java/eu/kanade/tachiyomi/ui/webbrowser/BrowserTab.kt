@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
@@ -560,9 +561,27 @@ data object BrowserTab : Tab {
                 }
             }
             webViewClient = object : WebViewClient() {
+                // Сетевая половина AdBlock: запросы рекламных сетей (включая
+                // iframe-баннеры со звуком) не отдаём странице вовсе.
+                override fun shouldInterceptRequest(
+                    view: WebView,
+                    request: android.webkit.WebResourceRequest,
+                ): android.webkit.WebResourceResponse? {
+                    if (BrowserAdBlock.isEnabled(view.context) &&
+                        BrowserAdBlock.shouldBlock(request.url?.toString())
+                    ) {
+                        return BrowserAdBlock.emptyResponse()
+                    }
+                    return super.shouldInterceptRequest(view, request)
+                }
+
                 override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                     if (view !== sharedWebView) return
                     if (!url.isNullOrBlank()) urlState.value = url
+                    // Блокировщик рекламы разворачивается на СТАРТЕ страницы:
+                    // иначе промо-карточка успевает мигнуть и отыграть звук
+                    // («тук-тук» поверх диалога авточтения).
+                    BrowserAdBlock.inject(view)
                 }
                 override fun onReceivedError(view: WebView, request: android.webkit.WebResourceRequest, error: android.webkit.WebResourceError) {
                     if (view !== sharedWebView) return
@@ -605,6 +624,9 @@ data object BrowserTab : Tab {
                             null,
                         )
                     }
+                    // Косметический фильтр: страница догрузилась — промо-карточки,
+                    // которые сайт досыпает после рендера, снимаем сразу.
+                    BrowserAdBlock.inject(view)
                     url?.let { urlState.value = it }
                 }
             }
@@ -1372,6 +1394,37 @@ data object BrowserTab : Tab {
                                     setBrowserSslPolicy(ctx, acceptSsl)
                                 }) {
                                     Icon(Icons.Outlined.Lock, contentDescription = "SSL-политика")
+                                }
+                            }
+                            // AdBlock: рекламные сети режем по сети, промо-карточки
+                            // («В паках больше выбора» и подобные) убирает контент-
+                            // скрипт — попап больше не лезет в диалог авточтения и
+                            // не отыгрывает звуки поверх речи.
+                            var adBlockOn by remember { mutableStateOf(BrowserAdBlock.isEnabled(ctx)) }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    if (adBlockOn) "AdBlock: вкл  " else "AdBlock: выкл  ",
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
+                                SmallFloatingActionButton(onClick = {
+                                    adBlockOn = !adBlockOn
+                                    BrowserAdBlock.setEnabled(ctx, adBlockOn)
+                                    if (adBlockOn) {
+                                        // Новая страница развернёт фильтр сама;
+                                        // на открытой — включаем обратно на месте.
+                                        BrowserAdBlock.inject(sharedWebView)
+                                        BrowserAdBlock.setEnabled(sharedWebView, true)
+                                        ctx.toast("AdBlock включён — реклама убирается со страницы")
+                                    } else {
+                                        BrowserAdBlock.setEnabled(sharedWebView, false)
+                                        ctx.toast("AdBlock выключен — страница как есть")
+                                    }
+                                }) {
+                                    Icon(
+                                        Icons.Outlined.Block,
+                                        contentDescription = "AdBlock",
+                                        tint = if (adBlockOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                    )
                                 }
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {

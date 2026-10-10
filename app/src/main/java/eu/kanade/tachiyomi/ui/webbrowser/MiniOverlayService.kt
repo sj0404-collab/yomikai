@@ -215,6 +215,20 @@ class MiniOverlayService : Service() {
             }
         }
         wv.webViewClient = object : WebViewClient() {
+            // Тот же AdBlock, что и в браузере: рекламные сети режем по сети,
+            // промо-карточки снимает вживлённый контент-скрипт.
+            override fun shouldInterceptRequest(
+                view: WebView,
+                request: android.webkit.WebResourceRequest,
+            ): android.webkit.WebResourceResponse? {
+                if (BrowserAdBlock.isEnabled(view.context) &&
+                    BrowserAdBlock.shouldBlock(request.url?.toString())
+                ) {
+                    return BrowserAdBlock.emptyResponse()
+                }
+                return super.shouldInterceptRequest(view, request)
+            }
+
             override fun shouldOverrideUrlLoading(view: WebView, url: String?): Boolean {
                 if (url != null) view.loadUrl(url)
                 return true
@@ -222,12 +236,14 @@ class MiniOverlayService : Service() {
 
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                 urlView?.text = url ?: ""
+                BrowserAdBlock.inject(view)
             }
 
             override fun onPageFinished(view: WebView, url: String?) {
                 urlView?.text = view.title?.takeIf { it.isNotBlank() } ?: url
                 backBtn?.isEnabled = view.canGoBack()
                 fwdBtn?.isEnabled = view.canGoForward()
+                BrowserAdBlock.inject(view)
             }
         }
         wv.loadUrl(currentUrl)
