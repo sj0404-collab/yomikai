@@ -1752,7 +1752,9 @@ class OcrOverlayService : Service() {
         panelViewModelOwner.viewModelStore.clear()
         runCatching { stt?.destroy() }
         stt = null
-        runCatching { readEngine.stop() }
+        // Движок держит собственный CoroutineScope: без destroy фоновый OCR
+        // дотягивался до конца уже после ухода сервиса.
+        runCatching { readEngine.destroy() }
         val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipListener?.let { runCatching { cm.removePrimaryClipChangedListener(it) } }
         closeSelector()

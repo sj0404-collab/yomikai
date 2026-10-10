@@ -24,6 +24,7 @@ object TtsReadingNotifier {
     private const val NOTIFICATION_ID = 0x77A1
     private const val ACTION_STOP = "app.yomikai.TTS_STOP"
 
+    @Volatile
     private var receiverRegistered = false
 
     /**
@@ -137,5 +138,24 @@ object TtsReadingNotifier {
         val nm = context.applicationContext
             .getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.cancel(NOTIFICATION_ID)
+    }
+
+    /**
+     * Снять уведомление и дать задерегистрировать приёмник «⏹ Остановить».
+     *
+     * Регистрация шла на applicationContext, поэтому без явного shutdown
+     * приёмник висел навсегда: процесс держал ссылку на объект-сироту до
+     * самого перезапуска приложения. Вызывается из `destroy()` владельцев
+     * чтения (ReaderActivity, BrowserTab, OcrOverlayService).
+     */
+    fun shutdown(context: Context) {
+        dismiss(context)
+        if (!receiverRegistered) return
+        receiverRegistered = false
+        runCatching {
+            context.applicationContext.unregisterReceiver(stopReceiver)
+        }.onFailure { e ->
+            logcat(LogPriority.WARN, e) { "Failed to unregister TTS stop receiver" }
+        }
     }
 }

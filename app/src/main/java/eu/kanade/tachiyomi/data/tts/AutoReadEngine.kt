@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import mihon.data.ocr.OcrScreenshotBuffer
@@ -1739,6 +1740,23 @@ class AutoReadEngine(
         _frameRegions.value = emptyList()
         streamedRegionCount.set(0)
         _isReading.value = false
+    }
+
+    /**
+     * Полностью освободить движок: остановить чтение и погасить собственную
+     * область корутин.
+     *
+     * [stop] отменяет только текущий/ручной кадр, но `scope` продолжает жить и
+     * дотягивает фоновый OCR до конца даже после ухода с экрана. На каждую
+     * Activity, вкладку браузера и сервис создаётся свой экземпляр, поэтому
+     * владелец обязан позвать [destroy] в своём `onDestroy`.
+     */
+    fun destroy() {
+        stop()
+        // Приёмник «⏹ Остановить» регистрировался на applicationContext и без
+        // явного shutdown висел бы до перезапуска приложения.
+        runCatching { TtsReadingNotifier.shutdown(context) }
+        scope.cancel()
     }
 
     /**

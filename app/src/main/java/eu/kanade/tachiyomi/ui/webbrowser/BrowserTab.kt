@@ -979,8 +979,11 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
             onDispose {
                 if (autoReadActive.value) {
                     autoReadActive.value = false
-                    readEngine.stop()
                 }
+                // Движок держит собственный CoroutineScope: гасим его вместе с
+                // вкладкой, иначе фоновый OCR доживал до конца после ухода.
+                readEngine.destroy()
+                autoReadEngine = null
             }
         }
         DisposableEffect(Unit) {

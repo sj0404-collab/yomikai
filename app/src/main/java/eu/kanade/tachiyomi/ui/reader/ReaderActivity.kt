@@ -265,7 +265,11 @@ class ReaderActivity : BaseActivity() {
     private var autoscrollJob: kotlinx.coroutines.Job? = null
 
     /** Движок авточтения с историей и подсветкой. */
-    private val autoReadEngine by lazy { eu.kanade.tachiyomi.data.tts.AutoReadEngine(applicationContext) }
+    private var autoReadEngineOrNull: eu.kanade.tachiyomi.data.tts.AutoReadEngine? = null
+    private val autoReadEngine: eu.kanade.tachiyomi.data.tts.AutoReadEngine
+        get() = autoReadEngineOrNull
+            ?: eu.kanade.tachiyomi.data.tts.AutoReadEngine(applicationContext)
+                .also { autoReadEngineOrNull = it }
     private var autoReadLoop: kotlinx.coroutines.Job? = null
     private val autoLookedUpChapters = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
 
@@ -795,6 +799,9 @@ class ReaderActivity : BaseActivity() {
      */
     override fun onDestroy() {
         stopAutoReadLoop()
+        // Движок держит собственный CoroutineScope: без destroy фоновый OCR
+        // дотягивался до конца уже после ухода с экрана.
+        autoReadEngineOrNull?.destroy()
         super.onDestroy()
         autoscrollJob?.cancel()
         viewModel.state.value.viewer?.destroy()
