@@ -104,7 +104,10 @@ internal class HttpPageLoader(
         }
 
         val queuedPages = mutableListOf<PriorityPage>()
-        if (page.status == Page.State.Queue) {
+        // Текущая страница тоже помечается в enqueued: без этого повторный
+        // loadPage той же страницы (пока она ещё в очереди) клал в очередь
+        // вторую копию, а отмена вычищала чужую пометку.
+        if (page.status == Page.State.Queue && enqueued.add(page.index)) {
             queuedPages += PriorityPage(page, PriorityPage.DEFAULT).also { queue.offer(it) }
         }
         queuedPages += preloadRemainingPages(page)
