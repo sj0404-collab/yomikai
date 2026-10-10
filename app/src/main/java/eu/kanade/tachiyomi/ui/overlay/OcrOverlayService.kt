@@ -550,12 +550,25 @@ class OcrOverlayService : Service() {
                 if (data == null) {
                     toast("Разрешение на захват не получено")
                 } else {
+                    // Android 14: getMediaProjection() разрешён только когда
+                    // сервис уже работает в foreground с типом mediaProjection.
+                    // Согласие пользователя к этому моменту получено (data !=
+                    // null), поэтому сначала усиливаем тип и только затем
+                    // запрашиваем проекцию. Раньше getMediaProjection()
+                    // вызывался на типе mediaPlayback — на Android 14 это
+                    // SecurityException, и оверлей не захватывал экран вовсе.
+                    projectionGranted = true
+                    runCatching { ensureForeground() }
                     val projection = runCatching {
                         val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE)
                             as android.media.projection.MediaProjectionManager
                         mpm.getMediaProjection(code, data)
                     }.getOrNull()
                     if (projection == null) {
+                        // Тип mediaProjection без реальной проекции оставлять
+                        // нельзя: откатываем foreground к mediaPlayback.
+                        projectionGranted = false
+                        runCatching { ensureForeground() }
                         toast("Не удалось начать захват экрана")
                     } else if (pendingScanOnce) {
                         pendingScanOnce = false
