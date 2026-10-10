@@ -169,11 +169,16 @@ object AiPlugins {
                         it.write(substitute(plugin.body, args, urlEncode = false).toByteArray())
                     }
                 }
-                val code = conn.responseCode
-                val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
-                    ?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
-                conn.disconnect()
-                "HTTP $code:\n" + text.take(1500)
+                try {
+                    val code = conn.responseCode
+                    val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
+                        ?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
+                    "HTTP $code:\n" + text.take(1500)
+                } finally {
+                    // disconnect() должен выполниться и при ошибке чтения:
+                    // иначе соединение висит и держит сокет до таймаута.
+                    conn.disconnect()
+                }
             }.getOrElse { "ОШИБКА плагина ${plugin.name}: ${it.message?.take(120)}" }
 
             "prompt" -> {

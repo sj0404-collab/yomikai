@@ -177,12 +177,17 @@ object EdgeTts {
             conn.setRequestProperty("Sec-Fetch-Mode", "cors")
             conn.setRequestProperty("Sec-Fetch-Dest", "empty")
             conn.setRequestProperty("Sec-CH-UA-Mobile", "?0")
-            if (conn.responseCode !in 200..299) {
-                logcat(LogPriority.WARN) { "EdgeTTS voices HTTP ${conn.responseCode}" }
-                return@runCatching emptyList<EdgeVoice>()
+            val body = try {
+                if (conn.responseCode !in 200..299) {
+                    logcat(LogPriority.WARN) { "EdgeTTS voices HTTP ${conn.responseCode}" }
+                    return@runCatching emptyList<EdgeVoice>()
+                }
+                conn.inputStream.bufferedReader().readText()
+            } finally {
+                // disconnect() обязан выполниться и при раннем возврате, и при
+                // исключении чтения: иначе соединение висит до таймаута.
+                conn.disconnect()
             }
-            val body = conn.inputStream.bufferedReader().readText()
-            conn.disconnect()
             val arr = org.json.JSONArray(body)
             buildList {
                 for (i in 0 until arr.length()) {

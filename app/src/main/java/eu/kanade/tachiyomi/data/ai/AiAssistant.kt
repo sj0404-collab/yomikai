@@ -12,6 +12,8 @@ import org.json.JSONObject
 import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.InetSocketAddress
 import java.net.Proxy
@@ -44,6 +46,15 @@ object AiAssistant {
      */
     const val ZEN_BASE_URL = "https://opencode.ai/zen/v1"
     const val OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+    /**
+     * Потолок размера ответа модели: 4 МиБ. Обычный readBytes() тянул в heap
+     * всё, что прислал сервер, — один потоковый ответ с «размышлениями» или
+     * огромная HTML-ошибка роняли приложение по OutOfMemory. Обрезаем на
+     * разумном пределе: JSON-ответы и списки моделей в него укладываются с
+     * запасом.
+     */
+    private const val MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 
     /**
      * Модели Zen, проверенные без ключа.
@@ -300,16 +311,40 @@ object AiAssistant {
             val conn = openConnection("$OPENROUTER_BASE_URL/models")
             conn.connectTimeout = 10_000
             conn.readTimeout = 20_000
-            val body = conn.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
-            conn.disconnect()
-            val arr = JSONObject(body).getJSONArray("data")
-            buildList {
-                for (i in 0 until arr.length()) {
-                    val id = arr.getJSONObject(i).optString("id")
-                    if (id.endsWith(":free")) add(id)
-                }
-            }.sorted()
+            try {
+                val body = conn.inputStream.use { it.readBoundedText() }
+                val arr = JSONObject(body).getJSONArray("data")
+                buildList {
+                    for (i in 0 until arr.length()) {
+                        val id = arr.getJSONObject(i).optString("id")
+                        if (id.endsWith(":free")) add(id)
+                    }
+                }.sorted()
+            } finally {
+                // Разбор JSON тоже может бросить: без finally соединение
+                // оставалось открытым.
+                conn.disconnect()
+            }
         }.getOrDefault(OPENROUTER_FREE_FALLBACK)
+    }
+
+    /**
+     * Прочитать поток в строку, но не более [MAX_RESPONSE_BYTES]. Замена
+     * unbounded `readBytes().toString(...)` на обоих сетевых путях агента и
+     * списка моделей.
+     */
+    private fun InputStream.readBoundedText(limit: Int = MAX_RESPONSE_BYTES): String {
+        val buffer = ByteArrayOutputStream(minOf(limit, 64 * 1024))
+        val chunk = ByteArray(16 * 1024)
+        var total = 0
+        while (total < limit) {
+            val read = read(chunk)
+            if (read < 0) break
+            val take = minOf(read, limit - total)
+            buffer.write(chunk, 0, take)
+            total += take
+        }
+        return buffer.toString("UTF-8")
     }
 
     /** Полный ответ модели: текст, «размышления» (reasoning), реальная модель. */
@@ -577,7 +612,7 @@ object AiAssistant {
             rawConn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
             val code = rawConn.responseCode
             val text = (if (code in 200..299) rawConn.inputStream else rawConn.errorStream)
-                ?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
+                ?.use { it.readBoundedText() }.orEmpty()
             if (code !in 200..299) {
                 // Отдельная судьба для «бесплатных» моделей Zen: OpenCode
                 // отдаёт их только своему же клиенту (проверка по User-Agent),

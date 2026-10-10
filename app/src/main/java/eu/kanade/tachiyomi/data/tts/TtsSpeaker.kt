@@ -1439,24 +1439,29 @@ object TtsSpeaker {
             try {
                 val conn = URL("https://api.elevenlabs.io/v1/text-to-speech/$voiceId")
                     .openConnection() as HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.doOutput = true
-                conn.connectTimeout = 20_000
-                conn.readTimeout = 60_000
-                conn.setRequestProperty("xi-api-key", apiKey)
-                conn.setRequestProperty("Content-Type", "application/json")
-                conn.setRequestProperty("Accept", "audio/mpeg")
-                val body = """{"text":${jsonQuote(text)},"model_id":"eleven_multilingual_v2"}"""
-                conn.outputStream.use { it.write(body.toByteArray()) }
-                if (conn.responseCode in 200..299) {
-                    val file = File(context.cacheDir, "tts_eleven.mp3")
-                    conn.inputStream.use { input -> file.outputStream().use { input.copyTo(it) } }
-                    playFileBlocking(file)
-                } else {
-                    logcat(LogPriority.WARN) { "ElevenLabs HTTP ${conn.responseCode}" }
-                    speakGoogleWebInline(context, text)
+                try {
+                    conn.requestMethod = "POST"
+                    conn.doOutput = true
+                    conn.connectTimeout = 20_000
+                    conn.readTimeout = 60_000
+                    conn.setRequestProperty("xi-api-key", apiKey)
+                    conn.setRequestProperty("Content-Type", "application/json")
+                    conn.setRequestProperty("Accept", "audio/mpeg")
+                    val body = """{"text":${jsonQuote(text)},"model_id":"eleven_multilingual_v2"}"""
+                    conn.outputStream.use { it.write(body.toByteArray()) }
+                    if (conn.responseCode in 200..299) {
+                        val file = File(context.cacheDir, "tts_eleven.mp3")
+                        conn.inputStream.use { input -> file.outputStream().use { input.copyTo(it) } }
+                        playFileBlocking(file)
+                    } else {
+                        logcat(LogPriority.WARN) { "ElevenLabs HTTP ${conn.responseCode}" }
+                        speakGoogleWebInline(context, text)
+                    }
+                } finally {
+                    // disconnect() в finally: иначе при исключении чтения или
+                    // воспроизведения соединение висело до таймаута.
+                    conn.disconnect()
                 }
-                conn.disconnect()
             } catch (e: Exception) {
                 logcat(LogPriority.WARN, e) { "ElevenLabs TTS failed" }
                 speakGoogleWebInline(context, text)
@@ -1511,13 +1516,17 @@ object TtsSpeaker {
             conn.connectTimeout = 15_000
             conn.readTimeout = 30_000
             conn.setRequestProperty("xi-api-key", apiKey)
-            if (conn.responseCode !in 200..299) {
-                logcat(LogPriority.WARN) { "ElevenLabs voices HTTP ${conn.responseCode}" }
+            val body = try {
+                if (conn.responseCode !in 200..299) {
+                    logcat(LogPriority.WARN) { "ElevenLabs voices HTTP ${conn.responseCode}" }
+                    return@runCatching emptyList()
+                }
+                conn.inputStream.bufferedReader().readText()
+            } finally {
+                // disconnect() в finally: ранний возврат и исключение чтения
+                // больше не оставляют соединение висеть до таймаута.
                 conn.disconnect()
-                return@runCatching emptyList()
             }
-            val body = conn.inputStream.bufferedReader().readText()
-            conn.disconnect()
             val arr = org.json.JSONObject(body).optJSONArray("voices") ?: return@runCatching emptyList()
             buildList {
                 for (i in 0 until arr.length()) {
@@ -1595,21 +1604,25 @@ object TtsSpeaker {
     private fun downloadToCache(context: Context, url: String): File? {
         return try {
             val conn = URL(url).openConnection() as HttpURLConnection
-            conn.connectTimeout = 15_000
-            conn.readTimeout = 30_000
-            // Без браузерного UA endpoint отдаёт 403
-            conn.setRequestProperty(
-                "User-Agent",
-                "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile Safari/537.36",
-            )
-            if (conn.responseCode !in 200..299) {
+            try {
+                conn.connectTimeout = 15_000
+                conn.readTimeout = 30_000
+                // Без браузерного UA endpoint отдаёт 403
+                conn.setRequestProperty(
+                    "User-Agent",
+                    "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile Safari/537.36",
+                )
+                if (conn.responseCode !in 200..299) {
+                    return null
+                }
+                val file = File(context.cacheDir, "tts_web_${System.nanoTime()}.mp3")
+                conn.inputStream.use { input -> file.outputStream().use { input.copyTo(it) } }
+                file
+            } finally {
+                // disconnect() в finally: ранний возврат/исключение записи не
+                // оставляют соединение висеть.
                 conn.disconnect()
-                return null
             }
-            val file = File(context.cacheDir, "tts_web_${System.nanoTime()}.mp3")
-            conn.inputStream.use { input -> file.outputStream().use { input.copyTo(it) } }
-            conn.disconnect()
-            file
         } catch (e: Exception) {
             logcat(LogPriority.WARN, e) { "TTS download failed" }
             null
