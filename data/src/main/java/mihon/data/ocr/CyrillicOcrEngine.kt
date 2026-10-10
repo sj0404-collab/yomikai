@@ -553,6 +553,8 @@ internal class CyrillicOcrEngine(
         val bands = lineBands(crop) ?: return null
         val pieces = mutableListOf<String>()
         var confidenceSum = 0f
+        var coverageSum = 0f
+        var inkSum = 0f
         var count = 0
         for (band in bands) {
             val piece = bandBitmap(crop, band) ?: continue
@@ -564,12 +566,26 @@ internal class CyrillicOcrEngine(
             if (recognition.text.isNotBlank()) {
                 pieces += recognition.text
                 confidenceSum += recognition.confidence
+                coverageSum += recognition.coverage
+                inkSum += recognition.inkRatio
                 count++
             }
         }
         if (pieces.isEmpty()) return null
-        if (!acceptsConfidence(Recognition("", if (count == 0) 0f else confidenceSum / count))) return null
-        return pieces.joinToString(" ")
+        // Собираем признак составного результата из реальных метрик полос: без
+        // среднего `inkRatio` `acceptsConfidence` всегда отклоняла его (0f <
+        // minCropInkRatio), и весь многострочный разбор молча не работал.
+        val text = pieces.joinToString(" ")
+        val accepted = acceptsConfidence(
+            Recognition(
+                text = text,
+                confidence = if (count == 0) 0f else confidenceSum / count,
+                coverage = if (count == 0) 0f else coverageSum / count,
+                inkRatio = if (count == 0) 0f else inkSum / count,
+            ),
+        )
+        if (!accepted) return null
+        return text
     }
 
     /**

@@ -91,6 +91,22 @@ class OcrRegionRulesTest {
     }
 
     @Test
+    fun `crop bounds follow the selected region`() {
+        // Вся страница — без обрезки.
+        OcrRegionRules.cropBounds(1000, ScanRegion.FULL_PAGE) shouldBe (0 to 1000)
+        // Верхняя половина — от 0 до половины высоты.
+        OcrRegionRules.cropBounds(1000, ScanRegion.TOP_HALF) shouldBe (0 to 500)
+        // Нижняя половина — вторая половина.
+        OcrRegionRules.cropBounds(1000, ScanRegion.BOTTOM_HALF) shouldBe (500 to 500)
+        // Нечётная высота не теряет пиксель и не выходит за границы.
+        OcrRegionRules.cropBounds(999, ScanRegion.TOP_HALF) shouldBe (0 to 499)
+        OcrRegionRules.cropBounds(999, ScanRegion.BOTTOM_HALF) shouldBe (499 to 500)
+        // Крошечная и нулевая высота не дают пустой или отрицательной обрезки.
+        OcrRegionRules.cropBounds(0, ScanRegion.TOP_HALF) shouldBe (0 to 1)
+        OcrRegionRules.cropBounds(1, ScanRegion.BOTTOM_HALF) shouldBe (0 to 1)
+    }
+
+    @Test
     fun `reading order names cover every preset value`() {
         OcrContentType.entries
             .map { OcrTuning.preset(it).readingOrder }

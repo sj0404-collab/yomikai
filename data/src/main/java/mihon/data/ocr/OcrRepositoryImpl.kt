@@ -620,17 +620,10 @@ class OcrRepositoryImpl(
         )
         return try {
             val outcome = withActiveOperation {
-                val regionChoice = ocrPreferences.scanRegion().get()
+                val regionChoice = presetScanRegion()
             val result = image.useBitmap { originalBitmap ->
                 val sourceHeight = originalBitmap.height
-                val cropTop = when (regionChoice) {
-                    mihon.domain.ocr.service.ScanRegion.BOTTOM_HALF -> sourceHeight / 2
-                    else -> 0
-                }
-                val cropHeight = when (regionChoice) {
-                    mihon.domain.ocr.service.ScanRegion.FULL_PAGE -> sourceHeight
-                    else -> (sourceHeight - cropTop).coerceAtLeast(1)
-                }
+                val (cropTop, cropHeight) = OcrRegionRules.cropBounds(sourceHeight, regionChoice)
                 val crop = if (cropTop == 0 && cropHeight == sourceHeight) {
                     originalBitmap
                 } else {

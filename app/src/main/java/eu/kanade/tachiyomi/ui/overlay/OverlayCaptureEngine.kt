@@ -56,17 +56,22 @@ class OverlayCaptureEngine(
             if (image == null) Thread.sleep(120)
         }
         val img = image ?: return null
+        val full = copyImage(img) ?: run {
+            img.close()
+            return null
+        }
         return try {
-            val full = copyImage(img) ?: return null
-            try {
-                val left = rect.left.coerceIn(0, full.width - 1)
-                val top = rect.top.coerceIn(0, full.height - 1)
-                val right = rect.right.coerceIn(left + 1, full.width)
-                val bottom = rect.bottom.coerceIn(top + 1, full.height)
-                Bitmap.createBitmap(full, left, top, right - left, bottom - top)
-            } finally {
-                if (!full.isRecycled) full.recycle()
-            }
+            val left = rect.left.coerceIn(0, full.width - 1)
+            val top = rect.top.coerceIn(0, full.height - 1)
+            val right = rect.right.coerceIn(left + 1, full.width)
+            val bottom = rect.bottom.coerceIn(top + 1, full.height)
+            val region = Bitmap.createBitmap(full, left, top, right - left, bottom - top)
+            // createBitmap возвращает ТОТ ЖЕ объект, когда прямоугольник
+            // покрывает весь кадр. Ресайклить его нельзя: наружу ушёл бы уже
+            // освобождённый битмап, и вызывающий (OverlayAutoReader) падал бы
+            // на getPixels. Освобождаем только копию.
+            if (region !== full && !full.isRecycled) full.recycle()
+            region
         } finally {
             img.close()
         }
