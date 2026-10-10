@@ -400,6 +400,10 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
                 is ChapterTransition -> onTransitionSelected(item)
             }
         }
+        // Ручная прокрутка гасит наложение прошлого кадра (см.
+        // ReaderActivity.onReaderScrolledManually): во время автоцикла
+        // вызов внутри — no-op.
+        runCatching { activity.onReaderScrolledManually() }
     }
 
     /**

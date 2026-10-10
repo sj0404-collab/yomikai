@@ -635,6 +635,21 @@ class ReaderActivity : BaseActivity() {
             startAutoReadLoop()
         }
 
+        // Ручная смена страницы: наложение прошлого кадра (рамки реплик,
+        // номера, значки) не должно оставаться висеть на новой странице.
+        // Во время автоцикла не трогаем — там рамки обновляет сам кадр.
+        var lastVisualPage by remember { mutableStateOf(state.currentPage) }
+        androidx.compose.runtime.LaunchedEffect(state.currentPage) {
+            if (autoReadActive || autoReadLoop != null) {
+                lastVisualPage = state.currentPage
+                return@LaunchedEffect
+            }
+            if (state.currentPage != lastVisualPage) {
+                lastVisualPage = state.currentPage
+                autoReadEngine.clearVisuals()
+            }
+        }
+
         androidx.compose.runtime.LaunchedEffect(state.currentChapter?.chapter?.id) {
             val chapter = state.currentChapter?.chapter ?: return@LaunchedEffect
             val manga = viewModel.manga ?: return@LaunchedEffect
@@ -1824,6 +1839,16 @@ class ReaderActivity : BaseActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * Ручная прокрутка ленты (вебтун): рамки прошлого кадра не должны висеть
+     * на прокрученном содержимом. Во время автоцикла наложение обновляет сам
+     * кадр, поэтому гасим только когда цикл выключен.
+     */
+    fun onReaderScrolledManually() {
+        if (autoReadActive || autoReadLoop != null) return
+        autoReadEngine.clearVisuals()
     }
 
     /**
