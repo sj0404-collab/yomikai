@@ -66,6 +66,10 @@ fun OcrBubbleSettingsDialog(
     var manualOrder by remember { mutableStateOf(prefs.scanReadingOrder().get()) }
     var language by remember { mutableStateOf(prefs.autoReadLanguage().get()) }
     var translate by remember { mutableStateOf(prefs.autoReadTranslate().get()) }
+    var translateSource by remember { mutableStateOf(prefs.autoReadTranslateSource().get()) }
+    var translateTarget by remember { mutableStateOf(prefs.translateTarget().get()) }
+    var overlayOn by remember { mutableStateOf(prefs.readerOverlayEnabled().get()) }
+    var readEverything by remember { mutableStateOf(prefs.autoReadReadEverything().get()) }
     var voiceIcons by remember { mutableStateOf(prefs.voiceIcons().get()) }
     var showNumbers by remember { mutableStateOf(prefs.showSpeechNumbers().get()) }
     var aiGender by remember { mutableStateOf(prefs.aiGenderVoices().get()) }
@@ -224,7 +228,68 @@ fun OcrBubbleSettingsDialog(
                         },
                     )
                     Column {
-                        Text("Переводить реплики на русский", style = MaterialTheme.typography.bodyMedium)
+                        Text("Переводить реплики", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "источник ${translateSource} → ${translateTarget} · обменял стрелкой «⇄» в меню OCR",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+
+                // Наложение на странице — один тумблер на всё: рамки реплик,
+                // номера и значки 🔊. Выключено — страница чистая, звук идёт сам.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            overlayOn = !overlayOn
+                            prefs.readerOverlayEnabled().set(overlayOn)
+                        },
+                ) {
+                    Checkbox(
+                        checked = overlayOn,
+                        onCheckedChange = {
+                            overlayOn = it
+                            prefs.readerOverlayEnabled().set(it)
+                        },
+                    )
+                    Column {
+                        Text("Наложение на странице", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "рамки реплик, номера, значки 🔊 · выкл = чистая страница",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+
+                // «Читать каждую букву»: одиночные «а…», «мгм», вздохи и
+                // прочие междометия не отбрасываются фильтром осмысленности.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            readEverything = !readEverything
+                            prefs.autoReadReadEverything().set(readEverything)
+                        },
+                ) {
+                    Checkbox(
+                        checked = readEverything,
+                        onCheckedChange = {
+                            readEverything = it
+                            prefs.autoReadReadEverything().set(it)
+                        },
+                    )
+                    Column {
+                        Text("Читать каждую букву", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "включая одиночные «а…», «мгм» и прочие междометия",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
 

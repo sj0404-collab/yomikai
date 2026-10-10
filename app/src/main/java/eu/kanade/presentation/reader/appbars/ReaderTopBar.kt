@@ -345,6 +345,65 @@ private fun OcrModelQuickSwitcher() {
                 }
             }
         }
+        // v1.9.x: тумблеры, которые просили в читалке — наложение страницы,
+        // «читать каждую букву» и стрелка обмена языков перевода.
+        androidx.compose.material3.HorizontalDivider()
+        val overlayPref = prefs.readerOverlayEnabled()
+        val overlayOn by overlayPref.changes().collectAsState(initial = overlayPref.get())
+        DropdownMenuItem(
+            text = {
+                androidx.compose.foundation.layout.Column {
+                    Text("Наложение на странице")
+                    Text(
+                        "рамки реплик, номера и значки 🔊 · выкл = чистая страница",
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            trailingIcon = { Switch(checked = overlayOn, onCheckedChange = null) },
+            onClick = { overlayPref.set(!overlayOn) },
+        )
+        val readAllPref = prefs.autoReadReadEverything()
+        val readAllOn by readAllPref.changes().collectAsState(initial = readAllPref.get())
+        DropdownMenuItem(
+            text = {
+                androidx.compose.foundation.layout.Column {
+                    Text("Читать каждую букву")
+                    Text(
+                        "даже одиночные «а…», «мгм», вздохи и междометия",
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            trailingIcon = { Switch(checked = readAllOn, onCheckedChange = null) },
+            onClick = { readAllPref.set(!readAllOn) },
+        )
+        // Стрелка «⇄» как в переводчике: источник и цель меняются местами.
+        DropdownMenuItem(
+            text = {
+                androidx.compose.foundation.layout.Column {
+                    Text("⇄ Обменять языки")
+                    Text(
+                        "сейчас: ${if (srcLang == "auto") "авто" else srcLang} → ${if (tgtLang == "auto") "авто" else tgtLang}",
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            onClick = {
+                // «auto» целью быть не может: при обмене берём язык реплик
+                // кадра (по нему OCR ищет текст), иначе русский.
+                val newSrc = tgtLang
+                val newTgt = if (srcLang != "auto") srcLang else {
+                    val frameLang = prefs.autoReadLanguage().get()
+                    if (frameLang.isNotBlank() && frameLang != "any") frameLang else "ru"
+                }
+                srcPref.set(newSrc)
+                tgtPref.set(newTgt)
+            },
+        )
         androidx.compose.material3.HorizontalDivider()
         val bookPref = prefs.bookKnowledgeEnabled()
         val bookOn by bookPref.changes().collectAsState(initial = bookPref.get())

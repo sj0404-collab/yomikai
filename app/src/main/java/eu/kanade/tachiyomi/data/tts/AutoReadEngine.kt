@@ -531,6 +531,38 @@ class AutoReadEngine(
      *  пословного префикс-матча (нормы выше склеены без пробелов). */
     private val spokenRaws = ArrayDeque<String>()
 
+    /**
+     * Дубли рамок одного кадра: одна реплика двумя боксами (потоковый проход +
+     * основной список). Вторая рамка ложилась поверх отмеченной с небольшим
+     * смещением — на экране «лесенка» дублей. Оставляем ту, что раньше в списке.
+     */
+    private fun dropOverlappingDuplicates(lines: List<Line>): List<Line> {
+        if (lines.size < 2) return lines
+        val kept = ArrayList<Line>(lines.size)
+        for (line in lines) {
+            val key = lineKey(line.text)
+            val dup = kept.any { k ->
+                lineKey(k.text) == key && overlapRatio(line.boundingBox, k.boundingBox) > 0.25f
+            }
+            if (!dup) kept += line
+        }
+        return kept
+    }
+
+    /** IoU двух нормализованных боксов. */
+    private fun overlapRatio(
+        a: mihon.domain.ocr.model.OcrBoundingBox,
+        b: mihon.domain.ocr.model.OcrBoundingBox,
+    ): Float {
+        val iw = (minOf(a.right, b.right) - maxOf(a.left, b.left)).coerceAtLeast(0f)
+        val ih = (minOf(a.bottom, b.bottom) - maxOf(a.top, b.top)).coerceAtLeast(0f)
+        val inter = iw * ih
+        if (inter <= 0f) return 0f
+        val union = (a.right - a.left) * (a.bottom - a.top) +
+            (b.right - b.left) * (b.bottom - b.top) - inter
+        return if (union <= 0f) 0f else inter / union
+    }
+
     @Synchronized
     private fun isDuplicate(rawText: String): Boolean {
         val norm = rawText.lowercase().filter { it.isLetterOrDigit() }
@@ -890,6 +922,10 @@ class AutoReadEngine(
 
                 val language = prefs.autoReadLanguage().get()
                 val translate = prefs.autoReadTranslate().get()
+                // «Читать каждую букву»: одиночные «а…», «мгм», вздохи и любые
+                // другие короткие реплики проходят фильтр осмысленности, каким
+                // бы «мусорным» он их не счёл. Главное — чтобы были буквы.
+                val readEverything = prefs.autoReadReadEverything().get()
                 // Ручной выбор пары языков («ja→ru», «ru→ja»): «auto» ведёт
                 // себя как раньше — переводчик решает сам.
                 val translateSource = prefs.autoReadTranslateSource().get().ifBlank { "auto" }
@@ -984,11 +1020,23 @@ class AutoReadEngine(
                 if (!wholePage) lines = mergeBubbleLines(lines)
 
                 // 1) фильтр мусора OCR (обрывки «eS la 4», «| | > |», «о»)
-                //    + фильтр по языку; 2) отсев уже прочитанного
+                //    + фильтр по языку; 2) отсев уже прочитанного.
+                // «Читать каждую букву» (readEverything) оставляет ЛЮБУЮ строку
+                // с буквами — даже одиночную «а…» или «мгм»: фильтр
+                // осмысленности пропускает только «словарные» короткие строки,
+                // а междометия пользователь просит читать обязательно. Промо-
+                // текст сайта при этом всё равно вырезается cleanOcrGarbage.
                 val fresh = lines
                     .asSequence()
                     .map { it.copy(text = cleanOcrGarbage(it.text, language)) }
-                    .filter { isMeaningful(it.text, language) }
+                    .filter { it.text.isNotBlank() }
+                    .let { seq ->
+                        if (readEverything) {
+                            seq.filter { line -> line.text.any { ch -> ch.isLetter() } }
+                        } else {
+                            seq.filter { isMeaningful(it.text, language) }
+                        }
+                    }
                     .filter { !isDuplicate(it.text) }
                     // Рамка обязана лежать внутри страницы и иметь разумный
                     // размер: иначе голубая подсветка вылезает за текст/экран.
@@ -1002,8 +1050,11 @@ class AutoReadEngine(
                     .toList()
 
                 // 3) порядок чтения (группировка в строки по близости центров Y,
-                // а не по фиксированным 12% полосам — убирает «лесенку»)
-                val ordered = orderRegions(fresh, order)
+                //    а не по фиксированным 12% полосам — убирает «лесенку»).
+                // Перед порядком снимаем ДУБЛИ рамок: одна и та же реплика,
+                // пришедшая двумя боксами (потоковый проход + основной), рисовала
+                // поверх отмеченной рамки вторую, чуть смещённую — «лесенку».
+                val ordered = orderRegions(dropOverlappingDuplicates(fresh), order)
 
                 // v1.9.134: фиксируем скорость кадра (снимок + OCR + разбор
                 // строк, БЕЗ времени самой озвучки — она не входит в кадровый
@@ -1131,12 +1182,31 @@ class AutoReadEngine(
                 // отдельный HTTP-запрос на каждую реплику — на 15 бабблах
                 // это 15 последовательных обращений между озвучками).
                 val target = prefs.translateTarget().get().ifBlank { "ru" }
+                // Гейт перевода: раньше был `language != target`, где language —
+                // ЭТАЛОННЫЙ язык реплик из настроек (по умолчанию «ru»). Из-за
+                // этого китайская манхуа НЕ переводилась: язык кадра «ru» ==
+                // цели «ru», и страница оставалась нечитаемой. Теперь при
+                // источнике «auto» язык определяется по САМОМУ тексту кадра
+                // (кириллица/латиница/кана/хан/хангыль), и перевод идёт, когда
+                // текст реально на другом языке. Для ручной пары («ja→ru»)
+                // сравниваем выбранные языки — как и раньше.
+                val effectiveTranslateSource = if (translateSource != "auto") {
+                    translateSource
+                } else {
+                    dominantLanguage(ordered.map { it.text }).ifBlank { "auto" }
+                }
+                val shouldTranslate = translate &&
+                    effectiveTranslateSource != "auto" &&
+                    effectiveTranslateSource != target
                 eu.kanade.tachiyomi.data.ai.AiConsole.ocr(
                     title = "Кадр $pageIndex · распознано реплик: ${ordered.size}",
                     detail = buildString {
                         append("движок ").append(result.ocrModel.name)
                         append(" · язык ").append(language)
-                        if (translate && language != target) append(" · перевод на ").append(target)
+                        if (shouldTranslate) {
+                            append(" · перевод ").append(effectiveTranslateSource)
+                                .append("→").append(target)
+                        }
                     },
                 )
                 // v1.9.134: РЕЖИМ АВТОЧТЕНИЯ ПОД ДВИЖОК (per-model pref).
@@ -1148,14 +1218,14 @@ class AutoReadEngine(
                 //  page   — кадр целиком одной озвучкой (см. wholePageMode).
                 val autoReadMode = prefs.autoReadModeFor(result.ocrModel).get()
                 val streamMode = autoReadMode == "stream"
-                val translationsDeferred = if (translate && language != target && streamMode) {
+                val translationsDeferred = if (shouldTranslate && streamMode) {
                     scope.async {
-                        runCatching { MangaTranslatorService.translateAll(ordered.map { it.text }, target, translateSource) }
+                        runCatching { MangaTranslatorService.translateAll(ordered.map { it.text }, target, effectiveTranslateSource) }
                             .getOrElse { ordered.map { it.text } }
                     }
                 } else null
-                val translations: List<String> = if (translate && language != target && !streamMode) {
-                    runCatching { MangaTranslatorService.translateAll(ordered.map { it.text }, target, translateSource) }
+                val translations: List<String> = if (shouldTranslate && !streamMode) {
+                    runCatching { MangaTranslatorService.translateAll(ordered.map { it.text }, target, effectiveTranslateSource) }
                         .getOrElse { ordered.map { it.text } }
                 } else {
                     ordered.map { it.text }
@@ -1298,7 +1368,7 @@ class AutoReadEngine(
                         translationsDeferred != null -> null
                         else -> translations.getOrNull(orderedIndex)?.takeIf { it.isNotBlank() }
                     }
-                    var speakTextRaw = if (translate && language != target) {
+                    var speakTextRaw = if (shouldTranslate) {
                         translatedText ?: region.text
                     } else {
                         prep?.text?.takeIf { it.isNotBlank() } ?: translatedText ?: region.text
@@ -2841,8 +2911,42 @@ class AutoReadEngine(
             return if (old.length >= new.length) old.contains(new) else new.contains(old)
         }
 
-        /**
-         * Упорядочивает реплики кадра в читаемом порядке.
+    /**
+     * Доминирующий язык текста кадра по письменности: "ru"/"en"/"ja"/"ko"/"zh",
+     * "" — букв не нашлось. Нужен, чтобы при источнике «auto» решить, надо ли
+     * переводить: эталонный язык реплик из настроек (по умолчанию «ru») врал
+     * на китайской манхуа, и перевод молча выключался.
+     */
+    fun dominantLanguage(texts: List<String>): String {
+        var cyr = 0
+        var lat = 0
+        var kana = 0
+        var hangul = 0
+        var han = 0
+        for (t in texts) {
+            for (ch in t) {
+                when {
+                    ch in '\u0400'..'\u04FF' -> cyr++
+                    ch in '\u0041'..'\u005A' || ch in '\u0061'..'\u007A' -> lat++
+                    ch in '\u3040'..'\u30FF' -> kana++
+                    ch in '\uAC00'..'\uD7AF' -> hangul++
+                    ch in '\u4E00'..'\u9FFF' -> han++
+                }
+            }
+        }
+        val top = maxOf(cyr, lat, kana, hangul, han)
+        if (top == 0) return ""
+        return when (top) {
+            cyr -> "ru"
+            lat -> "en"
+            kana -> "ja"
+            hangul -> "ko"
+            else -> "zh"
+        }
+    }
+
+    /**
+     * Упорядочивает реплики кадра в читаемом порядке.
          *
          * Раньше реплики сортировались одним ключом: манга — по правому краю
          * (самая правая рамка первой), комикс — по левому, вебтун — по верху.

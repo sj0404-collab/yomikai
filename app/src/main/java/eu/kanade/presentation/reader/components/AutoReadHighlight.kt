@@ -59,6 +59,8 @@ fun AutoReadHighlight(
     imageRect: android.graphics.RectF? = null,
 ) {
     val prefs = remember { Injekt.get<OcrPreferences>() }
+    // Наложение целиком выключено — не рисуем ничего: страницу не загораживаем.
+    if (!prefs.readerOverlayEnabled().get()) return
     // Не кэшируем навсегда: пользователь меняет цвет в настройках — рамки
     // перекрашиваются со следующей реплики, без перезапуска читалки
     val accent = Color(prefs.highlightColor().get().toULong().toLong())

@@ -31,6 +31,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import eu.kanade.tachiyomi.data.tts.AutoReadEngine
 import mihon.domain.ocr.model.OcrBoundingBox
+import mihon.domain.ocr.service.OcrPreferences
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import kotlin.math.roundToInt
 
 /**
@@ -63,6 +66,9 @@ fun OcrBubbleVoiceOverlay(
     imageRect: android.graphics.RectF? = null,
 ) {
     if (regions.isEmpty()) return
+    // Главный тумблер наложения выключен — значков озвучки тоже нет.
+    val prefs = remember { Injekt.get<OcrPreferences>() }
+    if (!prefs.readerOverlayEnabled().get()) return
     BoxWithConstraints(
         modifier = modifier.fillMaxSize().semantics { contentDescription = "Бейдж озвучки реплик" },
     ) {
