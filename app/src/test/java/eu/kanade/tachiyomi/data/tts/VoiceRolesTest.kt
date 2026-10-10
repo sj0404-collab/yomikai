@@ -140,4 +140,18 @@ class VoiceRolesTest {
         VoiceJson.withArray("", key = "7", value = """[{"name":"X"}]""")
             .let { VoiceRoleDictionary.parseBookRoles(it, bookId = 7L).map { r -> r.name } } shouldBe listOf("X")
     }
+
+    @Test
+    fun `extractArray reads both array and string values`() {
+        // Массив — всегда работало.
+        VoiceJson.extractArray("""{"12":[{"name":"Аки"}]}""", "12") shouldBe """[{"name":"Аки"}]"""
+        // Строка: раньше ветка начинала разбор с открывающей кавычки и сразу
+        // выходила -> возвращала null, строковые значения не читались вовсе.
+        // Строка-контейнер со вложенным JSON раскрывается обратно в текст.
+        val escaped = """{"12":"[{\"name\":\"Аки\"}]"}"""
+        VoiceJson.extractArray(escaped, "12")
+            .let { VoiceJson.parseObjects(it!!).first()["name"] } shouldBe "Аки"
+        // Нет ключа — null, как и раньше.
+        VoiceJson.extractArray("""{"12":[{"name":"Аки"}]}""", "99") shouldBe null
+    }
 }

@@ -160,16 +160,17 @@ internal object VoiceJson {
                     null
                 }
                 '"' -> {
-                    var inStr = false
-                    var k = m
+                    // Стартуем сразу ПОСЛЕ открывающей кавычки: раньше цикл
+                    // натыкался на неё и выходил с inStr=false -> всегда null.
+                    var k = m + 1
+                    var closed = false
                     while (k < t.length) {
                         val c = t[k]
                         if (c == '\\') { k += 2; continue }
-                        if (c == '"') { inStr = false; break }
-                        inStr = true
+                        if (c == '"') { closed = true; break }
                         k++
                     }
-                    if (!inStr) null else t.substring(m, k + 1)
+                    if (closed) unquote(t.substring(m, k + 1)) else null
                 }
                 else -> null
             }
