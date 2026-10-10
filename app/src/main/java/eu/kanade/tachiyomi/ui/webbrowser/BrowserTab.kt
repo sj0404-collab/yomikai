@@ -322,6 +322,22 @@ data object BrowserTab : Tab {
                     if (r.width * r.height > vw * vh * 0.5) continue;
                     push(r);
                 }
+                // 1.5) модальные окна и диалоги поверх страницы («УДАЛИТЬ»,
+                // «ЧЕРНОВИК», промо-боксы): OCR читал кнопки диалога вместо
+                // манги, и первые кадры проходили холостыми.
+                var modals = document.querySelectorAll('[role="dialog"],[role="alertdialog"],[class*="modal"],[class*="popup"],[class*="dialog"],[id*="modal"],[id*="popup"]');
+                for (var m = 0; m < modals.length; m++) {
+                    var mo = modals[m];
+                    var csm = window.getComputedStyle(mo);
+                    if (csm.display === 'none' || csm.visibility === 'hidden' || parseFloat(csm.opacity || '1') < 0.05) continue;
+                    var rm = mo.getBoundingClientRect();
+                    if (rm.width < 24 || rm.height < 12) continue;
+                    if (rm.bottom < 0 || rm.top > vh) continue;
+                    var am = rm.width * rm.height;
+                    if (am < vw * vh * 0.01) continue;
+                    if (am > vw * vh * 0.60) continue;
+                    push(rm);
+                }
                 // 2) фиксированные/липкие слои в нижних 75% экрана: баннер
                 // крепится поверх изображения, а не панель ридера.
                 var all = document.querySelectorAll('body *');
@@ -914,6 +930,9 @@ data object BrowserTab : Tab {
         // • пустые кадры (нет нового текста) проходятся сразу, без задержек.
         LaunchedEffect(isAutoRead) {
             if (!isAutoRead) { readEngine.stop(); return@LaunchedEffect }
+            // Движок из меню браузера: без этого авточтение шло дефолтным
+            // CYRILLIC (локальный TFLite), даже когда выбран Google Lens.
+            applyBrowserOcrMode(ctx)
             readEngine.clearHistory()
             var stuckCounter = 0
             // Рекламные прямоугольники DOM-ом обновляем каждые ~4 кадра,
@@ -1333,6 +1352,9 @@ data object BrowserTab : Tab {
                                         else -> "online"
                                     }
                                     setBrowserOcrMode(ctx, ocrMode)
+                                    // Применяем сразу: следующий кадр авточтения
+                                    // должен идти уже новым движком.
+                                    applyBrowserOcrMode(ctx)
                                 }) {
                                     Icon(Icons.Outlined.Tune, contentDescription = "Движок OCR")
                                 }
@@ -1879,7 +1901,31 @@ private fun preprocessForOcr(src: android.graphics.Bitmap): android.graphics.Bit
         return out
     }
 
-    /** OCR с препроцессом: текст + рамки реплик (нормализованные 0..1). */
+/**
+ * Применить выбор движка из меню браузера (browser_ocr/engine_mode) к общему
+ * префу `pref_ocr_model`, по которому scanPage и берёт движок.
+ *
+ * Раньше меню писало только в engine_mode, а `ocrWithPreprocess` применял его
+ * лишь при РУЧНОМ скане: авточтение (readEngine.readFrame) всё время шло
+ * дефолтным CYRILLIC, даже когда выбрали «Google Lens».
+ */
+private fun applyBrowserOcrMode(context: android.content.Context) {
+    val mode = context.getSharedPreferences("browser_ocr", 0)
+        .getString("engine_mode", "auto") ?: "auto"
+    val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+    val net = cm?.activeNetwork
+    val online = net != null &&
+        (cm.getNetworkCapabilities(net)?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) ?: false)
+    val want = when {
+        mode == "offline" -> mihon.domain.ocr.model.OcrModel.CYRILLIC
+        mode == "online" -> mihon.domain.ocr.model.OcrModel.GLENS
+        online -> mihon.domain.ocr.model.OcrModel.GLENS
+        else -> mihon.domain.ocr.model.OcrModel.CYRILLIC
+    }
+    Injekt.get<mihon.domain.ocr.service.OcrPreferences>().ocrModel().set(want)
+}
+
+/** OCR с препроцессом: текст + рамки реплик (нормализованные 0..1). */
 private suspend fun ocrWithPreprocess(context: android.content.Context, src: android.graphics.Bitmap): Pair<String, List<Pair<mihon.domain.ocr.model.OcrBoundingBox, String>>> {
         val pre = preprocessForOcr(src)
         val bmp = if (pre.width < 1200) {
@@ -1890,29 +1936,16 @@ private suspend fun ocrWithPreprocess(context: android.content.Context, src: and
         }
         return try {
             val ocr = Injekt.get<mihon.domain.ocr.interactor.ScanPageOcr>()
-            // v1.9.49: режим выбирается в меню браузера («OCR: Авто/Онлайн/Офлайн»):
-            // пользователь может жёстко просить PaddleOCR офлайн, не только онлайн.
+            // Режим из меню браузера применяем к общему префу — по нему scanPage
+            // и выбирает движок (общий путь для ручного скана и авточтения).
+            applyBrowserOcrMode(context)
             val prefsO = Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
-            val online = runCatching {
-                val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
-                val net = cm?.activeNetwork
-                net != null && (cm.getNetworkCapabilities(net)
-                    ?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) ?: false)
-            }.getOrDefault(false)
-            val mode = context.getSharedPreferences("browser_ocr", 0)
-                .getString("engine_mode", "auto") ?: "auto"
-            val want = when {
-                mode == "offline" -> mihon.domain.ocr.model.OcrModel.CYRILLIC
-                mode == "online" -> mihon.domain.ocr.model.OcrModel.GLENS
-                online -> mihon.domain.ocr.model.OcrModel.GLENS
-                else -> mihon.domain.ocr.model.OcrModel.CYRILLIC
-            }
-            prefsO.ocrModel().set(want)
+            val want = prefsO.ocrModel().get()
             val pgIdx = (System.currentTimeMillis() % 1_000_000L).toInt()
             var regions = withTimeout(60_000) {
                 ocr.await(chapterId = -1L, pageIndex = pgIdx, image = bmp.toOcrImage())
             }.let(::ocrFixedRegions)
-            if (regions.isEmpty() && (want == mihon.domain.ocr.model.OcrModel.GLENS || mode == "online")) {
+            if (regions.isEmpty() && want == mihon.domain.ocr.model.OcrModel.GLENS) {
                 // Онлайн не ответил (лимит/сеть) — откат на офлайн-кириллицу.
                 prefsO.ocrModel().set(mihon.domain.ocr.model.OcrModel.CYRILLIC)
                 regions = withTimeout(180_000) {
