@@ -77,7 +77,9 @@ object OcrScreenshotBuffer {
     var version: Int = 0
         private set
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // Одно поток-исполнитель: add() из авточтения и clear()/clearChapter()
+    // из UI иначе писали бы один JSON параллельно и перемешивали байты.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
     private var persistFile: File? = null
     private var imagesDir: File? = null
     private var initialized = false
@@ -381,7 +383,16 @@ object OcrScreenshotBuffer {
         val entries = _entries.value
         scope.launch {
             try {
-                file.writeText(json.encodeToString(entries))
+                // Временный файл + rename: обрыв процесса не оставит
+                // обрезанный JSON, а единственный поток-исполнитель не даст
+                // двум записям перемешаться.
+                val encoded = json.encodeToString(entries)
+                val tmp = File(file.parentFile, "${file.name}.tmp")
+                tmp.writeText(encoded)
+                if (!tmp.renameTo(file)) {
+                    file.writeText(encoded)
+                    tmp.delete()
+                }
             } catch (e: Exception) {
                 logcat(LogPriority.WARN, e) { "OcrScreenshotBuffer: persist failed" }
             }
