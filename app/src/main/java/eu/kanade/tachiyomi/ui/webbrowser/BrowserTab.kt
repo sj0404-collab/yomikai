@@ -26,6 +26,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Pause
@@ -556,11 +557,22 @@ data object BrowserTab : Tab {
                     }
                 }
                 override fun onReceivedSslError(view: WebView, handler: android.webkit.SslErrorHandler, error: android.net.http.SslError) {
-                    handler.cancel()
                     if (view !== sharedWebView) return
-android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    if (getBrowserSslPolicy(view.context)) {
+                        // Читательские сайты часто отдают цепочки с ручной подписью
+                        // (primaryError 2 = SSL_IDMISMATCH, 3 = UNTRUSTED и т.п.).
+                        // При включённой политике загружаем страницу дальше, иначе
+                        // WebView молча бросает загрузку.
+                        handler.proceed()
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            context.toast("SSL-проблема (${error.primaryError}) — продолжаю загрузку")
+                        }
+                    } else {
+                        handler.cancel()
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
                             context.toast("SSL-ошибка: ${error.primaryError}")
                         }
+                    }
                 }
                 override fun onPageFinished(view: WebView, url: String?) {
                     // фоновая вкладка догрузилась — адрес/активную не трогаем
@@ -632,6 +644,15 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
     private fun setBrowserOcrMode(context: Context, mode: String) {
         context.getSharedPreferences("browser_ocr", 0).edit()
             .putString("engine_mode", mode).apply()
+    }
+
+    /** SSL-политика браузера: true — принимать проблемные цепочки и грузить дальше. */
+    private fun getBrowserSslPolicy(context: Context): Boolean =
+        context.getSharedPreferences("browser_ocr", 0).getBoolean("accept_ssl", true)
+
+    private fun setBrowserSslPolicy(context: Context, accept: Boolean) {
+        context.getSharedPreferences("browser_ocr", 0).edit()
+            .putBoolean("accept_ssl", accept).apply()
     }
 
     @Composable
@@ -920,30 +941,21 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
                     pageIndex = wv.scrollY,
                     onPageFinished = { finished = true },
                 )
-                // vNEW: скролл идёт НЕПРЕРЫВНО ПОКА читаем кадр (как в нативной
-                // читалке манги — без рывков «прочитал→прыгнул»), с той же
-                // скоростью, что выбрана для автопрокрутки браузера. Если сайт
-                // крутится внутренним контейнером — JS-догон раз в цикл.
-                val posBefore = readScrollPos(wv)
-                // Темп скролла следует за темпом речи: быстрая скорость чтения
-                // — быстрый скролл, как в нативной читалке манги. Кроме того,
-                // за один кадр прокручиваем НЕ БОЛЬШЕ 40% высоты вьюпорта:
-                // иначе голос "не поспевает" и строки проскакивают непрочитанными.
-                val rateNow = voicePrefs.speechRate().get().takeIf { it > 0f } ?: 1f
-                val speedPx = ((speed * 3 * rateNow).roundToInt()).coerceAtLeast(1)
-                val maxAdvancePx = (wv.height * 0.4f).roundToInt().coerceAtLeast(64)
-                var advancedPx = 0
+                // Правильный цикл: СНАЧАЛА кадр целиком читается (скан →
+                // распознавание → озвучка), и только ПОТОМ плавная автопрокрутка
+                // к следующему фрагменту. Раньше скролл шёл ПАРАЛЛЕЛЬНО чтению и
+                // успевал уехать вперёд голоса: строки уходили из поля зрения
+                // раньше, чем их успевали произнести.
                 while (!finished && isAutoRead) {
-                    if (advancedPx < maxAdvancePx) {
-                        // Плавное торможение по мере приближения к лимиту кадра:
-                        // скролл ЗАМЕДЛЯЕТСЯ, пока реплика не досказана — как в
-                        // читалке манги, без резкого рывка/чёрного перехода.
-                        val remain = (maxAdvancePx - advancedPx).toFloat() / maxAdvancePx
-                        val step = (speedPx * (0.15f + 0.85f * remain)).roundToInt().coerceAtLeast(1)
-                        wv.scrollBy(0, step)
-                        advancedPx += step
-                    }
+                    // Блокинг (нет голоса / OCR падает): onPageFinished не вызовется,
+                    // ждать вечность нечего — показываем причину и останавливаемся.
+                    if (readEngine.voiceBlock.value != null) break
                     delay(16)
+                }
+                readEngine.voiceBlock.value?.let { blocking ->
+                    isAutoRead = false
+                    ctx.toast(blocking)
+                    break
                 }
                 if (!isAutoRead) break
 
@@ -952,6 +964,25 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
 
                 val prefs = Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
                 if (!prefs.autoReadAutoAdvance().get()) { isAutoRead = false; break }
+
+                // Плавная автопрокрутка к следующему фрагменту: серия мелких шагов
+                // по 16 мс со скоростью, заданной для автопрокрутки браузера.
+                // Шаг — до 45% высоты вьюпорта, чтобы следующий кадр перекрывал
+                // текущий и текст на стыке не терялся (дубли отсекает история).
+                val posBefore = readScrollPos(wv)
+                val rateNow = voicePrefs.speechRate().get().takeIf { it > 0f } ?: 1f
+                val speedPx = ((speed * 3 * rateNow).roundToInt()).coerceAtLeast(1)
+                val targetAdvancePx = (wv.height * 0.45f).roundToInt().coerceAtLeast(64)
+                var advancedPx = 0
+                while (isAutoRead && advancedPx < targetAdvancePx) {
+                    // К концу шага плавно тормозим — стык кадров встречаем мягко.
+                    val remain = (targetAdvancePx - advancedPx).toFloat() / targetAdvancePx
+                    val step = (speedPx * (0.15f + 0.85f * remain)).roundToInt().coerceAtLeast(1)
+                    wv.scrollBy(0, step)
+                    advancedPx += step
+                    delay(16)
+                }
+                if (!isAutoRead) break
 
                 // scrollBy не сдвинул (контейнер внутри страницы) — добиваем JS.
                 var posAfter = readScrollPos(wv)
@@ -1249,6 +1280,13 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
                                     )
                                 }
                             }
+                            // Скорость плавной прокрутки: ×1…×10 (работает и для
+                            // автопрокрутки, и для шага авточтения между кадрами).
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Прокрутка: ×${speed.roundToInt()}  ", style = MaterialTheme.typography.labelMedium)
+                                TextButton(onClick = { speed = (speed - 1f).coerceAtLeast(1f) }) { Text("−") }
+                                TextButton(onClick = { speed = (speed + 1f).coerceAtMost(10f) }) { Text("+") }
+                            }
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("Прочитать страницу  ", style = MaterialTheme.typography.labelMedium)
                                 SmallFloatingActionButton(onClick = {
@@ -1297,6 +1335,21 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
                                     setBrowserOcrMode(ctx, ocrMode)
                                 }) {
                                     Icon(Icons.Outlined.Tune, contentDescription = "Движок OCR")
+                                }
+                            }
+                            // SSL: принимать проблемные сертификаты (для сайтов с
+                            // ручной подписью, у которых иначе не грузится страница).
+                            var acceptSsl by remember { mutableStateOf(getBrowserSslPolicy(ctx)) }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    if (acceptSsl) "SSL: принимать  " else "SSL: блокировать  ",
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
+                                SmallFloatingActionButton(onClick = {
+                                    acceptSsl = !acceptSsl
+                                    setBrowserSslPolicy(ctx, acceptSsl)
+                                }) {
+                                    Icon(Icons.Outlined.Lock, contentDescription = "SSL-политика")
                                 }
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
