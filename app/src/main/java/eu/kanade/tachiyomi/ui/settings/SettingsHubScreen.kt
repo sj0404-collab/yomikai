@@ -558,6 +558,15 @@ private fun SoundRolesTab() {
         checked = aiGender,
     ) { prefs.aiGenderVoices().set(it) }
 
+    val describePages by prefs.describeTextlessPages().changes()
+        .collectAsState(initial = prefs.describeTextlessPages().get())
+    HubSwitchRow(
+        title = "Описывать развороты без текста",
+        subtitle = "Страница без реплик озвучивается описанием картинки. " +
+            "Нужен ОНЛАЙН-движок (Zen/Gemini/OpenRouter) — картинка уходит в облако",
+        checked = describePages,
+    ) { prefs.describeTextlessPages().set(it) }
+
     HubOptions(
         title = "Пресет голоса",
         options = listOf(

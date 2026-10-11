@@ -29,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.AutoMode
 import androidx.compose.material.icons.outlined.AutoStories
+import androidx.compose.material.icons.outlined.ImageSearch
 import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.GraphicEq
@@ -93,6 +94,13 @@ fun ReaderFloatingControls(
      * только из плавающей кнопки на экране манги (с предварительным сканом).
      */
     onAutoReadChapter: () -> Unit = {},
+    /**
+     * Описать текущую страницу голосом: запрос к vision-модели выбранного
+     * OCR-движка. Нужен на разворотах-иллюстрациях, где реплик нет и озвучке
+     * нечего читать. С локальным движком описание не вернётся — страница
+     * просто останется как есть.
+     */
+    onDescribePage: () -> Unit = {},
     /** Идёт ли чтение главы — для подписи и цвета кнопки. */
     chapterReadActive: Boolean = false,
     onStopSpeak: () -> Unit = {},
@@ -328,6 +336,23 @@ fun ReaderFloatingControls(
                                             MaterialTheme.colorScheme.onPrimaryContainer
                                         },
                                         contentDescription = "Читать главу",
+                                    ),
+                                ),
+                            ),
+                            rowUnlessHidden(
+                                "r_describe_page",
+                                OcrMenuRow(
+                                    label = "Описать страницу",
+                                    action = OcrMenuAction(
+                                        icon = Icons.Outlined.ImageSearch,
+                                        onClick = {
+                                            beepAction()
+                                            menuOpen = false
+                                            onDescribePage()
+                                        },
+                                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        contentDescription = "Описать страницу",
                                     ),
                                 ),
                             ),

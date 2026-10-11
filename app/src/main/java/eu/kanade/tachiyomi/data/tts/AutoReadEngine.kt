@@ -765,11 +765,17 @@ class AutoReadEngine(
             // битмап на сборку GC на каждом кадре.
             val released = java.util.concurrent.atomic.AtomicBoolean(false)
             var scanBitmap: Bitmap? = null
+            // Копия кадра для описания разворота. Основной битмап умирает на
+            // releaseFrame(), а описание может понадобиться позже — когда
+            // выяснится, что на странице нет ни одной реплики.
+            var describeBitmap: Bitmap? = null
             val releaseFrame = {
                 if (released.compareAndSet(false, true)) {
                     if (!bitmap.isRecycled) bitmap.recycle()
                     val scan = scanBitmap
                     if (scan != null && scan !== bitmap && !scan.isRecycled) scan.recycle()
+                    val describe = describeBitmap
+                    if (describe != null && !describe.isRecycled) describe.recycle()
                 }
             }
             try {
@@ -1018,6 +1024,13 @@ class AutoReadEngine(
                     runCatching { encodeJpeg(ocrBitmap, JPEG_QUALITY) }.getOrNull()
                 } else null
 
+                // Копия для описания разворота — тоже ДО recycle. Берём только
+                // когда функция включена, чтобы не платить памятью на каждом
+                // кадре у пользователя, которому описание не нужно.
+                if (prefs.describeTextlessPages().get() && !bitmap.isRecycled) {
+                    describeBitmap = copyForDescription(bitmap)
+                }
+
                 // Пиксели больше не нужны — освобождаем сразу, не дожидаясь
                 // конца кадра (releaseFrame идемпотентен, finally его подстрахует).
                 releaseFrame()
@@ -1195,6 +1208,21 @@ class AutoReadEngine(
                     // остановить чтение, не вернувшись в приложение.
                     runCatching { TtsReadingNotifier.show(context, lastFrameText, pageLabel) }
                         .onFailure { logcat(LogPriority.WARN, it) { "Reading notification failed" } }
+                }
+
+                // Разворот без текста: озвучивать нечего, и страница молча
+                // листалась. Если функция включена — спрашиваем у ВЫБРАННОЙ
+                // vision-модели, что на картинке, и читаем описание вслух.
+                // Локальные движки описать не умеют: askAboutPage вернёт null,
+                // и страница спокойно пролистнется дальше.
+                val describe = describeBitmap
+                if (ordered.isEmpty() && describe != null && !describe.isRecycled) {
+                    val answer = describePageImage(describe, pageIndex)
+                    if (!answer.isNullOrBlank()) {
+                        lastFrameText = answer
+                        runCatching { TtsReadingNotifier.show(context, answer, pageLabel) }
+                        speakAndAwait(SpeechMarkup.strip(answer))
+                    }
                 }
 
                 // 3.7) перевод ВСЕЙ страницы одним запросом (раньше был
@@ -1555,6 +1583,58 @@ class AutoReadEngine(
                 }
             }
         }
+    }
+
+    /**
+     * Описание страницы выбранной vision-моделью.
+     *
+     * Работает через тот движок, что выбран в настройках OCR, и только если он
+     * онлайн (Zen / Gemini / OpenRouter): картинка уходит в облако, локальные
+     * движки описать не умеют и возвращают null. null означает «описания не
+     * будет» — вызывающий просто листает страницу дальше.
+     */
+    suspend fun describePageImage(bitmap: Bitmap, pageIndex: Int): String? {
+        if (bitmap.isRecycled) return null
+        eu.kanade.tachiyomi.data.ai.AiConsole.ocr(
+            title = "Описание страницы $pageIndex",
+            detail = "Движок ${prefs.ocrModel().get().name.lowercase()} запрашивается на картинку",
+        )
+        val answer = runCatching {
+            eu.kanade.tachiyomi.data.ai.AiAgent.askAboutPage(bitmap, DESCRIBE_PAGE_PROMPT)
+        }.getOrElse { e ->
+            eu.kanade.tachiyomi.data.ai.AiConsole.error("Описание страницы $pageIndex не удалось: ${e.message}")
+            null
+        }
+        val text = answer?.trim()?.takeIf { it.isNotBlank() && !containsNoTextMarker(it) }
+        eu.kanade.tachiyomi.data.ai.AiConsole.ocr(
+            title = "Описание страницы $pageIndex",
+            detail = if (text == null) {
+                "движок не умеет описывать картинки — страница пролистывается"
+            } else {
+                "получено: ${text.take(200)}"
+            },
+        )
+        return text
+    }
+
+    /** Независимая уменьшенная копия кадра для отправки в vision-модель. */
+    private fun copyForDescription(bitmap: Bitmap): Bitmap? {
+        if (bitmap.isRecycled) return null
+        val maxSide = maxOf(bitmap.width, bitmap.height)
+        if (maxSide <= 0) return null
+        return runCatching {
+            if (maxSide > DESCRIBE_MAX_SIDE) {
+                val scale = DESCRIBE_MAX_SIDE.toFloat() / maxSide
+                Bitmap.createScaledBitmap(
+                    bitmap,
+                    (bitmap.width * scale).toInt().coerceAtLeast(1),
+                    (bitmap.height * scale).toInt().coerceAtLeast(1),
+                    true,
+                )
+            } else {
+                bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, false)
+            }
+        }.getOrNull()
     }
 
     /**
@@ -2746,6 +2826,33 @@ class AutoReadEngine(
          * вывески), и озвучивать его не нужно.
          */
         private const val RUSSIAN_LINE_CYRILLIC_SHARE = 0.5f
+
+        /** Сторона копии кадра для описания: vision-модели хватает этого. */
+        private const val DESCRIBE_MAX_SIDE = 900
+
+        /** Вопрос к vision-модели для разворота без текста. */
+        private const val DESCRIBE_PAGE_PROMPT =
+            "Опиши этот кадр манги коротко, 2–4 предложения: что изображено, кто в кадре, " +
+                "что происходит, какое настроение. Если это просто фон или пейзаж без " +
+                "персонажей, так и напиши. Если можешь прочитать текст на картинке — " +
+                "приведи его отдельно. Не выдумывай то, чего на кадре нет."
+
+        /** Ответы вида «текста на странице нет» — описанием не считаются. */
+        private val NO_TEXT_MARKERS = listOf(
+            "нет текста",
+            "текст отсутствует",
+            "текста нет",
+            "no text",
+        )
+
+        /**
+         * Vision-модель честно отвечает «текста на странице нет» — это не
+         * описание, и читать такое вслух незачем.
+         */
+        internal fun containsNoTextMarker(text: String): Boolean {
+            val lower = text.lowercase()
+            return NO_TEXT_MARKERS.any { marker -> lower.contains(marker) }
+        }
 
         /**
          * Сколько последних персонажей движок помнит по полу и имени. Память

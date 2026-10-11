@@ -1311,6 +1311,7 @@ class ReaderActivity : BaseActivity() {
                     onAutoscrollToggle = ::toggleAutoscroll,
                     onAutoSpeakPage = ::autoSpeakVisiblePage,
                     onAutoReadChapter = ::startAutoReadLoop,
+                    onDescribePage = ::describeCurrentPage,
                     chapterReadActive = chapterReadActive,
                     onStopSpeak = {
                         stopAutoReadLoop()
@@ -1943,11 +1944,46 @@ class ReaderActivity : BaseActivity() {
     }
 
     /**
+     * Описать текущую страницу голосом.
+     *
+     * Нужно на разворотах-иллюстрациях: реплик нет, озвучке нечего читать, и
+     * страница просто молча листалась. Кадр уходит vision-модели ТОГО ЖЕ
+     * движка, что выбран для OCR; с локальным кириллическим движком ответа не
+     * будет — об этом честно сообщаем тостом, а не молчанием.
+     */
+    private fun describeCurrentPage() {
+        val root = binding.root
+        if (root.width <= 0 || root.height <= 0) {
+            toast("Не удалось получить кадр страницы")
+            return
+        }
+        val pageNumber = viewModel.state.value.currentPage + 1
+        toast("Описываю страницу…")
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val rect = android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
+            val bitmap = cropCurrentSelectionBitmap(rect)
+            if (bitmap == null) {
+                toast("Не удалось получить кадр страницы")
+                return@launch
+            }
+            val answer = try {
+                autoReadEngine.describePageImage(bitmap, pageNumber)
+            } finally {
+                if (!bitmap.isRecycled) bitmap.recycle()
+            }
+            if (answer.isNullOrBlank()) {
+                toast("Выбранный движок не умеет описывать картинки (нужен онлайн)")
+            } else {
+                autoReadEngine.speakSingle(answer)
+            }
+        }
+    }
+
+    /**
      * Полное авточтение: читать страницу → (страница стоит, пока не дочитана)
      * → перелистнуть → читать следующую. RTL/LTR листает страницы читалки,
      * вертикальный режим прокручивает на экран.
-     */
-    fun startAutoReadLoop() {
+     */    fun startAutoReadLoop() {
         stopAutoReadLoop()
         autoReadActive = true
         chapterReadActiveFlow.value = true
