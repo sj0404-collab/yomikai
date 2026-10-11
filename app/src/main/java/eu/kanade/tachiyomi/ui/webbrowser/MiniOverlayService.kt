@@ -221,7 +221,8 @@ class MiniOverlayService : Service() {
                 view: WebView,
                 request: android.webkit.WebResourceRequest,
             ): android.webkit.WebResourceResponse? {
-                if (BrowserAdBlock.isEnabled(view.context) &&
+                if (!request.isForMainFrame &&
+                    BrowserAdBlock.isEnabled(view.context) &&
                     BrowserAdBlock.shouldBlock(request.url?.toString())
                 ) {
                     return BrowserAdBlock.emptyResponse()
@@ -237,6 +238,8 @@ class MiniOverlayService : Service() {
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                 urlView?.text = url ?: ""
                 BrowserAdBlock.inject(view)
+                WebScriptsStore.load(view.context)
+                WebScriptsStore.inject(view.context, view, url, "start")
             }
 
             override fun onPageFinished(view: WebView, url: String?) {
@@ -244,6 +247,7 @@ class MiniOverlayService : Service() {
                 backBtn?.isEnabled = view.canGoBack()
                 fwdBtn?.isEnabled = view.canGoForward()
                 BrowserAdBlock.inject(view)
+                WebScriptsStore.inject(view.context, view, url, "end")
             }
         }
         wv.loadUrl(currentUrl)

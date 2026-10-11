@@ -15,20 +15,23 @@ import java.io.ByteArrayInputStream
  *
  *  1. **Сетевой фильтр** ([shouldBlock] + [shouldInterceptRequest]):
  *     запросы на домены рекламных сетей и рекламные пути режутся в
- *     [android.webkit.WebViewClient.shouldInterceptRequest] — скрипты,
- *     баннеры и «звуковые эффекты» рекламы («тук-тук» поверх диалога
- *     авточтения) вообще не приезжают.
+ *     [android.webkit.WebViewClient.shouldInterceptRequest]. Главный документ
+ *     (main frame) НИКОГДА не блокируется — иначе страница станет пустой.
  *
  *  2. **Косметический фильтр** ([CONTENT_SCRIPT]): контент-скрипт,
- *     вживляемый в каждую страницу. Убирает узлы, которые сайт отдаёт
- *     сам ( MangaLib-промо, карточки «В паках больше выбора», telegram-
- *     оверлеи, липкие баннеры). Реклама «всё время меняется» и подселяется
- *     динамически, поэтому фильтр висит на [MutationObserver] + таймере,
- *     а не разово отрабатывает на загрузке.
+ *     вживляемый в каждую страницу. Убирает только заведомо рекламные узлы.
  *
- * Фильтр нарочно консервативен: читательские панели ридеров, навигация
- * «← том N глава M →», крупные картинки манги в белый список не попадают.
- * Крутилку «убрать» держит пользователь — тумблер «AdBlock» в меню браузера.
+ * ВАЖНО (исправление регрессии): раньше фильтр сканировал весь DOM каждые
+ * 1.5 с, на каждую мутацию И на каждый скролл, вызывая `getComputedStyle` +
+ * `getBoundingClientRect` для тысяч узлов. На тяжёлых страницах это грузило
+ * рендер-процесс WebView, он падал, и вью показывала только фон (пользователь
+ * видел «синий экран», после которого не открывался ни один сайт). Теперь:
+ *  - нет `setInterval` и scroll-hook;
+ *  - MutationObserver только на childList (без attributes), с debounce и
+ *    лимитом прогонов;
+ *  - селекторы узкие (реклама по advert/data-ad + рекламные iframe);
+ *  - никогда не удаляются крупные узлы (>25% экрана) и контейнеры с
+ *    настоящей картинкой/видео/канвасом.
  */
 object BrowserAdBlock {
 
@@ -62,10 +65,8 @@ object BrowserAdBlock {
     )
 
     /**
-     * Рекламные куски в ПУТИ url (не только хост: MangaLib и подобные
-     * раздают рекламу со своих же поддоменов вида `img.example.com/_ads/`).
-     * Маркеры держим максимально конкретными — общий «/banner» чужие
-     * страницы ломал бы (сайтовые шапки тоже называют баннерами).
+     * Рекламные куски в ПУТИ url (не только хост). Маркеры держим максимально
+     * конкретными — общий «/banner» чужие страницы ломал бы.
      */
     private val AD_PATH_MARKERS: List<String> = listOf(
         "/adsbygoogle", "/googlesyndication", "/doubleclick", "/adservice",
@@ -82,8 +83,12 @@ object BrowserAdBlock {
     /**
      * Запрос к рекламе? Хост совпал с сетью (или её поддоменом), либо в
      * пути есть заведомо рекламный маркер.
+     *
+     * [mainFrame] — запрос главного документа. Его блокировать нельзя:
+     * возврат пустышки на main frame даёт пустую (фоновую) страницу.
      */
-    fun shouldBlock(url: String?): Boolean {
+    fun shouldBlock(url: String?, mainFrame: Boolean = false): Boolean {
+        if (mainFrame) return false
         val raw = url?.takeIf { it.isNotBlank() } ?: return false
         val host = runCatching { Uri.parse(raw).host?.lowercase() }.getOrNull()
         if (host != null && host != "localhost") {
@@ -125,37 +130,30 @@ object BrowserAdBlock {
      * Контент-скрипт косметического фильтра. Никаких `$` — Kotlin raw string,
      * ещё и в WebView исполняется как обычный ES5-кусок.
      *
-     * Правила удаления (по убыванию уверенности):
-     *  1. узлы с рекламными id/class (adv/banner/promo/adsbygoogle/ins/telegram) и
-     *     iframe'ы рекламных сетей;
-     *  2. фиксированные/липкие оверлеи с z-index >= 10 в нижних 75% экрана —
-     *     так выглядят промо-карточки поверх манги;
-     *  3. небольшие позиционированные карточки с заведомо рекламным текстом.
+     * Удаляем только:
+     *  1. узлы с явно рекламными id/class/атрибутами (advert, adsbygoogle,
+     *     data-ad-slot/data-ad-client) и рекламные iframe;
+     *  2. очень маленькие липкие/фиксированные плашки поверх контента
+     *     (z-index >= 500 в нижней половине экрана).
      *
-     * Белый список (KEEP) спасает читательский UI: ридеры, навигация глав,
-     * картинки страниц, плееры. Всё, что крупнее половины экрана, не трогаем.
+     * НЕ удаляем: крупные узлы (>25% экрана), контейнеры с настоящей
+     * картинкой/видео/канвасом, всё из белого списка (ридеры, страницы,
+     * навигация, плееры).
      */
     private val CONTENT_SCRIPT: String = """
         (function(){
           if (window.__ykAbInstalled) return;
-          var ON = true, swept = 0;
-          var AD_SEL = '[id*="adv"],[class*="adv"],[id*="banner"],[class*="banner"],' +
-            '[class*="promo"],[class*="adsbygoogle"],[class*="adb"],' +
+          var ON = true, swept = 0, runs = 0, MAX_RUNS = 40;
+          var AD_SEL = '[id*="advert"],[class*="advert"],' +
+            '[class*="adsbygoogle"],[data-ad-slot],[data-ad-client],.adsbygoogle,' +
             'iframe[src*="ads"],iframe[src*="doubleclick"],iframe[src*="adsterra"],' +
             'iframe[src*="clickadu"],iframe[src*="propellerads"],iframe[src*="hilltopads"],' +
             'iframe[src*="monetag"],iframe[src*="adcash"],iframe[src*="popads"],' +
             'iframe[src*="exoclick"],iframe[src*="adfox"],iframe[src*="adriver"],' +
-            'iframe[src*="yandex"][src*="ads"],' +
-            '[class*="telegram"],[id*="telegram"],ins';
-          // Ничего читательского и контентного не удаляем.
+            'iframe[src*="amazon-adsystem"],iframe[src*="adnxs"],iframe[src*="googlesyndication"]';
           var KEEP = new RegExp('(reader|reading|manga|chapter|page|swiper|slide|img|image|' +
             'viewer|content|main|book|scroll|zoom|player|nav|menu|header|footer|' +
             'wrapper|container|card|toolbar|toast)', 'i');
-          var PROMO = new RegExp('(' +
-            'промокод|подпи\\w*вайт\\w*|подпишись|мы\\s+в\\s+телеграм|наш\\s+телеграм|' +
-            'телеграм-?канал|скача\\w+\\s+приложени|установи\\w+\\s+приложени|' +
-            'в\\s+паках\\s+больше|перейти\\s+в\\s+(?:наш|группу|канал)|' +
-            'отключите\\s+блокировщик|рекламодател|advert)', 'i');
 
           function name(el){
             return ((el.id || '') + ' ' + (typeof el.className === 'string' ? el.className : '')).toLowerCase();
@@ -167,6 +165,21 @@ object BrowserAdBlock {
             var r = el.getBoundingClientRect();
             return r.width > 24 && r.height > 16 && r.bottom > 0 && r.top < window.innerHeight;
           }
+          // Контейнер с настоящей картинкой/видео/канвасом трогать нельзя.
+          function hasMedia(el){
+            try {
+              var m = el.querySelectorAll('img,video,canvas');
+              for (var i = 0; i < m.length; i++) {
+                var r = m[i].getBoundingClientRect();
+                if (r.width * r.height > window.innerWidth * window.innerHeight * 0.08) return true;
+              }
+            } catch (e) {}
+            return false;
+          }
+          function within(el, frac){
+            var r = el.getBoundingClientRect();
+            return r.width * r.height <= window.innerWidth * window.innerHeight * frac;
+          }
           function nuke(el){
             if (!el || !el.parentNode) return;
             el.parentNode.removeChild(el);
@@ -174,7 +187,7 @@ object BrowserAdBlock {
           }
           function sweep(){
             if (!ON || !document.body) return;
-            var vh = window.innerHeight, vw = window.innerWidth;
+            if (runs++ > MAX_RUNS) return;
 
             // 1) явно рекламные узлы + рекламные iframe
             try {
@@ -183,57 +196,33 @@ object BrowserAdBlock {
               for (var i = 0; i < junk.length; i++) {
                 var el = junk[i];
                 if (KEEP.test(name(el))) continue;
-                var r = el.getBoundingClientRect();
-                if (r.width * r.height > vw * vh * 0.5) continue; // вдруг контейнер всей страницы
-                if (r.bottom < 0 || r.top > vh) continue;
+                if (!vis(el)) continue;
+                if (!within(el, 0.25)) continue; // крупное — не реклама
+                if (hasMedia(el)) continue;      // внутри контент-картинка
                 list.push(el);
               }
               for (var j = 0; j < list.length; j++) nuke(list[j]);
             } catch (e) {}
 
-            // 2) липкие/фиксированные оверлеи поверх контента (z>=10, ниже шапки)
+            // 2) очень маленькие липкие промо-плашки поверх контента
             try {
               var all = document.querySelectorAll('body *');
               var kill = [];
-              for (var k = 0; k < all.length && k < 2500; k++) {
-                var el = all[k];
-                if (!vis(el)) continue;
-                var cs = window.getComputedStyle(el);
-                var pos = cs.position;
-                if (pos !== 'fixed' && pos !== 'sticky') continue;
-                var z = parseInt(cs.zIndex || '0', 10);
-                if (z < 10) continue;
-                var r = el.getBoundingClientRect();
-                if (r.top < vh * 0.25) continue; // шапка/панель ридера сверху — не наше
-                if (KEEP.test(name(el))) continue;
-                var frac = (r.width * r.height) / (vw * vh);
-                if (frac < 0.004 || frac > 0.35) continue;
-                kill.push(el);
+              for (var k = 0; k < all.length && k < 1500; k++) {
+                var el2 = all[k];
+                if (!vis(el2)) continue;
+                var cs = window.getComputedStyle(el2);
+                if (cs.position !== 'fixed' && cs.position !== 'sticky') continue;
+                if (parseInt(cs.zIndex || '0', 10) < 500) continue;
+                if (KEEP.test(name(el2))) continue;
+                var r2 = el2.getBoundingClientRect();
+                var frac = (r2.width * r2.height) / (window.innerWidth * window.innerHeight);
+                if (frac < 0.002 || frac > 0.10) continue;
+                if (r2.top < window.innerHeight * 0.4) continue;
+                if (hasMedia(el2)) continue;
+                kill.push(el2);
               }
               for (var m = 0; m < kill.length; m++) nuke(kill[m]);
-            } catch (e) {}
-
-            // 3) промо по тексту: маленькая карточка с заведомо рекламным текстом
-            try {
-              var nodes = document.querySelectorAll('body div,body span,body a,body section,body aside,body p');
-              var kill3 = [];
-              for (var n = 0; n < nodes.length && n < 3000; n++) {
-                var el = nodes[n];
-                if (!vis(el)) continue;
-                var cs = window.getComputedStyle(el);
-                if (cs.position === 'static') continue;
-                var z3 = parseInt(cs.zIndex || '0', 10);
-                if (cs.position === 'fixed' && z3 < 10) continue;
-                if (cs.position === 'absolute' && z3 < 100) continue;
-                var r = el.getBoundingClientRect();
-                var frac = (r.width * r.height) / (vw * vh);
-                if (frac < 0.002 || frac > 0.35) continue;
-                if (KEEP.test(name(el))) continue;
-                var t = (el.textContent || '').replace(/\s+/g, ' ').trim();
-                if (t.length > 320) continue;
-                if (PROMO.test(t)) kill3.push(el);
-              }
-              for (var q = 0; q < kill3.length; q++) nuke(kill3[q]);
             } catch (e) {}
           }
 
@@ -241,21 +230,18 @@ object BrowserAdBlock {
             window.__ykAbInstalled = true;
             window.__ykAbOn = function(v){ ON = v !== false; if (ON) sweep(); };
             window.__ykAbHits = function(){ return swept; };
+            window.__ykAbScan = function(){ sweep(); };
             var scheduled = false;
             function kick(){
               if (scheduled) return;
               scheduled = true;
-              setTimeout(function(){ scheduled = false; sweep(); }, 250);
+              setTimeout(function(){ scheduled = false; if (ON) sweep(); }, 400);
             }
             try {
               new MutationObserver(kick).observe(document.documentElement, {
-                childList: true, subtree: true, attributes: true,
-                attributeFilter: ['style', 'class', 'id', 'src']
+                childList: true, subtree: true
               });
             } catch (e) {}
-            setInterval(sweep, 1500);
-            window.addEventListener('scroll', kick, true);
-            window.addEventListener('pageshow', sweep);
             document.addEventListener('DOMContentLoaded', sweep);
             window.addEventListener('load', sweep);
             sweep();
@@ -268,7 +254,6 @@ object BrowserAdBlock {
                 install();
               }
             });
-            // На случай SPA: документ уже живой — ставим сразу.
             setTimeout(function(){ if (!window.__ykAbInstalled) install(); }, 0);
           } else {
             install();

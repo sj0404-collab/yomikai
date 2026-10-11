@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Language
@@ -67,6 +68,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.collectAsState
@@ -174,11 +176,16 @@ data object BrowserTab : Tab {
     /** v1.9.41: живой WebView на каждую вкладку (до 4): переключение НЕ
      *  перезапускает страницу — вкладки держатся открытыми, как в Via/Chrome. */
     private val webViewPool = LinkedHashMap<String, WebView>()
+    /** URL для пересоздания вкладки после сбоя рендер-процесса (tabId → url). */
+    private val recoverUrls = HashMap<String, String>()
 
     private var urlState = mutableStateOf(HOME_URL)
     private var canGoBackState = mutableStateOf(false)
     private var canGoForwardState = mutableStateOf(false)
     private var progressState = mutableFloatStateOf(1f)
+    /** Инкремент при падении рендер-процесса WebView: заставляет Content
+     *  пересобраться и AndroidView пересоздать мёртвую вью. */
+    private var rendererEpoch = mutableStateOf(0)
     private var autoscrollActive = mutableStateOf(false)
     private var autoscrollSpeed = mutableFloatStateOf(2f)
 
@@ -482,7 +489,10 @@ data object BrowserTab : Tab {
     @SuppressLint("SetJavaScriptEnabled")
     private fun configureWebView(context: Context, webView: WebView) {
         webView.apply {
-            setBackgroundColor(Color.parseColor("#13141F"))
+            // Нейтральный тёмный фон (без синего оттенка): при сбое рендера
+            // видно тёмный экран, а не «синий». Реальное восстановление —
+            // onRenderProcessGone ниже.
+            setBackgroundColor(Color.parseColor("#101014"))
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.databaseEnabled = true
@@ -567,7 +577,10 @@ data object BrowserTab : Tab {
                     view: WebView,
                     request: android.webkit.WebResourceRequest,
                 ): android.webkit.WebResourceResponse? {
-                    if (BrowserAdBlock.isEnabled(view.context) &&
+                    // Главный документ не блокируем никогда: пустой main frame
+                    // = синяя/пустая страница (жалоба пользователя).
+                    if (!request.isForMainFrame &&
+                        BrowserAdBlock.isEnabled(view.context) &&
                         BrowserAdBlock.shouldBlock(request.url?.toString())
                     ) {
                         return BrowserAdBlock.emptyResponse()
@@ -582,6 +595,9 @@ data object BrowserTab : Tab {
                     // иначе промо-карточка успевает мигнуть и отыграть звук
                     // («тук-тук» поверх диалога авточтения).
                     BrowserAdBlock.inject(view)
+                    // Пользовательские скрипты с моментом «до загрузки DOM».
+                    WebScriptsStore.load(context)
+                    WebScriptsStore.inject(context, view, url, "start")
                 }
                 override fun onReceivedError(view: WebView, request: android.webkit.WebResourceRequest, error: android.webkit.WebResourceError) {
                     if (view !== sharedWebView) return
@@ -627,7 +643,36 @@ data object BrowserTab : Tab {
                     // Косметический фильтр: страница догрузилась — промо-карточки,
                     // которые сайт досыпает после рендера, снимаем сразу.
                     BrowserAdBlock.inject(view)
+                    // Пользовательские скрипты с моментом «после загрузки».
+                    WebScriptsStore.inject(context, view, url, "end")
                     url?.let { urlState.value = it }
+                }
+                // Рендер-процесс WebView упал (OOM/сбой): без обработки система
+                // убивает приложение, а вью остаётся пустой — виден только фон
+                // («синий экран»). Выкидываем мёртвую вью из пула и заставляем
+                // вкладку пересоздать её и загрузить страницу заново.
+                @android.annotation.TargetApi(android.os.Build.VERSION_CODES.O)
+                override fun onRenderProcessGone(
+                    view: WebView,
+                    detail: android.webkit.RenderProcessGoneDetail,
+                ): Boolean {
+                    val deadUrl = runCatching { view.url }.getOrNull() ?: urlState.value
+                    val deadTabId = webViewPool.entries.firstOrNull { it.value === view }?.key
+                    if (deadTabId != null) recoverUrls[deadTabId] = deadUrl
+                    webViewPool.entries.removeAll { it.value === view }
+                    runCatching { (view.parent as? ViewGroup)?.removeView(view) }
+                    runCatching { view.destroy() }
+                    if (sharedWebView === view) sharedWebView = null
+                    canGoBackState.value = false
+                    canGoForwardState.value = false
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        context.toast(
+                            if (detail.didCrash()) "WebView упал — перезапускаю страницу"
+                            else "WebView выгружен — перезапускаю страницу",
+                        )
+                    }
+                    rendererEpoch.value++
+                    return true
                 }
             }
         }
@@ -671,7 +716,7 @@ data object BrowserTab : Tab {
                 runCatching { old.destroy() }
             }
         }
-        wv.post { wv.loadUrl(url) }
+        wv.post { wv.loadUrl(recoverUrls.remove(tabId) ?: url) }
         return wv
     }
 
@@ -699,6 +744,9 @@ data object BrowserTab : Tab {
         val canGoBack by canGoBackState
         val canGoForward by canGoForwardState
         val progress by progressState
+        // Читаем: рост epoch = рендер упал, Content пересобирается и AndroidView
+        // пересоздаёт WebView.
+        val rendererGeneration = rendererEpoch.value
 
         BackHandler(enabled = canGoBack) {
             sharedWebView?.goBack()
@@ -732,6 +780,7 @@ data object BrowserTab : Tab {
         var oneShotRead by remember { mutableStateOf(false) }
         val ctx = androidx.compose.ui.platform.LocalContext.current
         WebStore.load(ctx)
+        WebScriptsStore.load(ctx)
         // v1.9.44: вкладки/активная восстанавливаются СИНХРОННО до первого кадра —
         // старт и новая вкладка показывают последний открытый сайт, а не дефолт.
         if (WebStore.tabs.value.isEmpty()) WebStore.addTab(ctx, HOME_URL, "Новая вкладка")
@@ -748,6 +797,7 @@ data object BrowserTab : Tab {
         var cacheOpen by remember { mutableStateOf(false) }
         var downloadsOpen by remember { mutableStateOf(false) }
         var voiceOpen by remember { mutableStateOf(false) }
+        var scriptsOpen by remember { mutableStateOf(false) }
         var webBookmarked by remember { mutableStateOf(false) }
         val webPages by WebStore.pages.collectAsState()
         val webMarks by WebStore.marks.collectAsState()
@@ -1145,6 +1195,7 @@ data object BrowserTab : Tab {
                     .fillMaxSize()
                     .weight(1f),
             ) {
+            key(rendererGeneration) {
             AndroidView(
                 modifier = Modifier
                     .fillMaxSize(),
@@ -1180,6 +1231,7 @@ data object BrowserTab : Tab {
                 },
             )
             }
+            }
         }
 
         // Линейка чтения (как в AlReader): подсветка текущей реплики
@@ -1212,6 +1264,18 @@ data object BrowserTab : Tab {
                 onRoleMode = { m -> voicePrefs.voiceMode().set(m) },
                 onVoiceEngine = { e -> voicePrefs.voiceEngine().set(e) },
                 onVoiceIcons = { b -> voicePrefs.voiceIcons().set(b) },
+            )
+        }
+
+        if (scriptsOpen) {
+            WebScriptsDialog(
+                context = ctx,
+                onReinject = {
+                    // Применяем правки/тумблеры к уже открытой странице.
+                    BrowserAdBlock.inject(sharedWebView)
+                    WebScriptsStore.injectAll(ctx, sharedWebView, urlBar)
+                },
+                onDismiss = { scriptsOpen = false },
             )
         }
 
@@ -1428,6 +1492,15 @@ data object BrowserTab : Tab {
                                 }
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Расширения и скрипты  ", style = MaterialTheme.typography.labelMedium)
+                                SmallFloatingActionButton(onClick = {
+                                    menuOpen = false
+                                    scriptsOpen = true
+                                }) {
+                                    Icon(Icons.Outlined.Code, contentDescription = "Расширения и скрипты")
+                                }
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
                                     if (voiceIcons) "Значки озвучки: вкл  " else "Значки озвучки: выкл  ",
                                     style = MaterialTheme.typography.labelMedium,
@@ -1524,6 +1597,7 @@ data object BrowserTab : Tab {
                                 ctx.toast("Разрешите показ поверх других приложений")
                             }
                         }) { Text("Мини-плеер поверх всех приложений") }
+                        TextButton(onClick = { moreOpen = false; scriptsOpen = true }) { Text("Расширения и скрипты") }
                         if (!hiddenM.contains("b_urlscan")) {
                             TextButton(onClick = { moreOpen = false; manualScan() }) { Text("Скан текста (OCR)") }
                         }
