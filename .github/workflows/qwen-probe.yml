@@ -1,26 +1,33 @@
-name: Qwen3-TTS heavy probe (RU, CPU)
+name: Qwen3-TTS heavy probe (RU, C engine CPU)
 
 on:
   workflow_dispatch:
 
 jobs:
   qwen-probe:
-    runs-on: windows-latest
-    timeout-minutes: 350
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
     steps:
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Deps (torch CPU + qwen-tts)
+      - name: Deps (OpenBLAS)
         run: |
-          pip install torch==2.11.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cpu
-          pip install -U qwen-tts
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libopenblas-dev
+      - name: Fetch qwen3-tts C engine
+        run: |
+          curl -sL https://codeload.github.com/gabriele-mastrapasqua/qwen3-tts/tar.gz/refs/heads/main | tar xz
+          mv qwen3-tts-main qtts
+      - name: Build (blas)
+        run: make -C qtts blas 2>&1 | tail -8
+      - name: Download 0.6B model
+        run: cd qtts && bash download_model.sh --model small --dir qwen3-tts-0.6b
+      - name: Engine caps
+        run: ./qtts/qwen_tts --caps || true
       - name: Generate RU samples
-        run: python tools/qwen_probe/gen.py
+        run: cd qtts && bash ../tools/qwen_probe/make_samples.sh
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: qwen-tts-probe
-          path: out/*.wav
+          name: qwen-tts-probe-c
+          path: qtts/out/*.wav
           retention-days: 7
