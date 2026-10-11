@@ -2,7 +2,7 @@
 
 Файл создан по итогам разбора скриншотов авточтения (бразуер + читалка) и
 жалоб пользователя. Обновляется по мере выполнения. Движемся по очереди:
-**одна задача → коммит → пуш**, в конце — релиз с тегом и эмоциональные голоса.
+**одна задача → коммит → пуш**, в конце — релиз с тегом.
 
 ---
 
@@ -51,123 +51,67 @@
 
 ## ЧАСТЬ 2. ОСТАЛОСЬ СДЕЛАТЬ (по очереди, каждая — свой коммит)
 
-### 2.1. Колоночный порядок чтения (RTL/LTR/вертикалка) — В РАБОТЕ
-**Где:** `app/src/main/java/eu/kanade/tachiyomi/data/tts/AutoReadEngine.kt`, функция
-`orderRegions` (в companion, ~строка 2963) + `groupIntoBands` (~строка 3011+).
-**Суть жалобы:** страницу читает «лесенкой/зигзагом»: вверху слева-направо, внизу
-справа-налево; при колонках разной ширины (одна шире, вторая уже, третья в полэкрана)
-текст прыгает между колонками вместо того, чтобы дочитать колонку до конца.
-**Как чинить:**
-1. Добавить в companion функцию `splitIntoColumns(lines)`: сортируем по X, кластеризуем
-   в колонки по перекрытию интервалов (пересечение / min(ширина) ≥ 0.3; центр в пределах
-   одной колонки). Колонка = устойчивый X-интервал.
-2. В `orderRegions` для `order != "vertical"`:
-   - если колонок ≥ 2 И в каждой колонке ≥ 2 реплики → **column-major**: колонки
-     упорядочить по направлению (RTL — справа налево, LTR — слева направо), внутри
-     колонки — сверху вниз (`groupIntoBands` + `ReadingOrderSorter.sort`);
-   - иначе — текущая полосовая логика (манга: ряды баблов).
-3. Для `"vertical"` колонок не строим: вебтун читается сверху вниз одной лентой
-   (`ReadingOrderSorter.sort` уже так делает).
-4. Осторожно: классическая манга (ряды баблов) не должна уехать в column-major —
-   порог «в каждой колонке ≥2 реплики» её защищает (в ряду баблы в разных X не образуют
-   высоких колонок).
+### 2.1. Колоночный порядок чтения (RTL/LTR/вертикалка) ✅
+**Файл:** `AutoReadEngine.kt` — `splitIntoColumns()` + `isDenseColumn()` +
+`orderWithinColumn()` (порог перекрытия интервалов ~0.3, константы `COLUMN_*`).
+`orderRegions` переписан: лента/манхуа с абзацами-колонками читается колонка за
+колонкой (RTL — справа налево, LTR — слева направо), классическая манга рядами
+баблов осталась рядовой (защита «≥2 реплик в колонке»); `vertical` читается одной
+лентой.
+**Тесты:** `app/src/test/java/eu/kanade/tachiyomi/data/tts/AutoReadEngineOrderTest.kt`
+(5 тестов: RTL ряды, RTL/LTR колонки, вертикаль, одна реплика).
 
-### 2.2. Рамки не стираются при ручном возврате на страницу
-**Где:** `app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt` (обработчик
-смены страницы `onPageChanged`/`onTap`/navigate); `AutoReadEngine.kt`.
-**Как чинить:**
-- в `AutoReadEngine` добавить `fun clearVisuals()`: `_frameRegions.value = emptyList()`,
-  `_currentRegion.value = null`, `frameGeometry = null`, `spokenLines.clear()`,
-  `streamedRegionCount.set(0)`;
-- вызывать из `ReaderActivity` при РУЧНОЙ смене страницы (листание пальцем/стрелками),
-  когда автоцикл авточтения выключен;
-- **не** вызывать во время автоцикла: `spokenLines` специально переживает страницы,
-  чтобы не перечитывать хвост вебтуна.
+### 2.2. Рамки не стираются при ручном возврате на страницу ✅
+**Файлы:** `AutoReadEngine.kt` — `clearVisuals()` (сбрасывает `_frameRegions`,
+`_currentRegion`, `frameGeometry`, `spokenLines`, `streamedRegionCount`);
+`ReaderActivity.kt` — `LaunchedEffect(state.currentPage)` срабатывает при ПАУЗЕ
+цикла и ручном перелистывании + `onReaderScrolledManually()` вручную гонит тот же
+сброс; `WebtoonViewer.kt` — хук `onScrolled` зовёт `onReaderScrolledManually()`.
+Во время автоцикла сброса нет: `spokenLines` специально переживает страницы.
 
-### 2.3. Узкие/портретные страницы: слова недоговаривает, не все слова сканирует
-**Где:** `AutoReadEngine.kt`, `downscaleForScan` (~строка 2584) и константа
-`OCR_SCAN_MAX_EDGE = 1600` (~строка 2542); путь `readFrame` (downscale на стр. ~753).
-**Суть:** широкий кадр читается идеально даже мелкий текст, узкий — режет слова.
-**Как чинить:**
-- в `downscaleForScan` поднять потолок до 2048 для портретных (height > width) и оставить
-  1600 для ландшафтных (батарея/время);
-- для очень узких источников (длинная сторона < 1600) делать мягкий апскейл ×1.5 перед
-  скеаном: детектор и рекогнайзер справляются заметно лучше на мелком кегле;
-- замерить `frameMs` (уже пишется `pref.autoReadLastMs`) до/после — если просадка
-  скорости > 30%, откатить апскейл для быстрых движков (FAST).
+### 2.3. Узкие/портретные страницы: слова недоговаривает ✅
+**Файл:** `AutoReadEngine.kt` — `downscaleForScan`: потолок 2048 для портретных
+(`OCR_SCAN_MAX_EDGE_PORTRAIT`), 1600 для ландшафтных; апскейл мелких кадров
+(длинная сторона < 1000) до ×1.5 (билинейный, `OCR_UPSCALE_MAX`).
 
-### 2.4. Скриншоты: удаление «насовсем» + кнопка удаления записи
-**Где:**
-- `data/src/main/java/mihon/data/ocr/OcrScreenshotBuffer.kt` — нет `remove(id)`;
-  `clear()/clearChapter()` удаляют только внутренние JPEG (`deleteImageFile`), копии в
-  галерее `Pictures/Yomikai` остаются. Нужно: запомнить `galleryUri` в записи при
-  публикации и удалять строку MediaStore вместе с файлом.
-- `data/src/main/java/mihon/data/ocr/OcrScreenshotEntry.kt` — добавить поле `galleryUri: String? = null`.
-- `app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotTab.kt` — добавить
-  per-entry кнопку удаления (иконка мусорного бака) и в диалоге «Очистить» предупреждать,
-  что теперь удаляется и из галереи.
-- `app/src/main/java/eu/kanade/tachiyomi/ui/screenshots/ScreenshotDetailScreen.kt` — кнопка
-  удаления на детальном экране.
-**Как чинить:**
-1. `publishToGallery/publishEntryToGallery` → сохранять `Uri` в запись (`markPublished`),
-   не забыть `persist()`.
-2. `fun remove(id: Long)` / `fun removeAll(ids: Set<Long>)`: удалить внутренний файл +
-   `contentResolver.delete(galleryUri)` + выкинуть запись, `version++`, persist.
-3. UI-кнопки дергать это в `rememberCoroutineScope().launch(Dispatchers.IO)`.
+### 2.4. Скриншоты: удаление «насовсем» ✅
+**Файлы:** `OcrScreenshotEntry.galleryUri`; `OcrScreenshotBuffer` —
+`markGalleryUri()`, `remove(id)`, `removeAll(ids)`, `deleteEverywhere()`
+(content:// через MediaStore + удаление внутреннего JPEG); `ScreenshotDetailScreen`
+— кнопка удаления.
 
-### 2.5. Скриншоты: мультивыбор + «отправить в архив»
-**Где:** `ScreenshotTab.kt` (сейчас у таба НЕТ ScreenModel — состояние локальное).
-**Как чинить:**
-- локальный `var selected by remember { mutableStateOf(setOf<Long>()) }`,
-  `selectionMode = selected.isNotEmpty()`;
-- `TopAppBar` в режиме выделения: счётчик, «В архив», «Удалить», «Отмена»
-  (как `LibrarySelectionToolbar`, паттерн — `presentation/library/components/LibraryToolbar.kt`);
-- тап по карточке в selection-режиме = toggle; `Modifier.selectedBackground` для подсветки;
-- «В архив» = `publishEntryToGallery` для каждого выбранного (галерея
-  `Pictures/Yomikai`) + записать `galleryUri` в запись (или удалить запись из буфера —
-  по смыслу «отправить в архив» — тогда это move: опубликовать + `remove(ids)`);
-- back-handler выходит из режима выделения.
+### 2.5. Скриншоты: мультивыбор + «отправить в архив» ✅
+**Файлы:** `ScreenshotTab.kt` — selection-режим (TopAppBar: счётчик, «В архив»,
+«Удалить», «Отмена»), тап = toggle с подсветкой, back-выход; «В архив» =
+публикация в галерею `Pictures/Yomikai` + move из буфера.
 
-### 2.6. Вебтун-авточтение: плавная скорость, без рывков, «режим рассказчика»
-**Где:**
-- `ReaderActivity.kt` ~2259–2313 (`scrollTargets`, CONFLATED-канал, `phraseMode`)
-  и ~1925–1939 (`startAutoReadLoop` включает штатную автопрокрутку);
-- `WebtoonViewer.kt` `scrollDownByFraction` (мягкий scroll при `usePageTransitions`);
-- `AutoReadEngine.kt` `pauseAfterLineMs` (120..800 мс).
-**Суть:** скорость «не прибавляется», падение рывком, кадры без текста стоят.
-**Как чинить:**
-- В consumer-корутине канала прокручивать НЕ одним `smoothScrollBy` на реплику, а
-  дробить: `dy / N` шагов по 16 мс (N = 10..20), со торможением на стыке (уже есть
-  коэффициент `remain` в цикле прокрутки — переиспользовать);
-- длину прокрутки оценивать из ДЛИНЫ реплики (`ttsTimeoutMs`/`pauseAfterLineMs` уже
-  значат речь): длинная реплика → больше времени на прокрутку → скорость ровная;
-- кадры без текста: не стопорить цикл — продолжать мягкую прокрутку с той же скоростью
-  (режим «сказки»): `while (readEngine.lastFrameHadText == false)` продолжать шаги;
-- скорость из `speechRate` уже приходит — домножить, чтобы «+» реально ускоряла ленту.
+### 2.6. Вебтун-авточтение: плавная скорость ✅
+**Файлы:** `WebtoonViewer.scrollByPx`; `ReaderActivity.smoothWebtoonScroll`
+(тики 16 мс, ease-out, длительность = доля экрана × 1200 мс / speechRate);
+`advanceAutoReadViewer(smooth = phraseMode)` + канал scrollTargets-consumer
+использует плавную прокрутку; кадры без текста продолжают мягко листаться.
 
-### 2.7. Эмоциональные голоса (после всех тестов, к релизу)
-**Где:**
-- `app/src/main/java/eu/kanade/tachiyomi/data/tts/` — `TtsSpeaker`, `AutoReadEngine.speakAndAwait`;
-- `SpeechMarkup` (разметка реплик), `mihon/domain/.../VoicePreset`;
-- UI выбора: `SettingsHubScreen.kt` → `SoundAutoReadTab` (~строка 623).
-**Задача:** голоса не «механически зачитывают», а вживаются в роль и передают эмоции
-(страх, утешение, злость, шёпот). Минимум:
-1. Детектор эмоции по тексту реплики (лексика + пунктуация: «!!», «...», «?!», слова
-   «боюсь», «прости», «нет!») — функция `guessEmotion(text)` в companion `AutoReadEngine`
-   рядом с `dominantLanguage`.
-2. Проброс эмоции в TTS: для системного движка — `speechPitch`/`speechRate` под эмоцию
-   (страх: pitch↑ rate↑; утешение: pitch↓ rate↓; шёпот: rate↓); для Edge TTS — стиль
-   через SSML (`mstts:express-as`), см. `bookTtsEngine`/`edgeVoice` prefs.
-3. Метка эмоции в `SpokenRegion.marks` для оверлея (если наложение включено).
-4. Переключатель «Эмоциональные голоса» в `SoundAutoReadTab`.
+### 2.7. Эмоциональные голоса ✅
+**Файлы:**
+- `OcrPreferences.kt` — pref `emotionalVoices()` (`pref_emotional_voices`, по
+  умолчанию **true**).
+- `AutoReadEngine.kt` — `enum class Emotion` (pitch/rate/glyph: страх 1.3/1.4 —
+  выше и быстрее, утешение 0.85/0.82 — ниже и медленнее, гнев, грусть, радость,
+  шёпот, удивление) + `guessEmotion(text)` в companion — лексика и пунктуация
+  (исключения «не страшно» с границей слова `\b`, чтобы «мне страшно» не ушло в
+  комфорт). Реплики `readFrame` и wholePageMode передают `prosody` в
+  `speakAndAwait(..., prosody)` при включённом тумблере.
+- `TtsSpeaker.kt` — `speakAs(..., emotionProsody)` → системный движок домножает
+  `speechRate`/`speechPitch`, Edge — prosody rate/pitch.
+- `SettingsHubScreen.kt` — тумблер «Эмоциональные голоса» в `SoundAutoReadTab`.
+**Тесты:** `AutoReadEngineEmotionTest.kt` (7 тестов).
 
 ---
 
 ## ЧАСТЬ 3. РЕЛИЗ И ТЕГИ (после всех правок)
 
-1. Прогнать `./gradlew :app:compileDebugKotlin` и юнит-тесты (фильтр рекламы —
-   `/tmp/opencode/adblock.test.js`, 13 проверок; порядок чтения — добавить тест
-   `AutoReadEngineTest` на колонки в `app/src/test/`).
+1. Прогнать `./gradlew :app:compileDebugKotlin` и юнит-тесты (все 354 зелёные;
+   фильтр рекламы — `/tmp/opencode/adblock.test.js`, 13 проверок).
 2. `git tag -a v1.9.x -m "..."` и `git push origin v1.9.x` (история коммитов —
    по одному на задачу, см. `git log --oneline`).
 3. Проверить на устройстве сценарии из жалоб:
@@ -175,4 +119,6 @@
    - читалка: «а…»/«мгм» читаются, манхуа переводится, ⇄ меняет языки;
    - рамки исчезают при возврате на страницу вручную;
    - скриншот удаляется насовсем; выделение → архив;
-   - вебтун листается ровно, «режим сказки» на пустых кадрах.
+   - вебтун листается ровно, «режим сказки» на пустых кадрах;
+   - реплики-эмоции звучат по-разному (страх/утешение), тумблер в
+     Авточтение → «Эмоциональные голоса».

@@ -596,6 +596,13 @@ class OcrPreferences(
     fun readerOverlayEnabled() = preferenceStore.getBoolean("pref_reader_overlay_enabled", true)
 
     /**
+     * Эмоциональные голоса: тон реплики (страх, утешение, гнев, шёпот…)
+     * передаётся высотой и темпом синтеза — системный TTS множителями
+     * pitch/rate, Edge — prosody. Выключено = ровное чтение как раньше.
+     */
+    fun emotionalVoices() = preferenceStore.getBoolean("pref_emotional_voices", true)
+
+    /**
      * Читать ВСЁ, что видно на странице: одиночные буквы, междометия
      * («а…», «мгм», вздохи) и прочие короткие реплики, которые обычный
      * фильтр осмысленности отбрасывает как мусор.

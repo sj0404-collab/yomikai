@@ -1291,7 +1291,20 @@ class AutoReadEngine(
                         // Весь кадр звучал раньше (приставки срезались дочиста):
                         // помечаем реплики прочитанными и листаем дальше.
                         speakable.forEach { spokenLines.add(lineKey(it.text)) }
-                    } else when (speakAndAwait(SpeechMarkup.strip(joined), pageGender, 0)) {
+                    } else when (
+                        speakAndAwait(
+                            SpeechMarkup.strip(joined),
+                            pageGender,
+                            0,
+                            prosody = if (prefs.emotionalVoices().get()) {
+                                guessEmotion(joined).let { e ->
+                                    if (e == Emotion.NEUTRAL) null else e.pitch to e.rate
+                                }
+                            } else {
+                                null
+                            },
+                        )
+                    ) {
                         SpeakOutcome.SPOKEN, SpeakOutcome.SILENT -> {
                             rejectedStreak = 0
                             speakable.forEach { spokenLines.add(lineKey(it.text)) }
@@ -1451,7 +1464,17 @@ class AutoReadEngine(
                     val langHint = if (translate && language != target &&
                         translatedText != null && translatedText != region.text
                     ) target else null
-                    when (speakAndAwait(spokenText, gender, slot, langHint)) {
+                    // Эмоциональные голоса: реплика звучит с эмоцией (страх выше
+                    // и быстрее, утешение ниже и медленнее). Тумблер выключен —
+                    // ровный голос, как раньше.
+                    val prosody = if (prefs.emotionalVoices().get()) {
+                        guessEmotion(speakTextRaw).let { e ->
+                            if (e == Emotion.NEUTRAL) null else e.pitch to e.rate
+                        }
+                    } else {
+                        null
+                    }
+                    when (speakAndAwait(spokenText, gender, slot, langHint, prosody)) {
                         SpeakOutcome.SPOKEN, SpeakOutcome.SILENT -> rejectedStreak = 0
                         SpeakOutcome.NO_ENGINE -> {
                             blockAutoread(NO_VOICE_MESSAGE)
@@ -2014,11 +2037,25 @@ class AutoReadEngine(
      *
      * Фразы выстраиваются в очередь ([speakMutex]): движок синтеза один, и без
      * очереди ручной тап по баблу перебивал реплику кадра на полуслове.
+     *
+     * [prosody] — (pitch, rate) эмоции реплики: null = ровный голос.
      */
-    private suspend fun speakAndAwait(text: String, gender: String? = null, speakerSlot: Int = 0, langHint: String? = null): SpeakOutcome =
-        speakMutex.withLock { speakAndAwaitAlone(text, gender, speakerSlot, langHint) }
+    private suspend fun speakAndAwait(
+        text: String,
+        gender: String? = null,
+        speakerSlot: Int = 0,
+        langHint: String? = null,
+        prosody: Pair<Float, Float>? = null,
+    ): SpeakOutcome =
+        speakMutex.withLock { speakAndAwaitAlone(text, gender, speakerSlot, langHint, prosody) }
 
-    private suspend fun speakAndAwaitAlone(text: String, gender: String? = null, speakerSlot: Int = 0, langHint: String? = null): SpeakOutcome {
+    private suspend fun speakAndAwaitAlone(
+        text: String,
+        gender: String? = null,
+        speakerSlot: Int = 0,
+        langHint: String? = null,
+        prosody: Pair<Float, Float>? = null,
+    ): SpeakOutcome {
         // Реплика может прийти с меткой `{имя:…}` (её снимает сам движок), а в
         // журнал и таймаут разумно класть то, что реально произносится.
         val spoken = SpeechMarkup.strip(text).ifBlank { text }
@@ -2040,6 +2077,7 @@ class AutoReadEngine(
         val t0 = System.currentTimeMillis()
         TtsSpeaker.speakAs(
             context, text, gender, speakerSlot, langHint = langHint,
+            emotionProsody = prosody,
             onState = { speaking ->
                 if (speaking && !started.value) {
                     started.value = true
@@ -2549,6 +2587,32 @@ class AutoReadEngine(
 
     // endregion Склейка строк одной реплики
 
+    /**
+     * Эмоция реплики и во что она превращается для синтеза.
+     *
+     * [pitch]/[rate] — множители высоты и темпа голоса (1 = без изменений).
+     * Системный TTS применяет их напрямую, Edge — через prosody. [glyph] для
+     * обслуживания/отладки, в озвучку не попадает.
+     *
+     * Enum лежит НА УРОВНЕ КЛАССА, а не в companion: вложенный в companion
+     * enum невидим как `AutoReadEngine.Emotion` (компилятор требует
+     * `AutoReadEngine.Companion.Emotion`), а тест эмоций обращается именно
+     * по короткому имени.
+     */
+    enum class Emotion(val pitch: Float, val rate: Float, val glyph: String) {
+        NEUTRAL(1f, 1f, ""),
+        /** Страх: голос выше и быстрее, «сдавленно». */
+        FEAR(1.3f, 1.4f, "!!"),
+        /** Утешение: ниже и медленнее, «объятие». */
+        COMFORT(0.85f, 0.82f, "☺"),
+        ANGER(0.9f, 1.18f, "><"),
+        SADNESS(0.88f, 0.78f, "…"),
+        JOY(1.14f, 1.12f, "^_^"),
+        /** Шёпот: почти без темпа. */
+        WHISPER(1.04f, 0.68f, "шш"),
+        SURPRISE(1.22f, 1.2f, "?!"),
+    }
+
     // region Чистка мусора OCR
 
     companion object {
@@ -2952,8 +3016,90 @@ class AutoReadEngine(
             return if (old.length >= new.length) old.contains(new) else new.contains(old)
         }
 
-    /**
-     * Доминирующий язык текста кадра по письменности: "ru"/"en"/"ja"/"ko"/"zh",
+        /**
+         * Эмоция реплики по словам и пунктуации (RU + общие крики).
+         *
+         * Голос должен ВЖИВАТЬСЯ в роль, а не «зачитывать»: страх читается выше и
+         * быстрее, утешение — ниже и медленнее. Правила нарочно простые и
+         * предсказуемые: лучше пережать половину реплик, чем угадать наспех.
+         * Порядок проверок важен: «не бойся!» — это утешение, а не страх.
+         */
+        fun guessEmotion(text: String): Emotion {
+            val t = text.lowercase().trim()
+            if (t.length < 2) return Emotion.NEUTRAL
+            // Утешение перебивает страх: «не бойся, я рядом» звучит мягко.
+            if (listOf(
+                    "не бойся", "не бойтесь", "я рядом", "всё хорошо", "все хорошо",
+                    "спокойно", "спокойствие", "успокой", "обним", "прости", "прощение",
+                    "ты не один", "ты не одна", "всё будет", "все будет", "ничего страшного",
+                    "я с тобой", "береги себя", "будь осторожен", "держись",
+                ).any { it in t }
+            ) {
+                return Emotion.COMFORT
+            }
+            if (listOf(
+                    "боюсь", "боится", "боишься", "боятся", "страх", "страшно", "ужас",
+                    "ужасно", "пуга", "паник", "беги", "бежим", "спасай", "смерт",
+                    "погиб", "убьёт", "убьет", "задрож", "дрожь", "вскрик", "крик",
+                    "помогите", "помоги", "бегом", "опасн", "опасно",
+                ).any { it in t } &&
+                // «не страшно», «\bне» с границей слова: иначе «мне страшно»
+                // (внутри «мне» сидят буквы «не») ложно считалось успокоением.
+                !listOf(
+                    Regex("\\bне\\s+страшн"),
+                    Regex("\\bне\\s+бо(йся|ится|ишься|ятся)"),
+                    Regex("\\bбез\\s+паник"),
+                ).any { it.containsMatchIn(t) }
+            ) {
+                return Emotion.FEAR
+            }
+            if (listOf(
+                    "ненавижу", "бесит", "бешена", "злой", "злость", "замолчи", "уйди",
+                    "прекрати", "как ты смеешь", "как вы смеете", "хватит", "сжечь",
+                    "уничтож", "сдохни", "мерзавец", "гад", "в ярости", "ронять",
+                ).any { it in t }
+            ) {
+                return Emotion.ANGER
+            }
+            if (listOf(
+                    "шепч", "шёпот", "шепот", "тихо", "тиш", "шшш", "молч", "секрет",
+                ).any { it in t }
+            ) {
+                return Emotion.WHISPER
+            }
+            if (listOf(
+                    "плак", "плачу", "груст", "печал", "прощай", "больно", "одиноко",
+                    "один", "слез", "рыда", "тоска", "опустош", "виноват", "жал",
+                ).any { it in t }
+            ) {
+                return Emotion.SADNESS
+            }
+            if (listOf(
+                    "ха-ха", "хаха", "хи-хи", "хихи", "ура", "рада", "рад ", "счаст",
+                    "люблю", "смех", "весел", "замечательно", "отлично", "ура!",
+                ).any { it in t }
+            ) {
+                return Emotion.JOY
+            }
+            if (listOf(
+                    "не может быть", "неужели", "как?!", "что?!", "кто?!", "зачем?!",
+                    "right?", "правда?!", "серьёзно", "серьезно", "ничего себе",
+                ).any { it in t }
+            ) {
+                return Emotion.SURPRISE
+            }
+            // Пунктуация: «!!!» злость/радость, «?!» удивление, «…» грусть, «!?» —
+            // сперва удивление, потом всё остальное.
+            val exclamations = t.count { it == '!' }
+            if (exclamations >= 3) return Emotion.ANGER
+            if (t.contains("?!") || t.contains("!?")) return Emotion.SURPRISE
+            if (t.endsWith("...") || t.endsWith("…")) return Emotion.SADNESS
+            // Один восклицательный знак сам по себе эмоцию не задаёт.
+            return Emotion.NEUTRAL
+        }
+
+        /**
+         * Доминирующий язык текста кадра по письменности: "ru"/"en"/"ja"/"ko"/"zh",
      * "" — букв не нашлось. Нужен, чтобы при источнике «auto» решить, надо ли
      * переводить: эталонный язык реплик из настроек (по умолчанию «ru») врал
      * на китайской манхуа, и перевод молча выключался.

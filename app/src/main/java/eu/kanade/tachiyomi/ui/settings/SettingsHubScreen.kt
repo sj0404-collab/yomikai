@@ -630,6 +630,8 @@ private fun SoundAutoReadTab() {
     val advance by prefs.autoReadAutoAdvance().changes()
         .collectAsState(initial = prefs.autoReadAutoAdvance().get())
     val icons by prefs.voiceIcons().changes().collectAsState(initial = prefs.voiceIcons().get())
+    val emotion by prefs.emotionalVoices().changes()
+        .collectAsState(initial = prefs.emotionalVoices().get())
     val autoScan by prefs.autoScanAndSpeak().changes()
         .collectAsState(initial = prefs.autoScanAndSpeak().get())
     val language by prefs.autoReadLanguage().changes()
@@ -682,6 +684,12 @@ private fun SoundAutoReadTab() {
         subtitle = "Показывать, что реплика уже озвучена",
         checked = icons,
     ) { prefs.voiceIcons().set(it) }
+    HubSwitchRow(
+        title = "Эмоциональные голоса",
+        subtitle = "Страх, утешение, гнев, шёпот: голос вживается в роль и читает " +
+            "медленнее/быстрее, выше/ниже",
+        checked = emotion,
+    ) { prefs.emotionalVoices().set(it) }
     HubSwitchRow(
         title = "Сканировать и озвучивать страницу целиком",
         subtitle = "Один снимок экрана и озвучка всей страницы без ожидания реплик",
