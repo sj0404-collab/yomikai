@@ -127,6 +127,14 @@ class ReaderViewModel @JvmOverloads constructor(
         const val MARKED_JPEG_QUALITY = 70
     }
 
+    /**
+     * Детектор панелей для «Скан-и-читай»: реплики раскладываются по панелям
+     * манги, чтобы порядок чтения совпадал с порядком панелей. Без модели или
+     * при ошибке детекции отдаёт пустой список — тогда остаётся обычный
+     * порядок по строкам.
+     */
+    private val detectPanels: mihon.domain.panel.interactor.DetectPanels by lazy { Injekt.get() }
+
     private val mutableState = MutableStateFlow(State())
     val state = mutableState.asStateFlow()
 
@@ -1139,14 +1147,46 @@ class ReaderViewModel @JvmOverloads constructor(
                 // с авточтением: своя копия сравнивала рамки по верхнему краю и
                 // читала мангу слева направо, если баблы стояли на разной высоте.
                 val order = mihon.data.ocr.OcrRegionRules.readingOrderFor(prefs)
-                val sorted = eu.kanade.tachiyomi.data.tts.AutoReadEngine.orderRegions(
-                    result.regions.map {
+                val direction = when (order) {
+                    "ltr" -> tachiyomi.core.common.util.system.ReadingDirection.LTR
+                    "vertical" -> tachiyomi.core.common.util.system.ReadingDirection.VERTICAL
+                    else -> tachiyomi.core.common.util.system.ReadingDirection.RTL
+                }
+                // Панели манги — чтобы реплики читались панель за панелью, как
+                // в авточтении, а не вперемешку по строкам. Детектор отдаёт
+                // панели уже в порядке чтения. Модели/ошибки нет → пустой
+                // список, и остаётся обычный порядок по строкам.
+                val panelBoxes = try {
+                    withTimeout(eu.kanade.tachiyomi.data.tts.AutoReadEngine.OCR_FRAME_TIMEOUT_MS) {
+                        detectPanels.await(
+                            cacheKey = "autoscan_${chapterId}_${pageIndex}",
+                            image = bitmap,
+                            originalWidth = bitmap.width,
+                            originalHeight = bitmap.height,
+                            direction = direction,
+                        ).panels.map { panel ->
+                            val rect = panel.rect
+                            mihon.domain.ocr.model.OcrBoundingBox(
+                                left = rect.left.toFloat() / bitmap.width,
+                                top = rect.top.toFloat() / bitmap.height,
+                                right = rect.right.toFloat() / bitmap.width,
+                                bottom = rect.bottom.toFloat() / bitmap.height,
+                            )
+                        }
+                    }
+                } catch (t: Throwable) {
+                    logcat(LogPriority.WARN, t) { "Auto scan panel detection failed" }
+                    emptyList()
+                }
+                val sorted = eu.kanade.tachiyomi.data.tts.AutoReadEngine.orderLinesByPanels(
+                    lines = result.regions.map {
                         eu.kanade.tachiyomi.data.tts.AutoReadEngine.Line(
                             text = it.text,
                             boundingBox = it.boundingBox,
                         )
                     },
-                    order,
+                    order = order,
+                    panels = panelBoxes,
                 )
                 val text = sorted.joinToString(". ") {
                     mihon.domain.ocr.model.normalizeOcrTextForDisplay(it.text)

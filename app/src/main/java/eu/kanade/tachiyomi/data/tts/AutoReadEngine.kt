@@ -3352,6 +3352,33 @@ class AutoReadEngine(
         }
 
         /**
+         * Порядок реплик С УЧЁТОМ ПАНЕЛЕЙ манги.
+         *
+         * Панели уже пришли в порядке чтения, поэтому реплики сначала
+         * раскладываются по ним ([orderBoxesByPanels]), а внутри каждой панели
+         * применяется обычный порядок [orderRegions]. Пустой список панелей —
+         * обычное поведение, как без детектора панелей.
+         */
+        internal fun orderLinesByPanels(
+            lines: List<Line>,
+            order: String,
+            panels: List<OcrBoundingBox>,
+        ): List<Line> {
+            if (lines.size < 2 || panels.isEmpty()) return orderRegions(lines, order)
+            val direction = when (order) {
+                "ltr" -> tachiyomi.core.common.util.system.ReadingDirection.LTR
+                "vertical" -> tachiyomi.core.common.util.system.ReadingDirection.VERTICAL
+                else -> tachiyomi.core.common.util.system.ReadingDirection.RTL
+            }
+            val panelOrder = orderBoxesByPanels(lines.map { it.boundingBox }, panels, direction)
+            // orderBoxesByPanels вернул те же рамки, что были на входе, поэтому
+            // исходные строки восстанавливаем по рамке (совпадающие рамки
+            // группируем, чтобы ничего не потерять).
+            val byBox = lines.groupBy { it.boundingBox }
+            return panelOrder.flatMap { byBox[it].orEmpty() }
+        }
+
+        /**
          * Колонки текста: махва/манологи/ленты с блоками разной ширины, где
          * читать надо колонку до конца, а не прыгать зигзагом. Колонка =
          * устойчивый X-интервал: реплика входит в колонку, если её X пересекает

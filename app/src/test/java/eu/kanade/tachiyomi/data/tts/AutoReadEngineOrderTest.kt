@@ -166,6 +166,33 @@ class AutoReadEngineOrderTest {
         assertEquals(listOf("левый верх", "правый верх", "левый низ"), ordered)
     }
 
+    @Test
+    fun `orderLinesByPanels читает панель за панелью`() {
+        val panels = listOf(
+            box(0.52f, 0.05f, 0.98f, 0.45f),
+            box(0.02f, 0.05f, 0.48f, 0.45f),
+        )
+        val lines = listOf(
+            line("низ правой", 0.55f, 0.30f, 0.90f, 0.42f),
+            line("верх правой", 0.55f, 0.08f, 0.90f, 0.20f),
+            line("верх левой", 0.05f, 0.08f, 0.40f, 0.20f),
+        )
+        val ordered = AutoReadEngine.orderLinesByPanels(lines, "rtl", panels)
+        assertEquals(listOf("верх правой", "низ правой", "верх левой"), ordered.map { it.text })
+    }
+
+    @Test
+    fun `orderLinesByPanels без панелей = обычный порядок`() {
+        val lines = listOf(
+            line("BR", 0.60f, 0.55f, 0.95f, 0.70f),
+            line("TR", 0.60f, 0.05f, 0.95f, 0.20f),
+            line("BL", 0.05f, 0.55f, 0.40f, 0.70f),
+            line("TL", 0.05f, 0.05f, 0.40f, 0.20f),
+        )
+        val ordered = AutoReadEngine.orderLinesByPanels(lines, "rtl", emptyList())
+        assertEquals(listOf("TR", "TL", "BR", "BL"), ordered.map { it.text })
+    }
+
     private fun box(l: Float, t: Float, r: Float, b: Float) = OcrBoundingBox(l, t, r, b)
 
     /** Прогоняет рамки через панельную сортировку и возвращает их подписи. */
