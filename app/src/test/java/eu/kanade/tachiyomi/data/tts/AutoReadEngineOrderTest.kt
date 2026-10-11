@@ -70,4 +70,28 @@ class AutoReadEngineOrderTest {
         val lines = listOf(line("один", 0.1f, 0.1f, 0.2f, 0.2f))
         assertEquals(listOf("один"), texts("rtl", lines))
     }
+
+    @Test
+    fun `вертикальная лесенка читается строго сверху вниз`() {
+        val lines = listOf(
+            line("низ", 0.10f, 0.60f, 0.45f, 0.67f),
+            line("верх", 0.60f, 0.05f, 0.95f, 0.12f),
+            line("середина", 0.35f, 0.32f, 0.70f, 0.39f),
+        )
+        assertEquals(listOf("верх", "середина", "низ"), texts("vertical", lines))
+    }
+
+    @Test
+    fun `rtl лесенка со сдвигом по X не читается куском слева и куском справа`() {
+        // Диагональ сверху-справа вниз-влево: раньше рекурсивный разрезатель
+        // делил кадр на правую и левую группы и читал их раздельно, из-за чего
+        // «лесенка» ломалась.
+        val lines = listOf(
+            line("D", 0.00f, 0.27f, 0.35f, 0.34f),
+            line("B", 0.35f, 0.13f, 0.75f, 0.20f),
+            line("A", 0.55f, 0.05f, 0.95f, 0.12f),
+            line("C", 0.15f, 0.20f, 0.55f, 0.27f),
+        )
+        assertEquals(listOf("A", "B", "C", "D"), texts("rtl", lines))
+    }
 }
