@@ -193,6 +193,45 @@ class AutoReadEngineOrderTest {
         assertEquals(listOf("TR", "TL", "BR", "BL"), ordered.map { it.text })
     }
 
+    @Test
+    fun `на русской странице иноязычные надписи выкидываются`() {
+        val lines = listOf(
+            line("Привет, как дела?", 0.1f, 0.1f, 0.5f, 0.2f),
+            line("Это реплика героя", 0.1f, 0.3f, 0.5f, 0.4f),
+            line("И снова реплика тут", 0.1f, 0.5f, 0.5f, 0.6f),
+            // Японский корешок, распознанный в мусор латиницей — выкидываем.
+            line("KOCRE 26 BUKU", 0.6f, 0.1f, 0.9f, 0.2f),
+            // Смешанная строка с вывеской — тоже чужая.
+            line("Quiz 26", 0.6f, 0.3f, 0.9f, 0.4f),
+        )
+        val kept = AutoReadEngine.dropForeignLanguageLines(lines).map { it.text }
+        assertEquals(
+            listOf("Привет, как дела?", "Это реплика героя", "И снова реплика тут"),
+            kept,
+        )
+    }
+
+    @Test
+    fun `на некириллической странице ничего не выкидываем`() {
+        val lines = listOf(
+            line("Hello there", 0.1f, 0.1f, 0.5f, 0.2f),
+            line("Another line", 0.1f, 0.3f, 0.5f, 0.4f),
+            line("Sign text", 0.6f, 0.1f, 0.9f, 0.2f),
+        )
+        assertEquals(3, AutoReadEngine.dropForeignLanguageLines(lines).size)
+    }
+
+    @Test
+    fun `cyrillicShare считает долю кириллицы по буквам`() {
+        assertEquals(1f, AutoReadEngine.cyrillicShare("Привет"))
+        assertEquals(0f, AutoReadEngine.cyrillicShare("Quiz"))
+        // 6 кириллических из 9 букв (пробел в знаменатель не входит).
+        assertEquals(2f / 3f, AutoReadEngine.cyrillicShare("Привет abc"), 0.001f)
+        // Пунктуация и пробелы в знаменатель не входят.
+        assertEquals(1f, AutoReadEngine.cyrillicShare("Да... что?"))
+        assertEquals(0f, AutoReadEngine.cyrillicShare("...12345"))
+    }
+
     private fun box(l: Float, t: Float, r: Float, b: Float) = OcrBoundingBox(l, t, r, b)
 
     /** Прогоняет рамки через панельную сортировку и возвращает их подписи. */

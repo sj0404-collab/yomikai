@@ -1049,12 +1049,20 @@ class AutoReadEngine(
                     }
                     .toList()
 
-                // 3) порядок чтения (группировка в строки по близости центров Y,
+                // 3) язык страницы: у переведённой манги в арте остаются
+                //    иноязычные надписи (корешок, вывески, звук). Если страница
+                //    кириллическая, такой мусор выкидываем — озвучивать его
+                //    незачем. На некириллической странице (английский комикс)
+                //    ничего не выкидываем.
+                // 4) порядок чтения (группировка в строки по близости центров Y,
                 //    а не по фиксированным 12% полосам — убирает «лесенку»).
                 // Перед порядком снимаем ДУБЛИ рамок: одна и та же реплика,
                 // пришедшая двумя боксами (потоковый проход + основной), рисовала
                 // поверх отмеченной рамки вторую, чуть смещённую — «лесенку».
-                val ordered = orderRegions(dropOverlappingDuplicates(fresh), order)
+                val ordered = orderRegions(
+                    dropOverlappingDuplicates(dropForeignLanguageLines(fresh)),
+                    order,
+                )
 
                 // v1.9.134: фиксируем скорость кадра (снимок + OCR + разбор
                 // строк, БЕЗ времени самой озвучки — она не входит в кадровый
@@ -2241,11 +2249,10 @@ class AutoReadEngine(
             originalHeight = bitmap.height,
             direction = direction,
         )
-        val bubbles = det.debugBubbles
-            .map { it.rect }
-            .filter { it.width() > 16 && it.height() > 16 }
+        val detectedBubbles = det.debugBubbles
+            .filter { it.rect.width() > 16 && it.rect.height() > 16 }
             .take(MAX_BUBBLES_PER_FRAME)
-        if (bubbles.isEmpty()) return emptyList()
+        if (detectedBubbles.isEmpty()) return emptyList()
 
         // Порядок чтения — ПО ПАНЕЛЯМ. Детектор отдаёт облачки в своём
         // техническом порядке, и соседние панели манги оказывались перемешаны:
@@ -2257,18 +2264,18 @@ class AutoReadEngine(
             val rect = panel.rect
             normalizeBox(rect.left, rect.top, rect.right, rect.bottom, bitmap)
         }
-        val orderedBubbles = orderBoxesByPanels(
-            boxes = bubbles.map { normalizeBox(it.left, it.top, it.right, it.bottom, bitmap) },
-            panels = panelBoxes,
-            direction = direction,
-        ).map { box ->
-            android.graphics.Rect(
-                (box.left * bitmap.width).toInt(),
-                (box.top * bitmap.height).toInt(),
-                (box.right * bitmap.width).toInt(),
-                (box.bottom * bitmap.height).toInt(),
-            )
+        // Реплики — это облачки, и детектор находит их увереннее, чем плоский
+        // текст на фоне (надпись на корешке манги, вывеска на полке, звук).
+        // Поэтому сначала читаем РЕПЛИКИ по панелям, а потом прочий текст —
+        // тоже по панелям. Раньше надпись с обложки и бумаги на полке
+        // вклинивалась прямо в разговор, причём вперемешку с репликами.
+        val (dialogueBubbles, backgroundBubbles) = detectedBubbles.partition {
+            it.confidence >= DIALOGUE_BUBBLE_CONFIDENCE
         }
+        val orderedBubbles = (
+            orderBubblesByPanels(dialogueBubbles.map { it.rect }, panelBoxes, direction, bitmap) +
+                orderBubblesByPanels(backgroundBubbles.map { it.rect }, panelBoxes, direction, bitmap)
+            ).take(MAX_BUBBLES_PER_FRAME)
 
         // Параллель по рамкам с лимитом [BUBBLE_OCR_PARALLELISM]: иначе при
         // онлайн-пресете авточтение ползёт (каждый баблон = сетевой раунд-трип
@@ -2284,6 +2291,31 @@ class AutoReadEngine(
                     }
                 }
             }.flatMap { it.await() }
+        }
+    }
+
+    /**
+     * Раскладывает облачки детектора по панелям и возвращает их в пиксельных
+     * рамках обратно: панели уже в порядке чтения, внутри панели — рядами.
+     */
+    private fun orderBubblesByPanels(
+        rects: List<android.graphics.Rect>,
+        panels: List<OcrBoundingBox>,
+        direction: tachiyomi.core.common.util.system.ReadingDirection,
+        bitmap: Bitmap,
+    ): List<android.graphics.Rect> {
+        if (rects.size < 2 || panels.isEmpty()) return rects
+        return orderBoxesByPanels(
+            boxes = rects.map { normalizeBox(it.left, it.top, it.right, it.bottom, bitmap) },
+            panels = panels,
+            direction = direction,
+        ).map { box ->
+            android.graphics.Rect(
+                (box.left * bitmap.width).toInt(),
+                (box.top * bitmap.height).toInt(),
+                (box.right * bitmap.width).toInt(),
+                (box.bottom * bitmap.height).toInt(),
+            )
         }
     }
 
@@ -2683,6 +2715,23 @@ class AutoReadEngine(
         // Ограничитель параллельного OCR рамок баблонов (см. ocrBubbleRect/readBubbles).
         private const val BUBBLE_OCR_PARALLELISM = 3
         private const val MAX_BUBBLES_PER_FRAME = 40
+
+        /**
+         * Уверенность детектора, выше которой облачко считается РЕПЛИКОЙ.
+         * Ниже — плоский текст на фоне (надпись на корешке, вывеска на полке,
+         * звук): он читается после всех реплик, а не вперемешку с ними.
+         */
+        private const val DIALOGUE_BUBBLE_CONFIDENCE = 0.55f
+
+        /** Доля букв кириллицы, при которой страница считается русской. */
+        private const val RUSSIAN_PAGE_CYRILLIC_SHARE = 0.6f
+
+        /**
+         * Доля букв кириллицы в самой реплике. Ниже — это не русский текст
+         * (японские надписи на корешках переведённой манги, латинские
+         * вывески), и озвучивать его не нужно.
+         */
+        private const val RUSSIAN_LINE_CYRILLIC_SHARE = 0.5f
 
         /**
          * Сколько последних персонажей движок помнит по полу и имени. Память
@@ -3376,6 +3425,38 @@ class AutoReadEngine(
             // группируем, чтобы ничего не потерять).
             val byBox = lines.groupBy { it.boundingBox }
             return panelOrder.flatMap { byBox[it].orEmpty() }
+        }
+
+        /**
+         * Доля буквенных символов строки, приходящихся на кириллицу.
+         * Пустые строки и строки без букв дают 0.
+         */
+        internal fun cyrillicShare(text: String): Float {
+            var letters = 0
+            var cyrillic = 0
+            for (ch in text) {
+                if (!ch.isLetter()) continue
+                letters++
+                // Кириллица: U+0400..U+04FF (включая ё, Ё).
+                if (ch.code in 0x0400..0x04FF) cyrillic++
+            }
+            return if (letters == 0) 0f else cyrillic.toFloat() / letters
+        }
+
+        /**
+         * Убирает иноязычные надписи, когда страница русская.
+         *
+         * Переведённая манга сохраняет в арте оригинальные надписи — корешок,
+         * вывески, звуки. Латинский распознаватель превращает их в мусор
+         * («КОСГЕ ИНИГМ ФАМ»), и авточтение это произносит. Если страница в
+         * целом кириллическая (перевод), такие строки выкидываем; если
+         * страница не кириллическая (английский комикс), ничего не трогаем.
+         */
+        internal fun dropForeignLanguageLines(lines: List<Line>): List<Line> {
+            if (lines.isEmpty()) return lines
+            val pageShare = lines.sumOf { cyrillicShare(it.text).toDouble() }.toFloat() / lines.size
+            if (pageShare < RUSSIAN_PAGE_CYRILLIC_SHARE) return lines
+            return lines.filter { cyrillicShare(it.text) >= RUSSIAN_LINE_CYRILLIC_SHARE }
         }
 
         /**
