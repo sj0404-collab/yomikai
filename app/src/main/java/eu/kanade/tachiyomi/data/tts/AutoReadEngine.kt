@@ -3797,12 +3797,76 @@ class AutoReadEngine(
                     letters.groupingBy { it }.eachCount().values.any { cnt -> cnt >= 3 }
             }
             if (words.isNotEmpty() && echoGarbage == words.size) return false
+            // Повтор одного слога на странице БЕЗ ТЕКСТА: OCR выдаёт «БУБУ»,
+            // «БЫБЫ», «ТУТУТУ» из кирпичной кладки и черепицы. Прежнее правило
+            // ловило только повторы 3+ раз, а «БУБУ» — это слог «БУ» ровно два
+            // раза, поэтому мусор проходил и озвучивался вслух. Настоящие
+            // удвоенные слова («мама», «папа») и смех («хаха») вынесены в
+            // [REDUPLICATED_WORDS] — их терять нельзя.
+            if (words.isNotEmpty() && isEchoBabbleText(words)) return false
             return words.any { w -> w.count { it.isLetter() } >= 3 } ||
                 // Короткие настоящие русские слова (я, и, но, не…) — читаем.
                 (language == "ru" && words.any { isShortRussianWord(it.filter(Char::isLetter)) }) ||
                 // …или короткая осмысленная («Да!», «Ах!», «Нет?»)
                 (text.length in 2..6 && text.count { it.isLetter() } >= 2)
         }
+
+        /**
+         * Мусор OCR со страницы без текста: строка из повторов одного слога
+         * («БУБУ», «БЫБЫ», «ТУТУТУ») либо из таких слогов-обрывков, собранных
+         * в строку («БУ БУБУ БЫБЫ»).
+         *
+         * От настоящей короткой реплики («Нет, да») такой мусор отличается
+         * бедностью алфавита: на восемь букв «бубубы» приходится три разных,
+         * а в живой реплике буквы почти не повторяются. Поэтому короткие слова
+         * считаются мусором только вместе с проверкой разнообразия букв.
+         */
+        private fun isEchoBabbleText(words: List<String>): Boolean {
+            if (words.isEmpty()) return false
+            if (words.all { isRepeatedSyllable(it) }) return true
+            val letters = words.joinToString("") { it.filter(Char::isLetter) }.lowercase()
+            if (letters.length < 4) return false
+            val isFragment = words.all { word ->
+                isRepeatedSyllable(word) || word.filter(Char::isLetter).length in 2..3
+            }
+            if (!isFragment) return false
+            val distinct = letters.toSet().size
+            return distinct <= 3 || distinct.toFloat() / letters.length <= 0.4f
+        }
+
+        /**
+         * Слово из повторов одного короткого слога: «БУ-БУ», «БЫБЫ», «ТУТУТУ».
+         * Так OCR описывает текстуры без букв — кладку, черепицу, листву.
+         * Настоящие слова такого вида перечислены в [REDUPLICATED_WORDS].
+         */
+        private fun isRepeatedSyllable(word: String): Boolean {
+            val letters = word.filter(Char::isLetter).lowercase()
+            if (letters.length < 4) return false
+            if (letters in REDUPLICATED_WORDS) return false
+            for (unitLength in 1..3) {
+                if (letters.length % unitLength != 0) continue
+                if (letters.length / unitLength < 2) continue
+                val chunk = letters.take(unitLength)
+                if (letters.chunked(unitLength).all { it == chunk }) return true
+            }
+            return false
+        }
+
+        /**
+         * Настоящие слова, которые выглядят как повтор слога, но являются
+         * репликами или словами текста: слова с удвоением и смех.
+         */
+        private val REDUPLICATED_WORDS = setOf(
+            // слова с удвоением
+            "мама", "папа", "баба", "дядя", "тётя", "тетя", "деда", "нана",
+            "вава", "пампа", "батя", "дядю", "тятя", "нюня", "мам",
+            // смех и междометия
+            "хаха", "хихи", "хехе", "ого", "ага", "угу", "ухты", "ахах",
+            "уахах", "ха", "хм", "эх", "ах", "ой", "уй", "эй",
+            // реплики-удвоения с дефисом («ти-ти», «го-го»)
+            "тити", "гого", "нуну", "нене", "тото", "вотвот", "тактак",
+            "каккак", "не-не", "ии", "уу", "дада",
+        )
 
         /**
          * Служебная навигация манга-ридера, которую авточтение не должно

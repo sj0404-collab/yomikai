@@ -17,6 +17,32 @@ import org.junit.jupiter.api.Assertions.assertTrue
 class AutoReadEngineCleanTest {
 
     @Test
+    fun `ocr babble from textless artwork is dropped`() {
+        // Страница-иллюстрация без текста: OCR описывает кладку повтором слога.
+        assertFalse(AutoReadEngine.isMeaningful("БУБУ", "ru"))
+        assertFalse(AutoReadEngine.isMeaningful("БЫБЫ", "ru"))
+        assertFalse(AutoReadEngine.isMeaningful("ТУТУТУ", "ru"))
+        assertFalse(AutoReadEngine.isMeaningful("БУ БУБУ БЫБЫ", "ru"))
+    }
+
+    @Test
+    fun `real reduplicated words are kept`() {
+        // Удвоенные слова и смех — настоящие реплики, терять их нельзя.
+        assertTrue(AutoReadEngine.isMeaningful("мама", "ru"))
+        assertTrue(AutoReadEngine.isMeaningful("Хаха", "ru"))
+        assertTrue(AutoReadEngine.isMeaningful("ого", "ru"))
+    }
+
+    @Test
+    fun `короткие живые реплики не путаются с мусором`() {
+        // «Нет, да» — короткая реплика из коротких слов. Мусор от неё
+        // отличается бедностью алфавита, поэтому проверка обязана её пропустить.
+        assertTrue(AutoReadEngine.isMeaningful("Нет, да", "ru"))
+        assertTrue(AutoReadEngine.isMeaningful("Я их вижу", "ru"))
+        assertTrue(AutoReadEngine.isMeaningful("Ты кто", "ru"))
+    }
+
+    @Test
     fun `russian single-letter words are meaningful`() {
         assertTrue(AutoReadEngine.isMeaningful("Я", "ru"))
         assertTrue(AutoReadEngine.isMeaningful("и", "ru"))
