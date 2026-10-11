@@ -128,6 +128,12 @@ data class SerializableOcrRegion(
     val right: Float,
     val bottom: Float,
     val orientation: String = "horizontal",
+    /**
+     * Номер панели манги (-1 — панель не определили). У старых записей JSON
+     * этого поля просто нет, и там остаётся -1: нумерация идёт сплошной, как
+     * раньше.
+     */
+    val panelIndex: Int = -1,
 ) {
     fun toOcrRegion(): OcrRegion = OcrRegion(
         order = order,
@@ -137,6 +143,7 @@ data class SerializableOcrRegion(
             "vertical" -> mihon.domain.ocr.model.OcrTextOrientation.Vertical
             else -> mihon.domain.ocr.model.OcrTextOrientation.Horizontal
         },
+        panelIndex = panelIndex,
     )
 
     companion object {
@@ -151,6 +158,7 @@ data class SerializableOcrRegion(
                 mihon.domain.ocr.model.OcrTextOrientation.Vertical -> "vertical"
                 else -> "horizontal"
             },
+            panelIndex = r.panelIndex,
         )
     }
 }

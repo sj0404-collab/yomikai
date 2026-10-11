@@ -232,6 +232,71 @@ class AutoReadEngineOrderTest {
         assertEquals(0f, AutoReadEngine.cyrillicShare("...12345"))
     }
 
+    @Test
+    fun `волна читается по направлению, а не как гора сверху вниз`() {
+        // Слева посередине, потом верх по центру, потом справа посередине —
+        // «волна». Раньше порядок по верхнему краю давал: верхний, потом
+        // левый, потом правый (гора). Вертикали перекрываются, значит это одна
+        // полоса и порядок задаёт направление чтения.
+        val boxes = listOf(
+            "левый" to box(0.02f, 0.30f, 0.28f, 0.42f),
+            "верх" to box(0.36f, 0.05f, 0.64f, 0.40f),
+            "правый" to box(0.72f, 0.30f, 0.98f, 0.42f),
+        )
+        val ordered = orderByPanels(boxes, listOf(box(0f, 0f, 1f, 1f)), tachiyomi.core.common.util.system.ReadingDirection.RTL)
+        assertEquals(listOf("правый", "верх", "левый"), ordered)
+    }
+
+    @Test
+    fun `волна ltr читается слева направо`() {
+        val boxes = listOf(
+            "правый" to box(0.72f, 0.30f, 0.98f, 0.42f),
+            "верх" to box(0.36f, 0.05f, 0.64f, 0.40f),
+            "левый" to box(0.02f, 0.30f, 0.28f, 0.42f),
+        )
+        val ordered = orderByPanels(boxes, listOf(box(0f, 0f, 1f, 1f)), tachiyomi.core.common.util.system.ReadingDirection.LTR)
+        assertEquals(listOf("левый", "верх", "правый"), ordered)
+    }
+
+    @Test
+    fun `настоящий шаг вниз остаётся следующей полосой`() {
+        // Полосы не перекрываются по вертикали — это не волна, а обычные ряды:
+        // верхний читается раньше нижнего даже при RTL.
+        val boxes = listOf(
+            "низ" to box(0.10f, 0.60f, 0.50f, 0.72f),
+            "верх" to box(0.10f, 0.05f, 0.50f, 0.17f),
+        )
+        val ordered = orderByPanels(boxes, listOf(box(0f, 0f, 1f, 1f)), tachiyomi.core.common.util.system.ReadingDirection.RTL)
+        assertEquals(listOf("верх", "низ"), ordered)
+    }
+
+    @Test
+    fun `текст между панелями попадает в панель с наибольшим перекрытием`() {
+        // Рамка на стыке двух панелей: ни в одной её центр не лежит, берём
+        // панель, с которой перекрытие больше, — реплика не теряется.
+        val panels = listOf(
+            box(0.52f, 0.05f, 0.98f, 0.45f),
+            box(0.02f, 0.05f, 0.48f, 0.45f),
+        )
+        val boxes = listOf(
+            "реплика правой" to box(0.55f, 0.08f, 0.90f, 0.20f),
+            "на стыке" to box(0.40f, 0.25f, 0.60f, 0.37f),
+            "реплика левой" to box(0.05f, 0.08f, 0.40f, 0.20f),
+        )
+        val withPanel = AutoReadEngine.orderBoxesByPanelsWithIndex(
+            boxes = boxes.map { it.second },
+            panels = panels,
+            direction = tachiyomi.core.common.util.system.ReadingDirection.RTL,
+        )
+        val indexByBox = boxes.associateBy { it.second }
+        assertEquals(
+            listOf("реплика правой", "на стыке", "реплика левой"),
+            withPanel.map { indexByBox.getValue(it.second).first },
+        )
+        // Номера панелей: 0 — правая, 1 — левая, стык лёг в правую.
+        assertEquals(listOf(0, 0, 1), withPanel.map { it.first })
+    }
+
     private fun box(l: Float, t: Float, r: Float, b: Float) = OcrBoundingBox(l, t, r, b)
 
     /** Прогоняет рамки через панельную сортировку и возвращает их подписи. */

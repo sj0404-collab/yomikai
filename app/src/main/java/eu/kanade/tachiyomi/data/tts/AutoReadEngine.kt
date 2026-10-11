@@ -75,7 +75,17 @@ class AutoReadEngine(
     private val bubbleOcr: mihon.domain.ocr.interactor.OcrProcessor by lazy { Injekt.get() }
 
     /** Строка кадра: текст + нормализованный box (для подсветки/порядка). */
-    data class Line(val text: String, val boundingBox: OcrBoundingBox)
+    data class Line(
+        val text: String,
+        val boundingBox: OcrBoundingBox,
+        /**
+         * Порядковый номер панели манги, в которой найдена реплика
+         * (-1 — панель не определили). Нужен, чтобы нумерация на странице
+         * начиналась заново с каждой панели: 1, 2, 3 в первой, снова 1, 2, 3
+         * во второй.
+         */
+        val panelIndex: Int = -1,
+    )
 
     data class SpokenRegion(
         val text: String,
@@ -1088,6 +1098,7 @@ class AutoReadEngine(
                             text = line.text,
                             boundingBox = line.boundingBox,
                             textOrientation = OcrTextOrientation.Horizontal,
+                            panelIndex = line.panelIndex,
                         )
                     }
                     OcrScreenshotBuffer.add(
@@ -1697,6 +1708,7 @@ class AutoReadEngine(
                     text = line.text,
                     boundingBox = line.boundingBox,
                     textOrientation = OcrTextOrientation.Horizontal,
+                    panelIndex = line.panelIndex,
                 )
             },
             // Без OCR результата виноват выбранный движок — он и остаётся
@@ -2284,10 +2296,11 @@ class AutoReadEngine(
         // что параллельность не перемешивает речь.
         val bubbleSemaphore = Semaphore(BUBBLE_OCR_PARALLELISM)
         return coroutineScope {
-            orderedBubbles.mapIndexed { index, r ->
+            orderedBubbles.mapIndexed { index, (panelIndex, rect) ->
                 async {
                     bubbleSemaphore.withPermit {
-                        ocrBubbleRect(bitmap, chapterId, pageIndex, r, index, direction)
+                        ocrBubbleRect(bitmap, chapterId, pageIndex, rect, index, direction)
+                            .map { it.copy(panelIndex = panelIndex) }
                     }
                 }
             }.flatMap { it.await() }
@@ -2296,21 +2309,22 @@ class AutoReadEngine(
 
     /**
      * Раскладывает облачки детектора по панелям и возвращает их в пиксельных
-     * рамках обратно: панели уже в порядке чтения, внутри панели — рядами.
+     * рамках вместе с номером панели: панели уже в порядке чтения, внутри
+     * панели — полосами. Номер панели нужен для нумерации реплик на странице.
      */
     private fun orderBubblesByPanels(
         rects: List<android.graphics.Rect>,
         panels: List<OcrBoundingBox>,
         direction: tachiyomi.core.common.util.system.ReadingDirection,
         bitmap: Bitmap,
-    ): List<android.graphics.Rect> {
-        if (rects.size < 2 || panels.isEmpty()) return rects
-        return orderBoxesByPanels(
+    ): List<Pair<Int, android.graphics.Rect>> {
+        if (rects.size < 2 || panels.isEmpty()) return rects.map { -1 to it }
+        return orderBoxesByPanelsWithIndex(
             boxes = rects.map { normalizeBox(it.left, it.top, it.right, it.bottom, bitmap) },
             panels = panels,
             direction = direction,
-        ).map { box ->
-            android.graphics.Rect(
+        ).map { (panelIndex, box) ->
+            panelIndex to android.graphics.Rect(
                 (box.left * bitmap.width).toInt(),
                 (box.top * bitmap.height).toInt(),
                 (box.right * bitmap.width).toInt(),
@@ -3267,44 +3281,22 @@ class AutoReadEngine(
         }
 
         /**
-         * Строки одного блока читаются рядами сверху вниз. Реплики с почти
-         * одинаковым верхом (в пределах [ROW_TOLERANCE_RATIO] от медианной
-         * высоты) считаются одним рядом и внутри ряда упорядочиваются по
-         * направлению: RTL — справа налево, иначе слева направо.
-         *
-         * Так не ломается «лесенка»: едва заметный вертикальный сдвиг соседних
-         * реплик не превращает ряд в две «стороны», а настоящий шаг вниз
-         * (больше допуска) читается как следующий ряд.
+         * Строки одного блока читаются полосами сверху вниз. Полосы собираются
+         * по ВЕРТИКАЛЬНОМУ ПЕРЕКРЫТИЮ ([verticalBands]), а не по близости
+         * верхов, поэтому «волна» (слева посередине → верх → справа посередине)
+         * читается по направлению, а не как «гора» сверху вниз. Внутри полосы
+         * порядок задаёт направление: RTL — справа налево, иначе слева направо.
          */
         private fun rowMajorOrder(
             lines: List<Line>,
             direction: tachiyomi.core.common.util.system.ReadingDirection,
         ): List<Line> {
             if (lines.size <= 1) return lines
-            val heights = lines
-                .map { it.boundingBox.bottom - it.boundingBox.top }
-                .filter { it > 0f }
-                .sorted()
-            val medianHeight = heights.getOrNull(heights.size / 2) ?: 0f
-            val tolerance = (medianHeight * ROW_TOLERANCE_RATIO)
-                .coerceIn(MIN_ROW_TOLERANCE, MAX_ROW_TOLERANCE)
-            val rows = mutableListOf<MutableList<Line>>()
-            var rowTop = 0f
-            for (line in lines.sortedBy { it.boundingBox.top }) {
-                val top = line.boundingBox.top
-                val current = rows.lastOrNull()
-                if (current == null || top - rowTop > tolerance) {
-                    rows += mutableListOf(line)
-                    rowTop = top
-                } else {
-                    current += line
-                }
-            }
-            return rows.flatMap { row ->
+            return verticalBands(lines) { it.boundingBox }.flatMap { band ->
                 when (direction) {
                     tachiyomi.core.common.util.system.ReadingDirection.RTL ->
-                        row.sortedByDescending { it.boundingBox.left + it.boundingBox.right }
-                    else -> row.sortedBy { it.boundingBox.left + it.boundingBox.right }
+                        band.sortedByDescending { it.boundingBox.left + it.boundingBox.right }
+                    else -> band.sortedBy { it.boundingBox.left + it.boundingBox.right }
                 }
             }
         }
@@ -3322,42 +3314,67 @@ class AutoReadEngine(
             boxes: List<OcrBoundingBox>,
             panels: List<OcrBoundingBox>,
             direction: tachiyomi.core.common.util.system.ReadingDirection,
-        ): List<OcrBoundingBox> {
+        ): List<OcrBoundingBox> = orderBoxesByPanelsWithIndex(boxes, panels, direction).map { it.second }
+
+        /**
+         * Как [orderBoxesByPanels], но вместе с рамкой отдаёт и номер панели,
+         * в которой она оказалась (-1 — панель не нашлась). Номер панели нужен
+         * для нумерации реплик на странице: в каждой панели счёт начинается
+         * заново с 1.
+         */
+        internal fun orderBoxesByPanelsWithIndex(
+            boxes: List<OcrBoundingBox>,
+            panels: List<OcrBoundingBox>,
+            direction: tachiyomi.core.common.util.system.ReadingDirection,
+        ): List<Pair<Int, OcrBoundingBox>> {
             // Одна панель на весь лист — обычное дело, и тогда порядок внутри
             // неё всё равно нужен: пропускать сортировку нельзя.
-            if (boxes.size < 2 || panels.isEmpty()) return boxes
-            val buckets = List(panels.size) { mutableListOf<OcrBoundingBox>() }
-            val orphans = mutableListOf<OcrBoundingBox>()
-            for (box in boxes) {
-                val centerX = (box.left + box.right) / 2f
-                val centerY = (box.top + box.bottom) / 2f
-                // Центр рамки внутри панели надёжнее перекрытия: облачко может
-                // вылезать за край панели, но его центр почти всегда внутри.
-                var target = panels.indexOfFirst { panel ->
-                    centerX >= panel.left && centerX <= panel.right &&
-                        centerY >= panel.top && centerY <= panel.bottom
-                }
-                if (target < 0) {
-                    // Центр мимо всех панелей (текст в поле или между панелями)
-                    // — берём панель с наибольшим перекрытием.
-                    var bestOverlap = 0f
-                    var bestIndex = -1
-                    panels.forEachIndexed { index, panel ->
-                        val overlap = overlapArea(panel, box)
-                        if (overlap > bestOverlap) {
-                            bestOverlap = overlap
-                            bestIndex = index
-                        }
-                    }
-                    target = bestIndex
-                }
-                if (target >= 0) buckets[target] += box else orphans += box
+            if (boxes.size < 2 || panels.isEmpty()) return boxes.map { -1 to it }
+            val panelIndexOfBox = boxes.map { box -> panelIndexFor(box, panels) }
+            val buckets = List(panels.size) { mutableListOf<Int>() }
+            val orphans = mutableListOf<Int>()
+            panelIndexOfBox.forEachIndexed { position, panelIndex ->
+                if (panelIndex >= 0) buckets[panelIndex] += position else orphans += position
             }
-            return buckets.flatMap { orderBoxesWithinPanel(it, direction) } +
-                orderBoxesWithinPanel(orphans, direction)
+            val ordered = mutableListOf<Pair<Int, OcrBoundingBox>>()
+            buckets.forEachIndexed { panelIndex, positions ->
+                ordered += orderBoxesWithinPanel(positions.map { boxes[it] }, direction)
+                    .map { panelIndex to it }
+            }
+            ordered += orderBoxesWithinPanel(orphans.map { boxes[it] }, direction).map { -1 to it }
+            return ordered
         }
 
-        /** Порядок рамок ВНУТРИ одной панели: рядами по направлению чтения. */
+        /**
+         * Панель рамки: та, в чьей рамке лежит ЦЕНТР реплики. Центр надёжнее
+         * перекрытия — облачко может вылезать за край панели. Если центр мимо
+         * всех панелей (текст в поле или в стыке между панелями) — берём панель
+         * с наибольшим перекрытием, чтобы такой текст всё же попал в чтение.
+         */
+        private fun panelIndexFor(
+            box: OcrBoundingBox,
+            panels: List<OcrBoundingBox>,
+        ): Int {
+            val centerX = (box.left + box.right) / 2f
+            val centerY = (box.top + box.bottom) / 2f
+            val containing = panels.indexOfFirst { panel ->
+                centerX >= panel.left && centerX <= panel.right &&
+                    centerY >= panel.top && centerY <= panel.bottom
+            }
+            if (containing >= 0) return containing
+            var bestOverlap = 0f
+            var bestIndex = -1
+            panels.forEachIndexed { index, panel ->
+                val overlap = overlapArea(panel, box)
+                if (overlap > bestOverlap) {
+                    bestOverlap = overlap
+                    bestIndex = index
+                }
+            }
+            return bestIndex
+        }
+
+        /** Порядок рамок ВНУТРИ одной панели: полосами по направлению чтения. */
         private fun orderBoxesWithinPanel(
             boxes: List<OcrBoundingBox>,
             direction: tachiyomi.core.common.util.system.ReadingDirection,
@@ -3369,29 +3386,63 @@ class AutoReadEngine(
                     compareBy<OcrBoundingBox> { it.top }.thenBy { it.left },
                 )
             }
-            val heights = boxes
-                .map { it.bottom - it.top }
-                .filter { it > 0f }
-                .sorted()
-            val tolerance = ((heights.getOrNull(heights.size / 2) ?: 0f) * ROW_TOLERANCE_RATIO)
-                .coerceIn(MIN_ROW_TOLERANCE, MAX_ROW_TOLERANCE)
-            val rows = mutableListOf<MutableList<OcrBoundingBox>>()
-            var rowTop = 0f
-            for (box in boxes.sortedBy { it.top }) {
-                if (rows.isEmpty() || box.top - rowTop > tolerance) {
-                    rows += mutableListOf(box)
-                    rowTop = box.top
-                } else {
-                    rows.last() += box
-                }
-            }
-            return rows.flatMap { row ->
+            return verticalBands(boxes) { it }.flatMap { band ->
                 when (direction) {
                     tachiyomi.core.common.util.system.ReadingDirection.RTL ->
-                        row.sortedByDescending { it.left + it.right }
-                    else -> row.sortedBy { it.left + it.right }
+                        band.sortedByDescending { it.left + it.right }
+                    else -> band.sortedBy { it.left + it.right }
                 }
             }
+        }
+
+        /**
+         * Раскладывает рамки на ПОПЕРЕЧНЫЕ ПОЛОСЫ по вертикальному перекрытию,
+         * а не по разнице верхних краёв.
+         *
+         * Так читается «волна»: реплика слева посередине, потом верхняя по
+         * центру, потом справа посередине. Их вертикали перекрываются — значит
+         * это одна полоса, и порядок внутри неё задаёт направление чтения
+         * (справа налево или слева направо). Если мерить по верхнему краю,
+         * такая раскладка читается как «гора»: верхний бок читается первым,
+         * а потом «скатывается» вниз — и реплики вразброс.
+         *
+         * Настоящий шаг вниз (рамки не перекрываются) даёт следующую полосу,
+         * поэтому обычная лесенка по-прежнему читается сверху вниз.
+         */
+        private fun <T> verticalBands(
+            items: List<T>,
+            box: (T) -> OcrBoundingBox,
+        ): List<List<T>> {
+            if (items.size < 2) return items.map { listOf(it) }
+            val bands = mutableListOf<MutableList<T>>()
+            var bandTop = 0f
+            var bandBottom = 0f
+            for (item in items.sortedBy { box(it).top }) {
+                val current = bands.lastOrNull()
+                val bounds = box(item)
+                if (current == null || !overlapsBand(bounds, bandTop, bandBottom)) {
+                    bands += mutableListOf(item)
+                    bandTop = bounds.top
+                    bandBottom = bounds.bottom
+                } else {
+                    current += item
+                    bandTop = minOf(bandTop, bounds.top)
+                    bandBottom = maxOf(bandBottom, bounds.bottom)
+                }
+            }
+            return bands
+        }
+
+        /** Перекрытие рамки с полосой хотя бы на [BAND_OVERLAP_SHARE] высоты. */
+        private fun overlapsBand(
+            bounds: OcrBoundingBox,
+            bandTop: Float,
+            bandBottom: Float,
+        ): Boolean {
+            val height = bounds.bottom - bounds.top
+            if (height <= 0f) return false
+            val overlap = minOf(bandBottom, bounds.bottom) - maxOf(bandTop, bounds.top)
+            return overlap >= BAND_OVERLAP_SHARE * height
         }
 
         private fun overlapArea(a: OcrBoundingBox, b: OcrBoundingBox): Float {
@@ -3548,13 +3599,12 @@ class AutoReadEngine(
         }
 
         /**
-         * Допуск объединения реплик в один ряд: доля медианной высоты строки.
-         * Реплики, чей верх различается меньше допуска, считаются одним рядом
-         * и читаются по направлению; выше допуска — уже следующий ряд.
+         * Доля высоты реплики, которую она должна перекрывать с полосой, чтобы
+         * попасть в неё. Задаёт, что считается «волной»: реплика на 40% выше
+         * соседней — ещё та же полоса и читается по направлению; ниже — уже
+         * следующая полоса сверху вниз.
          */
-        private const val ROW_TOLERANCE_RATIO = 0.6f
-        private const val MIN_ROW_TOLERANCE = 0.006f
-        private const val MAX_ROW_TOLERANCE = 0.06f
+        private const val BAND_OVERLAP_SHARE = 0.4f
 
         private const val COLUMN_OVERLAP_RATIO = 0.3f
         private const val COLUMN_GAP = 0.04f

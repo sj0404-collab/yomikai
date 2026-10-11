@@ -40,6 +40,12 @@ data class OcrRegion(
     val text: String,
     val boundingBox: OcrBoundingBox,
     val textOrientation: OcrTextOrientation,
+    /**
+     * Порядковый номер панели манги, в которой найден регион (-1 — панель не
+     * определили). Нужен для нумерации на странице: внутри каждой панели счёт
+     * начинается заново с 1, как в нумерации панелей комикса.
+     */
+    val panelIndex: Int = -1,
 ) {
     /**
      * Регион покрывает всю страницу целиком.
