@@ -2247,14 +2247,37 @@ class AutoReadEngine(
             .take(MAX_BUBBLES_PER_FRAME)
         if (bubbles.isEmpty()) return emptyList()
 
+        // Порядок чтения — ПО ПАНЕЛЯМ. Детектор отдаёт облачки в своём
+        // техническом порядке, и соседние панели манги оказывались перемешаны:
+        // реплика из нижней панели читалась раньше реплики из верхней. Панели
+        // из det.panels уже отсортированы ReadingOrderSorter'ом в порядок
+        // чтения манги, поэтому рамки раскладываются по ним, а внутри панели
+        // сортируются рядами (см. orderBoxesByPanels).
+        val panelBoxes = det.panels.map { panel ->
+            val rect = panel.rect
+            normalizeBox(rect.left, rect.top, rect.right, rect.bottom, bitmap)
+        }
+        val orderedBubbles = orderBoxesByPanels(
+            boxes = bubbles.map { normalizeBox(it.left, it.top, it.right, it.bottom, bitmap) },
+            panels = panelBoxes,
+            direction = direction,
+        ).map { box ->
+            android.graphics.Rect(
+                (box.left * bitmap.width).toInt(),
+                (box.top * bitmap.height).toInt(),
+                (box.right * bitmap.width).toInt(),
+                (box.bottom * bitmap.height).toInt(),
+            )
+        }
+
         // Параллель по рамкам с лимитом [BUBBLE_OCR_PARALLELISM]: иначе при
         // онлайн-пресете авточтение ползёт (каждый баблон = сетевой раунд-трип
         // + полный OCR-конвейер на него). async по всем сразу + Semaphore,
-        // сборка строго в геометрическом порядке детектора — речевой порядок
-        // не меняется.
+        // сборка строго в порядке [orderedBubbles] — панель за панелью, так
+        // что параллельность не перемешивает речь.
         val bubbleSemaphore = Semaphore(BUBBLE_OCR_PARALLELISM)
         return coroutineScope {
-            bubbles.mapIndexed { index, r ->
+            orderedBubbles.mapIndexed { index, r ->
                 async {
                     bubbleSemaphore.withPermit {
                         ocrBubbleRect(bitmap, chapterId, pageIndex, r, index, direction)
@@ -3235,6 +3258,95 @@ class AutoReadEngine(
                     else -> row.sortedBy { it.boundingBox.left + it.boundingBox.right }
                 }
             }
+        }
+
+        /**
+         * Раскладывает рамки текста ПО ПАНЕЛЯМ манги.
+         *
+         * Панели приходят из детектора уже в порядке чтения (для RTL правая
+         * верхняя первой), поэтому реплики читаются панель за панелью, а
+         * внутри панели — по её собственной геометрии. Без этого баблоны шли в
+         * том порядке, который вернул детектор, и реплики из соседних панелей
+         * перемешивались между собой.
+         */
+        internal fun orderBoxesByPanels(
+            boxes: List<OcrBoundingBox>,
+            panels: List<OcrBoundingBox>,
+            direction: tachiyomi.core.common.util.system.ReadingDirection,
+        ): List<OcrBoundingBox> {
+            if (boxes.size < 2 || panels.size < 2) return boxes
+            val buckets = List(panels.size) { mutableListOf<OcrBoundingBox>() }
+            val orphans = mutableListOf<OcrBoundingBox>()
+            for (box in boxes) {
+                val centerX = (box.left + box.right) / 2f
+                val centerY = (box.top + box.bottom) / 2f
+                // Центр рамки внутри панели надёжнее перекрытия: облачко может
+                // вылезать за край панели, но его центр почти всегда внутри.
+                var target = panels.indexOfFirst { panel ->
+                    centerX >= panel.left && centerX <= panel.right &&
+                        centerY >= panel.top && centerY <= panel.bottom
+                }
+                if (target < 0) {
+                    // Центр мимо всех панелей (текст в поле или между панелями)
+                    // — берём панель с наибольшим перекрытием.
+                    var bestOverlap = 0f
+                    var bestIndex = -1
+                    panels.forEachIndexed { index, panel ->
+                        val overlap = overlapArea(panel, box)
+                        if (overlap > bestOverlap) {
+                            bestOverlap = overlap
+                            bestIndex = index
+                        }
+                    }
+                    target = bestIndex
+                }
+                if (target >= 0) buckets[target] += box else orphans += box
+            }
+            return buckets.flatMap { orderBoxesWithinPanel(it, direction) } +
+                orderBoxesWithinPanel(orphans, direction)
+        }
+
+        /** Порядок рамок ВНУТРИ одной панели: рядами по направлению чтения. */
+        private fun orderBoxesWithinPanel(
+            boxes: List<OcrBoundingBox>,
+            direction: tachiyomi.core.common.util.system.ReadingDirection,
+        ): List<OcrBoundingBox> {
+            if (boxes.size < 2) return boxes
+            // Вертикальная лента: строго сверху вниз, при равных Y — по X.
+            if (direction == tachiyomi.core.common.util.system.ReadingDirection.VERTICAL) {
+                return boxes.sortedWith(
+                    compareBy<OcrBoundingBox> { it.top }.thenBy { it.left },
+                )
+            }
+            val heights = boxes
+                .map { it.bottom - it.top }
+                .filter { it > 0f }
+                .sorted()
+            val tolerance = ((heights.getOrNull(heights.size / 2) ?: 0f) * ROW_TOLERANCE_RATIO)
+                .coerceIn(MIN_ROW_TOLERANCE, MAX_ROW_TOLERANCE)
+            val rows = mutableListOf<MutableList<OcrBoundingBox>>()
+            var rowTop = 0f
+            for (box in boxes.sortedBy { it.top }) {
+                if (rows.isEmpty() || box.top - rowTop > tolerance) {
+                    rows += mutableListOf(box)
+                    rowTop = box.top
+                } else {
+                    rows.last() += box
+                }
+            }
+            return rows.flatMap { row ->
+                when (direction) {
+                    tachiyomi.core.common.util.system.ReadingDirection.RTL ->
+                        row.sortedByDescending { it.left + it.right }
+                    else -> row.sortedBy { it.left + it.right }
+                }
+            }
+        }
+
+        private fun overlapArea(a: OcrBoundingBox, b: OcrBoundingBox): Float {
+            val width = minOf(a.right, b.right) - maxOf(a.left, b.left)
+            val height = minOf(a.bottom, b.bottom) - maxOf(a.top, b.top)
+            return if (width > 0f && height > 0f) width * height else 0f
         }
 
         /**

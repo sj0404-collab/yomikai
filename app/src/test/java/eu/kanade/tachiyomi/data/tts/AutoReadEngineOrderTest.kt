@@ -94,4 +94,59 @@ class AutoReadEngineOrderTest {
         )
         assertEquals(listOf("A", "B", "C", "D"), texts("rtl", lines))
     }
+
+    @Test
+    fun `панели манги читаются в порядке панелей, внутри панели — рядами`() {
+        // Панели уже пришли в порядке чтения: правая, потом левая. Реплика из
+        // левой панели стоит ВЫШЕ реплики из правой — но порядок всё равно
+        // «правая панель целиком, потом левая».
+        val panels = listOf(
+            box(0.52f, 0.05f, 0.98f, 0.45f),
+            box(0.02f, 0.05f, 0.48f, 0.45f),
+        )
+        val boxes = listOf(
+            "низ правой" to box(0.55f, 0.30f, 0.90f, 0.42f),
+            "верх правой" to box(0.55f, 0.08f, 0.90f, 0.20f),
+            "верх левой" to box(0.05f, 0.08f, 0.40f, 0.20f),
+        )
+        val ordered = orderByPanels(boxes, panels, tachiyomi.core.common.util.system.ReadingDirection.RTL)
+        assertEquals(listOf("верх правой", "низ правой", "верх левой"), ordered)
+    }
+
+    @Test
+    fun `реплика без панели уходит в конец`() {
+        val panels = listOf(
+            box(0.52f, 0.05f, 0.98f, 0.45f),
+            box(0.02f, 0.05f, 0.48f, 0.45f),
+        )
+        val boxes = listOf(
+            "в панели" to box(0.55f, 0.08f, 0.90f, 0.20f),
+            "в поле" to box(0.02f, 0.80f, 0.40f, 0.92f),
+        )
+        val ordered = orderByPanels(boxes, panels, tachiyomi.core.common.util.system.ReadingDirection.RTL)
+        assertEquals(listOf("в панели", "в поле"), ordered)
+    }
+
+    @Test
+    fun `без панелей порядок не меняется`() {
+        val boxes = listOf(
+            "A" to box(0.10f, 0.10f, 0.40f, 0.20f),
+            "B" to box(0.55f, 0.08f, 0.90f, 0.18f),
+        )
+        val ordered = orderByPanels(boxes, emptyList(), tachiyomi.core.common.util.system.ReadingDirection.RTL)
+        assertEquals(listOf("A", "B"), ordered)
+    }
+
+    private fun box(l: Float, t: Float, r: Float, b: Float) = OcrBoundingBox(l, t, r, b)
+
+    /** Прогоняет рамки через панельную сортировку и возвращает их подписи. */
+    private fun orderByPanels(
+        boxes: List<Pair<String, OcrBoundingBox>>,
+        panels: List<OcrBoundingBox>,
+        direction: tachiyomi.core.common.util.system.ReadingDirection,
+    ): List<String> {
+        val result = AutoReadEngine.orderBoxesByPanels(boxes.map { it.second }, panels, direction)
+        val names = boxes.associateBy { it.second }
+        return result.map { names.getValue(it).first }
+    }
 }
