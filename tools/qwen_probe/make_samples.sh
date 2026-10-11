@@ -8,7 +8,7 @@ EMO='Привет! Я — локальный голос студии, и это 
 DIC='Ба — барабан, па — парус. Брат Боря бил в барабан, а парус плыл по ветру. Ва — волна, фа — фонарь. Галка гоготала гулко, курица кудахтала кутерьмой. Жа — жук, ша — шарф. Жук жужжал жадно, шарф шуршал шёлком. За — зонт, са — сова. Да — дуб, та — туча. Сова свистела сонно в соснах. Мама мыла Машу мылом, Юрий юлил у юрты. Цапля цыкнула, чайка чиркнула крылом. Рома радостно раскричался радуге. Всё слышно? Ни одного тихого ша-ша-ша — только чистые, звонкие слова!'
 
 echo "=== EMOTSII (serena, inline [emotion]) ==="
-time ./qwen_tts -d "$M" --int8 -s serena -l Russian --text "$EMO" -o out/emotsii_ru_serena.wav --compose -j 4
+time ./qwen_tts -d "$M" --int8 -s serena -l Russian --text "$EMO" -o out/emotsii_ru_serena.wav -j 4
 
 echo "=== DIKCIYA (ryan) ==="
 time ./qwen_tts -d "$M" --int8 -s ryan -l Russian --text "$DIC" -o out/dikciya_ru_ryan.wav -j 4
