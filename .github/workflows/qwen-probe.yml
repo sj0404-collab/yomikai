@@ -1,0 +1,26 @@
+name: Qwen3-TTS heavy probe (RU, CPU)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  qwen-probe:
+    runs-on: windows-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Deps (torch CPU + qwen-tts)
+        run: |
+          pip install torch==2.11.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install -U qwen-tts
+      - name: Generate RU samples
+        run: python tools/qwen_probe/gen.py
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwen-tts-probe
+          path: out/*.wav
+          retention-days: 7
