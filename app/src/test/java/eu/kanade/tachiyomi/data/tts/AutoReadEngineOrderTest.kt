@@ -137,6 +137,35 @@ class AutoReadEngineOrderTest {
         assertEquals(listOf("A", "B"), ordered)
     }
 
+    @Test
+    fun `ltr панели идут слева направо`() {
+        // Западный комикс: детектор вернул панели в порядке чтения — левая,
+        // потом правая. Реплики читаются по панелям в том же порядке.
+        val panels = listOf(
+            box(0.02f, 0.05f, 0.48f, 0.45f),
+            box(0.52f, 0.05f, 0.98f, 0.45f),
+        )
+        val boxes = listOf(
+            "правая" to box(0.55f, 0.08f, 0.90f, 0.20f),
+            "левая" to box(0.05f, 0.08f, 0.40f, 0.20f),
+        )
+        val ordered = orderByPanels(boxes, panels, tachiyomi.core.common.util.system.ReadingDirection.LTR)
+        assertEquals(listOf("левая", "правая"), ordered)
+    }
+
+    @Test
+    fun `ltr внутри одной панели — рядами слева направо`() {
+        // Панель на весь лист: порядок внутри неё всё равно применяется.
+        val panels = listOf(box(0.02f, 0.02f, 0.98f, 0.45f))
+        val boxes = listOf(
+            "правый верх" to box(0.55f, 0.08f, 0.90f, 0.20f),
+            "левый верх" to box(0.08f, 0.06f, 0.40f, 0.18f),
+            "левый низ" to box(0.08f, 0.28f, 0.40f, 0.40f),
+        )
+        val ordered = orderByPanels(boxes, panels, tachiyomi.core.common.util.system.ReadingDirection.LTR)
+        assertEquals(listOf("левый верх", "правый верх", "левый низ"), ordered)
+    }
+
     private fun box(l: Float, t: Float, r: Float, b: Float) = OcrBoundingBox(l, t, r, b)
 
     /** Прогоняет рамки через панельную сортировку и возвращает их подписи. */

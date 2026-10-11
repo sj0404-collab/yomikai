@@ -3274,7 +3274,9 @@ class AutoReadEngine(
             panels: List<OcrBoundingBox>,
             direction: tachiyomi.core.common.util.system.ReadingDirection,
         ): List<OcrBoundingBox> {
-            if (boxes.size < 2 || panels.size < 2) return boxes
+            // Одна панель на весь лист — обычное дело, и тогда порядок внутри
+            // неё всё равно нужен: пропускать сортировку нельзя.
+            if (boxes.size < 2 || panels.isEmpty()) return boxes
             val buckets = List(panels.size) { mutableListOf<OcrBoundingBox>() }
             val orphans = mutableListOf<OcrBoundingBox>()
             for (box in boxes) {
