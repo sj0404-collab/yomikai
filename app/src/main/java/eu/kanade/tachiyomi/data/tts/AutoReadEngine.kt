@@ -431,6 +431,15 @@ class AutoReadEngine(
     private var ocrFailedStreak = 0
 
     /**
+     * Сколько последних кадров подряд оказалось без читаемого текста.
+     *
+     * Пока счётчик не нулевой, тяжёлые проходы (добор облачков, скриншот в
+     * буфер) пропускаются: на развороте-иллюстрации они тратят время впустую.
+     * Читаемая реплика обнуляет счётчик — скан оживает сам.
+     */
+    private var emptyFrameStreak = 0
+
+    /**
      * Пол говорящего, который звучал последним.
      *
      * Нужен, чтобы отличать «диалог» от «нового персонажа»: в сцене без
@@ -998,12 +1007,24 @@ class AutoReadEngine(
                         }
                     }
                 }
+                // Пустые страницы пролистываем дёшево: на развороте без реплик
+                // добор облачков — это второй полный проход OCR впустую, а
+                // скриншот пустой страницы только засоряет буфер. Как только на
+                // странице снова есть буквы, streak обнуляется и все проходы
+                // включаются обратно (см. skipEmptyPageWork).
+                val skipEmptyWork = skipEmptyPageWork(
+                    enabled = prefs.skipEmptyPages().get(),
+                    previousFrameWasEmpty = emptyFrameStreak > 0,
+                    hasAnyLetters = lines.any { it.text.any(Char::isLetter) },
+                )
+
                 // v1.9.92: онлайн-движок вернул ПОДОЗРИТЕЛЬНО мало строк (например,
                 // только ватермарку «Читай раньше всех на Remanga», а настоящую
                 // крупную реплику модель не увидела) — дочитываем кадр локальным
                 // разбором баллонов (YOLO + Cyrillic OCR) и доклеиваем результат.
                 // Так реальный текст манхвы не пропадает, даже если AI его пропустил.
                 if (result.ocrModel in ONLINE_MODELS &&
+                    !skipEmptyWork &&
                     lines.count { it.text.count(Char::isLetter) >= 3 } < SUPPLEMENT_BUBBLES_MIN &&
                     !ocrBitmap.isRecycled
                 ) {
@@ -1020,7 +1041,10 @@ class AutoReadEngine(
 
                 // Скриншот-кадр для вкладки «Скриншоты»: JPEG сохраняем ДО recycle —
                 // после него пикселей больше нет, а сама запись пишется ниже по коду.
-                val screenshotJpeg: ByteArray? = if (prefs.autoScreenshotEnabled().get() && !ocrBitmap.isRecycled) {
+                val screenshotJpeg: ByteArray? = if (prefs.autoScreenshotEnabled().get() &&
+                    !skipEmptyWork &&
+                    !ocrBitmap.isRecycled
+                ) {
                     runCatching { encodeJpeg(ocrBitmap, JPEG_QUALITY) }.getOrNull()
                 } else null
 
@@ -1196,6 +1220,7 @@ class AutoReadEngine(
                 }
 
                 lastFrameHadText = ordered.isNotEmpty()
+                emptyFrameStreak = if (ordered.isEmpty()) emptyFrameStreak + 1 else 0
                 if (ordered.isNotEmpty()) {
                     lastFrameText = ordered.joinToString("\n") { it.text }
                     // Кадр распознан — счётчик отказов OCR сбрасываем, иначе
@@ -1213,17 +1238,31 @@ class AutoReadEngine(
                 // Разворот без текста: озвучивать нечего, и страница молча
                 // листалась. Если функция включена — спрашиваем у ВЫБРАННОЙ
                 // vision-модели, что на картинке, и читаем описание вслух.
-                // Локальные движки описать не умеют: askAboutPage вернёт null,
-                // и страница спокойно пролистнется дальше.
+                // Ждём НЕДОЛГО: запрос уходит в облако и легко висит десятки
+                // секунд, а авточтение стояло бы на каждой пустой странице.
+                // Не ответила за [DESCRIBE_TIMEOUT_MS] — описание выключаем само,
+                // иначе чтение встанет в очередь к модели до конца главы.
                 val describe = describeBitmap
                 if (ordered.isEmpty() && describe != null && !describe.isRecycled) {
-                    val answer = describePageImage(describe, pageIndex)
+                    val answer = withTimeoutOrNull(DESCRIBE_TIMEOUT_MS) {
+                        describePageImage(describe, pageIndex)
+                    }
                     if (!answer.isNullOrBlank()) {
                         lastFrameText = answer
                         runCatching { TtsReadingNotifier.show(context, answer, pageLabel) }
                         speakAndAwait(SpeechMarkup.strip(answer))
+                    } else {
+                        disableDescribeWithReason(
+                            if (answer == null) {
+                                "модель не ответила за ${DESCRIBE_TIMEOUT_MS / 1000} с"
+                            } else {
+                                "движок не умеет описывать картинки"
+                            },
+                        )
                     }
                 }
+                describeBitmap?.let { if (!it.isRecycled) it.recycle() }
+                describeBitmap = null
 
                 // 3.7) перевод ВСЕЙ страницы одним запросом (раньше был
                 // отдельный HTTP-запрос на каждую реплику — на 15 бабблах
@@ -1615,6 +1654,25 @@ class AutoReadEngine(
             },
         )
         return text
+    }
+
+    /**
+     * Выключает описание разворотов само, потому что запрос ответа не дал.
+     *
+     * Пока функция включена, авточтение встаёт на паузу у КАЖДОЙ страницы без
+     * текста и ждёт сеть. Если модель молчит или движок вообще не умеет
+     * описывать картинки, ждать дальше бессмысленно: чтение встаёт в очередь
+     * до конца главы. Выключаем и пишем причину в «Консоль ИИ» и в историю.
+     */
+    private fun disableDescribeWithReason(reason: String) {
+        if (!prefs.describeTextlessPages().get()) return
+        prefs.describeTextlessPages().set(false)
+        logcat(LogPriority.WARN) { "Описание разворотов выключено: $reason" }
+        eu.kanade.tachiyomi.data.ai.AiConsole.ocr(
+            title = "Описание разворотов выключено",
+            detail = reason,
+        )
+        OcrHistoryStore.addAutoRead(false, "описание выключено", reason)
     }
 
     /** Независимая уменьшенная копия кадра для отправки в vision-модель. */
@@ -2830,6 +2888,15 @@ class AutoReadEngine(
         /** Сторона копии кадра для описания: vision-модели хватает этого. */
         private const val DESCRIBE_MAX_SIDE = 900
 
+        /**
+         * Сколько ждём ответа vision-модели на разворот без текста.
+         *
+         * Запрос уходит в облако и может висеть десятки секунд. Пока описание
+         * включено, авточтение стоит на каждой пустой странице — поэтому ждём
+         * недолго: не ответила — выключаем описание и листаем дальше.
+         */
+        internal const val DESCRIBE_TIMEOUT_MS = 15_000L
+
         /** Вопрос к vision-модели для разворота без текста. */
         private const val DESCRIBE_PAGE_PROMPT =
             "Опиши этот кадр манги коротко, 2–4 предложения: что изображено, кто в кадре, " +
@@ -3585,8 +3652,27 @@ class AutoReadEngine(
             return panelOrder.flatMap { byBox[it].orEmpty() }
         }
 
-        /**
-         * Доля буквенных символов строки, приходящихся на кириллицу.
+    /**
+     * Нужно ли тратить время на дополнительные проходы по кадру.
+     *
+     * OCR всё равно выполняется — без него не понять, что текста нет. Но если
+     * на кадре нет НИ ОДНОЙ буквы, добор облачков (второй полный проход) и
+     * скриншот пустой страницы бесполезны. А если предыдущий кадр тоже был
+     * пустым, кадр почти наверняка из того же разворота-иллюстрации, и ждать
+     * нечего: пропускаем, пока не встретим читаемую реплику.
+     */
+    internal fun skipEmptyPageWork(
+        enabled: Boolean,
+        previousFrameWasEmpty: Boolean,
+        hasAnyLetters: Boolean,
+    ): Boolean {
+        if (!enabled) return false
+        if (!hasAnyLetters) return true
+        return previousFrameWasEmpty
+    }
+
+    /**
+     * Доля буквенных символов строки, приходящихся на кириллицу.
          * Пустые строки и строки без букв дают 0.
          */
         internal fun cyrillicShare(text: String): Float {

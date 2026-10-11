@@ -1967,12 +1967,24 @@ class ReaderActivity : BaseActivity() {
                 return@launch
             }
             val answer = try {
-                autoReadEngine.describePageImage(bitmap, pageNumber)
+                // Ждём недолго: запрос в облако может висеть десятки секунд.
+                // Не ответил за отведённое время — описание само выключается,
+                // иначе авточтение будет вставать на паузу у каждой пустой
+                // страницы до конца главы.
+                kotlinx.coroutines.withTimeoutOrNull(
+                    eu.kanade.tachiyomi.data.tts.AutoReadEngine.DESCRIBE_TIMEOUT_MS,
+                ) {
+                    autoReadEngine.describePageImage(bitmap, pageNumber)
+                }
             } finally {
                 if (!bitmap.isRecycled) bitmap.recycle()
             }
             if (answer.isNullOrBlank()) {
-                toast("Выбранный движок не умеет описывать картинки (нужен онлайн)")
+                val reason = if (answer == null) "модель не ответила вовремя" else "движок не умеет описывать картинки"
+                uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+                    .describeTextlessPages()
+                    .set(false)
+                toast("Описание выключено: $reason")
             } else {
                 autoReadEngine.speakSingle(answer)
             }
