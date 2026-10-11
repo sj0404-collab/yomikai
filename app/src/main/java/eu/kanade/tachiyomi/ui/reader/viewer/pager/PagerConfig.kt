@@ -33,7 +33,10 @@ class PagerConfig(
 
     var dualPageSplitChangedListener: ((Boolean) -> Unit)? = null
 
-    var imageScaleType = 1
+    // 2 = «Растянуть» (см. ReaderPreferences.imageScaleType): страница во
+    // весь экран. Ставим тем же значением, что и дефолт преференса, иначе до
+    // первого чтения настройки картинка моргает другим масштабом.
+    var imageScaleType = 2
         private set
 
     var imageZoomType = ReaderPageImageView.ZoomStartPosition.LEFT
