@@ -3,12 +3,28 @@ package eu.kanade.tachiyomi.ui.overlay
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Context
+<<<<<<< HEAD
 import android.graphics.Path
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.CompletableDeferred
+=======
+import android.content.Intent
+import android.graphics.Path
+import android.net.Uri
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
+import android.util.Log
+import android.view.accessibility.AccessibilityEvent
+import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 
@@ -111,6 +127,7 @@ class OverlayGestureService : AccessibilityService() {
                 )
                 .build()
             val result = CompletableDeferred<Boolean>()
+<<<<<<< HEAD
             val sent = service.dispatchGesture(
                 gesture,
                 object : AccessibilityService.GestureResultCallback() {
@@ -125,6 +142,35 @@ class OverlayGestureService : AccessibilityService() {
                 callbackHandler,
             )
             if (!sent) return false
+=======
+            // Диспатчим с главного лупера: система привязывает службу к нему,
+            // и часть прошивок молча отклоняет жест, отправленный из фонового
+            // потока, даже если сам вызов возвращает true.
+            val sent = withContext(Dispatchers.Main.immediate) {
+                service.dispatchGesture(
+                    gesture,
+                    object : AccessibilityService.GestureResultCallback() {
+                        override fun onCompleted(gestureDescription: GestureDescription?) {
+                            result.complete(true)
+                        }
+
+                        override fun onCancelled(gestureDescription: GestureDescription?) {
+                            Log.w(
+                                TAG,
+                                "dispatchGesture отменён системой: " +
+                                    "(${swipe.fromX},${swipe.fromY})→(${swipe.toX},${swipe.toY})",
+                            )
+                            result.complete(false)
+                        }
+                    },
+                    callbackHandler,
+                )
+            }
+            if (!sent) {
+                Log.w(TAG, "dispatchGesture не отправлен: служба не подключена к системе")
+                return false
+            }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             return withTimeoutOrNull(GESTURE_TIMEOUT_MS) { result.await() } ?: false
         }
 
@@ -155,6 +201,11 @@ class OverlayGestureService : AccessibilityService() {
 
         /** Сколько ждать ответа системы по жесту, мс. */
         private const val GESTURE_TIMEOUT_MS = 3_000L
+<<<<<<< HEAD
+=======
+
+        private const val TAG = "OverlayGestureService"
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     }
 }
 
@@ -166,6 +217,7 @@ data class GestureSwipe(
     val toY: Int,
 )
 
+<<<<<<< HEAD
 /** Показывает, что служба выключена, и ведёт в настройки доступности. */
 fun Context.requestGestureService() {
     runCatching {
@@ -175,3 +227,44 @@ fun Context.requestGestureService() {
         )
     }.onFailure { toast("Открой Настройки → Специальные возможности") }
 }
+=======
+/**
+ * Ведёт в настройки доступности и объясняет «Ограниченные настройки».
+ *
+ * На Android 13+ приложение, установленное не из магазина, получает
+ * серый, невключаемый переключатель Службы доступности: система блокирует
+ * её «Ради безопасности — эта настройка сейчас недоступна». Обойти это
+ * из кода нельзя, но можно прямо сказать, где разрешить.
+ */
+fun Context.requestGestureService() {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        toast(
+            "Переключатель серый? «О приложении» → ⋮ → " +
+                "«Разрешить ограниченные настройки»",
+        )
+    }
+    runCatching {
+        startActivity(
+            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }.onFailure { toast("Открой Настройки → Специальные возможности") }
+}
+
+/**
+ * Системный экран приложения.
+ *
+ * Именно там на Android 13+ находится пункт ⋮ «Разрешить ограниченные
+ * настройки», без которого Службу доступности из APK не включить.
+ */
+fun Context.openAppDetails() {
+    runCatching {
+        startActivity(
+            Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.fromParts("package", packageName, null),
+            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }.onFailure { toast("Открой Настройки → Приложения") }
+}
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)

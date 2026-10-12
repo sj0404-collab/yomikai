@@ -22,10 +22,20 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+<<<<<<< HEAD
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Language
+=======
+import androidx.compose.material.icons.outlined.Block
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.Lock
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Pause
@@ -65,6 +75,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+<<<<<<< HEAD
+=======
+import androidx.compose.runtime.key
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.collectAsState
@@ -103,6 +117,10 @@ import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.FullscreenExit
+<<<<<<< HEAD
+=======
+import androidx.compose.material.icons.outlined.PhotoCamera
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 import androidx.compose.runtime.rememberCoroutineScope
 import eu.kanade.tachiyomi.util.ocr.toOcrImage
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -171,11 +189,22 @@ data object BrowserTab : Tab {
     /** v1.9.41: живой WebView на каждую вкладку (до 4): переключение НЕ
      *  перезапускает страницу — вкладки держатся открытыми, как в Via/Chrome. */
     private val webViewPool = LinkedHashMap<String, WebView>()
+<<<<<<< HEAD
+=======
+    /** URL для пересоздания вкладки после сбоя рендер-процесса (tabId → url). */
+    private val recoverUrls = HashMap<String, String>()
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 
     private var urlState = mutableStateOf(HOME_URL)
     private var canGoBackState = mutableStateOf(false)
     private var canGoForwardState = mutableStateOf(false)
     private var progressState = mutableFloatStateOf(1f)
+<<<<<<< HEAD
+=======
+    /** Инкремент при падении рендер-процесса WebView: заставляет Content
+     *  пересобраться и AndroidView пересоздать мёртвую вью. */
+    private var rendererEpoch = mutableStateOf(0)
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     private var autoscrollActive = mutableStateOf(false)
     private var autoscrollSpeed = mutableFloatStateOf(2f)
 
@@ -286,6 +315,145 @@ data object BrowserTab : Tab {
         }
     }
 
+<<<<<<< HEAD
+=======
+    /**
+     * Реклама/поповеры поверх изображения («+ алмазы», «Telegram-канал»,
+     * «Перейти», крестик) — НЕ текст книги, но они лежат прямо на странице,
+     * и OCR читал их вместе с мангой. DOM ищет такие узлы: явно-рекламные
+     * по id/class/src (adv/banner/promo/telegram/ins) и фиксированные/липкие
+     * оверлеи в нижней половине экрана. Возвращает прямоугольники в долях
+     * вьюпорта (0..1) в том же формате, что detectBookZone.
+     */
+    private suspend fun detectOverlayJunkRects(): List<android.graphics.RectF> {
+        val wv = sharedWebView ?: return emptyList()
+        val js = """
+            (function() {
+                var vh = window.innerHeight, vw = window.innerWidth;
+                var out = [];
+                function push(r) {
+                    var l = Math.max(0, r.left) / vw, t = Math.max(0, r.top) / vh;
+                    var rr = Math.min(vw, r.right) / vw, bb = Math.min(vh, r.bottom) / vh;
+                    if (rr - l < 0.02 || bb - t < 0.015) return;
+                    out.push(l.toFixed(4) + "," + t.toFixed(4) + "," + rr.toFixed(4) + "," + bb.toFixed(4));
+                }
+                // 1) явно рекламные узлы по именам (MangaLib и аналоги).
+                var junk = document.querySelectorAll(
+                    '[id*="adv"],[class*="adv"],[id*="banner"],[class*="banner"],' +
+                    '[class*="promo"],[class*="adsbygoogle"],[class*="adb"],' +
+                    'iframe[src*="ads"],iframe[src*="doubleclick"],' +
+                    '[class*="telegram"],[id*="telegram"],ins'
+                );
+                for (var i = 0; i < junk.length; i++) {
+                    var r = junk[i].getBoundingClientRect();
+                    if (r.width < 24 || r.height < 16) continue;
+                    if (r.bottom < 0 || r.top > vh) continue;
+                    if (r.width * r.height > vw * vh * 0.5) continue;
+                    push(r);
+                }
+                // 1.5) модальные окна и диалоги поверх страницы («УДАЛИТЬ»,
+                // «ЧЕРНОВИК», промо-боксы): OCR читал кнопки диалога вместо
+                // манги, и первые кадры проходили холостыми.
+                var modals = document.querySelectorAll('[role="dialog"],[role="alertdialog"],[class*="modal"],[class*="popup"],[class*="dialog"],[id*="modal"],[id*="popup"]');
+                for (var m = 0; m < modals.length; m++) {
+                    var mo = modals[m];
+                    var csm = window.getComputedStyle(mo);
+                    if (csm.display === 'none' || csm.visibility === 'hidden' || parseFloat(csm.opacity || '1') < 0.05) continue;
+                    var rm = mo.getBoundingClientRect();
+                    if (rm.width < 24 || rm.height < 12) continue;
+                    if (rm.bottom < 0 || rm.top > vh) continue;
+                    var am = rm.width * rm.height;
+                    if (am < vw * vh * 0.01) continue;
+                    if (am > vw * vh * 0.60) continue;
+                    push(rm);
+                }
+                // 2) фиксированные/липкие слои в нижних 75% экрана: баннер
+                // крепится поверх изображения, а не панель ридера.
+                var all = document.querySelectorAll('body *');
+                for (var k = 0; k < all.length && k < 2500; k++) {
+                    var el = all[k];
+                    var cs = window.getComputedStyle(el);
+                    if (cs.position !== 'fixed' && cs.position !== 'sticky') continue;
+                    if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity) < 0.05) continue;
+                    var z = parseInt(cs.zIndex || '0', 10);
+                    if (z < 10) continue;
+                    var r2 = el.getBoundingClientRect();
+                    if (r2.height < 12 || r2.height > vh * 0.35) continue;
+                    if (r2.bottom < 0 || r2.top > vh) continue;
+                    var area = r2.width * r2.height, frac = area / (vw * vh);
+                    if (frac < 0.004 || frac > 0.5) continue;
+                    if (r2.top < vh * 0.25) continue; // верхняя панель ридера — не трогаем
+                    push(r2);
+                }
+                return out.join(";");
+            })()
+        """.trimIndent()
+        return kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+            try {
+                wv.post {
+                    wv.evaluateJavascript(js) { raw ->
+                        val body = raw?.trim('"').orEmpty()
+                        val rects = body.split(';')
+                            .mapNotNull { part ->
+                                val nums = part.split(',').mapNotNull { it.toFloatOrNull() }
+                                if (nums.size == 4 && nums[3] > nums[1] && nums[2] > nums[0]) {
+                                    android.graphics.RectF(nums[0], nums[1], nums[2], nums[3])
+                                } else {
+                                    null
+                                }
+                            }
+                            .take(24)
+                        if (cont.isActive) cont.resume(rects) {}
+                    }
+                }
+            } catch (e: Exception) {
+                if (cont.isActive) cont.resume(emptyList()) {}
+            }
+        }
+    }
+
+    /** Залить рекламные прямоугольники чёрным, чтобы OCR их не видел. */
+    /**
+     * Суммарная площадь junk-прямоугольников (после зажима в 0..1). Если
+     * детектор ошибся и «рекламой» объявлен почти весь кадр (тёмные страницы
+     * ранобэ-читалок), возвращаем вход без изменений — раньше в OCR уходила
+     * сплошная ЧЁРНАЯ страница и распознавался мусор вроде «МАЙН/ТУ».
+     */
+    private fun junkAreaFraction(junk: List<android.graphics.RectF>): Float {
+        var area = 0f
+        junk.forEach { r ->
+            val w = (r.right.coerceIn(0f, 1f) - r.left.coerceIn(0f, 1f)).coerceAtLeast(0f)
+            val h = (r.bottom.coerceIn(0f, 1f) - r.top.coerceIn(0f, 1f)).coerceAtLeast(0f)
+            area += w * h
+        }
+        return area.coerceIn(0f, 1f)
+    }
+
+    private fun blankJunkRects(
+        src: android.graphics.Bitmap,
+        junk: List<android.graphics.RectF>,
+    ): android.graphics.Bitmap {
+        if (junk.isEmpty()) return src
+        if (junkAreaFraction(junk) > 0.55f) return src // детектор промахнулся
+        val out = android.graphics.Bitmap.createBitmap(
+            src.width, src.height, android.graphics.Bitmap.Config.ARGB_8888,
+        )
+        val canvas = android.graphics.Canvas(out)
+        canvas.drawBitmap(src, 0f, 0f, null)
+        val paint = android.graphics.Paint().apply { color = android.graphics.Color.BLACK }
+        junk.forEach { r ->
+            canvas.drawRect(
+                (r.left * src.width).coerceIn(0f, src.width.toFloat()),
+                (r.top * src.height).coerceIn(0f, src.height.toFloat()),
+                (r.right * src.width).coerceIn(0f, src.width.toFloat()),
+                (r.bottom * src.height).coerceIn(0f, src.height.toFloat()),
+                paint,
+            )
+        }
+        return out
+    }
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     /** Кадр, обрезанный до зоны книги (если зона найдена). */
     private fun cropToZone(src: android.graphics.Bitmap, zone: android.graphics.RectF?): android.graphics.Bitmap {
         if (zone == null) return src
@@ -343,7 +511,14 @@ data object BrowserTab : Tab {
     @SuppressLint("SetJavaScriptEnabled")
     private fun configureWebView(context: Context, webView: WebView) {
         webView.apply {
+<<<<<<< HEAD
             setBackgroundColor(Color.parseColor("#13141F"))
+=======
+            // Нейтральный тёмный фон (без синего оттенка): при сбое рендера
+            // видно тёмный экран, а не «синий». Реальное восстановление —
+            // onRenderProcessGone ниже.
+            setBackgroundColor(Color.parseColor("#101014"))
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.databaseEnabled = true
@@ -422,9 +597,39 @@ data object BrowserTab : Tab {
                 }
             }
             webViewClient = object : WebViewClient() {
+<<<<<<< HEAD
                 override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                     if (view !== sharedWebView) return
                     if (!url.isNullOrBlank()) urlState.value = url
+=======
+                // Сетевая половина AdBlock: запросы рекламных сетей (включая
+                // iframe-баннеры со звуком) не отдаём странице вовсе.
+                override fun shouldInterceptRequest(
+                    view: WebView,
+                    request: android.webkit.WebResourceRequest,
+                ): android.webkit.WebResourceResponse? {
+                    // Главный документ не блокируем никогда: пустой main frame
+                    // = синяя/пустая страница (жалоба пользователя).
+                    if (!request.isForMainFrame &&
+                        BrowserAdBlock.isEnabled(view.context) &&
+                        BrowserAdBlock.shouldBlock(request.url?.toString())
+                    ) {
+                        return BrowserAdBlock.emptyResponse()
+                    }
+                    return super.shouldInterceptRequest(view, request)
+                }
+
+                override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                    if (view !== sharedWebView) return
+                    if (!url.isNullOrBlank()) urlState.value = url
+                    // Блокировщик рекламы разворачивается на СТАРТЕ страницы:
+                    // иначе промо-карточка успевает мигнуть и отыграть звук
+                    // («тук-тук» поверх диалога авточтения).
+                    BrowserAdBlock.inject(view)
+                    // Пользовательские скрипты с моментом «до загрузки DOM».
+                    WebScriptsStore.load(context)
+                    WebScriptsStore.inject(context, view, url, "start")
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                 }
                 override fun onReceivedError(view: WebView, request: android.webkit.WebResourceRequest, error: android.webkit.WebResourceError) {
                     if (view !== sharedWebView) return
@@ -435,11 +640,30 @@ data object BrowserTab : Tab {
                     }
                 }
                 override fun onReceivedSslError(view: WebView, handler: android.webkit.SslErrorHandler, error: android.net.http.SslError) {
+<<<<<<< HEAD
                     handler.cancel()
                     if (view !== sharedWebView) return
 android.os.Handler(android.os.Looper.getMainLooper()).post {
                             context.toast("SSL-ошибка: ${error.primaryError}")
                         }
+=======
+                    if (view !== sharedWebView) return
+                    if (getBrowserSslPolicy(view.context)) {
+                        // Читательские сайты часто отдают цепочки с ручной подписью
+                        // (primaryError 2 = SSL_IDMISMATCH, 3 = UNTRUSTED и т.п.).
+                        // При включённой политике загружаем страницу дальше, иначе
+                        // WebView молча бросает загрузку.
+                        handler.proceed()
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            context.toast("SSL-проблема (${error.primaryError}) — продолжаю загрузку")
+                        }
+                    } else {
+                        handler.cancel()
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            context.toast("SSL-ошибка: ${error.primaryError}")
+                        }
+                    }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                 }
                 override fun onPageFinished(view: WebView, url: String?) {
                     // фоновая вкладка догрузилась — адрес/активную не трогаем
@@ -456,8 +680,45 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
                             null,
                         )
                     }
+<<<<<<< HEAD
                     url?.let { urlState.value = it }
                 }
+=======
+                    // Косметический фильтр: страница догрузилась — промо-карточки,
+                    // которые сайт досыпает после рендера, снимаем сразу.
+                    BrowserAdBlock.inject(view)
+                    // Пользовательские скрипты с моментом «после загрузки».
+                    WebScriptsStore.inject(context, view, url, "end")
+                    url?.let { urlState.value = it }
+                }
+                // Рендер-процесс WebView упал (OOM/сбой): без обработки система
+                // убивает приложение, а вью остаётся пустой — виден только фон
+                // («синий экран»). Выкидываем мёртвую вью из пула и заставляем
+                // вкладку пересоздать её и загрузить страницу заново.
+                @android.annotation.TargetApi(android.os.Build.VERSION_CODES.O)
+                override fun onRenderProcessGone(
+                    view: WebView,
+                    detail: android.webkit.RenderProcessGoneDetail,
+                ): Boolean {
+                    val deadUrl = runCatching { view.url }.getOrNull() ?: urlState.value
+                    val deadTabId = webViewPool.entries.firstOrNull { it.value === view }?.key
+                    if (deadTabId != null) recoverUrls[deadTabId] = deadUrl
+                    webViewPool.entries.removeAll { it.value === view }
+                    runCatching { (view.parent as? ViewGroup)?.removeView(view) }
+                    runCatching { view.destroy() }
+                    if (sharedWebView === view) sharedWebView = null
+                    canGoBackState.value = false
+                    canGoForwardState.value = false
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        context.toast(
+                            if (detail.didCrash()) "WebView упал — перезапускаю страницу"
+                            else "WebView выгружен — перезапускаю страницу",
+                        )
+                    }
+                    rendererEpoch.value++
+                    return true
+                }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             }
         }
     }
@@ -500,16 +761,47 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
                 runCatching { old.destroy() }
             }
         }
+<<<<<<< HEAD
         wv.post { wv.loadUrl(url) }
         return wv
     }
 
+=======
+        wv.post { wv.loadUrl(recoverUrls.remove(tabId) ?: url) }
+        return wv
+    }
+
+    /** Режим OCR в браузере: auto / online (Google Lens) / offline (Paddle кирилл.). */
+    private fun browserOcrMode(context: Context): String =
+        context.getSharedPreferences("browser_ocr", 0).getString("engine_mode", "auto") ?: "auto"
+
+    private fun setBrowserOcrMode(context: Context, mode: String) {
+        context.getSharedPreferences("browser_ocr", 0).edit()
+            .putString("engine_mode", mode).apply()
+    }
+
+    /** SSL-политика браузера: true — принимать проблемные цепочки и грузить дальше. */
+    private fun getBrowserSslPolicy(context: Context): Boolean =
+        context.getSharedPreferences("browser_ocr", 0).getBoolean("accept_ssl", true)
+
+    private fun setBrowserSslPolicy(context: Context, accept: Boolean) {
+        context.getSharedPreferences("browser_ocr", 0).edit()
+            .putBoolean("accept_ssl", accept).apply()
+    }
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     @Composable
     override fun Content() {
         var urlBar by urlState
         val canGoBack by canGoBackState
         val canGoForward by canGoForwardState
         val progress by progressState
+<<<<<<< HEAD
+=======
+        // Читаем: рост epoch = рендер упал, Content пересобирается и AndroidView
+        // пересоздаёт WebView.
+        val rendererGeneration = rendererEpoch.value
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 
         BackHandler(enabled = canGoBack) {
             sharedWebView?.goBack()
@@ -539,8 +831,16 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
         }
 
         var isAutoRead by autoReadActive
+<<<<<<< HEAD
         val ctx = androidx.compose.ui.platform.LocalContext.current
         WebStore.load(ctx)
+=======
+        // «Прочитать страницу» — один проход авточтения без перехода дальше.
+        var oneShotRead by remember { mutableStateOf(false) }
+        val ctx = androidx.compose.ui.platform.LocalContext.current
+        WebStore.load(ctx)
+        WebScriptsStore.load(ctx)
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         // v1.9.44: вкладки/активная восстанавливаются СИНХРОННО до первого кадра —
         // старт и новая вкладка показывают последний открытый сайт, а не дефолт.
         if (WebStore.tabs.value.isEmpty()) WebStore.addTab(ctx, HOME_URL, "Новая вкладка")
@@ -557,6 +857,10 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
         var cacheOpen by remember { mutableStateOf(false) }
         var downloadsOpen by remember { mutableStateOf(false) }
         var voiceOpen by remember { mutableStateOf(false) }
+<<<<<<< HEAD
+=======
+        var scriptsOpen by remember { mutableStateOf(false) }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         var webBookmarked by remember { mutableStateOf(false) }
         val webPages by WebStore.pages.collectAsState()
         val webMarks by WebStore.marks.collectAsState()
@@ -606,6 +910,32 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
         var saving by remember { mutableStateOf(false) }
         var saveMsg by remember { mutableStateOf<String?>(null) }
 
+<<<<<<< HEAD
+=======
+        /** «Скриншот сейчас» (как в читалке манги): текущий кадр WebView в PNG. */
+        fun saveScreenshotNow() {
+            val bmp = captureWebView()
+            if (bmp == null) {
+                ctx.toast("Не удалось захватить кадр")
+                return
+            }
+            try {
+                val dir = java.io.File(
+                    ctx.getExternalFilesDir(android.os.Environment.DIRECTORY_PICTURES)
+                        ?: ctx.filesDir,
+                    "screenshots",
+                ).apply { mkdirs() }
+                val out = java.io.File(dir, "web-${System.currentTimeMillis()}.png")
+                out.outputStream().use { stream ->
+                    bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream)
+                }
+                ctx.toast("Скриншот сохранён: ${out.absolutePath}")
+            } catch (e: Exception) {
+                ctx.toast("Не удалось сохранить скриншот: ${e.javaClass.simpleName}")
+            }
+        }
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         fun manualScan() {
             imageLongPress = { manualScan() }
             ocrJob?.cancel()
@@ -628,6 +958,7 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
                 ocrRegions = emptyList()
                 ocrFrame = raw // результат появится ПРЯМО НА КАДРЕ
                 try {
+<<<<<<< HEAD
                     val l = rect.left.toInt().coerceIn(0, raw.width - 1)
                     val t = rect.top.toInt().coerceIn(0, raw.height - 1)
                     val r = rect.right.toInt().coerceIn(l + 1, raw.width)
@@ -636,14 +967,37 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
                         raw
                     } else {
                         android.graphics.Bitmap.createBitmap(raw, l, t, r - l, b - t)
+=======
+                    // Реклама поверх картинки («+ алмазы», «Перейти») к книге
+                    // не относится — вычищаем её из кадра до OCR.
+                    val junk = detectOverlayJunkRects()
+                    // (ocrFrame оставляем исходным кадром — результат
+                    // показываем на нём, а не на вычищенном.)
+                    val clean = if (junk.isNotEmpty()) blankJunkRects(raw, junk) else raw
+                    val l = rect.left.toInt().coerceIn(0, clean.width - 1)
+                    val t = rect.top.toInt().coerceIn(0, clean.height - 1)
+                    val r = rect.right.toInt().coerceIn(l + 1, clean.width)
+                    val b = rect.bottom.toInt().coerceIn(t + 1, clean.height)
+                    val cropped = if (r - l < 40 || b - t < 40) {
+                        clean
+                    } else {
+                        android.graphics.Bitmap.createBitmap(clean, l, t, r - l, b - t)
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                     }
                     // v1.9.42: оверлей покажет сам фрагмент: текст ляжет точно
                     // на свои рамки (раньше координаты области растягивались на
                     // весь экран и «плывали» по странице).
+<<<<<<< HEAD
                     if (cropped !== raw) ocrFrame = cropped
                     val prefsN = Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
                     var result = ocrWithPreprocess(ctx, cropped)
                     if (result.first.isBlank() && cropped !== raw) {
+=======
+                    if (cropped !== clean) ocrFrame = cropped
+                    val prefsN = Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+                    var result = ocrWithPreprocess(ctx, cropped)
+                    if (result.first.isBlank() && cropped !== clean) {
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                         // v1.9.41: ретрай на увеличении — мелкий/бледный текст
                         val up = android.graphics.Bitmap.createScaledBitmap(
                             cropped,
@@ -732,17 +1086,41 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
         // • пустые кадры (нет нового текста) проходятся сразу, без задержек.
         LaunchedEffect(isAutoRead) {
             if (!isAutoRead) { readEngine.stop(); return@LaunchedEffect }
+<<<<<<< HEAD
             readEngine.clearHistory()
             var stuckCounter = 0
             while (isAutoRead) {
                 val wv = sharedWebView
                 val raw = captureWebView()
                 if (wv == null || raw == null) { delay(500); continue }
+=======
+            // Движок из меню браузера: без этого авточтение шло дефолтным
+            // CYRILLIC (локальный TFLite), даже когда выбран Google Lens.
+            applyBrowserOcrMode(ctx)
+            readEngine.clearHistory()
+            var stuckCounter = 0
+            // Рекламные прямоугольники DOM-ом обновляем каждые ~4 кадра,
+            // чтобы не просить JS на каждом тике.
+            var junkFrameSkip = 0
+            var cachedJunk: List<android.graphics.RectF> = emptyList()
+            while (isAutoRead) {
+                val wv = sharedWebView
+                val raw0 = captureWebView()
+                if (wv == null || raw0 == null) { delay(500); continue }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 
                 // Только страница книги: зона крупных картинок, без UI сайта
                 val zone = detectBookZone()
                 readEngine.highlightZone = zone
+<<<<<<< HEAD
                 val bmp = cropToZone(raw, zone)
+=======
+                if (junkFrameSkip % 4 == 0) {
+                    cachedJunk = detectOverlayJunkRects()
+                }
+                junkFrameSkip++
+                val bmp = cropToZone(blankJunkRects(raw0, cachedJunk), zone)
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 
                 var finished = false
                 readEngine.readFrame(
@@ -751,6 +1129,7 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
                     pageIndex = wv.scrollY,
                     onPageFinished = { finished = true },
                 )
+<<<<<<< HEAD
                 while (!finished && isAutoRead) delay(120)
                 if (!isAutoRead) break
 
@@ -788,6 +1167,61 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
                 }
                 // Пустой кадр — не ждём дорисовку, идём дальше сразу
                 if (hadText) delay(350)
+=======
+                // Правильный цикл: СНАЧАЛА кадр целиком читается (скан →
+                // распознавание → озвучка), и только ПОТОМ плавная автопрокрутка
+                // к следующему фрагменту. Раньше скролл шёл ПАРАЛЛЕЛЬНО чтению и
+                // успевал уехать вперёд голоса: строки уходили из поля зрения
+                // раньше, чем их успевали произнести.
+                while (!finished && isAutoRead) {
+                    // Блокинг (нет голоса / OCR падает): onPageFinished не вызовется,
+                    // ждать вечность нечего — показываем причину и останавливаемся.
+                    if (readEngine.voiceBlock.value != null) break
+                    delay(16)
+                }
+                readEngine.voiceBlock.value?.let { blocking ->
+                    isAutoRead = false
+                    ctx.toast(blocking)
+                    break
+                }
+                if (!isAutoRead) break
+
+                // «Прочитать страницу»: только текущий кадр, дальше не идём.
+                if (oneShotRead) { oneShotRead = false; isAutoRead = false; break }
+
+                val prefs = Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+                if (!prefs.autoReadAutoAdvance().get()) { isAutoRead = false; break }
+
+                // Плавная автопрокрутка к следующему фрагменту: серия мелких шагов
+                // по 16 мс со скоростью, заданной для автопрокрутки браузера.
+                // Шаг — до 45% высоты вьюпорта, чтобы следующий кадр перекрывал
+                // текущий и текст на стыке не терялся (дубли отсекает история).
+                val posBefore = readScrollPos(wv)
+                val rateNow = voicePrefs.speechRate().get().takeIf { it > 0f } ?: 1f
+                val speedPx = ((speed * 3 * rateNow).roundToInt()).coerceAtLeast(1)
+                val targetAdvancePx = (wv.height * 0.45f).roundToInt().coerceAtLeast(64)
+                var advancedPx = 0
+                while (isAutoRead && advancedPx < targetAdvancePx) {
+                    // К концу шага плавно тормозим — стык кадров встречаем мягко.
+                    val remain = (targetAdvancePx - advancedPx).toFloat() / targetAdvancePx
+                    val step = (speedPx * (0.15f + 0.85f * remain)).roundToInt().coerceAtLeast(1)
+                    wv.scrollBy(0, step)
+                    advancedPx += step
+                    delay(16)
+                }
+                if (!isAutoRead) break
+
+                // scrollBy не сдвинул (контейнер внутри страницы) — добиваем JS.
+                var posAfter = readScrollPos(wv)
+                if (posAfter - posBefore <= 0f) {
+                    scrollJs(wv, (wv.height * 0.5f).roundToInt().coerceAtLeast(1))
+                    delay(220)
+                    posAfter = readScrollPos(wv)
+                }
+                // Пустой кадр (без текста) не задерживает чтение: только лёгкая
+                // пауза после текстового, чтобы глаз не рыскал.
+                if (readEngine.lastFrameHadText) delay(140)
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 
                 if (posAfter - posBefore <= 0f) {
                     // Не сдвинулись — конец страницы (или контент короче экрана)
@@ -804,8 +1238,16 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
             onDispose {
                 if (autoReadActive.value) {
                     autoReadActive.value = false
+<<<<<<< HEAD
                     readEngine.stop()
                 }
+=======
+                }
+                // Движок держит собственный CoroutineScope: гасим его вместе с
+                // вкладкой, иначе фоновый OCR доживал до конца после ухода.
+                readEngine.destroy()
+                autoReadEngine = null
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             }
         }
         DisposableEffect(Unit) {
@@ -895,6 +1337,10 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
                     .fillMaxSize()
                     .weight(1f),
             ) {
+<<<<<<< HEAD
+=======
+            key(rendererGeneration) {
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             AndroidView(
                 modifier = Modifier
                     .fillMaxSize(),
@@ -930,6 +1376,10 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
                 },
             )
             }
+<<<<<<< HEAD
+=======
+            }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         }
 
         // Линейка чтения (как в AlReader): подсветка текущей реплики
@@ -965,6 +1415,21 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
             )
         }
 
+<<<<<<< HEAD
+=======
+        if (scriptsOpen) {
+            WebScriptsDialog(
+                context = ctx,
+                onReinject = {
+                    // Применяем правки/тумблеры к уже открытой странице.
+                    BrowserAdBlock.inject(sharedWebView)
+                    WebScriptsStore.injectAll(ctx, sharedWebView, urlBar)
+                },
+                onDismiss = { scriptsOpen = false },
+            )
+        }
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         // Плавающее SAO-меню браузера: автоскролл, наверх, закрыть
         if (!pip) BoxWithConstraints(
             modifier = Modifier.fillMaxSize(),
@@ -1027,6 +1492,27 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
                                     )
                                 }
                             }
+<<<<<<< HEAD
+=======
+                            // Скорость авточтения: 50%…200%, −/+ (п.1).
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                var rateUi by remember {
+                                    mutableStateOf(voicePrefs.speechRate().get())
+                                }
+                                Text(
+                                    "Скорость: ${(rateUi * 100).roundToInt()}%  ",
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
+                                TextButton(onClick = {
+                                    rateUi = (rateUi - 0.25f).coerceAtLeast(0.5f)
+                                    voicePrefs.speechRate().set(rateUi)
+                                }) { Text("−") }
+                                TextButton(onClick = {
+                                    rateUi = (rateUi + 0.25f).coerceAtMost(2.0f)
+                                    voicePrefs.speechRate().set(rateUi)
+                                }) { Text("+") }
+                            }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("Скан OCR  ", style = MaterialTheme.typography.labelMedium)
                                 SmallFloatingActionButton(onClick = {
@@ -1036,6 +1522,156 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
                                     Icon(Icons.Outlined.DocumentScanner, contentDescription = "OCR")
                                 }
                             }
+<<<<<<< HEAD
+=======
+
+                            // ---- Те же кнопки, что в нативной читалке манги ----
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    if (isAuto) "Стоп автопрокрутки  " else "Автопрокрутка  ",
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
+                                SmallFloatingActionButton(onClick = {
+                                    isAuto = !isAuto
+                                }) {
+                                    Icon(
+                                        if (isAuto) Icons.Outlined.Stop else Icons.Outlined.PlayArrow,
+                                        contentDescription = "Автопрокрутка",
+                                        tint = if (isAuto) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
+                            }
+                            // Скорость плавной прокрутки: ×1…×10 (работает и для
+                            // автопрокрутки, и для шага авточтения между кадрами).
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Прокрутка: ×${speed.roundToInt()}  ", style = MaterialTheme.typography.labelMedium)
+                                TextButton(onClick = { speed = (speed - 1f).coerceAtLeast(1f) }) { Text("−") }
+                                TextButton(onClick = { speed = (speed + 1f).coerceAtMost(10f) }) { Text("+") }
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Прочитать страницу  ", style = MaterialTheme.typography.labelMedium)
+                                SmallFloatingActionButton(onClick = {
+                                    menuOpen = false
+                                    isAuto = false
+                                    oneShotRead = true
+                                    isAutoRead = true
+                                }) {
+                                    Icon(Icons.Outlined.RecordVoiceOver, contentDescription = "Прочитать страницу")
+                                }
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Стоп чтения  ", style = MaterialTheme.typography.labelMedium)
+                                SmallFloatingActionButton(onClick = {
+                                    oneShotRead = false
+                                    isAutoRead = false
+                                    readEngine.stop()
+                                }) {
+                                    Icon(Icons.Outlined.Stop, contentDescription = "Стоп чтения")
+                                }
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Скриншот сейчас  ", style = MaterialTheme.typography.labelMedium)
+                                SmallFloatingActionButton(onClick = {
+                                    menuOpen = false
+                                    saveScreenshotNow()
+                                }) {
+                                    Icon(Icons.Outlined.PhotoCamera, contentDescription = "Скриншот")
+                                }
+                            }
+                            // Движок OCR: не только онлайн — кликом листается Авто/Онлайн/Офлайн.
+                            var ocrMode by remember { mutableStateOf(browserOcrMode(ctx)) }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                val ocrLabel = when (ocrMode) {
+                                    "online" -> "OCR: Онлайн (Google Lens)  "
+                                    "offline" -> "OCR: Офлайн (Paddle кирилл.)  "
+                                    else -> "OCR: Авто  "
+                                }
+                                Text(ocrLabel, style = MaterialTheme.typography.labelMedium)
+                                SmallFloatingActionButton(onClick = {
+                                    ocrMode = when (ocrMode) {
+                                        "online" -> "offline"
+                                        "offline" -> "auto"
+                                        else -> "online"
+                                    }
+                                    setBrowserOcrMode(ctx, ocrMode)
+                                    // Применяем сразу: следующий кадр авточтения
+                                    // должен идти уже новым движком.
+                                    applyBrowserOcrMode(ctx)
+                                }) {
+                                    Icon(Icons.Outlined.Tune, contentDescription = "Движок OCR")
+                                }
+                            }
+                            // SSL: принимать проблемные сертификаты (для сайтов с
+                            // ручной подписью, у которых иначе не грузится страница).
+                            var acceptSsl by remember { mutableStateOf(getBrowserSslPolicy(ctx)) }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    if (acceptSsl) "SSL: принимать  " else "SSL: блокировать  ",
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
+                                SmallFloatingActionButton(onClick = {
+                                    acceptSsl = !acceptSsl
+                                    setBrowserSslPolicy(ctx, acceptSsl)
+                                }) {
+                                    Icon(Icons.Outlined.Lock, contentDescription = "SSL-политика")
+                                }
+                            }
+                            // AdBlock: рекламные сети режем по сети, промо-карточки
+                            // («В паках больше выбора» и подобные) убирает контент-
+                            // скрипт — попап больше не лезет в диалог авточтения и
+                            // не отыгрывает звуки поверх речи.
+                            var adBlockOn by remember { mutableStateOf(BrowserAdBlock.isEnabled(ctx)) }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    if (adBlockOn) "AdBlock: вкл  " else "AdBlock: выкл  ",
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
+                                SmallFloatingActionButton(onClick = {
+                                    adBlockOn = !adBlockOn
+                                    BrowserAdBlock.setEnabled(ctx, adBlockOn)
+                                    if (adBlockOn) {
+                                        // Новая страница развернёт фильтр сама;
+                                        // на открытой — включаем обратно на месте.
+                                        BrowserAdBlock.inject(sharedWebView)
+                                        BrowserAdBlock.setEnabled(sharedWebView, true)
+                                        ctx.toast("AdBlock включён — реклама убирается со страницы")
+                                    } else {
+                                        BrowserAdBlock.setEnabled(sharedWebView, false)
+                                        ctx.toast("AdBlock выключен — страница как есть")
+                                    }
+                                }) {
+                                    Icon(
+                                        Icons.Outlined.Block,
+                                        contentDescription = "AdBlock",
+                                        tint = if (adBlockOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Расширения и скрипты  ", style = MaterialTheme.typography.labelMedium)
+                                SmallFloatingActionButton(onClick = {
+                                    menuOpen = false
+                                    scriptsOpen = true
+                                }) {
+                                    Icon(Icons.Outlined.Code, contentDescription = "Расширения и скрипты")
+                                }
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    if (voiceIcons) "Значки озвучки: вкл  " else "Значки озвучки: выкл  ",
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
+                                SmallFloatingActionButton(onClick = {
+                                    voicePrefs.voiceIcons().set(!voiceIcons)
+                                }) {
+                                    Icon(
+                                        Icons.Outlined.RecordVoiceOver,
+                                        contentDescription = "Значки озвучки",
+                                        tint = if (voiceIcons) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
+                            }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("Голоса  ", style = MaterialTheme.typography.labelMedium)
                                 SmallFloatingActionButton(onClick = {
@@ -1118,6 +1754,10 @@ android.os.Handler(android.os.Looper.getMainLooper()).post {
                                 ctx.toast("Разрешите показ поверх других приложений")
                             }
                         }) { Text("Мини-плеер поверх всех приложений") }
+<<<<<<< HEAD
+=======
+                        TextButton(onClick = { moreOpen = false; scriptsOpen = true }) { Text("Расширения и скрипты") }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                         if (!hiddenM.contains("b_urlscan")) {
                             TextButton(onClick = { moreOpen = false; manualScan() }) { Text("Скан текста (OCR)") }
                         }
@@ -1548,7 +2188,35 @@ private fun preprocessForOcr(src: android.graphics.Bitmap): android.graphics.Bit
         return out
     }
 
+<<<<<<< HEAD
     /** OCR с препроцессом: текст + рамки реплик (нормализованные 0..1). */
+=======
+/**
+ * Применить выбор движка из меню браузера (browser_ocr/engine_mode) к общему
+ * префу `pref_ocr_model`, по которому scanPage и берёт движок.
+ *
+ * Раньше меню писало только в engine_mode, а `ocrWithPreprocess` применял его
+ * лишь при РУЧНОМ скане: авточтение (readEngine.readFrame) всё время шло
+ * дефолтным CYRILLIC, даже когда выбрали «Google Lens».
+ */
+private fun applyBrowserOcrMode(context: android.content.Context) {
+    val mode = context.getSharedPreferences("browser_ocr", 0)
+        .getString("engine_mode", "auto") ?: "auto"
+    val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+    val net = cm?.activeNetwork
+    val online = net != null &&
+        (cm.getNetworkCapabilities(net)?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) ?: false)
+    val want = when {
+        mode == "offline" -> mihon.domain.ocr.model.OcrModel.CYRILLIC
+        mode == "online" -> mihon.domain.ocr.model.OcrModel.GLENS
+        online -> mihon.domain.ocr.model.OcrModel.GLENS
+        else -> mihon.domain.ocr.model.OcrModel.CYRILLIC
+    }
+    Injekt.get<mihon.domain.ocr.service.OcrPreferences>().ocrModel().set(want)
+}
+
+/** OCR с препроцессом: текст + рамки реплик (нормализованные 0..1). */
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 private suspend fun ocrWithPreprocess(context: android.content.Context, src: android.graphics.Bitmap): Pair<String, List<Pair<mihon.domain.ocr.model.OcrBoundingBox, String>>> {
         val pre = preprocessForOcr(src)
         val bmp = if (pre.width < 1200) {
@@ -1559,6 +2227,7 @@ private suspend fun ocrWithPreprocess(context: android.content.Context, src: and
         }
         return try {
             val ocr = Injekt.get<mihon.domain.ocr.interactor.ScanPageOcr>()
+<<<<<<< HEAD
             // v1.9.44: в вебе по умолчанию ОНЛАЙН OCR (Google Lens, ключ встроен) —
             // качество выше и не тянется 2-МБ офлайн-модель; без сети — локальный
             // CYRILLIC (кириллический).
@@ -1571,6 +2240,13 @@ private suspend fun ocrWithPreprocess(context: android.content.Context, src: and
             }.getOrDefault(false)
             val want = if (online) mihon.domain.ocr.model.OcrModel.GLENS else mihon.domain.ocr.model.OcrModel.CYRILLIC
             prefsO.ocrModel().set(want)
+=======
+            // Режим из меню браузера применяем к общему префу — по нему scanPage
+            // и выбирает движок (общий путь для ручного скана и авточтения).
+            applyBrowserOcrMode(context)
+            val prefsO = Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+            val want = prefsO.ocrModel().get()
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             val pgIdx = (System.currentTimeMillis() % 1_000_000L).toInt()
             var regions = withTimeout(60_000) {
                 ocr.await(chapterId = -1L, pageIndex = pgIdx, image = bmp.toOcrImage())

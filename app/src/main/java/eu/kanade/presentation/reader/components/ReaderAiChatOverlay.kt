@@ -121,6 +121,10 @@ fun ReaderAiChatOverlay(
     var loading by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
     var showClearConfirm by remember { mutableStateOf(false) }
+<<<<<<< HEAD
+=======
+    var showConsole by remember { mutableStateOf(false) }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     var attachedName by remember { mutableStateOf<String?>(null) }
     var attachedBytes by remember { mutableStateOf<ByteArray?>(null) }
     var activity by remember { mutableStateOf("") }
@@ -289,6 +293,22 @@ fun ReaderAiChatOverlay(
         runningJob?.cancel()
         runningJob = null
         loading = false
+<<<<<<< HEAD
+=======
+        // «Сюжет» шёл своим запросом и раньше дожидался его сам: остановка
+        // агента и чтения его не трогала, и пересказ дописывался на живого
+        // читателя уже после «Стоп».
+        val plotStopped = eu.kanade.tachiyomi.data.ai.ReadingPlotAgentHolder.agent.cancel()
+        // Сокет сам по себе отмены не знает: пока он висит, модель продолжает
+        // отвечать в никуда, и «Стоп» держал бы экран занятым до 90 секунд.
+        runCatching { eu.kanade.tachiyomi.data.ai.AiHttpServer.abortAllRequests("кнопка «Стоп» в чате") }
+        eu.kanade.tachiyomi.data.ai.AiAssistant.abortActiveRequests("кнопка «Стоп» в чате")
+        eu.kanade.tachiyomi.data.ai.AiConsole.user(
+            title = "Остановлено",
+            detail = "агент: ${if (runningJob != null) "был в работе" else "не работал"}" +
+                (if (plotStopped) " · сюжет: запрос отменён" else ""),
+        )
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         onStopRequested()
         showToast("Остановлено")
     }
@@ -432,6 +452,36 @@ fun ReaderAiChatOverlay(
                         label = { Text("Файлы") },
                         modifier = Modifier.height(30.dp),
                     )
+<<<<<<< HEAD
+=======
+                    // Сюжет: пересказ того, что уже прозвучало при чтении.
+                    // Отдельная вкладка, потому что это не диалог с агентом, а
+                    // его наблюдение: текст пишется сам по мере чтения.
+                    FilterChip(
+                        selected = tab == 2,
+                        onClick = { tab = 2 },
+                        label = { Text("Сюжет") },
+                        modifier = Modifier.height(30.dp),
+                    )
+                    // Консоль: что ИИ делает прямо сейчас. Отдельный экран, а
+                    // не ещё одна вкладка чата: её открывают, когда ход идёт и
+                    // надо посмотреть, чем он занят.
+                    FilterChip(
+                        selected = false,
+                        onClick = { showConsole = true },
+                        label = { Text("Консоль") },
+                        modifier = Modifier.height(30.dp),
+                    )
+                }
+                if (showConsole) {
+                    AiConsoleDialog(
+                        onClose = { showConsole = false },
+                        onStopEverything = stopEverything,
+                    )
+                }
+                if (tab == 2) {
+                    ReadingPlotPanel(mangaId = mangaId, showToast = showToast)
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                 }
                 if (tab == 1) {
                     WorkspaceFilesPanel(

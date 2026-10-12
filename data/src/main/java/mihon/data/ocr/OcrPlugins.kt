@@ -78,6 +78,30 @@ object OcrPlugins {
         supportsRegions = true,
     )
 
+<<<<<<< HEAD
+=======
+    /**
+     * Настоящий Tesseract с русской моделью.
+     *
+     * До v1.10.18 пункт «Tesseract» в настройках был фикцией: он молча
+     * отображался в PP-OCR, а дескриптора в реестре не было вовсе — из-за
+     * чего движок пропадал из всех списков, строящихся по [ALL].
+     */
+    val TESSERACT = OcrPluginDescriptor(
+        id = "tesseract",
+        model = OcrModel.TESSERACT,
+        title = "Tesseract (rus)",
+        summary = "Офлайн-движок с русской моделью. Медленнее PP-OCR, зато читает " +
+            "кириллицу иначе — годится там, где важно не ошибиться. " +
+            "Языковые данные (~8 МБ) скачиваются при выборе.",
+        engineType = "TESSERACT",
+        online = false,
+        requirements = setOf(OcrPluginRequirement.MODEL_PACK),
+        // Ставим после PP-OCR: он и быстрее, и в среднем точнее на манге.
+        fallbackPriority = 5,
+    )
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     val MLKIT = OcrPluginDescriptor(
         id = "mlkit",
         model = OcrModel.MLKIT,
@@ -151,11 +175,18 @@ object OcrPlugins {
     val LEGACY_ALIASES = listOf(
         OcrModel.LEGACY to CYRILLIC.id,
         OcrModel.FAST to CYRILLIC.id,
+<<<<<<< HEAD
         OcrModel.TESSERACT to CYRILLIC.id,
     )
 
     /** Все выбираемые плагины в порядке показа в настройках. */
     val ALL = listOf(CYRILLIC, MLKIT, GLENS, ZEN_FREE, GOOGLE_AI, OPENROUTER, OWOCR)
+=======
+    )
+
+    /** Все выбираемые плагины в порядке показа в настройках. */
+    val ALL = listOf(CYRILLIC, TESSERACT, MLKIT, GLENS, ZEN_FREE, GOOGLE_AI, OPENROUTER, OWOCR)
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 
     private val BY_ID = ALL.associateBy { it.id }
     private val BY_ENGINE_TYPE = ALL.associateBy { it.engineType }

@@ -69,7 +69,13 @@ object OcrHistoryStore {
     private val _reads = MutableStateFlow<List<AutoReadEntry>>(emptyList())
     val reads: StateFlow<List<AutoReadEntry>> = _reads
 
+<<<<<<< HEAD
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+=======
+    // Одно поток-исполнитель: несколько быстрых addScan/addAutoRead иначе
+    // писали бы один и тот же JSON параллельно и перемешивали байты.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     private var persistFile: File? = null
     private var initialized = false
 
@@ -93,10 +99,27 @@ object OcrHistoryStore {
 
     private fun persist() {
         val file = persistFile ?: return
+<<<<<<< HEAD
         scope.launch {
             runCatching {
                 val data = Persisted(_scans.value.take(MAX_ENTRIES), _reads.value.take(MAX_ENTRIES))
                 file.writeText(json.encodeToString(data))
+=======
+        // Снимок берём сразу, под @Synchronized-локом вызывающего метода, и
+        // пишем во временный файл с последующим rename: обрыв процесса не
+        // оставит обрезанный JSON, а единственный поток-исполнитель
+        // гарантирует, что записи не перемешаются.
+        val data = Persisted(_scans.value.take(MAX_ENTRIES), _reads.value.take(MAX_ENTRIES))
+        scope.launch {
+            runCatching {
+                val encoded = json.encodeToString(data)
+                val tmp = File(file.parentFile, "${file.name}.tmp")
+                tmp.writeText(encoded)
+                if (!tmp.renameTo(file)) {
+                    file.writeText(encoded)
+                    tmp.delete()
+                }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             }.onFailure { e -> logcat(LogPriority.WARN, e) { "OcrHistoryStore persist failed" } }
         }
     }

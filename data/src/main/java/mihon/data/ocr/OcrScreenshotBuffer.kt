@@ -77,14 +77,30 @@ object OcrScreenshotBuffer {
     var version: Int = 0
         private set
 
+<<<<<<< HEAD
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+=======
+    // Одно поток-исполнитель: add() из авточтения и clear()/clearChapter()
+    // из UI иначе писали бы один JSON параллельно и перемешивали байты.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     private var persistFile: File? = null
     private var imagesDir: File? = null
     private var initialized = false
 
+<<<<<<< HEAD
     fun init(context: Context) {
         if (initialized) return
         initialized = true
+=======
+    /** Контекст приложения: удаление копий из галереи идёт через ContentResolver. */
+    private var appContext: Context? = null
+
+    fun init(context: Context) {
+        if (initialized) return
+        initialized = true
+        appContext = context.applicationContext
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         persistFile = File(context.filesDir, FILE_NAME)
         imagesDir = File(context.filesDir, IMAGE_DIR_NAME).apply { mkdirs() }
         load()
@@ -223,7 +239,57 @@ object OcrScreenshotBuffer {
             logcat(LogPriority.WARN, e) { "OcrScreenshotBuffer: read image failed for $path" }
             return null
         }
+<<<<<<< HEAD
         return publishToGallery(context, bytes, galleryDisplayName(entry.pageIndex, entry.timestamp))
+=======
+        val uri = publishToGallery(context, bytes, galleryDisplayName(entry.pageIndex, entry.timestamp))
+        // Запомнили опубликованную копию в ЗАПИСИ: иначе удаление скриншота
+        // оставляло бы её в галерее висеть («удалил только в приложении»).
+        if (uri != null) markGalleryUri(entry.id, uri.toString())
+        return uri
+    }
+
+    /**
+     * Запомнить, что запись опубликована в галерее под [uri]: удаление записи
+     * потом уберёт и эту копию. Журнал сразу персистится — перезапуск не
+     * должен «забывать» связь с галереей.
+     */
+    @Synchronized
+    fun markGalleryUri(id: Long, uri: String) {
+        val updated = _entries.value.map { if (it.id == id) it.copy(galleryUri = uri) else it }
+        if (updated == _entries.value) return
+        _entries.value = updated
+        _lastEntry.value?.let { last -> if (last.id == id) _lastEntry.value = updated.firstOrNull { it.id == id } }
+        version++
+        persist()
+    }
+
+    /**
+     * Удалить запись НАСОВСЕМ: внутренний JPEG + копию в галерее (если
+     * публиковалась) + саму запись. Ровно то, чего не хватало: кнопка
+     * удаления оставляла файл в `Pictures/Yomikai`.
+     */
+    @Synchronized
+    fun remove(id: Long) {
+        val entry = _entries.value.firstOrNull { it.id == id }
+        if (entry != null) deleteEverywhere(entry)
+        _entries.value = _entries.value.filter { it.id != id }
+        if (_lastEntry.value?.id == id) _lastEntry.value = null
+        version++
+        persist()
+    }
+
+    /** То же для набора записей (мультивыбор на вкладке «Скриншоты»). */
+    @Synchronized
+    fun removeAll(ids: Set<Long>) {
+        if (ids.isEmpty()) return
+        val doomed = _entries.value.filter { it.id in ids }
+        doomed.forEach { deleteEverywhere(it) }
+        _entries.value = _entries.value.filterNot { it.id in ids }
+        if (_lastEntry.value?.id in ids) _lastEntry.value = null
+        version++
+        persist()
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     }
 
     /**
@@ -249,7 +315,11 @@ object OcrScreenshotBuffer {
 
     /** Очистить буфер. */
     fun clear() {
+<<<<<<< HEAD
         _entries.value.forEach { deleteImageFile(it) }
+=======
+        _entries.value.forEach { deleteEverywhere(it) }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         _entries.value = emptyList()
         _lastEntry.value = null
         version++
@@ -259,7 +329,11 @@ object OcrScreenshotBuffer {
     /** Очистить скриншоты одной главы. */
     fun clearChapter(chapterId: Long) {
         val (keep, remove) = _entries.value.partition { it.chapterId != chapterId }
+<<<<<<< HEAD
         remove.forEach { deleteImageFile(it) }
+=======
+        remove.forEach { deleteEverywhere(it) }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         _entries.value = keep
         if (_lastEntry.value?.chapterId == chapterId) _lastEntry.value = null
         version++
@@ -376,12 +450,51 @@ object OcrScreenshotBuffer {
         }
     }
 
+<<<<<<< HEAD
+=======
+    /**
+     * Полное удаление записи: внутренний файл + копия в галерее.
+     *
+     * `content://` убираем через ContentResolver (MediaStore), `file://`
+     * (Android 8–9) — файлом плюс перескан медиабазы, иначе галерея будет
+     * показывать «битую» миниатюру до перезагрузки.
+     */
+    private fun deleteEverywhere(entry: OcrScreenshotEntry) {
+        deleteImageFile(entry)
+        val uriString = entry.galleryUri ?: return
+        val uri = runCatching { Uri.parse(uriString) }.getOrNull() ?: return
+        val resolver = appContext?.contentResolver ?: return
+        if (uri.scheme == "content") {
+            runCatching { resolver.delete(uri, null, null) }
+                .onFailure { logcat(LogPriority.WARN, it) { "OcrScreenshotBuffer: gallery delete failed" } }
+        } else {
+            runCatching {
+                uri.path?.let { File(it).delete() }
+                MediaScannerConnection.scanFile(appContext, arrayOf(uri.path), null, null)
+            }.onFailure { logcat(LogPriority.WARN, it) { "OcrScreenshotBuffer: gallery file delete failed" } }
+        }
+    }
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     private fun persist() {
         val file = persistFile ?: return
         val entries = _entries.value
         scope.launch {
             try {
+<<<<<<< HEAD
                 file.writeText(json.encodeToString(entries))
+=======
+                // Временный файл + rename: обрыв процесса не оставит
+                // обрезанный JSON, а единственный поток-исполнитель не даст
+                // двум записям перемешаться.
+                val encoded = json.encodeToString(entries)
+                val tmp = File(file.parentFile, "${file.name}.tmp")
+                tmp.writeText(encoded)
+                if (!tmp.renameTo(file)) {
+                    file.writeText(encoded)
+                    tmp.delete()
+                }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             } catch (e: Exception) {
                 logcat(LogPriority.WARN, e) { "OcrScreenshotBuffer: persist failed" }
             }

@@ -28,6 +28,10 @@ import eu.kanade.domain.track.interactor.SyncChapterProgressWithTrack
 import eu.kanade.domain.track.interactor.TrackChapter
 import eu.kanade.tachiyomi.data.dictionary.audio.DictionaryAudioPlayerImpl
 import eu.kanade.tachiyomi.data.dictionary.audio.DictionaryAudioRepositoryImpl
+<<<<<<< HEAD
+=======
+import eu.kanade.tachiyomi.data.ocr.OcrChapterAiVerifier
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 import eu.kanade.tachiyomi.data.ocr.OcrChapterScanner
 import eu.kanade.tachiyomi.data.ocr.OcrPageSourceGateway
 import eu.kanade.tachiyomi.data.ocr.OcrPageSourceGatewayImpl
@@ -76,6 +80,10 @@ import mihon.domain.ocr.interactor.GetCachedChapterIdsOcr
 import mihon.domain.ocr.interactor.GetCachedPageOcr
 import mihon.domain.ocr.interactor.GetOcrCacheSize
 import mihon.domain.ocr.interactor.OcrProcessor
+<<<<<<< HEAD
+=======
+import mihon.domain.ocr.interactor.SaveCachedPageOcr
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 import mihon.domain.ocr.interactor.ScanPageOcr
 import mihon.domain.ocr.interactor.WithOcrScanSession
 import mihon.domain.ocr.repository.OcrRepository
@@ -294,12 +302,21 @@ class DomainModule : InjektModule {
         addSingletonFactory { OcrPageSourceResolver(get(), get(), get()) }
         addSingletonFactory { ReaderSelectionCropper(get()) }
         addSingletonFactory { OcrScanNotifier(get<Application>()) }
+<<<<<<< HEAD
         addSingletonFactory { OcrChapterScanner(get<Application>(), get(), get(), get(), get(), get(), get(), get()) }
+=======
+        addSingletonFactory { OcrChapterScanner(get<Application>(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        addFactory { OcrChapterAiVerifier(get()) }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         addSingletonFactory { OcrScanManager(get<Application>(), get(), get(), get()) }
         addFactory { OcrQueueActions(get(), get()) }
         addFactory { OcrProcessor(get()) }
         addFactory { WithOcrScanSession(get()) }
         addFactory { ScanPageOcr(get()) }
+<<<<<<< HEAD
+=======
+        addFactory { SaveCachedPageOcr(get()) }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         addFactory { GetCachedChapterIdsOcr(get()) }
         addFactory { GetCachedPageOcr(get()) }
         addFactory { ClearCachedChapterOcr(get()) }

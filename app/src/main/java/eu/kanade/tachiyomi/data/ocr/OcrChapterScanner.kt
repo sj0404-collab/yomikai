@@ -2,11 +2,25 @@ package eu.kanade.tachiyomi.data.ocr
 
 import android.content.Context
 import eu.kanade.tachiyomi.R
+<<<<<<< HEAD
 import eu.kanade.tachiyomi.util.ocr.toOcrImage
 import eu.kanade.tachiyomi.util.system.activeNetworkState
 import kotlinx.coroutines.CancellationException
 import logcat.LogPriority
 import mihon.domain.ocr.interactor.ClearCachedChapterOcr
+=======
+import eu.kanade.tachiyomi.data.ai.AiConsole
+import eu.kanade.tachiyomi.util.ocr.toOcrImage
+import eu.kanade.tachiyomi.util.system.activeNetworkState
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import logcat.LogPriority
+import mihon.domain.ocr.interactor.ClearCachedChapterOcr
+import mihon.domain.ocr.interactor.SaveCachedPageOcr
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 import mihon.domain.ocr.interactor.ScanPageOcr
 import mihon.domain.ocr.interactor.WithOcrScanSession
 import tachiyomi.core.common.util.system.logcat
@@ -16,6 +30,15 @@ import tachiyomi.domain.manga.interactor.GetManga
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
+<<<<<<< HEAD
+=======
+// Полоса параллельного скана страниц главы: 2 страницы в полёте.
+// При пресете «online» каждая страница — сетевой вызов, так что скан главы
+// вдвое быстрее; больше 2 нельзя — в полёте не может жить много декодированных
+// битмапов страниц (память), а локальные движки всё равно очередятся в OcrEngineLocks.
+private const val CHAPTER_SCAN_PARALLELISM = 2
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 internal class OcrChapterScanner(
     private val context: Context,
     private val getChapter: GetChapter,
@@ -23,6 +46,10 @@ internal class OcrChapterScanner(
     private val clearCachedChapterOcr: ClearCachedChapterOcr,
     private val withOcrScanSession: WithOcrScanSession,
     private val scanPageOcr: ScanPageOcr,
+<<<<<<< HEAD
+=======
+    private val saveCachedPageOcr: SaveCachedPageOcr,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     private val pageSourceResolver: OcrPageSourceResolver,
     private val downloadPreferences: DownloadPreferences,
 ) {
@@ -32,6 +59,10 @@ internal class OcrChapterScanner(
         onComplete: (OcrChapterScanProgress) -> Unit,
         onError: (OcrChapterScanError) -> Unit,
         onCacheStateChanged: (chapterId: Long, hasResults: Boolean) -> Unit = { _, _ -> },
+<<<<<<< HEAD
+=======
+        aiVerifier: OcrChapterAiVerifier? = null,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     ): Boolean {
         val chapter = getChapter.await(chapterId)
         if (chapter == null) {
@@ -93,6 +124,7 @@ internal class OcrChapterScanner(
                         onProgress(lastProgress)
 
                         try {
+<<<<<<< HEAD
                             var chapterHasCachedResults = false
                             for ((index, page) in pages.pages.withIndex()) {
                                 val networkError = checkNetworkState()
@@ -130,6 +162,89 @@ internal class OcrChapterScanner(
                             }
 
                             onComplete(lastProgress)
+=======
+                            val chapterHasCachedResults = java.util.concurrent.atomic.AtomicBoolean(false)
+                            AiConsole.ocr(
+                                title = "Скан главы «${chapter.name}» начат",
+                                detail = buildString {
+                                    append("страниц ").append(pages.pages.size)
+                                    append(" · глава ").append(chapter.id)
+                                    if (aiVerifier != null) append(" · ИИ-проверка включена")
+                                },
+                            )
+                            val chapterStartedAt = android.os.SystemClock.elapsedRealtime()
+                            // Скан страниц — полосой по CHAPTER_SCAN_PARALLELISM:
+                            // при пресете «online» каждая страница это сетевой вызов,
+                            // и последовательный цикл полз в 2 раза медленнее, чем мог
+                            // бы. Ошибка любой страницы (или потеря сети) отменяет
+                            // coroutineScope и обрабатывается общим catch ниже — как
+                            // и раньше (кэш главы стирается, onError с Unexpected).
+                            // Прогресс считается по факту завершения страниц — это
+                            // монотонный счётчик, порядок страниц в отчёте не важен.
+                            val scanSemaphore = Semaphore(CHAPTER_SCAN_PARALLELISM)
+                            val progressLock = Any()
+                            var processedPagesCount = 0
+                            coroutineScope {
+                                val pageJobs = pages.pages.mapIndexed { index, page ->
+                                    async {
+                                        val networkError = checkNetworkState()
+                                        if (networkError != null) error(networkError)
+                                        scanSemaphore.withPermit {
+                                            val bitmap = page.openBitmap() ?: error("Unable to decode page ${page.pageIndex + 1}")
+                                            try {
+                                                val ocr = scanPageOcr.await(chapterId, page.pageIndex, bitmap.toOcrImage())
+                                                // Проверка картинки моделью идёт ПОСЛЕ OCR и до
+                                                // recycle битмапа: JPEG нужен модели, а реплики —
+                                                // только что распознанным черновиком. Кадр
+                                                // гасится флагом scanChapter(aiVerifier = null),
+                                                // поэтому часовой оффлайн-скан остаётся как был.
+                                                val fixed = aiVerifier?.verifyPage(
+                                                    pageName = "${chapter.name} #${index + 1}",
+                                                    bitmap = bitmap,
+                                                    regions = ocr.regions,
+                                                )
+                                                // Проверенный текст возвращается в кэш, иначе
+                                                // читатель получил бы старый распознанный текст,
+                                                // а правка модели осталась бы в отчёте.
+                                                if (fixed != null) {
+                                                    saveCachedPageOcr.await(
+                                                        ocr.copy(
+                                                            chapterId = chapterId,
+                                                            pageIndex = page.pageIndex,
+                                                            regions = fixed,
+                                                        ),
+                                                    )
+                                                }
+                                            } finally {
+                                                if (!bitmap.isRecycled) {
+                                                    bitmap.recycle()
+                                                }
+                                            }
+                                        }
+
+                                        if (chapterHasCachedResults.compareAndSet(false, true)) {
+                                            onCacheStateChanged(chapterId, true)
+                                        }
+
+                                        val nextProgress = synchronized(progressLock) {
+                                            processedPagesCount++
+                                            lastProgress = lastProgress.copy(processedPages = processedPagesCount)
+                                            lastProgress
+                                        }
+                                        onProgress(nextProgress)
+                                    }
+                                }
+                                pageJobs.forEach { it.await() }
+                            }
+
+                            onComplete(lastProgress)
+                            AiConsole.ocr(
+                                title = "Скан главы «${chapter.name}» готов",
+                                detail = "страниц ${pages.pages.size} · " +
+                                    "${android.os.SystemClock.elapsedRealtime() - chapterStartedAt} мс",
+                                level = AiConsole.Level.OK,
+                            )
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                             true
                         } catch (e: Throwable) {
                             handleUnexpectedFailure(

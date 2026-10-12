@@ -553,6 +553,11 @@ internal class CyrillicOcrEngine(
         val bands = lineBands(crop) ?: return null
         val pieces = mutableListOf<String>()
         var confidenceSum = 0f
+<<<<<<< HEAD
+=======
+        var coverageSum = 0f
+        var inkSum = 0f
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         var count = 0
         for (band in bands) {
             val piece = bandBitmap(crop, band) ?: continue
@@ -564,12 +569,34 @@ internal class CyrillicOcrEngine(
             if (recognition.text.isNotBlank()) {
                 pieces += recognition.text
                 confidenceSum += recognition.confidence
+<<<<<<< HEAD
+=======
+                coverageSum += recognition.coverage
+                inkSum += recognition.inkRatio
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                 count++
             }
         }
         if (pieces.isEmpty()) return null
+<<<<<<< HEAD
         if (!acceptsConfidence(Recognition("", if (count == 0) 0f else confidenceSum / count))) return null
         return pieces.joinToString(" ")
+=======
+        // Собираем признак составного результата из реальных метрик полос: без
+        // среднего `inkRatio` `acceptsConfidence` всегда отклоняла его (0f <
+        // minCropInkRatio), и весь многострочный разбор молча не работал.
+        val text = pieces.joinToString(" ")
+        val accepted = acceptsConfidence(
+            Recognition(
+                text = text,
+                confidence = if (count == 0) 0f else confidenceSum / count,
+                coverage = if (count == 0) 0f else coverageSum / count,
+                inkRatio = if (count == 0) 0f else inkSum / count,
+            ),
+        )
+        if (!accepted) return null
+        return text
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     }
 
     /**
@@ -1258,9 +1285,22 @@ internal class CyrillicOcrEngine(
         } else {
             0f
         }
+<<<<<<< HEAD
         val userDictionaryBonus = tuning().dictionaryCoverageBonus *
             OcrTextCleaner.userDictionaryCoverage(candidate.text)
         return candidate.confidence * fitness + lengthBonus + verifierBonus + userDictionaryBonus
+=======
+        // Пользовательский словарь — сильнейший сигнал (читатель сам подтвердил
+        // слово), поэтому у него свой бонус; встроенный [RuWordList] даёт бонус
+        // поменьше. Оба только РАНЖИРУЮТ гипотезы v3/v5: текст кандидата не
+        // меняется, замены слов по словарю по-прежнему запрещены.
+        val userDictionaryBonus = tuning().dictionaryCoverageBonus *
+            OcrTextCleaner.userDictionaryCoverage(candidate.text)
+        val builtinDictionaryBonus = tuning().dictionaryCoverageBonus *
+            OcrTextCleaner.dictionaryCoverage(candidate.text)
+        return candidate.confidence * fitness + lengthBonus + verifierBonus +
+            userDictionaryBonus + builtinDictionaryBonus
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     }
 
     private fun createHighContrast(source: Bitmap): Bitmap {

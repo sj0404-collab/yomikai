@@ -32,6 +32,10 @@ import eu.kanade.presentation.util.formattedMessage
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.model.Download
+<<<<<<< HEAD
+=======
+import eu.kanade.tachiyomi.data.ocr.OcrChapterAiVerifier
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 import eu.kanade.tachiyomi.data.ocr.OcrChapterScanner
 import eu.kanade.tachiyomi.data.ocr.OcrPageSourceResolver
 import eu.kanade.tachiyomi.data.ocr.OcrScanFailure
@@ -70,6 +74,12 @@ import tachiyomi.core.common.preference.mapAsCheckboxState
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.launchNonCancellable
 import tachiyomi.core.common.util.lang.withUIContext
+<<<<<<< HEAD
+=======
+import mihon.data.ocr.OcrPluginAvailability
+import mihon.data.ocr.OcrPluginRequirement
+import mihon.data.ocr.OcrPlugins
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.category.interactor.SetMangaCategories
@@ -767,12 +777,90 @@ class MangaScreenModel(
     private val _chapterAutoRead = MutableStateFlow(ChapterAutoReadState())
     val chapterAutoRead = _chapterAutoRead.asStateFlow()
 
+<<<<<<< HEAD
     /** Выбранный движок для скан-чтения (по умолчанию — уже настроенный в приложении). */
     var autoReadEngine: OcrModel = ocrPreferences.ocrModel().get()
+=======
+    /**
+     * Идущий скан главы.
+     *
+     * Держать задачу надо было, чтобы «Остановить скан» в диалоге реально
+     * останавливал: у фонового OCR-списка есть своя очередь, а здесь скан
+     * шёл отдельной корутиной без ссылки на неё, и кнопка лишь закрывала
+     * диалог, продолжая жчь трафик.
+     */
+    private var chapterScanJob: kotlinx.coroutines.Job? = null
+
+    /** Прервать идущий скан главы (кнопка в диалоге прогресса). */
+    fun cancelChapterScan() {
+        val job = chapterScanJob ?: return
+        job.cancel()
+        chapterScanJob = null
+        _chapterAutoRead.value = ChapterAutoReadState()
+        eu.kanade.tachiyomi.data.ai.AiConsole.user("Скан главы остановлен")
+    }
+
+    /**
+     * Выбранный движок для скан-чтения: тот, что уже настроен в приложении.
+     *
+     * `val`, а не `var`: смена движка идёт через [selectAutoReadEngine], которая
+     * ещё и пишет глобальный преф. Публичный сеттер здесь означал бы ровно это
+     * же, но молча — без записи в настройки.
+     */
+    val autoReadEngine: OcrModel = ocrPreferences.ocrModel().get()
+
+    /**
+     * Все OCR-модели приложения — тот же реестр `OcrPlugins`, что и в настройках
+     * распознавания.
+     *
+     * Список из двух движков (Glens и OpenRouter) в диалоге скана означал, что
+     * модель, аккуратно настроенная в «Плагины OCR», в скан-чтение не попадала
+     * вообще. Сканировать и озвучивать можно ровно тем же, чем распознаётся
+     * обычная страница, — иначе скан и авточтение говорят разными голосами.
+     *
+     * Недоступные модели не выбрасываются: они показываются с причиной («нужен
+     * ключ», «нет пакета моделей»), иначе список молча выглядел бы короче
+     * настроек.
+     */
+    fun autoReadEngineOptions(networkAvailable: Boolean): List<AutoReadEngineOption> {
+        val availableIds = runCatching {
+            OcrPluginAvailability.availableIds(
+                context = context,
+                networkAvailable = networkAvailable,
+                hasApiKey = { plugin ->
+                    when (plugin.id) {
+                        "openrouter" -> ocrPreferences.openrouterApiKey().get().isNotBlank()
+                        "google_ai" -> ocrPreferences.googleApiKey().get().isNotBlank()
+                        else -> false
+                    }
+                },
+                hasServerAddress = { ocrPreferences.owocrAddress().get().isNotBlank() },
+            )
+        }.getOrDefault(emptySet())
+        return OcrPlugins.ALL.map { plugin ->
+            AutoReadEngineOption(
+                model = plugin.model,
+                title = plugin.title,
+                available = plugin.id in availableIds,
+                unavailableReason = OcrPluginAvailability.missingRequirement(plugin, availableIds)
+                    ?.let { requirementName(it) },
+            )
+        }
+    }
+
+    private fun requirementName(requirement: OcrPluginRequirement): String = when (requirement) {
+        OcrPluginRequirement.NETWORK -> "нужен интернет"
+        OcrPluginRequirement.MODEL_PACK -> "не скачан пакет моделей"
+        OcrPluginRequirement.LITERT -> "нет LiteRT"
+        OcrPluginRequirement.API_KEY -> "не задан API-ключ"
+        OcrPluginRequirement.SERVER_ADDRESS -> "не задан адрес сервера"
+    }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 
     /** Формат экспортируемого транскрипта: "md" | "txt" | "pdf" | "docx". */
     private var autoReadFormat: String = "md"
 
+<<<<<<< HEAD
     /**
      * Запускает фоновый скан одной главы с прогрессом «стр. N из M» (через уже
      * существующий [OcrChapterScanner]), по завершении собирает транскрипт со
@@ -780,11 +868,42 @@ class MangaScreenModel(
      */
     fun scanAndAutoReadChapter(chapter: Chapter) {
         if (_chapterAutoRead.value.running) return
+=======
+/**
+     * Запускает фоновый скан главы с прогрессом «стр. N из M» (через уже
+     * существующий [OcrChapterScanner]), по завершении собирает транскрипт со
+     * спикерами в документ и сигналит UI, чтобы тот открыл читалку в авточтении.
+     *
+     * Диалог не зависает «навсегда»: у сканера есть ветки, которые не зовут ни
+     * `onComplete`, ни `onError`, и раньше они оставляли `running = true` до
+     * перезапуска экрана. Теперь любой исход, кроме успеха, закрывает
+     * состояние.
+     */
+    fun scanAndAutoReadChapter(chapter: Chapter) = scanAndAutoReadChapters(listOf(chapter))
+
+    /**
+     * То же самое пачкой: главы сканируются по очереди, прогресс показывает
+     * «глава i из N» и «стр. j из M» внутри неё.
+     *
+     * Одна кнопка «Сканировать и читать» на весь экран означала, что выбрать
+     * главу нельзя было вообще; теперь то же действие доступно и у каждой
+     * главы, и сразу для нескольких скачанных.
+     *
+     * Открывается авточтение ПЕРВОЙ удачно просканированной главы: следующая
+     * включается вручную — продолжение через главы в движке авточтения не
+     * описано, а молча перескакивать через главы хуже, чем остановиться.
+     */
+    fun scanAndAutoReadChapters(chapters: List<Chapter>) {
+        if (_chapterAutoRead.value.running) return
+        if (chapters.isEmpty()) return
+        chapterScanJob?.cancel()
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         val manga = successState?.manga
         if (manga == null) {
             _chapterAutoRead.value = ChapterAutoReadState(error = "Манга не загружена")
             return
         }
+<<<<<<< HEAD
         screenModelScope.launchIO {
             _chapterAutoRead.value = ChapterAutoReadState(running = true, title = chapter.name, total = 0)
             try {
@@ -831,6 +950,94 @@ class MangaScreenModel(
                 throw e
             } catch (e: Exception) {
                 logcat(LogPriority.ERROR, e) { "scanAndAutoReadChapter failed" }
+=======
+        chapterScanJob = screenModelScope.launchIO {
+            val queue = chapters
+            _chapterAutoRead.value = ChapterAutoReadState(
+                running = true,
+                title = if (queue.size == 1) queue.first().name else "${queue.size} глав",
+                total = 0,
+                stage = "Подготовка…",
+            )
+            var firstScanned: Chapter? = null
+            var exports = 0
+            try {
+                val aiReady = ocrPreferences.googleApiKey().get().isNotBlank()
+                val verifier = if (aiReady) OcrChapterAiVerifier(ocrPreferences) else null
+                for ((index, chapter) in queue.withIndex()) {
+                    val batchLabel = if (queue.size == 1) "" else " · глава ${index + 1} из ${queue.size}"
+                    val ok = ocrChapterScanner.scanChapter(
+                        chapterId = chapter.id,
+                        onProgress = { p ->
+                            val ocrStage = if (aiReady) {
+                                "OCR страницы ${p.processedPages} из ${p.totalPages} + ИИ-проверка"
+                            } else {
+                                "OCR страницы ${p.processedPages} из ${p.totalPages}"
+                            }
+                            _chapterAutoRead.value = _chapterAutoRead.value.copy(
+                                running = true,
+                                processed = p.processedPages,
+                                total = p.totalPages,
+                                title = if (queue.size == 1) p.chapterName else "${queue.size} глав · ${p.chapterName}",
+                                stage = ocrStage + batchLabel,
+                                stagePercent = if (p.totalPages > 0) {
+                                    (p.processedPages * 100 / p.totalPages).coerceIn(0, 100)
+                                } else {
+                                    0
+                                },
+                            )
+                        },
+                        aiVerifier = verifier,
+                        onComplete = { p ->
+                            _chapterAutoRead.value = _chapterAutoRead.value.copy(
+                                running = true,
+                                processed = p.processedPages,
+                                total = p.totalPages,
+                                stage = "Сборка транскрипта…$batchLabel",
+                            )
+                        },
+                        onError = { e ->
+                            // Одна неудачная глава не отменяет пачку: иначе
+                            // выделенные 10 глав оказывались бы неозвученными
+                            // из-за одной без страниц.
+                            logcat(LogPriority.WARN) {
+                                "Scan-and-read: chapter ${chapter.id} failed: ${e.failure}"
+                            }
+                            _chapterAutoRead.value = _chapterAutoRead.value.copy(
+                                stage = "Глава «${chapter.name}» пропущена — ${e.failure}",
+                            )
+                        },
+                    )
+                    if (ok && verifier != null) {
+                        _chapterAutoRead.value = _chapterAutoRead.value.copy(
+                            stage = "ИИ-проверка завершена, словарь ролей сохраняем…",
+                            aiChecking = true,
+                        )
+                        val summary = verifier.commit(chapter.mangaId)
+                        _chapterAutoRead.value = _chapterAutoRead.value.copy(
+                            stage = "ИИ закончил: персонажей ${summary.rolesFound}" +
+                                if (summary.rolesFound == 0) " (ключ есть, но ролей не найдено)" else "",
+                            stagePercent = 100,
+                            aiChecking = false,
+                        )
+                    }
+                    if (ok) {
+                        if (firstScanned == null) firstScanned = chapter
+                        buildChapterTranscript(manga, chapter)?.let { exports++ }
+                    }
+                }
+                val opened = firstScanned
+                _chapterAutoRead.value = _chapterAutoRead.value.copy(
+                    running = false,
+                    error = if (opened == null) "Не удалось просканировать ни одной главы" else null,
+                    transcriptsSaved = exports,
+                    openChapterId = opened?.id,
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e) { "scanAndAutoReadChapters failed" }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                 _chapterAutoRead.value = _chapterAutoRead.value.copy(
                     running = false,
                     error = e.message ?: "Ошибка сканирования",
@@ -863,6 +1070,7 @@ class MangaScreenModel(
         }
     }
 
+<<<<<<< HEAD
     /** Выбрать движок OCR для скан-чтения (offline / Glens / GitHub-раннер). */
     fun setAutoReadEngine(engine: AutoReadEngineChoice) {
         val model = when (engine) {
@@ -871,6 +1079,13 @@ class MangaScreenModel(
             AutoReadEngineChoice.GITHUB_RUNNER -> OcrModel.OPENROUTER
         }
         autoReadEngine = model
+=======
+    /** Выбрать движок OCR для скан-чтения (любой из реестра `OcrPlugins`). */
+    fun selectAutoReadEngine(model: OcrModel) {
+        // Выбор движка для скана — это и глобальный движок распознавания: иначе
+        // скан идёт одним движком, а авточтение в читалке — другим, и читатель
+        // слышит не то, что только что отсканировано.
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         ocrPreferences.ocrModel().set(model)
     }
 
@@ -1377,6 +1592,7 @@ data class ChapterAutoReadState(
     val title: String = "",
     val error: String? = null,
     val exportFile: String? = null,
+<<<<<<< HEAD
     val openChapterId: Long? = null,
 )
 
@@ -1386,6 +1602,29 @@ enum class AutoReadEngineChoice {
     GLENS,
     GITHUB_RUNNER,
 }
+=======
+    /** Сколько транскриптов записано: у пачки их по числу глав. */
+    val transcriptsSaved: Int = 0,
+    val openChapterId: Long? = null,
+    /** Идёт ли проверка страниц моделью (вторая стадия скана). */
+    val aiChecking: Boolean = false,
+    /** Что именно делает скан прямо сейчас — для «терминала» в диалоге. */
+    val stage: String = "",
+    /** Проценты по текущей стадии, 0..100. */
+    val stagePercent: Int = 0,
+)
+
+/** Модель OCR для скан-чтения: любой плагин из `OcrPlugins.ALL`. */
+@Immutable
+data class AutoReadEngineOption(
+    val model: OcrModel,
+    val title: String,
+    /** Готова ли модель к работе прямо сейчас. */
+    val available: Boolean,
+    /** Почему недоступна: сеть / пакет моделей / LiteRT / ключ / адрес. */
+    val unavailableReason: String?,
+)
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 
 @Immutable
 sealed class ChapterList {

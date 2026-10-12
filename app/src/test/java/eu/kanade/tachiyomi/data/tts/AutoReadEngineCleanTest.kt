@@ -4,6 +4,10 @@ import mihon.domain.ocr.model.OcrBoundingBox
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+<<<<<<< HEAD
+=======
+import org.junit.jupiter.api.Assertions.assertNull
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 import org.junit.jupiter.api.Assertions.assertTrue
 
 /**
@@ -16,6 +20,35 @@ import org.junit.jupiter.api.Assertions.assertTrue
 class AutoReadEngineCleanTest {
 
     @Test
+<<<<<<< HEAD
+=======
+    fun `ocr babble from textless artwork is dropped`() {
+        // Страница-иллюстрация без текста: OCR описывает кладку повтором слога.
+        assertFalse(AutoReadEngine.isMeaningful("БУБУ", "ru"))
+        assertFalse(AutoReadEngine.isMeaningful("БЫБЫ", "ru"))
+        assertFalse(AutoReadEngine.isMeaningful("ТУТУТУ", "ru"))
+        assertFalse(AutoReadEngine.isMeaningful("БУ БУБУ БЫБЫ", "ru"))
+    }
+
+    @Test
+    fun `real reduplicated words are kept`() {
+        // Удвоенные слова и смех — настоящие реплики, терять их нельзя.
+        assertTrue(AutoReadEngine.isMeaningful("мама", "ru"))
+        assertTrue(AutoReadEngine.isMeaningful("Хаха", "ru"))
+        assertTrue(AutoReadEngine.isMeaningful("ого", "ru"))
+    }
+
+    @Test
+    fun `короткие живые реплики не путаются с мусором`() {
+        // «Нет, да» — короткая реплика из коротких слов. Мусор от неё
+        // отличается бедностью алфавита, поэтому проверка обязана её пропустить.
+        assertTrue(AutoReadEngine.isMeaningful("Нет, да", "ru"))
+        assertTrue(AutoReadEngine.isMeaningful("Я их вижу", "ru"))
+        assertTrue(AutoReadEngine.isMeaningful("Ты кто", "ru"))
+    }
+
+    @Test
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     fun `russian single-letter words are meaningful`() {
         assertTrue(AutoReadEngine.isMeaningful("Я", "ru"))
         assertTrue(AutoReadEngine.isMeaningful("и", "ru"))
@@ -185,4 +218,186 @@ class AutoReadEngineCleanTest {
         assertTrue(AutoReadEngine.ttsStartedOrGiveUp(started = true, elapsedMs = 0))
         assertTrue(AutoReadEngine.ttsStartedOrGiveUp(started = true, elapsedMs = 60_000))
     }
+<<<<<<< HEAD
+=======
+
+    @Test
+    fun `unlabeled dialogue alternates voices instead of cycling`() {
+        // Регрессия: в сцене без подписей каждая реплика считалась новым
+        // персонажем, слот рос на единицу, и голос шёл по кругу — на странице
+        // шесть баблов читало шесть разных голосов вместо двух.
+        // Пол сменился — возвращаемся к тому, кто уже звучал (А, Б, А, Б).
+        assertEquals(0, AutoReadEngine.continueSpeakerIndex(1, genderJustChanged = true, longLine = true))
+        assertEquals(1, AutoReadEngine.continueSpeakerIndex(2, genderJustChanged = true, longLine = true))
+        assertEquals(0, AutoReadEngine.continueSpeakerIndex(2, genderJustChanged = false, longLine = true))
+    }
+
+    @Test
+    fun `short reply keeps the voice of the open turn`() {
+        // Короткая реплика («Да!») — это продолжение того же голоса, даже если
+        // пол не менялся: иначе возгласы схлопывались бы в разных персонажей.
+        assertEquals(0, AutoReadEngine.continueSpeakerIndex(1, genderJustChanged = false, longLine = false))
+        assertEquals(2, AutoReadEngine.continueSpeakerIndex(3, genderJustChanged = false, longLine = false))
+    }
+
+    @Test
+    fun `a lone speaker keeps talking when nobody else is known`() {
+        // Персонаж этого пола один: длинные реплики подряд — это монолог, а не
+        // диалог, и голос не должен скакать на несуществующего собеседника.
+        assertEquals(0, AutoReadEngine.continueSpeakerIndex(1, genderJustChanged = false, longLine = true))
+        // Никого не знаем — продолжать некому.
+        assertEquals(-1, AutoReadEngine.continueSpeakerIndex(0, genderJustChanged = true, longLine = true))
+    }
+
+    @Test
+    fun `frame box maps back onto the page`() {
+        // Кадр вебтуна — окно ленты, а не страница. Реплика из середины кадра
+        // должна попасть на ту же страницу, а не на середину страницы.
+        val mapped = AutoReadEngine.frameBoxToPage(
+            left = 0.0f,
+            top = 0.0f,
+            right = 1.0f,
+            bottom = 1.0f,
+            cropLeft = 0.0f,
+            cropTop = 0.4f,
+            cropRight = 1.0f,
+            cropBottom = 0.9f,
+        )!!
+        assertEquals(0.0f, mapped[0], 1e-5f)
+        assertEquals(0.4f, mapped[1], 1e-5f)
+        assertEquals(1.0f, mapped[2], 1e-5f)
+        assertEquals(0.9f, mapped[3], 1e-5f)
+
+        // Половина кадра — это середина окна кадра на странице.
+        val half = AutoReadEngine.frameBoxToPage(
+            left = 0.0f,
+            top = 0.0f,
+            right = 0.5f,
+            bottom = 0.5f,
+            cropLeft = 0.0f,
+            cropTop = 0.4f,
+            cropRight = 1.0f,
+            cropBottom = 0.9f,
+        )!!
+        assertEquals(0.5f, half[2], 1e-5f)
+        assertEquals(0.65f, half[3], 1e-5f)
+    }
+
+    @Test
+    fun `frame box without usable geometry is left alone`() {
+        // Кадр без геометрии (склейка нескольких страниц) или вырожденная
+        // геометрия — пересчитывать нечего, рамка остаётся прежней.
+        assertNull(
+            AutoReadEngine.frameBoxToPage(0f, 0f, 1f, 1f, 0f, 0f, 0f, 1f),
+        )
+        assertNull(
+            AutoReadEngine.frameBoxToPage(0f, 0f, 1f, 1f, 0.2f, 0.2f, 0.2f, 0.8f),
+        )
+    }
+
+    @Test
+    fun `pause after a line follows the rhythm of the phrase`() {
+        // Регрессия: пауза между страницами была фиксированной (350 + 900 мс),
+        // и чтение шло рывками с пустым тактом. Теперь пауза вырастает там,
+        // где её делает сама речь.
+        val short = AutoReadEngine.pauseAfterLineMs("Да.", speechRate = 1f)
+        val thought = AutoReadEngine.pauseAfterLineMs("Я так и знал...", speechRate = 1f)
+        val question = AutoReadEngine.pauseAfterLineMs("Куда ты идёшь?", speechRate = 1f)
+        val shout = AutoReadEngine.pauseAfterLineMs("Стой!", speechRate = 1f)
+
+        assertTrue(thought > short, "многоточие должно держать паузу дольше точки")
+        assertTrue(question > short, "вопрос требует паузы")
+        assertTrue(shout < question, "после восклицания пауза почти не нужна")
+    }
+
+    @Test
+    fun `pause stays inside audible bounds`() {
+        // Слишком короткая пауза слипает реплики в одну, слишком длинная —
+        // это уже провал, которого в книге не было.
+        for (text in listOf("А.", "Я долго молчал, глядя на него и не зная, что сказать.", "...")) {
+            for (rate in listOf(0.5f, 1f, 2f)) {
+                val pause = AutoReadEngine.pauseAfterLineMs(text, rate)
+                assertTrue(pause in 120L..800L, "пауза $pause вне диапазона для '$text' @ $rate")
+            }
+        }
+        // Быстрый голос — короче пауза, иначе на высоком темпе появляется провал.
+        val slow = AutoReadEngine.pauseAfterLineMs("Хорошо.", speechRate = 0.5f)
+        val fast = AutoReadEngine.pauseAfterLineMs("Хорошо.", speechRate = 2f)
+        assertTrue(fast < slow)
+    }
+
+    @Test
+    fun `full page frame keeps boxes untouched`() {
+        // Манга, постраничный режим: кадр равен странице, пересчёт обязан быть
+        // тождественным — иначе подсветка поедет на обычных страницах.
+        val mapped = AutoReadEngine.frameBoxToPage(
+            left = 0.2f,
+            top = 0.3f,
+            right = 0.7f,
+            bottom = 0.8f,
+            cropLeft = 0.0f,
+            cropTop = 0.0f,
+            cropRight = 1.0f,
+            cropBottom = 1.0f,
+        )!!
+        assertEquals(0.2f, mapped[0], 1e-5f)
+        assertEquals(0.3f, mapped[1], 1e-5f)
+        assertEquals(0.7f, mapped[2], 1e-5f)
+        assertEquals(0.8f, mapped[3], 1e-5f)
+    }
+
+    // ===== Нечёткая история: бабл не должен выпадать из чтения =====
+
+    @Test
+    fun `a bubble containing an already spoken phrase is still read`() {
+        // Предыдущая страница заканчивалась на «Я не знаю», следующая
+        // начинается с «Я не знаю, что делать». Простое включение считало
+        // вторую реплику дублем, и верхний бабл страницы не читался вовсе.
+        val old = "янезнаю"
+        val new = "янезнаючтоделать"
+        assertFalse(AutoReadEngine.isSameSpokenLine(old, new))
+    }
+
+    @Test
+    fun `a bubble shorter than a spoken one is still read`() {
+        // Обратный случай: раньше прочитанная длинная фраза съедала любую
+        // новую реплику, целиком в неё вошедшую.
+        val old = "яподождуznа самомделе"
+        val new = "подожду"
+        assertFalse(AutoReadEngine.isSameSpokenLine(old, new))
+    }
+
+    @Test
+    fun `a new bubble reusing one common word is still read`() {
+        assertFalse(AutoReadEngine.isSameSpokenLine("этонеправда", "ямочуправду"))
+    }
+
+    @Test
+    fun `the same bubble with truncated edges is still a duplicate`() {
+        // Собственно ради чего история и нужна: та же реплика после прокрутки
+        // приходит обрезанной по краям — длина сопоставима, поэтому это дубль.
+        assertTrue(AutoReadEngine.isSameSpokenLine("янезнаю", "янезнаю"))
+        assertTrue(AutoReadEngine.isSameSpokenLine("этонеправда", "этонеправд"))
+    }
+
+    @Test
+    fun `ocr jitter on the same line is still a duplicate`() {
+        // Та же длина, отличаются пару букв: 3-граммы это видят.
+        assertTrue(AutoReadEngine.isSameSpokenLine("держисвет", "держисвеп"))
+        assertTrue(AutoReadEngine.isSameSpokenLine("этонеправда", "этонеправла"))
+    }
+
+    @Test
+    fun `a much longer bubble is never a re-read of a short one`() {
+        // Реплика, в которую просто добавили слова, — другой бабл, даже если
+        // короткая в неё целиком вошла.
+        assertFalse(AutoReadEngine.isSameSpokenLine("подожду", "яподождунасамомделе"))
+    }
+
+    @Test
+    fun `completely different bubbles are not duplicates`() {
+        assertFalse(AutoReadEngine.isSameSpokenLine("этодракон", "отойдемотсюда"))
+        assertFalse(AutoReadEngine.isSameSpokenLine("нельзя", "янельзявойти"))
+    }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 }

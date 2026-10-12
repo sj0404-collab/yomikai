@@ -28,6 +28,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.AutoMode
+<<<<<<< HEAD
+=======
+import androidx.compose.material.icons.outlined.AutoStories
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.GraphicEq
@@ -84,6 +88,19 @@ fun ReaderFloatingControls(
     onScanRegionChange: (ScanRegion) -> Unit,
     onAutoscrollToggle: (Boolean, Float) -> Unit,
     onAutoSpeakPage: () -> Unit = {},
+<<<<<<< HEAD
+=======
+    /**
+     * Авточтение всей главы: страница за страницей до конца, с листанием.
+     *
+     * Раньше в меню была только кнопка «Прочитать страницу» — она озвучивала
+     * текущий кадр и останавливалась, а запустить чтение главы можно было
+     * только из плавающей кнопки на экране манги (с предварительным сканом).
+     */
+    onAutoReadChapter: () -> Unit = {},
+    /** Идёт ли чтение главы — для подписи и цвета кнопки. */
+    chapterReadActive: Boolean = false,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     onStopSpeak: () -> Unit = {},
     /** Мгновенный скриншот текущего кадра (Glens/любой движок): OCR сейчас,
      *  не дожидаясь авточтения, и запись в буфер «Скриншоты». */
@@ -291,6 +308,38 @@ fun ReaderFloatingControls(
                                     ),
                                 ),
                             ),
+<<<<<<< HEAD
+=======
+                            rowUnlessHidden(
+                                "r_autoread_chapter",
+                                OcrMenuRow(
+                                    label = if (chapterReadActive) "Глава: читаю…" else "Читать главу",
+                                    action = OcrMenuAction(
+                                        icon = if (chapterReadActive) {
+                                            Icons.Outlined.GraphicEq
+                                        } else {
+                                            Icons.Outlined.AutoStories
+                                        },
+                                        onClick = {
+                                            beepAction()
+                                            menuOpen = false
+                                            onAutoReadChapter()
+                                        },
+                                        containerColor = if (chapterReadActive) {
+                                            MaterialTheme.colorScheme.tertiaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.primaryContainer
+                                        },
+                                        contentColor = if (chapterReadActive) {
+                                            MaterialTheme.colorScheme.onTertiaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.onPrimaryContainer
+                                        },
+                                        contentDescription = "Читать главу",
+                                    ),
+                                ),
+                            ),
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                             OcrMenuRow(
                                 label = "Стоп чтения",
                                 action = OcrMenuAction(

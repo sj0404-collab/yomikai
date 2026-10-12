@@ -5,6 +5,10 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.text.TextPaint
+<<<<<<< HEAD
+=======
+import mihon.data.ocr.RuMorph
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 import mihon.domain.ocr.model.OcrTextOrientation
 import kotlin.math.abs
 import kotlin.math.min
@@ -43,6 +47,16 @@ internal class ReaderOcrOverlayRenderer(
      */
     private val highlightTextColor: Int = contrastTextColor(highlightColor)
 
+<<<<<<< HEAD
+=======
+    /**
+     * Цвет служебных слов и местоимений. Знаменательные «реплики» остаются
+     * белыми, поэтому служебные выделяются холодным акцентом, читаемым на
+     * тёмной подложке плашки.
+     */
+    private val functionWordColor = Color.rgb(127, 212, 255)
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     fun buildLayout(
         bubbleRect: RectF,
         displayText: String,
@@ -143,6 +157,7 @@ internal class ReaderOcrOverlayRenderer(
                 val bottom = line.highlightSegments.first().bottom
                 canvas.drawRect(left, top, right, bottom, horizontalHighlightPaint)
             }
+<<<<<<< HEAD
             // Always draw white text; highlighted segments get a contrasting color.
             // We draw non-highlighted text first in white, then re-draw highlighted chars
             // on top in the contrasting color so the highlight background shows correctly.
@@ -159,6 +174,26 @@ internal class ReaderOcrOverlayRenderer(
                 }
             }
         }
+=======
+            // Каждый символ рисуется РОВНО ОДИН РАЗ: строка заранее разбита на
+            // непрерывные куски (runs), у каждого свой цвет. Никаких слоёв
+            // «нарисовать всю строку, потом поверх слова» — служебные слова и
+            // реплики не перекрывают друг друга.
+            line.runs.forEach { run ->
+                textPaint.color = when {
+                    run.isHighlighted -> highlightTextColor
+                    run.isFunction -> functionWordColor
+                    else -> Color.WHITE
+                }
+                // До озвучки текст курсивом (запрос пользователя); звучащее
+                // сейчас слово — прямым начертанием.
+                textPaint.textSkewX = if (run.isHighlighted) 0f else -0.25f
+                val x = line.left + measureText(line.text, 0, run.startCharIndex)
+                canvas.drawText(run.text, x, line.baselineY, textPaint)
+            }
+        }
+        textPaint.textSkewX = 0f
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     }
 
     private fun drawVerticalText(canvas: Canvas, overlayLayout: ReaderOcrOverlayLayout.Vertical) {
@@ -183,7 +218,15 @@ internal class ReaderOcrOverlayRenderer(
             }
 
         overlayLayout.glyphs.forEach { glyph ->
+<<<<<<< HEAD
             textPaint.color = if (glyph.isHighlighted) highlightTextColor else Color.WHITE
+=======
+            textPaint.color = when {
+                glyph.isHighlighted -> highlightTextColor
+                glyph.isFunction -> functionWordColor
+                else -> Color.WHITE
+            }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             textPaint.textSkewX = if (glyph.isHighlighted) 0f else -0.25f
             val drawChar = verticalEllipsis(glyph.char)
             val textWidth = measureText(drawChar)
@@ -259,6 +302,7 @@ internal class ReaderOcrOverlayRenderer(
                 contentRect.left
             }
             val highlightSegments = mutableListOf<RectF>()
+<<<<<<< HEAD
             // Collect contiguous runs of highlighted characters so we can re-draw them
             // in a contrasting text color on top of the highlight background.
             val highlightText = mutableListOf<Pair<String, Float>>()
@@ -275,12 +319,16 @@ internal class ReaderOcrOverlayRenderer(
                 }
             }
 
+=======
+            val highlightFlags = BooleanArray(line.length)
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             line.forEachIndexed { charIndex, _ ->
                 val charDisplayOffset = displayOffset + charIndex
                 if (highlightRange != null && charDisplayOffset in highlightRange.first until highlightRange.second) {
                     val left = lineLeft + measureText(line, 0, charIndex)
                     val right = lineLeft + measureText(line, 0, charIndex + 1)
                     highlightSegments += RectF(left, lineTop, right, lineBottom)
+<<<<<<< HEAD
                     if (highlightRunStart < 0) {
                         highlightRunStart = charDisplayOffset
                         highlightRunStartIndex = charIndex
@@ -290,6 +338,11 @@ internal class ReaderOcrOverlayRenderer(
                 }
             }
             flushHighlightRun(line.length)
+=======
+                    highlightFlags[charIndex] = true
+                }
+            }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 
             linePlacements += HorizontalLinePlacement(
                 text = line,
@@ -299,7 +352,11 @@ internal class ReaderOcrOverlayRenderer(
                 baselineY = lineTop - fontMetrics.top,
                 startDisplayOffset = displayOffset,
                 highlightSegments = highlightSegments,
+<<<<<<< HEAD
                 highlightText = highlightText,
+=======
+                runs = buildTextRuns(line, highlightFlags),
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             )
             displayOffset += line.length
             if (index < lines.lastIndex) {
@@ -365,6 +422,10 @@ internal class ReaderOcrOverlayRenderer(
         var displayOffset = 0
         for ((lineIndex, line) in lines.withIndex()) {
             val glyphs = mutableListOf<VerticalGlyph>()
+<<<<<<< HEAD
+=======
+            val functionFlags = functionWordFlags(line)
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             line.forEachIndexed { charIndex, char ->
                 val glyphWidth = maxOf(measureText(verticalEllipsis(char.toString())), textSizePx * 0.85f)
                 val isHighlighted = highlightRange?.let { displayOffset in it.first until it.second } == true
@@ -373,6 +434,10 @@ internal class ReaderOcrOverlayRenderer(
                     displayOffset = displayOffset,
                     glyphWidth = glyphWidth,
                     isHighlighted = isHighlighted,
+<<<<<<< HEAD
+=======
+                    isFunction = functionFlags[charIndex],
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                     indexInColumn = charIndex,
                 )
                 displayOffset++
@@ -412,6 +477,10 @@ internal class ReaderOcrOverlayRenderer(
                     rect = RectF(columnLeft, glyphTop, columnRight, glyphTop + glyphCellHeight),
                     baselineY = glyphTop + baselineOffsetInCell,
                     isHighlighted = glyph.isHighlighted,
+<<<<<<< HEAD
+=======
+                    isFunction = glyph.isFunction,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                 )
             }
         }
@@ -436,6 +505,55 @@ internal class ReaderOcrOverlayRenderer(
         return textPaint.measureText(text, start, end)
     }
 
+<<<<<<< HEAD
+=======
+    /**
+     * Разбивает строку на непрерывные куски с одинаковым состоянием
+     * (подсвечено/нет, служебное/знаменательное). Каждый символ попадает
+     * ровно в один кусок, поэтому при отрисовке слово никогда не рисуется
+     * повторно.
+     */
+    private fun buildTextRuns(text: String, highlightFlags: BooleanArray): List<HorizontalTextRun> {
+        if (text.isEmpty()) return emptyList()
+        val functionFlags = functionWordFlags(text)
+        val runs = mutableListOf<HorizontalTextRun>()
+        var start = 0
+        while (start < text.length) {
+            val highlighted = highlightFlags[start]
+            val function = functionFlags[start]
+            var end = start + 1
+            while (end < text.length && highlightFlags[end] == highlighted && functionFlags[end] == function) {
+                end++
+            }
+            runs += HorizontalTextRun(
+                startCharIndex = start,
+                text = text.substring(start, end),
+                isHighlighted = highlighted,
+                isFunction = function,
+            )
+            start = end
+        }
+        return runs
+    }
+
+    /**
+     * Помечает символы кириллических слов, которые RuMorph относит к
+     * служебным/местоимениям. Пунктуация, латиница и CJK остаются
+     * знаменательными.
+     */
+    private fun functionWordFlags(text: String): BooleanArray {
+        val flags = BooleanArray(text.length)
+        for (match in CYRILLIC_WORD.findAll(text)) {
+            if (RuMorph.isFunctionWord(match.value)) {
+                for (index in match.range) {
+                    flags[index] = true
+                }
+            }
+        }
+        return flags
+    }
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     private fun verticalEllipsis(text: String): String {
         return when (text) {
             "…" -> "︙"
@@ -454,6 +572,12 @@ internal class ReaderOcrOverlayRenderer(
     }
 
     companion object {
+<<<<<<< HEAD
+=======
+        /** Кириллическое слово, возможно составное через дефис («из-за»). */
+        private val CYRILLIC_WORD = Regex("[а-яёА-ЯЁ]+(?:-[а-яёА-ЯЁ]+)*")
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         /**
          * Returns [Color.BLACK] or [Color.WHITE] - whichever has higher contrast
          * against [background] - using the WCAG relative-luminance formula.
@@ -508,6 +632,10 @@ internal data class VerticalGlyphPlacement(
     val rect: RectF,
     val baselineY: Float,
     val isHighlighted: Boolean,
+<<<<<<< HEAD
+=======
+    val isFunction: Boolean,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 )
 
 internal data class HorizontalLinePlacement(
@@ -518,8 +646,24 @@ internal data class HorizontalLinePlacement(
     val baselineY: Float,
     val startDisplayOffset: Int,
     val highlightSegments: List<RectF>,
+<<<<<<< HEAD
     /** Contiguous runs of highlighted characters as (text, x) for contrast-color redraw. */
     val highlightText: List<Pair<String, Float>> = emptyList(),
+=======
+    /** Непрерывные куски строки: каждый символ ровно в одном куске. */
+    val runs: List<HorizontalTextRun> = emptyList(),
+)
+
+/**
+ * Непрерывный участок строки с одинаковым цветом: [isHighlighted] —
+ * звучит сейчас, [isFunction] — служебное слово/местоимение.
+ */
+internal data class HorizontalTextRun(
+    val startCharIndex: Int,
+    val text: String,
+    val isHighlighted: Boolean,
+    val isFunction: Boolean,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 )
 
 private data class VerticalGlyph(
@@ -527,6 +671,10 @@ private data class VerticalGlyph(
     val displayOffset: Int,
     val glyphWidth: Float,
     val isHighlighted: Boolean,
+<<<<<<< HEAD
+=======
+    val isFunction: Boolean,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     val indexInColumn: Int,
 )
 

@@ -17,6 +17,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+<<<<<<< HEAD
+=======
+import androidx.compose.material.icons.outlined.Delete
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.SwapHoriz
@@ -115,6 +119,18 @@ class ScreenshotDetailScreen(
                             Icon(Icons.Outlined.Download, contentDescription = "Сохранить в галерею")
                         }
                     }
+<<<<<<< HEAD
+=======
+                    if (entry != null) {
+                        // Удалить насовсем: внутренний файл + копия в галерее.
+                        IconButton(onClick = {
+                            mihon.data.ocr.OcrScreenshotBuffer.remove(entry.id)
+                            navigator.pop()
+                        }) {
+                            Icon(Icons.Outlined.Delete, contentDescription = "Удалить насовсем")
+                        }
+                    }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                 },
             )
 

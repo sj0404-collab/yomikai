@@ -3,8 +3,15 @@ package eu.kanade.presentation.manga
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.layout.Box
+<<<<<<< HEAD
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+=======
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
@@ -23,8 +30,17 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
+<<<<<<< HEAD
 import androidx.compose.material3.Icon
 import androidx.compose.material3.SmallExtendedFloatingActionButton
+=======
+import androidx.compose.material.icons.outlined.RecordVoiceOver
+import androidx.compose.material.icons.outlined.Terminal
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SmallExtendedFloatingActionButton
+import androidx.compose.material3.SmallFloatingActionButton
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -45,6 +61,10 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.util.fastAll
 import androidx.compose.ui.util.fastAny
+<<<<<<< HEAD
+=======
+import androidx.compose.ui.unit.dp
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 import androidx.compose.ui.util.fastMap
 import eu.kanade.presentation.components.relativeDateText
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
@@ -99,6 +119,14 @@ fun MangaScreen(
     onFilterButtonClicked: () -> Unit,
     onRefresh: () -> Unit,
     onContinueReading: () -> Unit,
+<<<<<<< HEAD
+=======
+    onScanChapterClicked: (() -> Unit)? = null,
+    /** Консоль ИИ: живой журнал скана и работы агента. */
+    onOpenAiConsole: (() -> Unit)? = null,
+    /** Скан конкретной главы: кнопка в строке списка. */
+    onScanChapterItemClicked: ((Chapter) -> Unit)? = null,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     onSearch: (query: String, global: Boolean) -> Unit,
 
     // For cover dialog
@@ -117,6 +145,11 @@ fun MangaScreen(
     onMultiMarkAsReadClicked: (List<Chapter>, markAsRead: Boolean) -> Unit,
     onMarkPreviousAsReadClicked: (Chapter) -> Unit,
     onOcrClicked: ((List<Chapter>) -> Unit)? = null,
+<<<<<<< HEAD
+=======
+    /** Скан выбранных глав пачкой с озвучкой. */
+    onScanAndReadChapters: ((List<Chapter>) -> Unit)? = null,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     onMultiDeleteClicked: (List<Chapter>) -> Unit,
 
     // For chapter swipe
@@ -153,6 +186,12 @@ fun MangaScreen(
             onFilterClicked = onFilterButtonClicked,
             onRefresh = onRefresh,
             onContinueReading = onContinueReading,
+<<<<<<< HEAD
+=======
+            onScanChapterClicked = onScanChapterClicked,
+            onOpenAiConsole = onOpenAiConsole,
+            onScanChapterItemClicked = onScanChapterItemClicked,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             onSearch = onSearch,
             onCoverClicked = onCoverClicked,
             onShareClicked = onShareClicked,
@@ -165,6 +204,10 @@ fun MangaScreen(
             onMultiMarkAsReadClicked = onMultiMarkAsReadClicked,
             onMarkPreviousAsReadClicked = onMarkPreviousAsReadClicked,
             onOcrClicked = onOcrClicked,
+<<<<<<< HEAD
+=======
+            onScanAndReadChapters = onScanAndReadChapters,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             onMultiDeleteClicked = onMultiDeleteClicked,
             onChapterSwipe = onChapterSwipe,
             onChapterSelected = onChapterSelected,
@@ -190,6 +233,12 @@ fun MangaScreen(
             onFilterButtonClicked = onFilterButtonClicked,
             onRefresh = onRefresh,
             onContinueReading = onContinueReading,
+<<<<<<< HEAD
+=======
+            onScanChapterClicked = onScanChapterClicked,
+            onOpenAiConsole = onOpenAiConsole,
+            onScanChapterItemClicked = onScanChapterItemClicked,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             onSearch = onSearch,
             onCoverClicked = onCoverClicked,
             onShareClicked = onShareClicked,
@@ -202,6 +251,10 @@ fun MangaScreen(
             onMultiMarkAsReadClicked = onMultiMarkAsReadClicked,
             onMarkPreviousAsReadClicked = onMarkPreviousAsReadClicked,
             onOcrClicked = onOcrClicked,
+<<<<<<< HEAD
+=======
+            onScanAndReadChapters = onScanAndReadChapters,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             onMultiDeleteClicked = onMultiDeleteClicked,
             onChapterSwipe = onChapterSwipe,
             onChapterSelected = onChapterSelected,
@@ -233,6 +286,14 @@ private fun MangaScreenSmallImpl(
     onFilterClicked: () -> Unit,
     onRefresh: () -> Unit,
     onContinueReading: () -> Unit,
+<<<<<<< HEAD
+=======
+    onScanChapterClicked: (() -> Unit)? = null,
+    /** Консоль ИИ: живой журнал скана и работы агента. */
+    onOpenAiConsole: (() -> Unit)? = null,
+    /** Скан конкретной главы: кнопка в строке списка. */
+    onScanChapterItemClicked: ((Chapter) -> Unit)? = null,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     onSearch: (query: String, global: Boolean) -> Unit,
 
     // For cover dialog
@@ -251,6 +312,11 @@ private fun MangaScreenSmallImpl(
     onMultiMarkAsReadClicked: (List<Chapter>, markAsRead: Boolean) -> Unit,
     onMarkPreviousAsReadClicked: (Chapter) -> Unit,
     onOcrClicked: ((List<Chapter>) -> Unit)? = null,
+<<<<<<< HEAD
+=======
+    /** Скан выбранных глав пачкой с озвучкой. */
+    onScanAndReadChapters: ((List<Chapter>) -> Unit)? = null,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     onMultiDeleteClicked: (List<Chapter>) -> Unit,
 
     // For chapter swipe
@@ -323,6 +389,10 @@ private fun MangaScreenSmallImpl(
                 onMultiMarkAsReadClicked = onMultiMarkAsReadClicked,
                 onMarkPreviousAsReadClicked = onMarkPreviousAsReadClicked,
                 onOcrClicked = onOcrClicked,
+<<<<<<< HEAD
+=======
+                onScanAndReadChapters = onScanAndReadChapters,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                 onDownloadChapter = onDownloadChapter,
                 onMultiDeleteClicked = onMultiDeleteClicked,
                 fillFraction = 1f,
@@ -333,6 +403,7 @@ private fun MangaScreenSmallImpl(
             val isFABVisible = remember(chapters) {
                 chapters.fastAny { !it.chapter.read } && !isAnySelected
             }
+<<<<<<< HEAD
             SmallExtendedFloatingActionButton(
                 text = {
                     val isReading = remember(state.chapters) {
@@ -345,11 +416,61 @@ private fun MangaScreenSmallImpl(
                 icon = { Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = null) },
                 onClick = onContinueReading,
                 expanded = chapterListState.shouldExpandFAB(),
+=======
+            // «Читать» и «Сканировать главу голосом» стоят в один ряд у нижнего
+            // правого края. Раньше вторая кнопка висела отдельным FAB выше и
+            // выглядела как парящая в воздухе кнопка между главами.
+            Row(
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                 modifier = Modifier.animateFloatingActionButton(
                     visible = isFABVisible,
                     alignment = Alignment.BottomEnd,
                 ),
+<<<<<<< HEAD
             )
+=======
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                if (onScanChapterClicked != null) {
+                    SmallFloatingActionButton(
+                        onClick = onScanChapterClicked,
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.RecordVoiceOver,
+                            contentDescription = "Сканировать главу онлайн-моделью и озвучить",
+                        )
+                    }
+                }
+                // Консоль ИИ третьей в том же ряду: скан главы запускается отсюда
+                // же, и смотреть, чем занят ИИ, нужно не заходя в читалку.
+                if (onOpenAiConsole != null) {
+                    SmallFloatingActionButton(
+                        onClick = onOpenAiConsole,
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Terminal,
+                            contentDescription = "Консоль ИИ",
+                        )
+                    }
+                }
+                SmallExtendedFloatingActionButton(
+                    text = {
+                        val isReading = remember(state.chapters) {
+                            state.chapters.fastAny { it.chapter.read }
+                        }
+                        Text(
+                            text = stringResource(if (isReading) MR.strings.action_resume else MR.strings.action_start),
+                        )
+                    },
+                    icon = { Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = null) },
+                    onClick = onContinueReading,
+                    expanded = chapterListState.shouldExpandFAB(),
+                )
+            }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         },
     ) { contentPadding ->
         val topPadding = contentPadding.calculateTopPadding()
@@ -446,6 +567,10 @@ private fun MangaScreenSmallImpl(
                         chapterSwipeEndAction = chapterSwipeEndAction,
                         onChapterClicked = onChapterClicked,
                         onDownloadChapter = onDownloadChapter,
+<<<<<<< HEAD
+=======
+                        onScanChapter = onScanChapterItemClicked,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                         onChapterSelected = onChapterSelected,
                         onChapterSwipe = onChapterSwipe,
                     )
@@ -477,6 +602,14 @@ fun MangaScreenLargeImpl(
     onFilterButtonClicked: () -> Unit,
     onRefresh: () -> Unit,
     onContinueReading: () -> Unit,
+<<<<<<< HEAD
+=======
+    onScanChapterClicked: (() -> Unit)? = null,
+    /** Консоль ИИ: живой журнал скана и работы агента. */
+    onOpenAiConsole: (() -> Unit)? = null,
+    /** Скан конкретной главы: кнопка в строке списка. */
+    onScanChapterItemClicked: ((Chapter) -> Unit)? = null,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     onSearch: (query: String, global: Boolean) -> Unit,
 
     // For cover dialog
@@ -495,6 +628,11 @@ fun MangaScreenLargeImpl(
     onMultiMarkAsReadClicked: (List<Chapter>, markAsRead: Boolean) -> Unit,
     onMarkPreviousAsReadClicked: (Chapter) -> Unit,
     onOcrClicked: ((List<Chapter>) -> Unit)? = null,
+<<<<<<< HEAD
+=======
+    /** Скан выбранных глав пачкой с озвучкой. */
+    onScanAndReadChapters: ((List<Chapter>) -> Unit)? = null,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     onMultiDeleteClicked: (List<Chapter>) -> Unit,
 
     // For swipe actions
@@ -564,6 +702,10 @@ fun MangaScreenLargeImpl(
                     onMultiMarkAsReadClicked = onMultiMarkAsReadClicked,
                     onMarkPreviousAsReadClicked = onMarkPreviousAsReadClicked,
                     onOcrClicked = onOcrClicked,
+<<<<<<< HEAD
+=======
+                    onScanAndReadChapters = onScanAndReadChapters,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                     onDownloadChapter = onDownloadChapter,
                     onMultiDeleteClicked = onMultiDeleteClicked,
                     fillFraction = 0.5f,
@@ -575,6 +717,7 @@ fun MangaScreenLargeImpl(
             val isFABVisible = remember(chapters) {
                 chapters.fastAny { !it.chapter.read } && !isAnySelected
             }
+<<<<<<< HEAD
             SmallExtendedFloatingActionButton(
                 text = {
                     val isReading = remember(state.chapters) {
@@ -589,11 +732,62 @@ fun MangaScreenLargeImpl(
                 icon = { Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = null) },
                 onClick = onContinueReading,
                 expanded = chapterListState.shouldExpandFAB(),
+=======
+            // См. комментарий у такой же кнопки в широком макете: вторая
+            // кнопка стоит в ряд с «Читать», а не висит отдельным FAB.
+            Row(
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                 modifier = Modifier.animateFloatingActionButton(
                     visible = isFABVisible,
                     alignment = Alignment.BottomEnd,
                 ),
+<<<<<<< HEAD
             )
+=======
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                if (onScanChapterClicked != null) {
+                    SmallFloatingActionButton(
+                        onClick = onScanChapterClicked,
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.RecordVoiceOver,
+                            contentDescription = "Сканировать главу онлайн-моделью и озвучить",
+                        )
+                    }
+                }
+                // Консоль ИИ третьей в том же ряду: скан главы запускается отсюда
+                // же, и смотреть, чем занят ИИ, нужно не заходя в читалку.
+                if (onOpenAiConsole != null) {
+                    SmallFloatingActionButton(
+                        onClick = onOpenAiConsole,
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Terminal,
+                            contentDescription = "Консоль ИИ",
+                        )
+                    }
+                }
+                SmallExtendedFloatingActionButton(
+                    text = {
+                        val isReading = remember(state.chapters) {
+                            state.chapters.fastAny { it.chapter.read }
+                        }
+                        Text(
+                            text = stringResource(
+                                if (isReading) MR.strings.action_resume else MR.strings.action_start,
+                            ),
+                        )
+                    },
+                    icon = { Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = null) },
+                    onClick = onContinueReading,
+                    expanded = chapterListState.shouldExpandFAB(),
+                )
+            }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         },
     ) { contentPadding ->
         PullRefresh(
@@ -685,6 +879,10 @@ fun MangaScreenLargeImpl(
                                 chapterSwipeEndAction = chapterSwipeEndAction,
                                 onChapterClicked = onChapterClicked,
                                 onDownloadChapter = onDownloadChapter,
+<<<<<<< HEAD
+=======
+                                onScanChapter = onScanChapterItemClicked,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                                 onChapterSelected = onChapterSelected,
                                 onChapterSwipe = onChapterSwipe,
                             )
@@ -703,6 +901,11 @@ private fun SharedMangaBottomActionMenu(
     onMultiMarkAsReadClicked: (List<Chapter>, markAsRead: Boolean) -> Unit,
     onMarkPreviousAsReadClicked: (Chapter) -> Unit,
     onOcrClicked: ((List<Chapter>) -> Unit)? = null,
+<<<<<<< HEAD
+=======
+    /** Скан выбранных глав пачкой с озвучкой. */
+    onScanAndReadChapters: ((List<Chapter>) -> Unit)? = null,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     onDownloadChapter: ((List<ChapterList.Item>, ChapterDownloadAction) -> Unit)?,
     onMultiDeleteClicked: (List<Chapter>) -> Unit,
     fillFraction: Float,
@@ -715,6 +918,20 @@ private fun SharedMangaBottomActionMenu(
             onOcrClicked?.invoke(selected.fastMap { it.chapter })
             Unit
         }.takeIf { onOcrClicked != null },
+<<<<<<< HEAD
+=======
+        // Пачкой — только скачанные: у нескачанной главы нет файлов, скан
+        // нечего брать. Нескачанные главы отсекаются, а не показываются с
+        // ошибкой по каждой.
+        onScanAndReadClicked = {
+            onScanAndReadChapters?.invoke(
+                selected.filter { it.downloadState == Download.State.DOWNLOADED }.fastMap { it.chapter },
+            )
+            Unit
+        }.takeIf {
+            onScanAndReadChapters != null && selected.fastAny { it.downloadState == Download.State.DOWNLOADED }
+        },
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         onBookmarkClicked = {
             onMultiBookmarkClicked.invoke(selected.fastMap { it.chapter }, true)
         }.takeIf { selected.fastAny { !it.chapter.bookmark } },
@@ -751,6 +968,10 @@ private fun LazyListScope.sharedChapterItems(
     chapterSwipeEndAction: LibraryPreferences.ChapterSwipeAction,
     onChapterClicked: (Chapter) -> Unit,
     onDownloadChapter: ((List<ChapterList.Item>, ChapterDownloadAction) -> Unit)?,
+<<<<<<< HEAD
+=======
+    onScanChapter: ((Chapter) -> Unit)?,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     onChapterSelected: (ChapterList.Item, Boolean, Boolean) -> Unit,
     onChapterSwipe: (ChapterList.Item, LibraryPreferences.ChapterSwipeAction) -> Unit,
 ) {
@@ -816,6 +1037,15 @@ private fun LazyListScope.sharedChapterItems(
                     } else {
                         null
                     },
+<<<<<<< HEAD
+=======
+                    onScanClick = onScanChapter?.let { scan ->
+                        {
+                            scan(item.chapter)
+                            Unit
+                        }
+                    },
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                     onChapterSwipe = {
                         onChapterSwipe(item, it)
                     },

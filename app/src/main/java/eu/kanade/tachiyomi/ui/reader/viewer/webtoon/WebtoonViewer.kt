@@ -400,6 +400,13 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
                 is ChapterTransition -> onTransitionSelected(item)
             }
         }
+<<<<<<< HEAD
+=======
+        // Ручная прокрутка гасит наложение прошлого кадра (см.
+        // ReaderActivity.onReaderScrolledManually): во время автоцикла
+        // вызов внутри — no-op.
+        runCatching { activity.onReaderScrolledManually() }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     }
 
     /**
@@ -430,8 +437,19 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
      * выпадали и «читались» снова только рывком. Меньший шаг (с перекрытием)
      * держит автопрокрутку, пока кадр не прочитан, и не пропускает текст на
      * границе вьюпорта.
+<<<<<<< HEAD
      */
     fun scrollDownByFraction(fraction: Float) {
+=======
+     *
+     * Возвращает `false`, если полоса уже закончилась: авточтению этим
+     * сообщается конец главы, иначе оно прокручивало бы последний экран по
+     * кругу. Проверка идёт по положению последней видимой полосы ДО развёртки
+     * анимации (`smoothScrollBy` считает её отложенной), поэтому «есть ещё что
+     * читать» определяется верно и при плавном, и при мгновенном шаге.
+     */
+    fun scrollDownByFraction(fraction: Float): Boolean {
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         val px = (activity.resources.displayMetrics.heightPixels * fraction)
             .toInt()
             .coerceAtLeast(1)
@@ -440,6 +458,33 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
         } else {
             recycler.scrollBy(0, px)
         }
+<<<<<<< HEAD
+=======
+        return canScrollDown()
+    }
+
+    /**
+     * Мгновенный шаг в пикселях — для ПОСТЕПЕННОЙ прокрутки авточтения
+     * (см. `ReaderActivity.smoothWebtoonScroll`): лента при выключенных
+     * анимациях листалась одним `scrollBy` на всю цель, и рамка «прыгала»
+     * рывком — скорость речи не успевала «разогнаться».
+     */
+    fun scrollByPx(px: Int) {
+        if (px == 0) return
+        recycler.scrollBy(0, px)
+    }
+
+    /**
+     * Есть ли ниже ещё содержимое главы.
+     *
+     * Последний элемент адаптера — переход к следующей главе, поэтому конец
+     * полосы — это «последний видимый элемент == последний в адаптере».
+     */
+    fun canScrollDown(): Boolean {
+        val last = layoutManager.findLastEndVisibleItemPosition()
+        if (last == androidx.recyclerview.widget.RecyclerView.NO_POSITION) return true
+        return last < adapter.items.size - 1
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     }
 
     /**

@@ -31,6 +31,10 @@ import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.DoneAll
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.MoreVert
+<<<<<<< HEAD
+=======
+import androidx.compose.material.icons.outlined.RecordVoiceOver
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 import androidx.compose.material.icons.outlined.RemoveDone
 import androidx.compose.material.icons.outlined.SwapCalls
 import androidx.compose.material3.DropdownMenuItem
@@ -78,6 +82,18 @@ fun MangaBottomActionMenu(
     onMarkPreviousAsReadClicked: (() -> Unit)? = null,
     onDownloadClicked: (() -> Unit)? = null,
     onOcrClicked: (() -> Unit)? = null,
+<<<<<<< HEAD
+=======
+    /**
+     * Сканировать выбранные главы и озвучить их.
+     *
+     * Отличается от [onOcrClicked]: тот только кладёт главы в фоновую очередь
+     * распознавания, этот же и транскрипт собирает, и открывает первую главу в
+     * авточтении. Поэтому кнопка появляется только когда выбраны скачанные
+     * главы — нескачанную нечем сканировать.
+     */
+    onScanAndReadClicked: (() -> Unit)? = null,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     onDeleteClicked: (() -> Unit)? = null,
 ) {
     AnimatedVisibility(
@@ -92,7 +108,11 @@ fun MangaBottomActionMenu(
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
         ) {
             val haptic = LocalHapticFeedback.current
+<<<<<<< HEAD
             val confirm = remember { mutableStateListOf(false, false, false, false, false, false, false, false) }
+=======
+            val confirm = remember { mutableStateListOf(false, false, false, false, false, false, false, false, false) }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             var resetJob by remember { mutableStateOf<Job?>(null) }
             val onLongClickItem: (Int) -> Unit = { toConfirmIndex ->
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -175,12 +195,29 @@ fun MangaBottomActionMenu(
                         onClick = onOcrClicked,
                     )
                 }
+<<<<<<< HEAD
+=======
+                if (onScanAndReadClicked != null) {
+                    Button(
+                        title = "Сканировать и озвучить",
+                        icon = Icons.Outlined.RecordVoiceOver,
+                        toConfirm = confirm[7],
+                        onLongClick = { onLongClickItem(7) },
+                        onClick = onScanAndReadClicked,
+                    )
+                }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                 if (onDeleteClicked != null) {
                     Button(
                         title = stringResource(MR.strings.action_delete),
                         icon = Icons.Outlined.Delete,
+<<<<<<< HEAD
                         toConfirm = confirm[7],
                         onLongClick = { onLongClickItem(7) },
+=======
+                        toConfirm = confirm[8],
+                        onLongClick = { onLongClickItem(8) },
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                         onClick = onDeleteClicked,
                     )
                 }

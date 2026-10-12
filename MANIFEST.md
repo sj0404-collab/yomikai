@@ -4,7 +4,11 @@
 никакие файлы не прячутся в системном /tmp.
 
 - **Клон (работай здесь):** /home/runner/hub-work/yomikai/code
+<<<<<<< HEAD
 - **Ветка:** main
+=======
+- **Ветка:** master
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 - **Только твои временные файлы (сборки, кеши, артефакты):** /home/runner/hub-work/yomikai/tmp
 - **Манифест:** /home/runner/hub-work/yomikai/code/MANIFEST.md
 

@@ -1,6 +1,10 @@
 package mihon.data.ocr
 
 import io.kotest.matchers.collections.shouldContainExactly
+<<<<<<< HEAD
+=======
+import io.kotest.matchers.collections.shouldContain
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 import io.kotest.matchers.shouldBe
 import mihon.domain.ocr.model.OcrModel
 import mihon.domain.ocr.service.ScanRegion
@@ -133,20 +137,61 @@ class OcrPluginsTest {
     fun `legacy engine selections migrate to the cyrillic plugin`() {
         OcrPlugins.byModel(OcrModel.LEGACY) shouldBe OcrPlugins.CYRILLIC
         OcrPlugins.byModel(OcrModel.FAST) shouldBe OcrPlugins.CYRILLIC
+<<<<<<< HEAD
         OcrPlugins.byModel(OcrModel.TESSERACT) shouldBe OcrPlugins.CYRILLIC
+=======
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         OcrPlugins.LEGACY_ALIASES.map { it.second }.toSet() shouldContainExactly setOf(OcrPlugins.CYRILLIC.id)
     }
 
     @Test
+<<<<<<< HEAD
+=======
+    fun `tesseract is a real plugin, not a cyrillic alias`() {
+        // v1.10.18: пункт «Tesseract» был фикцией — он молча уходил в PP-OCR,
+        // а дескриптора в реестре не было, и движок пропадал из всех списков.
+        OcrPlugins.byModel(OcrModel.TESSERACT) shouldBe OcrPlugins.TESSERACT
+        OcrPlugins.TESSERACT.id shouldBe "tesseract"
+        OcrPlugins.TESSERACT.online shouldBe false
+    }
+
+    @Test
+    fun `tesseract is listed among selectable plugins`() {
+        // Списки в UI строятся из ALL, а не из enum: без записи тут движок
+        // выбирался в настройках и тут же исчезал из остальных мест.
+        OcrPlugins.ALL shouldContain OcrPlugins.TESSERACT
+        OcrPlugins.byId("tesseract") shouldBe OcrPlugins.TESSERACT
+    }
+
+    @Test
+    fun `tesseract needs downloaded models`() {
+        // Нативная библиотека в APK, а буквы в .traineddata — без пакета
+        // движок молча отдаёт пустоту, и это должно быть видно в UI.
+        OcrPlugins.TESSERACT.requirements shouldContain OcrPluginRequirement.MODEL_PACK
+    }
+
+    @Test
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     fun `availability follows the declared requirements`() {
         val offlineOnly = OcrPlugins.available(
             networkAvailable = false,
             modelsInstalled = true,
             litertAvailable = true,
         )
+<<<<<<< HEAD
         // Офлайн-движки с выполненными требованиями: PP-OCR (пак + LiteRT)
         // и ML Kit (вкомпилирован, требований нет).
         offlineOnly shouldContainExactly listOf(OcrPlugins.CYRILLIC, OcrPlugins.MLKIT)
+=======
+        // Офлайн-движки с выполненными требованиями: PP-OCR (пак + LiteRT),
+        // Tesseract (пакет языковых данных) и ML Kit (вкомпилирован, без
+        // требований).
+        offlineOnly shouldContainExactly listOf(
+            OcrPlugins.CYRILLIC,
+            OcrPlugins.TESSERACT,
+            OcrPlugins.MLKIT,
+        )
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 
         // ML Kit не требует ни сети, ни пакета моделей, поэтому доступен всегда.
         val nothing = OcrPlugins.available(
@@ -154,6 +199,10 @@ class OcrPluginsTest {
             modelsInstalled = false,
             litertAvailable = false,
         )
+<<<<<<< HEAD
+=======
+        // Без скачанных пакетов доступен только вкомпилированный ML Kit.
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         nothing shouldContainExactly listOf(OcrPlugins.MLKIT)
 
         val withKeys = OcrPlugins.available(
@@ -172,25 +221,44 @@ class OcrPluginsTest {
 
         OcrPlugins.fallbackChain(primary, "single", networkAvailable = true) shouldBe emptyList()
 
+<<<<<<< HEAD
         // offline: остаётся только второй локальный движок (ML Kit).
         OcrPlugins.fallbackChain(primary, "offline", networkAvailable = true)
             .map { it.id } shouldContainExactly listOf("mlkit")
+=======
+        // offline: остаются локальные движки после основного — Tesseract
+        // (второй русский) и ML Kit (латиница).
+        OcrPlugins.fallbackChain(primary, "offline", networkAvailable = true)
+            .map { it.id } shouldContainExactly listOf("tesseract", "mlkit")
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 
         OcrPlugins.fallbackChain(primary, "online", networkAvailable = true).map { it.id } shouldContainExactly
             listOf("google_lens", "zen_free", "google_ai", "openrouter", "owocr")
 
         // auto без сети не пробует онлайн-движки вовсе: локальные по приоритету.
         OcrPlugins.fallbackChain(OcrPlugins.GLENS, "auto", networkAvailable = false).map { it.id } shouldContainExactly
+<<<<<<< HEAD
             listOf("cyrillic_ppocr", "mlkit")
 
         // auto с сетью: сначала онлайн по приоритету, потом локальный.
         OcrPlugins.fallbackChain(OcrPlugins.GLENS, "auto", networkAvailable = true).map { it.id } shouldContainExactly
             listOf("zen_free", "google_ai", "openrouter", "owocr", "cyrillic_ppocr", "mlkit")
+=======
+            listOf("cyrillic_ppocr", "tesseract", "mlkit")
+
+        // auto с сетью: сначала онлайн по приоритету, потом локальный.
+        OcrPlugins.fallbackChain(OcrPlugins.GLENS, "auto", networkAvailable = true).map { it.id } shouldContainExactly
+            listOf("zen_free", "google_ai", "openrouter", "owocr", "cyrillic_ppocr", "tesseract", "mlkit")
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 
         // Неизвестный пресет читается как auto: при отсутствии сети первичный
         // Cyrillic исключён, остаётся ML Kit.
         OcrPlugins.fallbackChain(primary, "что-то-новое", networkAvailable = false)
+<<<<<<< HEAD
             .map { it.id } shouldContainExactly listOf("mlkit")
+=======
+            .map { it.id } shouldContainExactly listOf("tesseract", "mlkit")
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     }
 
     @Test
@@ -231,8 +299,14 @@ class OcrPluginsTest {
     fun `online flags match the fallback pools`() {
         OcrPlugins.ALL.filter { it.online }.map { it.id } shouldContainExactly
             listOf("google_lens", "zen_free", "google_ai", "openrouter", "owocr")
+<<<<<<< HEAD
         OcrPlugins.ALL.filterNot { it.online }.map { it.id } shouldContainExactly
             listOf("cyrillic_ppocr", "mlkit")
+=======
+        // Офлайн-пул: PP-OCR, Tesseract (второй русский движок) и ML Kit.
+        OcrPlugins.ALL.filterNot { it.online }.map { it.id } shouldContainExactly
+            listOf("cyrillic_ppocr", "tesseract", "mlkit")
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     }
 
     @Test

@@ -84,6 +84,17 @@ class OcrPreferences(
 
     fun useFallbackModels() = preferenceStore.getBoolean("pref_use_fallback_models", true)
 
+<<<<<<< HEAD
+=======
+    /**
+     * Считать ли страницу без текста картинкой и не гонять резервную цепочку.
+     *
+     * Включено по умолчанию. Иначе каждая иллюстрация прогонялась ещё и
+     * онлайн-движками с загрузкой картинки — авточтение на ней подвисало.
+     */
+    fun skipUntitledPages() = preferenceStore.getBoolean("pref_skip_untitled_pages", true)
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     // Пресет цепочки фолбэков:
     //  auto      — умный порядок: онлайн при сети, локальные без сети
     //  online    — только онлайн-движки (GLENS -> ZEN_FREE -> GOOGLE)
@@ -119,10 +130,39 @@ class OcrPreferences(
     // Движки: system_tts (системные/локальные голоса), google_web (веб без
     // API-ключа, с сайта Google Translate), eleven_api (ElevenLabs по ключу)
     fun voiceEngine() = preferenceStore.getString("pref_voice_engine", "system_tts")
+<<<<<<< HEAD
     fun voiceName() = preferenceStore.getString("pref_voice_name", "ru-ru-x-dfa-network")
     fun voiceSlots() = preferenceStore.getString("voice_slots", "[]")
 
     /**
+=======
+
+    /**
+     * Основной голос. По умолчанию ПУСТО — голос выбирается автоматически.
+     *
+     * Раньше здесь стоял сетевой голос Google `ru-ru-x-dfa-network`: у новой
+     * установки озвучка уходила в интернет без разрешения и без внятного
+     * запроса. Пустое значение отдаёт выбор VoiceHelper.pickFor, который
+     * ранжирует голоса «локальные → сетевые», поэтому по умолчанию читает
+     * установленный локальный движок, а сетевой включается только если его
+     * выбрали руками.
+     */
+    fun voiceName() = preferenceStore.getString("pref_voice_name", "")
+    fun voiceSlots() = preferenceStore.getString("voice_slots", "[]")
+
+    /**
+     * Закреплённые голоса персонажей по книгам.
+     *
+     * Формат: {"<chapterId>": {"<ключ персонажа>": <слот>}, …}. Слот — это
+     * номер, по которому голос выбирается автоматически (см.
+     * TtsSpeaker.pickSlotVoice). Без этой карты голос персонажа держался
+     * только в памяти сеанса: закрыл книгу — вернулся, и тот же герой мог
+     * заговорить другим голосом.
+     */
+    fun bookVoiceSlots() = preferenceStore.getString("pref_book_voice_slots", "{}")
+
+    /**
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
      * Читать только голосом телефона.
      *
      * Включено по требованию читателя: и авточтение, и одиночная реплика
@@ -140,6 +180,21 @@ class OcrPreferences(
     fun voiceRoles() = preferenceStore.getString("voice_role_dict", "[]")
     fun voiceIntonations() = preferenceStore.getString("voice_intonation_dict", "[]")
 
+<<<<<<< HEAD
+=======
+    /**
+     * Роли голосов, привязанные к конкретной книге: JSON-объект
+     * `{ "<mangaId>": [ роли ], … }`.
+     *
+     * Глобальный [voiceRoles] один на всё приложение, и это было проблемой:
+     * голос, назначенный Аки в «Миэруко-тян», тут же перехватывал такую же
+     * подпись в любой другой книге. Книжный словарь лежит поверх и имеет
+     * приоритет, поэтому озвучка персонажа работает только там, где её
+     * назначили, а общие правила продолжают применяться везде.
+     */
+    fun voiceRolesByBook() = preferenceStore.getString("voice_role_dict_by_book", "{}")
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     fun speechRate() = preferenceStore.getFloat("pref_speech_rate", 1.0f)
     fun speechPitch() = preferenceStore.getFloat("pref_speech_pitch", 1.0f)
     fun ttsWebLanguage() = preferenceStore.getString("pref_tts_web_lang", "ru")
@@ -163,6 +218,32 @@ class OcrPreferences(
     // Авто-OCR видимой страницы + мгновенная озвучка результата
     fun autoScanAndSpeak() = preferenceStore.getBoolean("pref_auto_scan_speak", false)
 
+<<<<<<< HEAD
+=======
+    /**
+     * Режим авточтения ПОД КОНКРЕТНУЮ модель (ранее — один общий конвейер
+     * для всех движков; GLens повторял целые реплики, Space Bunny медлил
+     * на переводе — теперь поведение подстраивается под природу движка):
+     *  - "stream" — «Строки сразу»: перевод страницы идёт в фоне, озвучка
+     *    стартует немедленно с оригинала и подхватывает перевод по мере
+     *    готовности. Для быстрых OCR / чтения исходного языка.
+     *  - "bubble" — «Баблоны с буфером слов» (дефолт): стабильный
+     *    по-баллонный путь с отсечением уже прочитанных слов.
+     *  - "page"   — «Вся страница одной озвучкой»: кадр склеивается в
+     *    одну реплику (дубль-приставка у старых слов всё равно срезается).
+     */
+    fun autoReadModeFor(model: OcrModel) = preferenceStore.getString(
+        "pref_autoread_mode_" + model.name.lowercase(),
+        "bubble",
+    )
+
+    /** Последний замер скорости кадра авточтения (мс) для движка [model]. */
+    fun autoReadLastMs(model: OcrModel) = preferenceStore.getString(
+        "pref_autoread_last_ms_" + model.name.lowercase(),
+        "",
+    )
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     // Пресет направления сканирования/чтения страницы:
     // rtl (манга), ltr (комиксы), vertical (вебтуны)
     fun scanReadingOrder() = preferenceStore.getString("pref_scan_reading_order", "rtl")
@@ -203,11 +284,44 @@ class OcrPreferences(
     // Требует Google AI ключ; выключено по умолчанию (онлайн, медленнее).
     fun aiGenderVoices() = preferenceStore.getBoolean("pref_ai_gender_voices", false)
 
+<<<<<<< HEAD
+=======
+    /**
+     * Пустые страницы пролистывать дёшево.
+     *
+     * Разворот-иллюстрация без реплик не должен задерживать чтение: OCR всё
+     * равно нужен, чтобы понять «текста нет», но добор облачков, скриншот в
+     * буфер и прочие проходы на такой странице тратят время впустую. Как только
+     * появилась читаемая реплика, все проходы включаются обратно.
+     */
+    fun skipEmptyPages() = preferenceStore.getBoolean("pref_skip_empty_pages", true)
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     // Целевой язык перевода перед озвучкой. Раньше был жёстко "ru" в коде
     // AutoReadEngine, из-за чего англоязычный пользователь получал русскую
     // озвучку независимо от настроек.
     fun translateTarget() = preferenceStore.getString("pref_translate_target", "ru")
 
+<<<<<<< HEAD
+=======
+    /**
+     * Язык источника для перевода авточтения («auto» — переводчик определяет
+     * сам, как было раньше). Ручной выбор помогает, когда кадр смешанный или
+     * переводчик путается на коротких репликах: «ja» — всегда с японского.
+     */
+    fun autoReadTranslateSource() = preferenceStore.getString("pref_autoread_translate_source", "auto")
+
+    /**
+     * «Знание о книге» на кадрах авточтения: запомненные правила порядка
+     * чтения, только-баллонов и советы ассистенту. Каждая порция знаний —
+     * это чтение файла книги и разбор JSON на КАЖДЫЙ кадр, поэтому по
+     * просьбе пользователя по умолчанию ВЫКЛЮЧЕНО (максимум скорости);
+     * включается переключателем в меню OCR читалки, когда правила для книги
+     * реально выучены. Словарь голосовых ролей отсюда не зависит — он свой.
+     */
+    fun bookKnowledgeEnabled() = preferenceStore.getBoolean("pref_book_knowledge_enabled", false)
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     // ---- Офлайн-распознавание (Tesseract, модели в APK) ----
     // Языки распознавания: eng+rus | rus | eng (оба .traineddata лежат в APK)
     fun tessLangs() = preferenceStore.getString("pref_tess_langs", "eng+rus")
@@ -478,6 +592,14 @@ class OcrPreferences(
     /** Отображаемое имя голоса для UI. */
     fun bookVoiceLabel() = preferenceStore.getString("pref_book_voice_label", "")
 
+<<<<<<< HEAD
+=======
+    /** Голоса персонажей ролевой озвучки книг (пусто — палитра по умолчанию). */
+    fun bookVoiceChar1() = preferenceStore.getString("pref_book_voice_char1", "")
+
+    fun bookVoiceChar2() = preferenceStore.getString("pref_book_voice_char2", "")
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     /** Имя TTS-голоса для книг, "" = голос по умолчанию. (legacy) */
     fun bookVoiceName() = preferenceStore.getString("pref_book_voice_name", "")
 
@@ -522,4 +644,28 @@ class OcrPreferences(
      * Выключено = только изображение без текстовых рамок.
      */
     fun screenshotShowTextOverlay() = preferenceStore.getBoolean("pref_screenshot_text_overlay", true)
+<<<<<<< HEAD
+=======
+
+    /**
+     * Наложение поверх страницы в читалке: рамки/пятна реплик, номера и
+     * значки 🔊. Выключено = страница без всяких наложений, озвучка идёт
+     * сама по себе (кто-то читает мангу чисто глазами, а звук — фоном).
+     */
+    fun readerOverlayEnabled() = preferenceStore.getBoolean("pref_reader_overlay_enabled", true)
+
+    /**
+     * Эмоциональные голоса: тон реплики (страх, утешение, гнев, шёпот…)
+     * передаётся высотой и темпом синтеза — системный TTS множителями
+     * pitch/rate, Edge — prosody. Выключено = ровное чтение как раньше.
+     */
+    fun emotionalVoices() = preferenceStore.getBoolean("pref_emotional_voices", true)
+
+    /**
+     * Читать ВСЁ, что видно на странице: одиночные буквы, междометия
+     * («а…», «мгм», вздохи) и прочие короткие реплики, которые обычный
+     * фильтр осмысленности отбрасывает как мусор.
+     */
+    fun autoReadReadEverything() = preferenceStore.getBoolean("pref_autoread_read_everything", true)
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 }

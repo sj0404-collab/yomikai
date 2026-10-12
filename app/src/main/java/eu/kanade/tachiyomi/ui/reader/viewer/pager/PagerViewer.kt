@@ -414,6 +414,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
     /**
      * Moves to the next page.
+<<<<<<< HEAD
      */
     open fun moveToNext() {
         if (tryAdvancePanelForward()) return
@@ -428,6 +429,29 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         if (tryAdvancePanelBackward()) return
         logcat(LogPriority.VERBOSE) { "Panel nav viewer fallback moveToPrevious -> page" }
         moveLeft()
+=======
+     *
+     * Возвращает `false`, когда двигаться некуда: открыта последняя страница
+     * главы (или панель последней страницы не прокручивается дальше).
+     *
+     * Раньше метод просто молчал на краю главы, и авточтение не могло отличить
+     * «страница перелистнулась» от «мы уже в конце»: цикл листал последнюю
+     * страницу по кругу, пока что-то другое его не останавливало.
+     */
+    open fun moveToNext(): Boolean {
+        if (tryAdvancePanelForward()) return true
+        logcat(LogPriority.VERBOSE) { "Panel nav viewer fallback moveToNext -> page" }
+        return moveRight()
+    }
+
+    /**
+     * Moves to the previous page. `false` — открыта первая страница главы.
+     */
+    open fun moveToPrevious(): Boolean {
+        if (tryAdvancePanelBackward()) return true
+        logcat(LogPriority.VERBOSE) { "Panel nav viewer fallback moveToPrevious -> page" }
+        return moveLeft()
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     }
 
     protected fun tryAdvancePanelForward(): Boolean {
@@ -464,6 +488,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
 
     /**
      * Moves to the page at the right. In L2R this is "next", in R2L this is "previous".
+<<<<<<< HEAD
      */
     protected open fun moveRight() {
         if (tryAdvancePanelRight()) return
@@ -475,10 +500,26 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
                 pager.setCurrentItem(pager.currentItem + 1, config.usePageTransitions)
             }
         }
+=======
+     *
+     * `false` — последняя страница главы: дальше листать некуда.
+     */
+    protected open fun moveRight(): Boolean {
+        if (tryAdvancePanelRight()) return true
+        if (pager.currentItem >= adapter.count - 1) return false
+        val holder = (currentPage as? ReaderPage)?.let(::getPageHolder)
+        if (holder != null && !config.panelNavigation && config.navigateToPan && holder.canPanRight()) {
+            holder.panRight()
+        } else {
+            pager.setCurrentItem(pager.currentItem + 1, config.usePageTransitions)
+        }
+        return true
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     }
 
     /**
      * Moves to the page at the left. In L2R this is "previous", in R2L this is "next".
+<<<<<<< HEAD
      */
     protected open fun moveLeft() {
         if (tryAdvancePanelLeft()) return
@@ -490,6 +531,21 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
                 pager.setCurrentItem(pager.currentItem - 1, config.usePageTransitions)
             }
         }
+=======
+     *
+     * `false` — первая страница главы.
+     */
+    protected open fun moveLeft(): Boolean {
+        if (tryAdvancePanelLeft()) return true
+        if (pager.currentItem <= 0) return false
+        val holder = (currentPage as? ReaderPage)?.let(::getPageHolder)
+        if (holder != null && !config.panelNavigation && config.navigateToPan && holder.canPanLeft()) {
+            holder.panLeft()
+        } else {
+            pager.setCurrentItem(pager.currentItem - 1, config.usePageTransitions)
+        }
+        return true
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     }
 
     private fun tryAdvancePanelRight(): Boolean {
@@ -507,6 +563,7 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     }
 
     /**
+<<<<<<< HEAD
      * Moves to the page at the top (or previous).
      */
     protected open fun moveUp() {
@@ -519,6 +576,16 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     protected open fun moveDown() {
         moveToNext()
     }
+=======
+     * Moves to the page at the top (or previous). `false` — вверх листать некуда.
+     */
+    protected open fun moveUp(): Boolean = moveToPrevious()
+
+    /**
+     * Moves to the page at the bottom (or next). `false` — вниз листать некуда.
+     */
+    protected open fun moveDown(): Boolean = moveToNext()
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 
     /**
      * Resets the adapter in order to recreate all the views. Used when a image configuration is

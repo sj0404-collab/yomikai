@@ -827,8 +827,28 @@ open class ReaderPageImageView @JvmOverloads constructor(
             val markColor = baseColor.withAlpha(Color.alpha(baseColor) * entryAlpha)
             val boxPaint = ocrMarksBoxPaints[entryIndex % ocrMarksBoxPaints.size]
             boxPaint.color = markColor
+<<<<<<< HEAD
             for (regionIndex in entry.regions.indices) {
                 val region = entry.regions[regionIndex]
+=======
+            // Нумерация ПО ПАНЕЛЯМ: внутри каждой панели манги счёт начинается
+            // заново с 1, как в комиксе (1, 2, 3 в первой панели, снова 1, 2, 3
+            // во второй). Регионы, у которых панель не определили (panelIndex =
+            // -1: текст в поле или в стыке), идут сплошной нумерацией — им
+            // «своя панель» не принадлежит.
+            var lastPanelIndex = Int.MIN_VALUE
+            var numberInPanel = 0
+            for (regionIndex in entry.regions.indices) {
+                val region = entry.regions[regionIndex]
+                // v1.9.138: чистка пометок-шума с экрана. Регионы с пустым
+                // текстом и вырожденные полоски (нулевая высота на стыке
+                // кадров / микропятна) дают на странице «линии + кружки-номера
+                // без смысла» — рисовать их не надо.
+                if (region.text.isBlank()) continue
+                val hFrac = region.bottom - region.top
+                val wFrac = region.right - region.left
+                if (hFrac < 0.012f || wFrac < 0.02f) continue
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                 val fileBox = entry.regionFileBoundingBox(region) ?: continue
                 val fileRect = RectF(
                     fileBox.left * entry.sourceWidth,
@@ -842,8 +862,20 @@ open class ReaderPageImageView @JvmOverloads constructor(
                 // что уже уехало за край экрана.
                 if (!viewRect.intersect(0f, 0f, viewWidth, viewHeight)) continue
 
+<<<<<<< HEAD
                 canvas.drawRect(viewRect, boxPaint)
                 drawOcrMarkNumber(canvas, viewRect, regionIndex + 1, markColor)
+=======
+                // Новая панель (или первый безымянный регион) — счёт с 1.
+                if (region.panelIndex != lastPanelIndex) {
+                    lastPanelIndex = region.panelIndex
+                    numberInPanel = 0
+                }
+                numberInPanel++
+
+                canvas.drawRect(viewRect, boxPaint)
+                drawOcrMarkNumber(canvas, viewRect, numberInPanel, markColor)
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             }
         }
     }

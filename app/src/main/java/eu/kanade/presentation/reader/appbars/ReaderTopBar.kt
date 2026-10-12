@@ -1,5 +1,9 @@
 package eu.kanade.presentation.reader.appbars
 
+<<<<<<< HEAD
+=======
+import androidx.compose.foundation.layout.padding
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Bookmark
@@ -10,7 +14,13 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+<<<<<<< HEAD
 import androidx.compose.material3.RadioButton
+=======
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -194,6 +204,12 @@ private fun OcrModelQuickSwitcher() {
                 model == OcrModel.OPENROUTER || model == OcrModel.GOOGLE -> "онлайн • нужен API-ключ"
                 else -> "онлайн • без ключа"
             }
+<<<<<<< HEAD
+=======
+            // v1.9.134: замер кадра в мс — прямо у движка, чтобы было видно,
+            // «кто медлит» (GLens быстрый, но вручную никто не мерил).
+            val lastMsRaw = prefs.autoReadLastMs(model).changes().collectAsState(initial = prefs.autoReadLastMs(model).get()).value
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             DropdownMenuItem(
                 text = {
                     androidx.compose.foundation.layout.Column {
@@ -205,6 +221,16 @@ private fun OcrModelQuickSwitcher() {
                                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+<<<<<<< HEAD
+=======
+                        if (lastMsRaw.isNotBlank()) {
+                            Text(
+                                "⏱ последний кадр: $lastMsRaw мс",
+                                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                     }
                 },
                 leadingIcon = {
@@ -236,5 +262,180 @@ private fun OcrModelQuickSwitcher() {
                 },
             )
         }
+<<<<<<< HEAD
+=======
+        // v1.9.134: режим АВТОЧТЕНИЯ СОХРАНЯЕТСЯ ОТДЕЛЬНО ДЛЯ КАЖДОЙ МОДЕЛИ.
+        // GLens быстрый, но при росте области захвата перевыпускал реплики
+        // целиком — «page»/«bubble» читают с отсечением прочитанных слов
+        // (см. AutoReadEngine.stripSpokenPrefix); «stream» запускает озвучку,
+        // не дожидаясь перевода страницы (ветка, которая медлила «по циклам»).
+        androidx.compose.material3.HorizontalDivider()
+        val modePref = prefs.autoReadModeFor(current)
+        val currentMode by modePref.changes().collectAsState(initial = modePref.get())
+        androidx.compose.material3.Text(
+            text = "Режим авточтения: " + stringResource(current.titleRes),
+            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+        )
+        listOf(
+            Triple("Строки сразу", "stream", "реплики звучат мгновенно, перевод подхватится сам"),
+            Triple("Баблоны с буфером слов", "bubble", "стабильно: прочитанные слова не повторяются"),
+            Triple("Вся страница одной озвучкой", "page", "один кадр — одна фраза, без пауз"),
+        ).forEach { (label, value, hint) ->
+            DropdownMenuItem(
+                text = {
+                    androidx.compose.foundation.layout.Column {
+                        Text(label)
+                        Text(
+                            hint,
+                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
+                leadingIcon = { RadioButton(selected = currentMode == value, onClick = null) },
+                onClick = { modePref.set(value) },
+            )
+        }
+
+        // v1.9.141: ПЕРЕВОД И «ЗНАНИЕ О КНИГЕ» — быстрые переключатели прямо
+        // в меню OCR читалки (по требованию пользователя), без ухода в
+        // настройки. Перевод: ручная пара языков («с японского на русский»
+        // и наоборот) + голос целевого языка. Знание о книге (выкл. по
+        // умолчанию) — файловые правила порядка чтения/баллонов: каждый
+        // кадр читал и разбирал файл книги, что жрало время.
+        androidx.compose.material3.HorizontalDivider()
+        val translatePref = prefs.autoReadTranslate()
+        val translateOn by translatePref.changes().collectAsState(initial = translatePref.get())
+        DropdownMenuItem(
+            text = {
+                androidx.compose.foundation.layout.Column {
+                    Text("Перевод перед озвучкой")
+                    Text(
+                        "читает сразу переведённым текстом голосом целевого языка",
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            trailingIcon = { Switch(checked = translateOn, onCheckedChange = null) },
+            onClick = { translatePref.set(!translateOn) },
+        )
+        val srcPref = prefs.autoReadTranslateSource()
+        val tgtPref = prefs.translateTarget()
+        val srcLang by srcPref.changes().collectAsState(initial = srcPref.get())
+        val tgtLang by tgtPref.changes().collectAsState(initial = tgtPref.get())
+        val srcLangs = listOf("auto", "ja", "en", "ko", "zh", "ru")
+        val tgtLangs = listOf("ru", "en", "uk", "ja", "ko", "zh")
+        var srcOpen by remember { mutableStateOf(false) }
+        var tgtOpen by remember { mutableStateOf(false) }
+        Box {
+            DropdownMenuItem(
+                text = { Text("Источник перевода: $srcLang") },
+                onClick = { srcOpen = true },
+            )
+            DropdownMenu(expanded = srcOpen, onDismissRequest = { srcOpen = false }) {
+                srcLangs.forEach { lang ->
+                    DropdownMenuItem(
+                        text = { Text(if (lang == "auto") "auto (определять самим)" else lang) },
+                        leadingIcon = { RadioButton(selected = srcLang == lang, onClick = null) },
+                        onClick = { srcPref.set(lang); srcOpen = false },
+                    )
+                }
+            }
+        }
+        Box {
+            DropdownMenuItem(
+                text = { Text("Язык перевода: $tgtLang") },
+                onClick = { tgtOpen = true },
+            )
+            DropdownMenu(expanded = tgtOpen, onDismissRequest = { tgtOpen = false }) {
+                tgtLangs.forEach { lang ->
+                    DropdownMenuItem(
+                        text = { Text(lang) },
+                        leadingIcon = { RadioButton(selected = tgtLang == lang, onClick = null) },
+                        onClick = { tgtPref.set(lang); tgtOpen = false },
+                    )
+                }
+            }
+        }
+        // v1.9.x: тумблеры, которые просили в читалке — наложение страницы,
+        // «читать каждую букву» и стрелка обмена языков перевода.
+        androidx.compose.material3.HorizontalDivider()
+        val overlayPref = prefs.readerOverlayEnabled()
+        val overlayOn by overlayPref.changes().collectAsState(initial = overlayPref.get())
+        DropdownMenuItem(
+            text = {
+                androidx.compose.foundation.layout.Column {
+                    Text("Наложение на странице")
+                    Text(
+                        "рамки реплик, номера и значки 🔊 · выкл = чистая страница",
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            trailingIcon = { Switch(checked = overlayOn, onCheckedChange = null) },
+            onClick = { overlayPref.set(!overlayOn) },
+        )
+        val readAllPref = prefs.autoReadReadEverything()
+        val readAllOn by readAllPref.changes().collectAsState(initial = readAllPref.get())
+        DropdownMenuItem(
+            text = {
+                androidx.compose.foundation.layout.Column {
+                    Text("Читать каждую букву")
+                    Text(
+                        "даже одиночные «а…», «мгм», вздохи и междометия",
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            trailingIcon = { Switch(checked = readAllOn, onCheckedChange = null) },
+            onClick = { readAllPref.set(!readAllOn) },
+        )
+        // Стрелка «⇄» как в переводчике: источник и цель меняются местами.
+        DropdownMenuItem(
+            text = {
+                androidx.compose.foundation.layout.Column {
+                    Text("⇄ Обменять языки")
+                    Text(
+                        "сейчас: ${if (srcLang == "auto") "авто" else srcLang} → ${if (tgtLang == "auto") "авто" else tgtLang}",
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            onClick = {
+                // «auto» целью быть не может: при обмене берём язык реплик
+                // кадра (по нему OCR ищет текст), иначе русский.
+                val newSrc = tgtLang
+                val newTgt = if (srcLang != "auto") srcLang else {
+                    val frameLang = prefs.autoReadLanguage().get()
+                    if (frameLang.isNotBlank() && frameLang != "any") frameLang else "ru"
+                }
+                srcPref.set(newSrc)
+                tgtPref.set(newTgt)
+            },
+        )
+        androidx.compose.material3.HorizontalDivider()
+        val bookPref = prefs.bookKnowledgeEnabled()
+        val bookOn by bookPref.changes().collectAsState(initial = bookPref.get())
+        DropdownMenuItem(
+            text = {
+                androidx.compose.foundation.layout.Column {
+                    Text("Знание о книге")
+                    Text(
+                        "запомненные правила порядка чтения и баллонов · выкл = быстрее",
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            trailingIcon = { Switch(checked = bookOn, onCheckedChange = null) },
+            onClick = { bookPref.set(!bookOn) },
+        )
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     }
 }

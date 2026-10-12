@@ -316,6 +316,13 @@ object OcrQueueScreen : Screen() {
         val useFallbackModels by useFallbackModelsPreference
             .changes()
             .collectAsState(initial = useFallbackModelsPreference.get())
+<<<<<<< HEAD
+=======
+        val skipUntitledPreference = remember { ocrPreferences.skipUntitledPages() }
+        val skipUntitled by skipUntitledPreference
+            .changes()
+            .collectAsState(initial = skipUntitledPreference.get())
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         val openrouterKeyPref = remember { ocrPreferences.openrouterApiKey() }
         val openrouterKey by openrouterKeyPref.changes().collectAsState(initial = openrouterKeyPref.get())
         val googleKeyPref = remember { ocrPreferences.googleApiKey() }
@@ -524,6 +531,17 @@ object OcrQueueScreen : Screen() {
                 subtitle = stringResource(MR.strings.pref_use_fallback_models_summary),
                 onCheckedChanged = useFallbackModelsPreference::set,
             )
+<<<<<<< HEAD
+=======
+            SwitchPreferenceWidget(
+                checked = skipUntitled,
+                title = "Пропускать страницы без текста",
+                subtitle = "Иллюстрация и разворот без текста считаются картинкой: " +
+                    "резервные движки не гоняются, авточтение листает дальше. " +
+                    "Выключите, если движок находит текст не с первого раза.",
+                onCheckedChanged = skipUntitledPreference::set,
+            )
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 
             PreferenceGroupHeader(title = stringResource(MR.strings.ocr_queue_header))
 

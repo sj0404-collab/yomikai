@@ -104,6 +104,30 @@ object OcrRegionRules {
         ),
     )
 
+<<<<<<< HEAD
+=======
+    /**
+     * Границы обрезки страницы под выбранную область: пара `(cropTop, cropHeight)`
+     * в пикселях. Единственное место, где область превращается в прямоугольник,
+     * поэтому `TOP_HALF` и `BOTTOM_HALF` обрезаются одинаково для движка, настроек
+     * и агента. Раньше `TOP_HALF` здесь не обрабатывался, и область скана
+     * фактически не применялась к странице.
+     */
+    fun cropBounds(sourceHeight: Int, region: ScanRegion): Pair<Int, Int> {
+        val height = sourceHeight.coerceAtLeast(1)
+        val top = when (region) {
+            ScanRegion.FULL_PAGE, ScanRegion.TOP_HALF -> 0
+            ScanRegion.BOTTOM_HALF -> height / 2
+        }
+        val cropHeight = when (region) {
+            ScanRegion.FULL_PAGE -> height
+            ScanRegion.TOP_HALF -> (height / 2).coerceAtLeast(1)
+            ScanRegion.BOTTOM_HALF -> (height - top).coerceAtLeast(1)
+        }
+        return top to cropHeight
+    }
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     /** Человекочитаемое имя области — для отчётов и подсказок. */
     fun regionTitle(region: ScanRegion): String = when (region) {
         ScanRegion.FULL_PAGE -> "вся страница"

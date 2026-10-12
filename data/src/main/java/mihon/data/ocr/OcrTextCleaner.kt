@@ -81,6 +81,7 @@ object OcrTextCleaner {
     }
 
     private val PROMOTIONAL_SITE = Regex(
+<<<<<<< HEAD
         "reman?ga(?:\\.org)?",
         RegexOption.IGNORE_CASE,
     )
@@ -89,14 +90,66 @@ object OcrTextCleaner {
         RegexOption.IGNORE_CASE,
     )
 
+=======
+        // v1.9.135: водяники манга-сайтов попадали в OCR и ЗАЧИТЫВАЛИСЬ как
+        // реплика («ЧИТАЙ НА САЙТЕ MANGABUFF…» получала номер реплики).
+        "reman?ga(?:\\.org)?|readmanga|mintmanga|mangabuff(?:\\.ru|\\.me|\\.com)?" +
+            "|mangapoisk|manga_?one|mangalib|acomics|usagi(?:\\.one)?|seimanga" +
+            "|desu(?:\\.me|s)?(?!\\p{L})|mangarip|manga-?sama|new-manga",
+        RegexOption.IGNORE_CASE,
+    )
+    private val PROMOTIONAL_SLOGAN = Regex(
+        // слоганы «читай раньше/на сайте» и слепки с адресом; короткие формы
+        // OCR (без точек/с опечатками «ситуатУка») ловим общими кусками.
+        "читай\\s+раньше\\s+всех(?:\\s+на\\s+\\S+)?" +
+            "|читай(те)?\\s+(?:новинки\\s+)?(?:бесплатно\\s+)?на\\s+сайте?(?:\\s+\\S+){0,3}" +
+            "|читаем\\s+на\\s+сайте?|сайте?\\s+\\S{0,16}\\.\\s*(?:ru|com|net|club|me|fun)",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /**
+     * Рекламные бары новелл-читалок («+ алмазы и промокоды в Telegram-канале
+     * Manga… Перейти», «ГЛАВЫ БЫСТРО В ДРУГИХ») OCR склеивает с реальной
+     * репликой через общую строку: целиком строку мы НЕ сносим — режем хвост
+     * от первого маркера. Реплика остаётся, реклама пропадает.
+     * «.» не переваривает \n — хвост режется ровно до конца строки.
+     */
+    private val PROMOTIONAL_ADBLOCK = Regex(
+        "\\s*\\+?\\s*алмазы\\s+и\\s+промокод\\p{L}{0,2}.*" +
+            "|\\s*\\+\\s*алмазы.*" +
+            "|телеграм(-|\\s)канал.*|telegram(-|\\s)канал.*|tg(-|\\s)канал.*" +
+            "|главы\\s+быстре?о?\\s+в\\s+других.*" +
+            "|быстрее?,?\\s+качественнее.*" +
+            "|читай(те)?\\s+на\\s+(?:сайте|сайте\\.\\S+).*" +
+            "|поддержать\\s+автора.*",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** Кнопки/навигация как САМОСТОЯТЕЛЬНАЯ строка — репликой не бывает. */
+    private val STANDALONE_AD_BUTTONS = setOf(
+        "перейти", "читать далее", "подробнее", "жми сюда", "далее",
+        "назад", "вперёд", "вперед", "меню глав",
+    )
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     fun stripPromotionalText(text: String): String {
         if (text.isBlank()) return text
         return text.lineSequence()
             .map { line ->
+<<<<<<< HEAD
                 line.replace(PROMOTIONAL_SLOGAN, "")
                     .replace(PROMOTIONAL_SITE, "")
                     .replace(Regex("[ \\t]{2,}"), " ")
                     .trim()
+=======
+                val cut = line
+                    .replace(PROMOTIONAL_ADBLOCK, "")
+                    .replace(PROMOTIONAL_SLOGAN, "")
+                    .replace(PROMOTIONAL_SITE, "")
+                    .replace(Regex("[ \\t]{2,}"), " ")
+                    .trim()
+                if (cut.lowercase() in STANDALONE_AD_BUTTONS) "" else cut
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             }
             .filter(String::isNotBlank)
             .joinToString("\n")
@@ -104,7 +157,19 @@ object OcrTextCleaner {
 
     fun isPromotionalText(text: String): Boolean {
         if (text.isBlank()) return false
+<<<<<<< HEAD
         return stripPromotionalText(text).isBlank()
+=======
+        // v1.9.136: линюя-строка с водяником режется ЦЕЛИКОМ, даже если после
+        // слогана стоит ещё слово («ЧИТАЙ НА САЙТЕ MANGABUFF… И ПРОЧЕЕ»): раньше
+        // проверка требовала, чтобы strip обнулил строку дочиста, и любой
+        // лишний хвост реабилитировал водяник. Промо-маркер внутри реплики не
+        // бывает случайным: нормальный текст слов «readmanga/mangabuff» и
+        // «читай на сайте» не содержит.
+        return stripPromotionalText(text).isBlank() ||
+            PROMOTIONAL_SITE.containsMatchIn(text) ||
+            PROMOTIONAL_SLOGAN.containsMatchIn(text)
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     }
 
     /**
@@ -279,8 +344,27 @@ object OcrTextCleaner {
 
     private fun restoreRun(source: String): String {
         val upper = source.uppercase()
+<<<<<<< HEAD
         var segments = splitKnownWords(upper)
         if (segments == null) {
+=======
+        // v1.9.139: настоящие слова НЕ дробим. DP-разбиение с лексиконом
+        // коротких слов резало частотную лексику на «слоги»:
+        // СВОИХ→«С ВО ИХ», НЕУЖЕЛИ→«НЕ УЖ ЕЛИ», ВЫГЛЯДИТ→«ВЫ ГЛЯДИТ»,
+        // МИРА→«МИР А», ПРИБЫЛИ→«ПРИ БЫЛИ», ВДРУГ→«В ДРУГ» — и TTS читал
+        // реплики по кускам с паузами («не-уж-ели»).
+        // v1.9.141: гейт «короче 9 букв не режем вовсе» снят: он же оставлял
+        // слипшимися РОВНО те короткие пары, которые пользователь видел на
+        // device-скриншотах («ИЗНИХ», «ОНБЫЛ», «КАКЖЕ», «СДЕМОНОМ»,
+        // «СМОГУПО»). Вместо длины прогона границу разрешает
+        // [boundaryIsJustified]: целое словарное слово по-прежнему
+        // неприкосновенно (СВОИХ/НЕУЖЕЛИ/ВЫГЛЯДИТ/МИРА/ПРИБЫЛИ/ВДРУГ лежат в
+        // [RuWordList] и вообще не доходят до разбиения), а у остальных
+        // прогонов граница должна быть лингвистически оправдана.
+        val solid = upper in CAPTION_WORDS || knownWord(upper)
+        var segments = if (solid) null else splitKnownWords(upper)
+        if (segments == null && !solid) {
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             // Слиплись слова без пробелов: разбиваем по частотному
             // словарю словоформ. Только вставка пробелов.
             val glued = splitGluedRun(upper)
@@ -326,7 +410,15 @@ object OcrTextCleaner {
      * тоже делятся на слова.
      */
     private fun splitGluedRun(run: String): List<String>? {
+<<<<<<< HEAD
         if (run.length < 6) return null
+=======
+        // v1.9.141: собственный порог длины снят — решение принимает
+        // [boundaryIsJustified], общий для обоих DP-разбиений. Порог 9 букв
+        // (v1.9.139) защищал от «ПРИ БЫЛИ», но заодно оставлял слипшимися
+        // короткие пары со скриншотов пользователя.
+        if (run.length < MIN_SPLIT_RUN) return null
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         val best = arrayOfNulls<List<String>>(run.length + 1)
         best[0] = emptyList()
         for (start in run.indices) {
@@ -340,7 +432,46 @@ object OcrTextCleaner {
                 if (current == null || candidate.size < current.size) best[end] = candidate
             }
         }
+<<<<<<< HEAD
         return best[run.length]?.takeIf { it.size > 1 }
+=======
+        val split = best[run.length]?.takeIf { it.size > 1 } ?: return null
+        return split.takeIf { boundaryIsJustified(split) }
+    }
+
+    /**
+     * Оправдана ли вставка границ в сплошном прогоне по частотному словарю.
+     *
+     * Словарь только РАЗРЕШАЕТ границу, но не всякая граница разрешена: DP
+     * умеет нарезать настоящее слово на куски из служебных слов — ПРОХОДЕ →
+     * «ПРО ХОДЕ», МЕЛКО → «МЕЛ КО», СОЛОНКИ → «СО ЛОНКИ». Поэтому разбиение
+     * принимается по одному из двух правил:
+     *
+     *  1. **все куски — полноценные слова** ([MIN_FULL_SEGMENT] букв и
+     *     больше). Тогда разрез не может быть обрезком: он режет ровно те
+     *     прогоны, где слиплись два нормальных слова («МНОЖЕСТВОКНИГ»,
+     *     «КОНЧИКАВОЛОС»), и не трогает «СТОЛИЧНЫЙ» (СТО+ЛИЧНЫЙ — кусок
+     *     в три буквы);
+     *  2. **каждый стык упирается в служебное слово** ([RuMorph.isFunctionWord]:
+     *     предлог, союз, частица, местоимение), а остальные куски — не короче
+     *     [MIN_SEGMENT_LETTERS]. Это ровно тот дефект, который даёт CTC-декодер
+     *     без токена пробела: он теряет пробел рядом с предлогом или частицей
+     *     («ИЗ НИХ» → «ИЗНИХ», «СМОГУ ПО» → «СМОГУПО», «КАК ЖЕ» → «КАКЖЕ»).
+     *     Требование «на КАЖДОМ стыке» отсекает синтетические слитки вроде
+     *     «НЕИЗВЕСТНОЕСЛОВО» (второй стык ИЗВЕСТНОЕ|СЛОВО служебным словом
+     *     не оправдан).
+     *
+     * Это по-прежнему НЕ словарная коррекция: текст не заменяется, вставляются
+     * только пробелы, а неразобранный прогон остаётся нетронутым.
+     */
+    private fun boundaryIsJustified(segments: List<String>): Boolean {
+        if (segments.all { it.length >= MIN_FULL_SEGMENT }) return true
+        val stub = segments.any { it.length < MIN_SEGMENT_LETTERS && !RuMorph.isFunctionWord(it) }
+        if (stub) return false
+        return segments.zipWithNext().all { (left, right) ->
+            RuMorph.isFunctionWord(left) || RuMorph.isFunctionWord(right)
+        }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     }
 
     /**
@@ -424,6 +555,18 @@ object OcrTextCleaner {
 
     private val CYRILLIC_RANGE = 0x0400..0x052F
 
+<<<<<<< HEAD
+=======
+    /** Минимальная длина прогона, который вообще имеет смысл делить на слова. */
+    private const val MIN_SPLIT_RUN = 4
+
+    /** Длина куска, с которой он считается полноценным словом, а не обрезком. */
+    private const val MIN_FULL_SEGMENT = 4
+
+    /** Кусок короче этого — только служебное слово (см. [boundaryIsJustified]). */
+    private const val MIN_SEGMENT_LETTERS = 3
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     /**
      * Common closed-class words plus the proper nouns and caption vocabulary
      * demonstrated in verified device regressions. The set only authorizes

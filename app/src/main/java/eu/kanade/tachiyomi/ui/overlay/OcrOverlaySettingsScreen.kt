@@ -206,6 +206,20 @@ object OcrOverlaySettingsScreen : Screen {
                     onChange = { context.requestGestureService() },
                 )
                 Text(
+<<<<<<< HEAD
+=======
+                    text = "Переключатель серый и не включается? Android 13+ блокирует " +
+                        "Службу доступности у приложений не из магазина. Нажмите здесь, " +
+                        "чтобы открыть «О приложении», затем ⋮ → «Разрешить ограниченные " +
+                        "настройки», после чего включите переключатель снова.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .clickable { context.openAppDetails() },
+                )
+                Text(
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                     text = "Пауза после реплики: ${prefs.overlayReadPause().get()} мс • " +
                         "ожидание перерисовки: ${prefs.overlayScrollSettle().get()} мс • " +
                         "длина свайпа: ${prefs.overlayScrollStep().get()}% высоты области",

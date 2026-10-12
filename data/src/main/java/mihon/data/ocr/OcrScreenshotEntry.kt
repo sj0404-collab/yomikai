@@ -43,6 +43,16 @@ data class OcrScreenshotEntry(
     val imageWidth: Int = 0,
     val imageHeight: Int = 0,
     val imagePath: String? = null,
+<<<<<<< HEAD
+=======
+    /**
+     * Uri опубликованной копии в галерее (`Pictures/Yomikai`), если запись
+     * отправляли туда. Нужен, чтобы удаление скриншота убирало его «насовсем»:
+     * и приватный файл, и общедоступную копию (раньше копия в галерее
+     * оставалась висеть после удаления записи).
+     */
+    val galleryUri: String? = null,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     val scanRegion: String = "viewport",
     val sourceWidth: Int = 0,
     val sourceHeight: Int = 0,
@@ -121,6 +131,15 @@ data class SerializableOcrRegion(
     val right: Float,
     val bottom: Float,
     val orientation: String = "horizontal",
+<<<<<<< HEAD
+=======
+    /**
+     * Номер панели манги (-1 — панель не определили). У старых записей JSON
+     * этого поля просто нет, и там остаётся -1: нумерация идёт сплошной, как
+     * раньше.
+     */
+    val panelIndex: Int = -1,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 ) {
     fun toOcrRegion(): OcrRegion = OcrRegion(
         order = order,
@@ -130,6 +149,10 @@ data class SerializableOcrRegion(
             "vertical" -> mihon.domain.ocr.model.OcrTextOrientation.Vertical
             else -> mihon.domain.ocr.model.OcrTextOrientation.Horizontal
         },
+<<<<<<< HEAD
+=======
+        panelIndex = panelIndex,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     )
 
     companion object {
@@ -144,6 +167,10 @@ data class SerializableOcrRegion(
                 mihon.domain.ocr.model.OcrTextOrientation.Vertical -> "vertical"
                 else -> "horizontal"
             },
+<<<<<<< HEAD
+=======
+            panelIndex = r.panelIndex,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         )
     }
 }

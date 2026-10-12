@@ -215,6 +215,24 @@ class MiniOverlayService : Service() {
             }
         }
         wv.webViewClient = object : WebViewClient() {
+<<<<<<< HEAD
+=======
+            // Тот же AdBlock, что и в браузере: рекламные сети режем по сети,
+            // промо-карточки снимает вживлённый контент-скрипт.
+            override fun shouldInterceptRequest(
+                view: WebView,
+                request: android.webkit.WebResourceRequest,
+            ): android.webkit.WebResourceResponse? {
+                if (!request.isForMainFrame &&
+                    BrowserAdBlock.isEnabled(view.context) &&
+                    BrowserAdBlock.shouldBlock(request.url?.toString())
+                ) {
+                    return BrowserAdBlock.emptyResponse()
+                }
+                return super.shouldInterceptRequest(view, request)
+            }
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             override fun shouldOverrideUrlLoading(view: WebView, url: String?): Boolean {
                 if (url != null) view.loadUrl(url)
                 return true
@@ -222,12 +240,23 @@ class MiniOverlayService : Service() {
 
             override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                 urlView?.text = url ?: ""
+<<<<<<< HEAD
+=======
+                BrowserAdBlock.inject(view)
+                WebScriptsStore.load(view.context)
+                WebScriptsStore.inject(view.context, view, url, "start")
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             }
 
             override fun onPageFinished(view: WebView, url: String?) {
                 urlView?.text = view.title?.takeIf { it.isNotBlank() } ?: url
                 backBtn?.isEnabled = view.canGoBack()
                 fwdBtn?.isEnabled = view.canGoForward()
+<<<<<<< HEAD
+=======
+                BrowserAdBlock.inject(view)
+                WebScriptsStore.inject(view.context, view, url, "end")
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             }
         }
         wv.loadUrl(currentUrl)

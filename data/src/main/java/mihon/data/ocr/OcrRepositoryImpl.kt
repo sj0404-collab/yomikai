@@ -16,6 +16,10 @@ import logcat.LogPriority
 import mihon.domain.ocr.exception.OcrException
 import mihon.domain.ocr.model.OcrBoundingBox
 import mihon.domain.ocr.model.OcrImage
+<<<<<<< HEAD
+=======
+import eu.kanade.tachiyomi.data.ai.AiConsole
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 import mihon.domain.ocr.model.OcrModel
 import mihon.domain.ocr.model.OcrPageResult
 import mihon.domain.ocr.model.OcrRegion
@@ -38,6 +42,25 @@ class OcrRepositoryImpl(
     private val ocrModelPref = preferenceStore.getEnum("pref_ocr_model", OcrModel.CYRILLIC)
     private val useFallbackModelsPref = preferenceStore.getBoolean("pref_use_fallback_models", true)
 
+<<<<<<< HEAD
+=======
+    /**
+     * Страница без текста — это картинка, а не сбой движка.
+     *
+     * Раньше «пустой результат» считался поводом идти по всей резервной цепочке.
+     * При пресете `auto` (дефолт) она включала GLENS, ZEN_FREE и GOOGLE, то есть
+     * каждая иллюстрация, разворот и обложка уезжали тремя сетевыми запросами с
+     * загрузкой картинки, а затем прогонялись все оффлайн-движки — и всё
+     * ради вывода «текста нет». Авточтение на таком кадре стояло секунды и
+     * «очень медленно листало», а мобильный трафик уходил в сеть без спроса.
+     *
+     * Теперь пустой результат завершает цепочку: движок отработал и сказал, что
+     * текста нет. Фолбэк остаётся для настоящих отказов (исключение), где он и
+     * нужен. Выключается настройкой «Пропускать страницы без текста».
+     */
+    private val skipUntitledPagesPref = preferenceStore.getBoolean("pref_skip_untitled_pages", true)
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     private val environmentResult by lazy {
         runCatching { Environment.create() }
             .onFailure { error ->
@@ -90,6 +113,12 @@ class OcrRepositoryImpl(
 
     private var cyrillicEngine: CyrillicOcrEngine? = null
     private var mlKitEngine: MlKitOcrEngine? = null
+<<<<<<< HEAD
+=======
+
+    /** Tesseract с русской моделью — тяжёлый, держим один на всё время. */
+    private var tesseractEngine: TesseractOcrEngine? = null
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     private var legacyEngine: LegacyOcrEngine? = null
     private var fastEngine: FastOcrEngine? = null
     private var glensEngine: GlensOcrEngine? = null
@@ -139,6 +168,10 @@ class OcrRepositoryImpl(
      */
     private fun EngineType.toOcrModel(): OcrModel = when (this) {
         EngineType.CYRILLIC -> OcrModel.CYRILLIC
+<<<<<<< HEAD
+=======
+        EngineType.TESSERACT -> OcrModel.TESSERACT
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         EngineType.MLKIT -> OcrModel.MLKIT
         EngineType.GLENS -> OcrModel.GLENS
         EngineType.OWOCR -> OcrModel.OWOCR
@@ -184,6 +217,10 @@ class OcrRepositoryImpl(
 
     internal enum class EngineType {
         CYRILLIC,
+<<<<<<< HEAD
+=======
+        TESSERACT,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         MLKIT,
         LEGACY,
         FAST,
@@ -216,7 +253,11 @@ class OcrRepositoryImpl(
             OcrModel.OPENROUTER -> EngineType.OPENROUTER
             OcrModel.GOOGLE -> EngineType.GOOGLE
             OcrModel.ZEN_FREE -> EngineType.ZEN_FREE
+<<<<<<< HEAD
             OcrModel.TESSERACT -> EngineType.CYRILLIC
+=======
+            OcrModel.TESSERACT -> EngineType.TESSERACT
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         }
         // ML Kit несёт в APK только латинскую модель. На кириллице он не
         // «медленно», а просто нечитаем, поэтому и как основной движок, и в
@@ -248,9 +289,21 @@ class OcrRepositoryImpl(
         EngineType.OPENROUTER, EngineType.GOOGLE,
     )
     private val offlineEngines = listOf(
+<<<<<<< HEAD
         // One canonical offline engine for Russian/Cyrillic text. Legacy,
         // FAST and Tesseract remain migration-only enum values.
         EngineType.CYRILLIC,
+=======
+        // Один основной офлайн-движок для кириллицы. LEGACY и FAST — только
+        // миграционные значения перечислений.
+        EngineType.CYRILLIC,
+        // Tesseract — второй офлайн-движок с русской моделью. Раньше он был
+        // фикцией и в цепочку не попадал, поэтому «прочитал не то → попробуй
+        // другой» для него просто не работало. Ставим после PP-OCR: тот и
+        // быстрее, и в среднем точнее, а Tesseract страхует, когда PP-OCR
+        // засомневался (мусор, пустые строки, нечитаемая вёрстка).
+        EngineType.TESSERACT,
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         // ML Kit вкомпилирован в APK и не требует ни сети, ни пакета моделей,
         // поэтому годится как офлайн-фолбэк, когда PP-OCR не установлен.
         EngineType.MLKIT,
@@ -270,6 +323,11 @@ class OcrRepositoryImpl(
      * проверки цепочка тратила до минуты на заведомо 401/403-ответ.
      */
     private fun onlineEngineReady(type: EngineType): Boolean = when (type) {
+<<<<<<< HEAD
+=======
+        // Tesseract работает локально, сети ему не нужно.
+        EngineType.TESSERACT -> true
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         EngineType.ZEN_FREE -> ocrPreferences.zenFreeEnabled().get()
         EngineType.GOOGLE -> ocrPreferences.googleApiKey().get().isNotBlank()
         EngineType.OPENROUTER -> ocrPreferences.openrouterApiKey().get().isNotBlank()
@@ -287,7 +345,15 @@ class OcrRepositoryImpl(
      *  single  — фолбэков нет.
      */
     private fun fallbackChain(primary: EngineType): List<EngineType> {
+<<<<<<< HEAD
         val preset = preferenceStore.getString("pref_fallback_preset", "auto").get()
+=======
+        // Дефолт — `offline`, а не `auto`. При `auto` цепочка включала онлайн-
+        // движки, и картинка страницы уходила в GLENS/ZEN_FREE/Google без
+        // явного согласия читателя. Теперь сеть в резервной цепочке появляется
+        // только если её выбрали руками.
+        val preset = preferenceStore.getString("pref_fallback_preset", "offline").get()
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         val online = listOf(EngineType.GLENS, EngineType.ZEN_FREE, EngineType.GOOGLE)
             .filter { onlineEngineReady(it) }
         val chain = when (preset) {
@@ -324,6 +390,18 @@ class OcrRepositoryImpl(
                     ::currentTuning,
                 ).also { cyrillicEngine = it }
             }
+<<<<<<< HEAD
+=======
+            EngineType.TESSERACT -> {
+                tesseractEngine ?: TesseractOcrEngine(
+                    dataDir = OcrModelFiles.resolve(
+                        context,
+                        TESSERACT_DATA_PATH,
+                    )?.let { java.io.File(it).parentFile },
+                    prefs = ocrPreferences,
+                ).also { tesseractEngine = it }
+            }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             EngineType.MLKIT -> {
                 mlKitEngine ?: MlKitOcrEngine().also { mlKitEngine = it }
             }
@@ -462,6 +540,70 @@ class OcrRepositoryImpl(
 
     override suspend fun recognizeText(image: OcrImage): String = recognizeText(image, null)
 
+<<<<<<< HEAD
+=======
+    /**
+     * Локальное распознавание без сети — для библиотеки книг.
+     *
+     * Движок задан здесь, а не берётся из настройки: у манги может быть выбран
+     * онлайн-движок, и книга не должна от этого зависеть. Фолбэк в сеть тоже
+     * запрещён — иначе «локальный» вызов всё равно ушёл бы в облако, только
+     * на втором шаге.
+     */
+    override suspend fun recognizeLocalText(image: OcrImage): String {
+        lastRecognizedEngine = null
+        val primary = localTextEngine()
+        return withActiveOperation {
+            submitTask(PrioritizedTaskQueue.Priority.HIGH) {
+                image.useBitmap { bitmap ->
+                    recognizeWithFallback(
+                        primary = primary,
+                        image = bitmap,
+                        // Страница книги — не срочное чтение, но и не повод
+                        // ждать облако: бюджет фолбэка тут только локальный.
+                        fallbackBudgetMs = localOnlyFallbackBudgetMs,
+                        allowOnlineFallback = false,
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Локальный движок для страниц книги.
+     *
+     * Выбирается по фактической готовности, а не жёстко. Кириллический
+     * PP-OCR — лучший для русского, но ему нужны скачанный пакет моделей и
+     * LiteRT; без них он не отработает и страница просто останется пустой.
+     * Тогда берётся Google ML Kit: он ВНУТРИ APK, ничего качать не надо, и
+     * для латиницы работает сразу.
+     *
+     * Оба варианта локальные. Сети здесь нет ни в одном.
+     */
+    private fun localTextEngine(): EngineType {
+        val litertReady = environmentResult.getOrNull() != null
+        val packReady = litertReady && runCatching {
+            OcrModelFiles.allInstalled(
+                context,
+                listOf(
+                    CyrillicOcrEngine.DETECTOR_PATH,
+                    CyrillicOcrEngine.PRIMARY_PATH,
+                    CyrillicOcrEngine.PRIMARY_DICT_PATH,
+                ),
+            )
+        }.getOrDefault(false)
+        return if (packReady) EngineType.CYRILLIC else EngineType.MLKIT
+    }
+
+    /**
+     * Сколько ждать локальных фолбэков.
+     *
+     * Отдельный бюджет от [defaultFallbackBudgetMs]: там цепочка заканчивается
+     * облаком за десятки секунд, а здесь её не будет, и ждать незачем.
+     */
+    private val localOnlyFallbackBudgetMs = 20_000L
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     override suspend fun recognizeText(image: OcrImage, model: OcrModel?): String {
         // Новый вызов — новый отчёт: без сброса неудача показала бы движок
         // ПРЕДЫДУЩЕГО распознавания.
@@ -521,6 +663,7 @@ class OcrRepositoryImpl(
         pageIndex: Int,
         image: OcrImage,
         onPartial: ((OcrRegion) -> Unit)?,
+<<<<<<< HEAD
     ): OcrPageResult {
         return withActiveOperation {
             val regionChoice = ocrPreferences.scanRegion().get()
@@ -534,6 +677,29 @@ class OcrRepositoryImpl(
                     mihon.domain.ocr.service.ScanRegion.FULL_PAGE -> sourceHeight
                     else -> (sourceHeight - cropTop).coerceAtLeast(1)
                 }
+=======
+        cacheResult: Boolean,
+    ): OcrPageResult {
+        // Живой журнал. Консоль открывают именно ради скана главы, а движки
+        // OCR ходят в сеть напрямую и минуют AiAssistant — из-за чего журнал был
+        // пуст ровно тогда, когда он нужнее всего.
+        val engineName = OcrPlugins.byModel(ocrModelPref.get()).title
+        val startedAt = android.os.SystemClock.elapsedRealtime()
+        AiConsole.ocr(
+            title = "Скан страницы ${pageIndex + 1} · $engineName",
+            detail = buildString {
+                append("chapterId=").append(chapterId)
+                append(" · ").append(image.width).append('×').append(image.height)
+                append(" · кэш: ").append(if (cacheResult) "да" else "нет")
+            },
+        )
+        return try {
+            val outcome = withActiveOperation {
+                val regionChoice = presetScanRegion()
+            val result = image.useBitmap { originalBitmap ->
+                val sourceHeight = originalBitmap.height
+                val (cropTop, cropHeight) = OcrRegionRules.cropBounds(sourceHeight, regionChoice)
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                 val crop = if (cropTop == 0 && cropHeight == sourceHeight) {
                     originalBitmap
                 } else {
@@ -571,11 +737,48 @@ class OcrRepositoryImpl(
                 )
             }
 
+<<<<<<< HEAD
             cacheStore.upsert(result)
             result
         }
     }
 
+=======
+            // Кадр авточтения — это окно вебтуна, а не страница: его рамки
+            // нормализованы к обрезанному кадру. В кэш страницы такую запись
+            // класть нельзя, иначе оверлей потом подсвечивал не там. Плюс
+            // веб-авточтение шлёт chapterId = -1 на каждую позицию прокрутки,
+            // и clearChapter такие записи не убирал.
+                if (cacheResult) cacheStore.upsert(result)
+                result
+            }
+            // Итог по странице: сколько реплик, сколько заняло, какой движок
+            // отдал текст на самом деле (не выбранный, а фактический — при
+            // фолбэке это разные движки).
+            AiConsole.ocr(
+                title = "Страница ${pageIndex + 1} · реплик: ${outcome.regions.size}",
+                detail = "движок: ${OcrPlugins.byModel(outcome.ocrModel).title} · " +
+                    "${android.os.SystemClock.elapsedRealtime() - startedAt} мс",
+                level = if (outcome.regions.isEmpty()) AiConsole.Level.WARN else AiConsole.Level.OK,
+            )
+            outcome
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AiConsole.ocr(
+                title = "Скан страницы ${pageIndex + 1} не удался · $engineName",
+                detail = e.message ?: e.javaClass.simpleName,
+                level = AiConsole.Level.ERROR,
+            )
+            throw e
+        }
+    }
+
+    override suspend fun savePage(result: OcrPageResult) {
+        cacheStore.upsert(result)
+    }
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     override suspend fun getCachedPage(
         chapterId: Long,
         pageIndex: Int,
@@ -627,6 +830,10 @@ class OcrRepositoryImpl(
         onPartial: ((OcrRegion) -> Unit)? = null,
     ): OcrPageResult {
         val fallbackEnabled = useFallbackModelsPref.get()
+<<<<<<< HEAD
+=======
+        val skipUntitled = skipUntitledPagesPref.get()
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         val engines = if (fallbackEnabled) listOf(primary) + fallbackChain(primary) else listOf(primary)
         var attempted = false
         var lastResult: OcrPageResult? = null
@@ -643,6 +850,27 @@ class OcrRepositoryImpl(
                 val usable = result.withoutPromotionalRegions()
                 if (usable.regions.isNotEmpty()) return usable
                 lastResult = usable
+<<<<<<< HEAD
+=======
+                // Движок отработал и не нашёл текста. Правило хода цепочки —
+                // в домене ([pageScanStepAfterEngine]), здесь только вывод в
+                // консоль: читатель должен видеть, почему страница прошла мимо.
+                if (
+                    mihon.domain.ocr.interactor.pageScanStepAfterEngine(
+                        failed = false,
+                        regionCount = usable.regions.size,
+                        skipUntitledPages = skipUntitled,
+                    ) == mihon.domain.ocr.interactor.PageScanStep.STOP
+                ) {
+                    AiConsole.ocr(
+                        title = "Страница ${pageIndex + 1} · без текста",
+                        detail = "${engine.name.lowercase()} не нашёл текста — " +
+                            "цепочка фолбэка прервана, страница считается картинкой",
+                        level = AiConsole.Level.INFO,
+                    )
+                    return usable
+                }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             } catch (error: Throwable) {
                 if (error is CancellationException) throw error
                 if (!fallbackEnabled) throw error
@@ -670,6 +898,10 @@ class OcrRepositoryImpl(
         noteEngineUsed(type)
         return when (type) {
             EngineType.CYRILLIC -> scanLocally(chapterId, pageIndex, image, OcrModel.CYRILLIC, type, onPartial)
+<<<<<<< HEAD
+=======
+            EngineType.TESSERACT -> scanWithTesseract(chapterId, pageIndex, image, type, onPartial)
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             EngineType.MLKIT -> scanWithMlKit(chapterId, pageIndex, image, OcrModel.MLKIT, onPartial)
             EngineType.GLENS -> scanWithGlens(chapterId, pageIndex, image, OcrModel.GLENS)
             EngineType.OWOCR -> scanWithOwOcr(chapterId, pageIndex, image, OcrModel.OWOCR)
@@ -752,6 +984,59 @@ class OcrRepositoryImpl(
      * именно её. Если движок падает или ничего не нашёл — честно уходим в общий
      * фолбэк (онлайн Glens при сети, иначе локальный кириллический PP-OCR).
      */
+<<<<<<< HEAD
+=======
+    /**
+     * Полная страница через Tesseract.
+     *
+     * Он возвращает весь текст одним куском и без боксов, поэтому кадр
+     * отдаётся одним регионом на всю страницу: приложение дальше разобьёт его
+     * на реплики само (см. splitWholePageToLines в AutoReadEngine).
+     */
+    private suspend fun scanWithTesseract(
+        chapterId: Long,
+        pageIndex: Int,
+        image: Bitmap,
+        type: EngineType,
+        onPartial: ((OcrRegion) -> Unit)? = null,
+    ): OcrPageResult {
+        val text = submitTask(PrioritizedTaskQueue.Priority.NORMAL) {
+            engineLocks.withTextEngineLock(type) {
+                runCatching { engineFor(type).recognizeText(image) }
+                    .getOrElse { e ->
+                        logcat(LogPriority.WARN, e) { "Tesseract scan failed" }
+                        ""
+                    }
+            }
+        }.trim()
+        if (text.isBlank()) {
+            return OcrPageResult(
+                chapterId = chapterId,
+                pageIndex = pageIndex,
+                ocrModel = OcrModel.TESSERACT,
+                imageWidth = image.width,
+                imageHeight = image.height,
+                regions = emptyList(),
+            )
+        }
+        val region = OcrRegion(
+            order = 0,
+            text = OcrTextCleaner.joinLineHyphens(text).trim(),
+            boundingBox = OcrBoundingBox(0f, 0f, 1f, 1f),
+            textOrientation = OcrTextOrientation.Horizontal,
+        )
+        onPartial?.invoke(region)
+        return OcrPageResult(
+            chapterId = chapterId,
+            pageIndex = pageIndex,
+            ocrModel = OcrModel.TESSERACT,
+            imageWidth = image.width,
+            imageHeight = image.height,
+            regions = listOf(region),
+        )
+    }
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     private suspend fun scanWithMlKit(
         chapterId: Long,
         pageIndex: Int,
@@ -1142,6 +1427,19 @@ class OcrRepositoryImpl(
 
             detEngine?.close()
             detEngine = null
+<<<<<<< HEAD
         }
     }
+=======
+
+            tesseractEngine?.close()
+            tesseractEngine = null
+        }
+    }
+
+    private companion object {
+        /** Каталог с языковыми данными Tesseract (rus.traineddata и др.). */
+        const val TESSERACT_DATA_PATH = "tesseract/rus.traineddata"
+    }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 }

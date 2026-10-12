@@ -17,8 +17,11 @@ package eu.kanade.tachiyomi.data.books
  * @param volume Номер тома (null если нет томов).
  * @param chapter Номер главы (null если нет нумерации).
  * @param subChapter Подглава / секция.
+<<<<<<< HEAD
  * @param skipPages Количество страниц для пропуска в начале (обложки/титулы).
  *                  Оставлено для совместимости; страницы показываются все.
+=======
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
  */
 data class BookChapter(
     val id: Long,
@@ -37,7 +40,10 @@ data class BookChapter(
     val lastPageRead: Long = 0,
     val text: String = "",
     val pages: List<BookPage> = emptyList(),
+<<<<<<< HEAD
     val skipPages: Int = 0,
+=======
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 ) {
     val isRecognizedNumber: Boolean
         get() = chapterNumber >= 0.0
@@ -93,6 +99,7 @@ data class BookChapter(
                 }
             } else {
                 // Текстовые главы
+<<<<<<< HEAD
                 if (volume != null) append("Том $volume")
                 if (chapter != null) {
                     if (isNotEmpty()) append(", ")
@@ -101,6 +108,28 @@ data class BookChapter(
                 if (subChapter != null) append(".$subChapter")
                 if (isNotEmpty()) append(": ")
                 append(name.ifBlank { "Текст" })
+=======
+                // Если имя уже начинается с «Глава N: …» / «Том N» / «Пролог…» —
+                // это название вытащено из текста главы: добавлять ещё один
+                // префикс «Глава X:» к нему не нужно (иначе «Глава 1: Глава 1: …»).
+                val selfTitled = name.trim().let {
+                    it.startsWith("Глава") || it.startsWith("Том") ||
+                        it.startsWith("Пролог") || it.startsWith("Эпилог") ||
+                        it.startsWith("Интерлюдия")
+                }
+                if (selfTitled) {
+                    append(name)
+                } else {
+                    if (volume != null) append("Том $volume")
+                    if (chapter != null) {
+                        if (isNotEmpty()) append(", ")
+                        append("Глава $chapter")
+                    }
+                    if (subChapter != null) append(".$subChapter")
+                    if (isNotEmpty()) append(": ")
+                    append(name.ifBlank { "Текст" })
+                }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             }
         }
 
@@ -196,7 +225,10 @@ data class BookChapter(
             chapter: Int? = null,
             subChapter: Int? = null,
             scanlator: String? = null,
+<<<<<<< HEAD
             skipBefore: Int = 0,
+=======
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         ): BookChapter {
             val chapterNumber = when {
                 chapter != null && volume != null -> volume * 100.0 + chapter
@@ -217,7 +249,10 @@ data class BookChapter(
                 chapterNumber = chapterNumber,
                 scanlator = scanlator,
                 pages = pageList,
+<<<<<<< HEAD
                 skipPages = skipBefore.coerceAtLeast(0),
+=======
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             )
         }
     }
@@ -228,14 +263,23 @@ data class BookChapter(
  *
  * @param pageNumber Порядковый номер страницы в файле (1-based).
  * @param totalPages Общее число страниц в файле.
+<<<<<<< HEAD
  * @param text Текст страницы (извлечённый через OCR или описание).
  * @param image Пиксели страницы (Bitmap bytes) для отображения.
+=======
+ * @param text Текст страницы. Для PDF/DJVU он пуст до локального распознавания:
+ *   Android PdfRenderer текстовый слой не отдаёт. Байты картинки в модели не
+ *   держались никогда — страницу рендерит `BookParser.renderPage` по требованию.
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
  */
 data class BookPage(
     val pageNumber: Int,
     val totalPages: Int = 0,
     val text: String = "",
+<<<<<<< HEAD
     val image: ByteArray? = null,
+=======
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true

@@ -34,6 +34,14 @@ object BooksStore {
     }
 
     private const val PROGRESS_PREFS = "yomikai_books_progress"
+<<<<<<< HEAD
+=======
+    private const val BOOKMARKS_PREFS = "book_bookmarks"
+    private const val HISTORY_PREFS = "book_history"
+    private const val LASTREAD_PREFS = "book_lastread"
+    private const val READTIME_PREFS = "book_readtime"
+    private const val ADDEDAT_PREFS = "book_addedat"
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     private const val METADATA_PREFS = "yomikai_books_metadata"
     private const val COVER_DIR = "book_covers"
 
@@ -48,15 +56,73 @@ object BooksStore {
         return UniFile.fromFile(folder)
     }
 
+<<<<<<< HEAD
     /** Список книг (исключая скрытые файлы), отсортированные по имени. */
     fun listBooks(context: Context): List<UniFile> {
         return booksDirectory(context)?.listFiles()
             ?.filter { !it.name.orEmpty().startsWith('.') }
+=======
+    /** Список книг (без папок, без скрытых «из приложения»), по имени. */
+    fun listBooks(context: Context): List<UniFile> {
+        val hidden = hiddenSet(context)
+        return booksDirectory(context)?.listFiles()
+            ?.filter {
+                it.isFile() &&
+                    !it.name.orEmpty().startsWith('.') &&
+                    !hidden.contains(it.uri.toString())
+            }
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             ?.sortedBy { it.name.orEmpty().lowercase() }
             .orEmpty()
             .toList()
     }
 
+<<<<<<< HEAD
+=======
+    // ---------- «Удалить из приложения» (файл остаётся на телефоне) ----------
+
+    private const val HIDDEN_PREFS = "book_hidden"
+
+    private fun hiddenSet(context: Context): Set<String> =
+        context.getSharedPreferences(HIDDEN_PREFS, Context.MODE_PRIVATE)
+            .getStringSet("uris", emptySet()).orEmpty()
+
+    /** Скрыть книгу из библиотеки (файл на телефоне остаётся). */
+    fun hideFromLibrary(context: Context, book: UniFile) {
+        context.getSharedPreferences(HIDDEN_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putStringSet("uris", hiddenSet(context) + book.uri.toString())
+            .apply()
+    }
+
+    fun isHidden(context: Context, book: UniFile): Boolean =
+        hiddenSet(context).contains(book.uri.toString())
+
+    // ---------- Источник книги (выбрано пользователем в карточке) ----------
+
+    private const val SOURCE_PREFS = "book_sources"
+    private const val AMBIENCE_PREFS = "book_ambience"
+
+    fun bookSource(context: Context, book: UniFile): String =
+        context.getSharedPreferences(SOURCE_PREFS, Context.MODE_PRIVATE)
+            .getString(book.uri.toString(), "").orEmpty()
+
+    fun setBookSource(context: Context, book: UniFile, source: String) {
+        context.getSharedPreferences(SOURCE_PREFS, Context.MODE_PRIVATE)
+            .edit().putString(book.uri.toString(), source).apply()
+    }
+
+    /** Настроение фоновой музыки аудиокниги (BookAmbience.Mood или ""/"OFF"). */
+    fun ambienceMood(context: Context, book: UniFile): String =
+        context.getSharedPreferences(AMBIENCE_PREFS, Context.MODE_PRIVATE)
+            .getString(book.uri.toString(), "").orEmpty()
+
+    fun setAmbienceMood(context: Context, book: UniFile, mood: String) {
+        context.getSharedPreferences(AMBIENCE_PREFS, Context.MODE_PRIVATE)
+            .edit().putString(book.uri.toString(), mood).apply()
+    }
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     /**
      * Копирует выбранный пользователем файл (SAF URI) в каталог книг.
      */
@@ -104,6 +170,13 @@ object BooksStore {
                 }
                 val finalFile = dir.findFile(candidate)
                 if (finalFile?.exists() == true) {
+<<<<<<< HEAD
+=======
+                    context.getSharedPreferences(ADDEDAT_PREFS, Context.MODE_PRIVATE)
+                        .edit()
+                        .putLong(finalFile.uri.toString(), System.currentTimeMillis())
+                        .apply()
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
                     ImportResult.Success(finalFile)
                 } else {
                     ImportResult.Failure("Файл не появился после добавления — проверьте хранилище")
@@ -142,6 +215,13 @@ object BooksStore {
             val out = target.openOutputStream()
                 ?: return ImportResult.Failure("Не удалось открыть файл для записи")
             out.use { it.write(content) }
+<<<<<<< HEAD
+=======
+            context.getSharedPreferences(ADDEDAT_PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putLong(target.uri.toString(), System.currentTimeMillis())
+                .apply()
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
             return ImportResult.Success(target)
         } catch (e: Exception) {
             return ImportResult.Failure("Ошибка добавления: ${e.message ?: e.javaClass.simpleName}")
@@ -158,10 +238,26 @@ object BooksStore {
     }
 
     fun clear(context: Context, book: UniFile) {
+<<<<<<< HEAD
         context.getSharedPreferences(PROGRESS_PREFS, Context.MODE_PRIVATE)
             .edit()
             .remove(book.uri.toString())
             .apply()
+=======
+        val key = book.uri.toString()
+        context.getSharedPreferences(PROGRESS_PREFS, Context.MODE_PRIVATE)
+            .edit().remove(key).apply()
+        context.getSharedPreferences(BOOKMARKS_PREFS, Context.MODE_PRIVATE)
+            .edit().remove(key).apply()
+        context.getSharedPreferences(HISTORY_PREFS, Context.MODE_PRIVATE)
+            .edit().remove(key).apply()
+        context.getSharedPreferences(LASTREAD_PREFS, Context.MODE_PRIVATE)
+            .edit().remove(key).apply()
+        context.getSharedPreferences(READTIME_PREFS, Context.MODE_PRIVATE)
+            .edit().remove(key).apply()
+        context.getSharedPreferences(ADDEDAT_PREFS, Context.MODE_PRIVATE)
+            .edit().remove(key).apply()
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
         // Также очищаем кэш метаданных и обложки
         clearMetadata(context, book)
         clearCover(context, book)
@@ -180,6 +276,150 @@ object BooksStore {
         )
     }
 
+<<<<<<< HEAD
+=======
+    // ---------- «Продолжить чтение»: последнее открытие, время чтения ----------
+
+    /** Книга была открыта в читалке (для сортировки «Недавние» и карточки). */
+    fun markOpened(context: Context, book: UniFile) {
+        context.getSharedPreferences(LASTREAD_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putLong(book.uri.toString(), System.currentTimeMillis())
+            .apply()
+    }
+
+    fun lastOpened(context: Context, book: UniFile): Long =
+        context.getSharedPreferences(LASTREAD_PREFS, Context.MODE_PRIVATE)
+            .getLong(book.uri.toString(), 0L)
+
+    /** Накопление времени чтения голосом (секунды суммируются). */
+    fun addReadSeconds(context: Context, book: UniFile, seconds: Int) {
+        val prefs = context.getSharedPreferences(READTIME_PREFS, Context.MODE_PRIVATE)
+        val key = book.uri.toString()
+        prefs.edit()
+            .putLong(key, (prefs.getLong(key, 0L) + seconds).coerceAtLeast(0))
+            .apply()
+    }
+
+    fun readSeconds(context: Context, book: UniFile): Long =
+        context.getSharedPreferences(READTIME_PREFS, Context.MODE_PRIVATE)
+            .getLong(book.uri.toString(), 0L)
+
+    /** Когда книга попала в библиотеку (для сортировки «Новые»). */
+    fun addedAt(context: Context, book: UniFile): Long {
+        val prefs = context.getSharedPreferences(ADDEDAT_PREFS, Context.MODE_PRIVATE)
+        val key = book.uri.toString()
+        val saved = prefs.getLong(key, 0L)
+        if (saved > 0) return saved
+        val fallback = runCatching { book.lastModified() }.getOrDefault(0L)
+        if (fallback > 0) {
+            prefs.edit().putLong(key, fallback).apply()
+        }
+        return fallback
+    }
+
+    // ---------- Закладки и история чтения ----------
+
+    /** Закладка: место в книге, к которому читатель хочет вернуться. */
+    data class Bookmark(
+        val chapter: Int,
+        val sentence: Int,
+        val label: String,
+        val timestamp: Long,
+    )
+
+    /**
+     * Хранение — SharedPreferences, ключ = URI книги.
+     * Строки разделяются «^^^», поля внутри — «|».
+     */
+    fun loadBookmarks(context: Context, book: UniFile): List<Bookmark> {
+        val raw = context.getSharedPreferences(BOOKMARKS_PREFS, Context.MODE_PRIVATE)
+            .getString(book.uri.toString(), null) ?: return emptyList()
+        return raw.split("^^^").mapNotNull { row ->
+            val parts = row.split('|')
+            if (parts.size < 4) return@mapNotNull null
+            Bookmark(
+                chapter = parts[0].toIntOrNull() ?: return@mapNotNull null,
+                sentence = parts[1].toIntOrNull() ?: 0,
+                label = parts[2],
+                timestamp = parts[3].toLongOrNull() ?: 0L,
+            )
+        }.sortedByDescending { it.timestamp }
+    }
+
+    fun addBookmark(context: Context, book: UniFile, bookmark: Bookmark) {
+        val list = loadBookmarks(context, book).filterNot {
+            it.chapter == bookmark.chapter && it.sentence == bookmark.sentence
+        } + bookmark
+        saveBookmarks(context, book, list)
+    }
+
+    fun removeBookmark(context: Context, book: UniFile, bookmark: Bookmark) {
+        saveBookmarks(
+            context, book,
+            loadBookmarks(context, book).filterNot { it.timestamp == bookmark.timestamp },
+        )
+    }
+
+    private fun saveBookmarks(context: Context, book: UniFile, list: List<Bookmark>) {
+        val value = list.joinToString("^^^") {
+            "${it.chapter}|${it.sentence}|${it.label.replace("^^^", " ").replace("|", " ")}|${it.timestamp}"
+        }
+        context.getSharedPreferences(BOOKMARKS_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(book.uri.toString(), value)
+            .apply()
+    }
+
+    /**
+     * Контрольная точка истории: куда читал(а) и когда. Храним последние 30
+     * позиций — список «вернуться назад по следам чтения».
+     */
+    data class HistoryPoint(
+        val timestamp: Long,
+        val chapter: Int,
+        val sentence: Int,
+        val chapterTitle: String,
+    )
+
+    fun loadHistory(context: Context, book: UniFile): List<HistoryPoint> {
+        val raw = context.getSharedPreferences(HISTORY_PREFS, Context.MODE_PRIVATE)
+            .getString(book.uri.toString(), null) ?: return emptyList()
+        return raw.split("^^^").mapNotNull { row ->
+            val parts = row.split('|')
+            if (parts.size < 4) return@mapNotNull null
+            HistoryPoint(
+                timestamp = parts[0].toLongOrNull() ?: 0L,
+                chapter = parts[1].toIntOrNull() ?: return@mapNotNull null,
+                sentence = parts[2].toIntOrNull() ?: 0,
+                chapterTitle = parts[3],
+            )
+        }
+    }
+
+    /** Кладёт точку истории; подряд идущие дубли той же главы заменяются. */
+    fun pushHistory(context: Context, book: UniFile, point: HistoryPoint) {
+        val list = loadHistory(context, book).toMutableList()
+        val last = list.lastOrNull()
+        if (last != null &&
+            last.chapter == point.chapter &&
+            last.sentence == point.sentence
+        ) {
+            return
+        }
+        list += point
+        while (list.size > 30) list.removeAt(0)
+        val value = list.joinToString("^^^") {
+            "${it.timestamp}|${it.chapter}|${it.sentence}|" +
+                it.chapterTitle.replace("^^^", " ").replace("|", " ")
+        }
+        context.getSharedPreferences(HISTORY_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(book.uri.toString(), value)
+            .apply()
+    }
+
+>>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     // ---------- Метаданные ----------
 
     /**
