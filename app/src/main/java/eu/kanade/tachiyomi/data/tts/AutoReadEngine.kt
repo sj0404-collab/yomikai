@@ -200,6 +200,14 @@ class AutoReadEngine(
     private val trackedSpeakers = ArrayDeque<TrackedSpeaker>()
 
     /**
+     * Книга, которую сейчас читают. Нужна для закрепления голоса персонажа:
+     * карта «книга → персонаж → слот» лежит в настройках и переживает
+     * перезапуск приложения.
+     */
+    @Volatile
+    private var currentChapterId: Long = -1L
+
+    /**
      * Слот голоса для реплики в режиме «много голосов» / «свой голос
      * персонажу». Слот принадлежит персонажу, а не полу, поэтому порядок
      * такой:
@@ -242,16 +250,58 @@ class AutoReadEngine(
             return known.slot
         }
         lastSpokenGender = g
+        val key = speakerName?.takeIf { it.isNotBlank() }?.let(::speakerKeyByName)
+            ?: "?" + trackedSpeakers.size + ":" + fingerprint.take(16)
+        // Персонаж узнан по тексту, но с именем: тогда голос закрепляем за
+        // ИМЕНЕМ, а не за отпечатком реплики — иначе перезапуск изменит голос.
+        val persistentKey = speakerName?.takeIf { it.isNotBlank() }?.let(::speakerKeyByName)
+        val rememberedSlot = persistentKey?.let { rememberedSlotFor(it) } ?: 0
+        val freeSlot = nextSlotFor(g)
+        // Закреплённый слот берём, только если он ещё свободен. [nextSlotFor]
+        // возвращает первый НЕЗАНЯТЫЙ слот, поэтому слот свободен ровно тогда,
+        // когда он не ниже первого свободного. Иначе два персонажа заговорили
+        // бы одним голосом.
+        val slot = if (rememberedSlot > 0 && rememberedSlot >= freeSlot) rememberedSlot else freeSlot
         val speaker = TrackedSpeaker(
-            key = speakerName?.takeIf { it.isNotBlank() }?.let(::speakerKeyByName)
-                ?: "?" + trackedSpeakers.size + ":" + fingerprint.take(16),
+            key = key,
             gender = g,
-            slot = nextSlotFor(g),
+            slot = slot,
             lastText = fingerprint,
         )
         trackedSpeakers.addLast(speaker)
         trimTrackedSpeakers()
-        return speaker.slot
+        if (persistentKey != null) rememberSlotFor(persistentKey, slot)
+        return slot
+    }
+
+    /**
+     * Закреплённый за персонажем слот для текущей книги, 0 — не закреплён.
+     *
+     * Слот хранится в настройках, поэтому голос персонажа переживает перезапуск
+     * приложения: раньше память жила только в [trackedSpeakers] и закрывалась
+     * вместе с книгой.
+     */
+    @Synchronized
+    private fun rememberedSlotFor(key: String): Int = runCatching {
+        val root = org.json.JSONObject(prefs.bookVoiceSlots().get())
+        val book = root.optJSONObject(currentChapterId.toString()) ?: return@runCatching 0
+        book.optInt(key, 0)
+    }.getOrDefault(0)
+
+    /** Запоминает слот персонажа за текущей книгой. */
+    @Synchronized
+    private fun rememberSlotFor(key: String, slot: Int) {
+        if (currentChapterId < 0L || slot <= 0) return
+        runCatching {
+            val root = org.json.JSONObject(prefs.bookVoiceSlots().get())
+            val bookKey = currentChapterId.toString()
+            val book = root.optJSONObject(bookKey) ?: org.json.JSONObject()
+            book.put(key, slot)
+            root.put(bookKey, book)
+            prefs.bookVoiceSlots().set(root.toString())
+        }.onFailure {
+            logcat(LogPriority.WARN, it) { "Не сохранился голос персонажа" }
+        }
     }
 
     /**
@@ -752,6 +802,10 @@ class AutoReadEngine(
         job?.cancel()
         TtsSpeaker.stop()
         val myGen = ++generation
+        // Книга для закрепления голосов персонажей: карта «книга → персонаж →
+        // слот» пишется в настройки, поэтому движок должен знать, что он
+        // читает именно эту книгу.
+        currentChapterId = chapterId
         // Счётчик кадров нужен finally: он единственный знает, не перебил ли
         // кадр более новый. Объявляется здесь же — в master переменная
         // использовалась, но не была заведена, и модуль не компилировался.
