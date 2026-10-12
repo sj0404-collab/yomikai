@@ -270,9 +270,15 @@ class OcrRepositoryImpl(
         EngineType.OPENROUTER, EngineType.GOOGLE,
     )
     private val offlineEngines = listOf(
-        // One canonical offline engine for Russian/Cyrillic text. Legacy,
-        // FAST and Tesseract remain migration-only enum values.
+        // Один основной офлайн-движок для кириллицы. LEGACY и FAST — только
+        // миграционные значения перечислений.
         EngineType.CYRILLIC,
+        // Tesseract — второй офлайн-движок с русской моделью. Раньше он был
+        // фикцией и в цепочку не попадал, поэтому «прочитал не то → попробуй
+        // другой» для него просто не работало. Ставим после PP-OCR: тот и
+        // быстрее, и в среднем точнее, а Tesseract страхует, когда PP-OCR
+        // засомневался (мусор, пустые строки, нечитаемая вёрстка).
+        EngineType.TESSERACT,
         // ML Kit вкомпилирован в APK и не требует ни сети, ни пакета моделей,
         // поэтому годится как офлайн-фолбэк, когда PP-OCR не установлен.
         EngineType.MLKIT,
