@@ -127,7 +127,18 @@ class OcrPreferences(
     // Движки: system_tts (системные/локальные голоса), google_web (веб без
     // API-ключа, с сайта Google Translate), eleven_api (ElevenLabs по ключу)
     fun voiceEngine() = preferenceStore.getString("pref_voice_engine", "system_tts")
-    fun voiceName() = preferenceStore.getString("pref_voice_name", "ru-ru-x-dfa-network")
+
+    /**
+     * Основной голос. По умолчанию ПУСТО — голос выбирается автоматически.
+     *
+     * Раньше здесь стоял сетевой голос Google `ru-ru-x-dfa-network`: у новой
+     * установки озвучка уходила в интернет без разрешения и без внятного
+     * запроса. Пустое значение отдаёт выбор VoiceHelper.pickFor, который
+     * ранжирует голоса «локальные → сетевые», поэтому по умолчанию читает
+     * установленный локальный движок, а сетевой включается только если его
+     * выбрали руками.
+     */
+    fun voiceName() = preferenceStore.getString("pref_voice_name", "")
     fun voiceSlots() = preferenceStore.getString("voice_slots", "[]")
 
     /**
