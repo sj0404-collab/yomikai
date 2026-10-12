@@ -352,6 +352,53 @@ object TtsSpeaker {
     }.getOrNull()
 
     /**
+     * Голос для персонажа по номеру слота, когда слот в настройках не задан.
+     *
+     * Берём ТОЛЬКО локальные голоса нужного пола (сетевые остаются для тех,
+     * кто выбрал их руками) и детерминированно отбираем по номеру слота:
+     * [slot] % размер списка. Поэтому:
+     *  • разные персонажи одного пола получают разные голоса;
+     *  • один и тот же персонаж — всегда один и тот же голос, потому что его
+     *    слот не меняется от реплики к реплике;
+     *  • ничего настраивать не нужно, озвучка работает «из коробки».
+     *
+     * Пустая строка означает «подходящих голосов нет» — тогда остаётся обычный
+     * выбор движка по полу.
+     */
+    private fun autoVoiceForSlot(slot: Int, gender: String?): String {
+        val tts = systemTts ?: return ""
+        val kind = when (gender) {
+            "male" -> VoiceKind.MALE
+            "female" -> VoiceKind.FEMALE
+            else -> VoiceKind.OTHER
+        }
+        val local = runCatching {
+            VoiceHelper.voicesFor(tts, "ru")
+                .filter { !it.isNetworkConnectionRequired }
+                .filter { VoiceHelper.classify(it) == kind }
+        }.getOrDefault(emptyList())
+            // Голосов нужного пола нет (например, все женские — сетевые) —
+            // берём любые локальные, лучше разные, чем один на всех.
+            .ifEmpty {
+                runCatching {
+                    VoiceHelper.voicesFor(tts, "ru").filter { !it.isNetworkConnectionRequired }
+                }.getOrDefault(emptyList())
+            }
+        return pickSlotVoice(local.map { it.name }, slot)
+    }
+
+    /**
+     * Голос по номеру слота: [names][slot % names.size].
+     *
+     * Чистая функция — её и покрывают тесты. Детерминированность и есть смысл:
+     * слот персонажа постоянен, значит и голос персонажа постоянен.
+     */
+    internal fun pickSlotVoice(names: List<String>, slot: Int): String {
+        if (names.isEmpty() || slot <= 0) return ""
+        return names[slot % names.size]
+    }
+
+    /**
      * Разбор спецификации голоса «пакет::имя».
      *
      * Раньше [speakWithVoice] брал `substringBefore("::")`, а он для строки
@@ -753,6 +800,12 @@ object TtsSpeaker {
                 ?.let { i -> arr.getJSONObject(i).optString("voice") }.orEmpty()
         }.getOrDefault("")
         val savedRawVoice = runCatching { prefs().voiceName().get() }.getOrDefault("")
+        // Автоголос персонажа: слот в руках не настроен — берём голос из
+        // установленного локального движка ПО НОМЕРУ СЛОТА. Так персонажи
+        // звучат разными голосами без ручной настройки, и главное — ОДИН И
+        // ТОТ ЖЕ персонаж всегда звучит тем же голосом: номер слота у него
+        // не меняется (см. voiceSlotFor), а выбор голоса детерминирован.
+        val autoSlotVoice = if (speakerSlot > 0) autoVoiceForSlot(speakerSlot, gender) else ""
         // Словарь голосовых ролей подбирает роль по имени говорящего
         // ({имя:Аки}), затем по имени/метке, упомянутым в самой реплике
         // (на OCR-чтении разметки нет), затем по полу. Голос/питч/темп роли
@@ -767,9 +820,9 @@ object TtsSpeaker {
         // слота 🎙 — раньше слот перебивал выбор, и голос «не активировался».
         val primaryRaw = roleVoice
             ?: if (gender == null) {
-                savedRawVoice.ifBlank { slotVoiceRaw }
+                savedRawVoice.ifBlank { slotVoiceRaw }.ifBlank { autoSlotVoice }
             } else {
-                slotVoiceRaw.ifBlank { savedRawVoice }
+                slotVoiceRaw.ifBlank { autoSlotVoice }.ifBlank { savedRawVoice }
             }
         val forcedPkg = (
             roleVoice?.takeIf { it.isNotBlank() && it.contains("::") }?.substringBefore("::")
