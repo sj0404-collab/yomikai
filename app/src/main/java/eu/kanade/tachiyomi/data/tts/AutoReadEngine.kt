@@ -250,11 +250,13 @@ class AutoReadEngine(
             return known.slot
         }
         lastSpokenGender = g
+        // Ключ закрепления: именованный персонаж — по имени, безымянный — по
+        // отпечатку его речи. Раньше безымянные герои теряли голос при каждом
+        // перезапуске, потому что ключ им вообще не выдавался.
+        val persistentKey = persistentSpeakerKey(speakerName, fingerprint)
         val key = speakerName?.takeIf { it.isNotBlank() }?.let(::speakerKeyByName)
-            ?: "?" + trackedSpeakers.size + ":" + fingerprint.take(16)
-        // Персонаж узнан по тексту, но с именем: тогда голос закрепляем за
-        // ИМЕНЕМ, а не за отпечатком реплики — иначе перезапуск изменит голос.
-        val persistentKey = speakerName?.takeIf { it.isNotBlank() }?.let(::speakerKeyByName)
+            ?: persistentKey
+            ?: "?" + trackedSpeakers.size
         val rememberedSlot = persistentKey?.let { rememberedSlotFor(it) } ?: 0
         val freeSlot = nextSlotFor(g)
         // Закреплённый слот берём, только если он ещё свободен. [nextSlotFor]
@@ -2873,6 +2875,9 @@ class AutoReadEngine(
          */
         private const val MIN_FINGERPRINT = 12
 
+        /** Сколько символов отпечатка речи входит в ключ безымянного героя. */
+        private const val PERSISTENT_KEY_LENGTH = 24
+
         /**
          * Максимальная длинная сторона кадра для OCR: минимальное разрешение,
          * при котором текст ещё читается. Детектор движка всё равно масштабирует
@@ -3601,9 +3606,29 @@ class AutoReadEngine(
     }
 
     /**
+     * Ключ, по которому голос персонажа закрепляется в настройках.
+     *
+     * Именованный персонаж привязывается к имени — это надёжно. Безымянный
+     * (подписей в репликах нет) привязывается к ОТПЕЧАТКУ своей речи: у героя
+     * устойчивый набор слов, поэтому первая длинная реплика даёт стабильный
+     * ключ между запусками. Раньше безымянные герои теряли голос при каждом
+     * перезапуске приложения.
+     *
+     * Короткие реплики ключа не дают: «Да!» есть у всех, и такой ключ склеил бы
+     * весь диалог в одного персонажа — им остаётся подбор по сходству внутри
+     * сеанса, как и раньше.
+     */
+    internal fun persistentSpeakerKey(speakerName: String?, fingerprint: String): String? {
+        val name = speakerName?.trim()
+        if (!name.isNullOrEmpty()) return "n:" + name.lowercase()
+        if (fingerprint.length < MIN_FINGERPRINT) return null
+        return "t:" + fingerprint.take(PERSISTENT_KEY_LENGTH)
+    }
+
+    /**
      * Доля буквенных символов строки, приходящихся на кириллицу.
-         * Пустые строки и строки без букв дают 0.
-         */
+     * Пустые строки и строки без букв дают 0.
+     */
         internal fun cyrillicShare(text: String): Float {
             var letters = 0
             var cyrillic = 0
