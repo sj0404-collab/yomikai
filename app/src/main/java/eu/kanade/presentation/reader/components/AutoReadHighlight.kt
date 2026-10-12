@@ -114,15 +114,24 @@ fun AutoReadHighlight(
                 AutoReadEngine.FrameRegion.State.UPCOMING,
                 -> {
                     val p = place(frame.box.left, frame.box.top, frame.box.right, frame.box.bottom)
+                    // Прочитанное заливаем заметно: раньше у DONE был альфа 0.04
+                    // и пятно не читалось вообще — нельзя было понять, где чтение
+                    // уже прошло и повторится ли фраза. Теперь это видимая
+                    // мягкая заливка, а «ещё не прочитано» остаётся тусклым.
+                    val done = frame.state == AutoReadEngine.FrameRegion.State.DONE
                     Box(
                         modifier = Modifier
                             .offset { IntOffset(p[0], p[1]) }
                             .width(p[2].dp)
                             .height(p[3].dp)
                             .background(
+                                color = accent.copy(alpha = if (done) 0.16f else 0.04f),
+                                shape = RoundedCornerShape(percent = 40),
+                            )
+                            .background(
                                 brush = Brush.radialGradient(
                                     colors = listOf(
-                                        accent.copy(alpha = if (frame.state == AutoReadEngine.FrameRegion.State.DONE) 0.04f else 0.02f),
+                                        accent.copy(alpha = if (done) 0.10f else 0.02f),
                                         Color.Transparent,
                                     ),
                                 ),
