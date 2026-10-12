@@ -141,6 +141,12 @@ object OcrModelDownloader {
         "panel_detector" to listOf(
             hf("leoxs22/manga-panel-detector-yolo26n", "manga_panel_detector_int8.tflite") to "panel_detector.tflite",
         ),
+        // Языковые данные Tesseract. Без них движок не поднимается: нативная
+        // библиотека есть в APK, а модель букв живёт отдельно (~8 МБ).
+        "tesseract" to listOf(
+            tesseract("rus.traineddata") to "rus.traineddata",
+            tesseract("eng.traineddata") to "eng.traineddata",
+        ),
     )
 
     /** Asset-style paths per pack, used to check installation and delete files. */
@@ -155,6 +161,7 @@ object OcrModelDownloader {
         "manga_ocr" to listOf("ocr/encoder.tflite", "ocr/decoder.tflite", "ocr/embeddings.bin"),
         "manga_ocr_fast" to listOf("ocr_fast/encoder.tflite", "ocr_fast/decoder.tflite"),
         "panel_detector" to listOf("panel_detector/model.tflite"),
+        "tesseract" to listOf("tesseract/rus.traineddata", "tesseract/eng.traineddata"),
     )
 
     /** Пин коммита репозитория моделей: неизменяемый источник файлов. */
@@ -162,6 +169,21 @@ object OcrModelDownloader {
 
     private fun cyrillic(path: String): String {
         return "https://raw.githubusercontent.com/sj0404-collab/ocr-rus-cyrillic/$CYRILLIC_PIN/$path"
+    }
+
+    /**
+     * Пин репозитория языковых данных Tesseract: неизменяемый источник, как и
+     * у кириллических моделей — файл не должен молча подменяться.
+     */
+    private const val TESSDATA_PIN = "87416418657359cb625c412a48b6e1d6d41c29bd"
+
+    /** Путь языковых данных Tesseract в каталоге моделей. */
+    const val TESSERACT_RUS_PATH = "tesseract/rus.traineddata"
+
+    /** Языковые данные Tesseract из tessdata_fast (быстрая модель). */
+    private fun tesseract(file: String): String {
+        return "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/" +
+            "$TESSDATA_PIN/$file"
     }
 
     /** Зеркало через jsDelivr CDN (тот же пин) — резерв при сбоях raw.github. */
@@ -186,6 +208,13 @@ object OcrModelDownloader {
         ),
         "cyrillic_dict_v3.txt" to listOf(cyrillicMirror("models/dicts/cyrillic_dict.txt")),
         "cyrillic_dict_v5.txt" to listOf(cyrillicMirror("models/dicts/ppocrv5_cyrillic_dict.txt")),
+        // Языковые данные Tesseract: jsDelivr отдаёт их из того же пина.
+        "rus.traineddata" to listOf(
+            "https://cdn.jsdelivr.net/gh/tesseract-ocr/tessdata_fast@$TESSDATA_PIN/rus.traineddata",
+        ),
+        "eng.traineddata" to listOf(
+            "https://cdn.jsdelivr.net/gh/tesseract-ocr/tessdata_fast@$TESSDATA_PIN/eng.traineddata",
+        ),
     )
 
     private fun hf(repo: String, path: String): String {
@@ -236,6 +265,33 @@ object OcrModelDownloader {
                 if (cont.isActive) cont.resumeWith(Result.success(p2))
             }
         }
+    }
+
+    /**
+     * Языковые данные Tesseract, скачиваются при первом обращении.
+     *
+     * Нативная библиотека уже в APK, а буквы живут отдельными файлами. Без
+     * них движок не поднимается, поэтому при выборе Tesseract пакет
+     * подтягивается сам — так же, как модель панелей.
+     *
+     * Возвращает каталог с `.traineddata` или null, если скачать не вышло:
+     * движок в этом случае честно отдаёт пустой результат, а не падает.
+     */
+    suspend fun ensureTesseractData(context: Context, langs: List<String>): String? {
+        val dir = OcrModelFiles.resolve(context, TESSERACT_RUS_PATH)?.let { java.io.File(it).parentFile }
+        val needDownload = langs.any { lang ->
+            val file = java.io.File(dir ?: java.io.File("/dev/null"), "$lang.traineddata")
+            !file.isFile
+        }
+        if (needDownload) {
+            kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+                downloadPack(context, "tesseract") { ok ->
+                    if (cont.isActive) cont.resumeWith(Result.success(Unit))
+                }
+            }
+        }
+        return OcrModelFiles.resolve(context, TESSERACT_RUS_PATH)
+            ?.let { java.io.File(it).parentFile?.absolutePath }
     }
 
     fun isPackInstalled(context: Context, pack: String): Boolean {

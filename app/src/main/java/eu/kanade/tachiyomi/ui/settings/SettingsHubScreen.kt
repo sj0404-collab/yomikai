@@ -85,6 +85,9 @@ import mihon.domain.ocr.service.ScanRegion
 import tachiyomi.presentation.core.components.SliderItem
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 
 /**
  * НАСТРОЙКИ-ХАБ: одна кнопка в читалке → один экран → разделы с обложками →
@@ -824,6 +827,10 @@ private fun OcrPresetsTab() {
     val localMode by prefs.localMode().changes().collectAsState(initial = prefs.localMode().get())
     val ruStress by prefs.ruStress().changes().collectAsState(initial = prefs.ruStress().get())
     val model by prefs.ocrModel().changes().collectAsState(initial = prefs.ocrModel().get())
+    // Нужны для докачки языковых данных Tesseract при выборе движка:
+    // LocalContext и scope нельзя брать внутри лямбды onSelect.
+    val ocrSettingsContext = LocalContext.current
+    val ocrSettingsScope = rememberCoroutineScope()
     val fallbacks by prefs.useFallbackModels().changes()
         .collectAsState(initial = prefs.useFallbackModels().get())
     val fallbackPreset by prefs.fallbackPreset().changes()
@@ -870,7 +877,30 @@ private fun OcrPresetsTab() {
         title = "Движок распознавания",
         options = OcrModel.entries.map { it to (ENGINE_TITLES[it] ?: it.name) },
         selected = model,
-        onSelect = { prefs.ocrModel().set(it) },
+        onSelect = { picked ->
+            prefs.ocrModel().set(picked)
+            // У Tesseract нативная библиотека в APK, а буквы живут отдельными
+            // файлами. Без них движок молча отдаёт пустоту, поэтому при выборе
+            // тянем языковые данные сразу, а не заставляем читателя гадать.
+            if (picked == OcrModel.TESSERACT) {
+                val context = ocrSettingsContext
+                val scope = ocrSettingsScope
+                val ttsLangs = prefs.tessLangs().get()
+                scope.launch {
+                    val dir = eu.kanade.tachiyomi.data.ocr.OcrModelDownloader.ensureTesseractData(
+                        context,
+                        ttsLangs.split('+', ',').map { it.trim() }.filter { it.isNotEmpty() },
+                    )
+                    if (dir == null) {
+                        android.widget.Toast.makeText(
+                            context,
+                            "Не удалось скачать языковые данные Tesseract",
+                            android.widget.Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                }
+            }
+        },
     )
 
     HubSwitchRow(
