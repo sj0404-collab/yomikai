@@ -42,6 +42,9 @@ dependencies {
     implementation(libs.androidx.sqlite.bundled)
     implementation(libs.litert)
     implementation(libs.mlkit.text.recognition)
+    // Настоящий Tesseract с русской моделью: APK без него ввёл полем
+    // «Tesseract», который молча уходил в PP-OCR.
+    implementation(libs.tesseract4android)
 
     implementation(libs.anki.android)
     implementation(libs.hoshidicts)

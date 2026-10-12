@@ -2778,6 +2778,16 @@ class AutoReadEngine(
         private val WORD_RE = Regex("[\\p{L}\\p{N}]+")
 
         /**
+         * Цифры, которые движок путает с кириллическими буквами. Совпадение
+         * «похожести» в шрифте манги: 0→о, 1→л, 2→з, 3→з, 4→а, 5→с,
+         * 6→б, 7→т, 8→в, 9→г.
+         */
+        private val DIGIT_TO_CYRILLIC = mapOf(
+            '0' to 'о', '1' to 'л', '2' to 'з', '3' to 'з', '4' to 'а',
+            '5' to 'с', '6' to 'б', '7' to 'т', '8' to 'в', '9' to 'г',
+        )
+
+        /**
          * Латинские буквы, неотличимые от кириллических. Только они: `l` и `i`
          * в кириллицу не переводятся (это разные буквы в русском языке).
          */
@@ -3756,6 +3766,36 @@ class AutoReadEngine(
          *  • остальные строки склеиваются пробелом.
          */
         /**
+         * Цифры ВНУТРИ кириллического слова — это не цифры, а буквы.
+         *
+         * Кириллический распознаватель регулярно выдаёт «стОл» → «5тОл»,
+         * «зАОО» → «3АОО», «мы» → «мЫ»/«900». Такие слово читается неверно
+         * либо роняет строку целиком. Если в слове есть кириллица и цифра —
+         * цифра почти наверняка буква, и мы возвращаем ей вид.
+         *
+         * Настоящие числа не трогаем: «глава 5», «2/89», «15» остаются числами,
+         * потому что там нет кириллицы в том же слове.
+         */
+        internal fun repairDigitsInCyrillicWords(text: String): String {
+            val out = StringBuilder(text.length)
+            var last = 0
+            for (match in WORD_RE.findAll(text)) {
+                val word = match.value
+                val hasCyrillic = word.any { it in '\u0400'..'\u04FF' }
+                val digits = word.count { it.isDigit() }
+                if (!hasCyrillic || digits == 0) continue
+                out.append(text, last, match.range.first)
+                for (ch in word) {
+                    val letter = DIGIT_TO_CYRILLIC[ch]
+                    out.append(if (letter != null) letter else ch)
+                }
+                last = match.range.last + 1
+            }
+            out.append(text, last, text.length)
+            return out.toString()
+        }
+
+        /**
          * Латинские буквы-омоглифы внутри СЛОВА — в кириллицу.
          *
          * Кириллический движок регулярно выдаёт «Взлёт» → «Bзлёт», «Сон» →
@@ -3814,7 +3854,14 @@ class AutoReadEngine(
                 row.replace(DIGIT_GLUE_RE, " ")
                     .replace(WHITESPACE_RE, " ").trim()
             }.map { row ->
-                if (language == "ru") replaceLatinLookalikes(row) else row
+                if (language == "ru") {
+                    // Сначала цифры-буквы, потом латинские омоглифы: после первой
+                    // замены в слове появляется кириллица, и вторая проверка
+                    // получает корректный признак «это русское слово».
+                    replaceLatinLookalikes(repairDigitsInCyrillicWords(row))
+                } else {
+                    row
+                }
             }.filter { it.isNotBlank() }
             if (rows.isEmpty()) return ""
             val kept = rows.filter { row -> isMeaningfulRow(row, language) }

@@ -107,6 +107,9 @@ class OcrRepositoryImpl(
 
     private var cyrillicEngine: CyrillicOcrEngine? = null
     private var mlKitEngine: MlKitOcrEngine? = null
+
+    /** Tesseract с русской моделью — тяжёлый, держим один на всё время. */
+    private var tesseractEngine: TesseractOcrEngine? = null
     private var legacyEngine: LegacyOcrEngine? = null
     private var fastEngine: FastOcrEngine? = null
     private var glensEngine: GlensOcrEngine? = null
@@ -156,6 +159,7 @@ class OcrRepositoryImpl(
      */
     private fun EngineType.toOcrModel(): OcrModel = when (this) {
         EngineType.CYRILLIC -> OcrModel.CYRILLIC
+        EngineType.TESSERACT -> OcrModel.TESSERACT
         EngineType.MLKIT -> OcrModel.MLKIT
         EngineType.GLENS -> OcrModel.GLENS
         EngineType.OWOCR -> OcrModel.OWOCR
@@ -201,6 +205,7 @@ class OcrRepositoryImpl(
 
     internal enum class EngineType {
         CYRILLIC,
+        TESSERACT,
         MLKIT,
         LEGACY,
         FAST,
@@ -233,7 +238,7 @@ class OcrRepositoryImpl(
             OcrModel.OPENROUTER -> EngineType.OPENROUTER
             OcrModel.GOOGLE -> EngineType.GOOGLE
             OcrModel.ZEN_FREE -> EngineType.ZEN_FREE
-            OcrModel.TESSERACT -> EngineType.CYRILLIC
+            OcrModel.TESSERACT -> EngineType.TESSERACT
         }
         // ML Kit несёт в APK только латинскую модель. На кириллице он не
         // «медленно», а просто нечитаем, поэтому и как основной движок, и в
@@ -287,6 +292,8 @@ class OcrRepositoryImpl(
      * проверки цепочка тратила до минуты на заведомо 401/403-ответ.
      */
     private fun onlineEngineReady(type: EngineType): Boolean = when (type) {
+        // Tesseract работает локально, сети ему не нужно.
+        EngineType.TESSERACT -> true
         EngineType.ZEN_FREE -> ocrPreferences.zenFreeEnabled().get()
         EngineType.GOOGLE -> ocrPreferences.googleApiKey().get().isNotBlank()
         EngineType.OPENROUTER -> ocrPreferences.openrouterApiKey().get().isNotBlank()
@@ -344,6 +351,15 @@ class OcrRepositoryImpl(
                     textPostprocessor,
                     ::currentTuning,
                 ).also { cyrillicEngine = it }
+            }
+            EngineType.TESSERACT -> {
+                tesseractEngine ?: TesseractOcrEngine(
+                    dataDir = OcrModelFiles.resolve(
+                        context,
+                        TESSERACT_DATA_PATH,
+                    )?.let { java.io.File(it).parentFile },
+                    prefs = ocrPreferences,
+                ).also { tesseractEngine = it }
             }
             EngineType.MLKIT -> {
                 mlKitEngine ?: MlKitOcrEngine().also { mlKitEngine = it }
@@ -808,6 +824,7 @@ class OcrRepositoryImpl(
         noteEngineUsed(type)
         return when (type) {
             EngineType.CYRILLIC -> scanLocally(chapterId, pageIndex, image, OcrModel.CYRILLIC, type, onPartial)
+            EngineType.TESSERACT -> scanWithTesseract(chapterId, pageIndex, image, type, onPartial)
             EngineType.MLKIT -> scanWithMlKit(chapterId, pageIndex, image, OcrModel.MLKIT, onPartial)
             EngineType.GLENS -> scanWithGlens(chapterId, pageIndex, image, OcrModel.GLENS)
             EngineType.OWOCR -> scanWithOwOcr(chapterId, pageIndex, image, OcrModel.OWOCR)
@@ -890,6 +907,56 @@ class OcrRepositoryImpl(
      * именно её. Если движок падает или ничего не нашёл — честно уходим в общий
      * фолбэк (онлайн Glens при сети, иначе локальный кириллический PP-OCR).
      */
+    /**
+     * Полная страница через Tesseract.
+     *
+     * Он возвращает весь текст одним куском и без боксов, поэтому кадр
+     * отдаётся одним регионом на всю страницу: приложение дальше разобьёт его
+     * на реплики само (см. splitWholePageToLines в AutoReadEngine).
+     */
+    private suspend fun scanWithTesseract(
+        chapterId: Long,
+        pageIndex: Int,
+        image: Bitmap,
+        type: EngineType,
+        onPartial: ((OcrRegion) -> Unit)? = null,
+    ): OcrPageResult {
+        val text = submitTask(PrioritizedTaskQueue.Priority.NORMAL) {
+            engineLocks.withTextEngineLock(type) {
+                runCatching { engineFor(type).recognizeText(image) }
+                    .getOrElse { e ->
+                        logcat(LogPriority.WARN, e) { "Tesseract scan failed" }
+                        ""
+                    }
+            }
+        }.trim()
+        if (text.isBlank()) {
+            return OcrPageResult(
+                chapterId = chapterId,
+                pageIndex = pageIndex,
+                ocrModel = OcrModel.TESSERACT,
+                imageWidth = image.width,
+                imageHeight = image.height,
+                regions = emptyList(),
+            )
+        }
+        val region = OcrRegion(
+            order = 0,
+            text = OcrTextCleaner.joinLineHyphens(text).trim(),
+            boundingBox = OcrBoundingBox(0f, 0f, 1f, 1f),
+            textOrientation = OcrTextOrientation.Horizontal,
+        )
+        onPartial?.invoke(region)
+        return OcrPageResult(
+            chapterId = chapterId,
+            pageIndex = pageIndex,
+            ocrModel = OcrModel.TESSERACT,
+            imageWidth = image.width,
+            imageHeight = image.height,
+            regions = listOf(region),
+        )
+    }
+
     private suspend fun scanWithMlKit(
         chapterId: Long,
         pageIndex: Int,
@@ -1280,6 +1347,14 @@ class OcrRepositoryImpl(
 
             detEngine?.close()
             detEngine = null
+
+            tesseractEngine?.close()
+            tesseractEngine = null
         }
+    }
+
+    private companion object {
+        /** Каталог с языковыми данными Tesseract (rus.traineddata и др.). */
+        const val TESSERACT_DATA_PATH = "tesseract/rus.traineddata"
     }
 }
