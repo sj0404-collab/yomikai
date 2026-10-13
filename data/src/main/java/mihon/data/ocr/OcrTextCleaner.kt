@@ -81,16 +81,6 @@ object OcrTextCleaner {
     }
 
     private val PROMOTIONAL_SITE = Regex(
-<<<<<<< HEAD
-        "reman?ga(?:\\.org)?",
-        RegexOption.IGNORE_CASE,
-    )
-    private val PROMOTIONAL_SLOGAN = Regex(
-        "читай\\s+раньше\\s+всех(?:\\s+на\\s+reman?ga(?:\\.org)?)?",
-        RegexOption.IGNORE_CASE,
-    )
-
-=======
         // v1.9.135: водяники манга-сайтов попадали в OCR и ЗАЧИТЫВАЛИСЬ как
         // реплика («ЧИТАЙ НА САЙТЕ MANGABUFF…» получала номер реплики).
         "reman?ga(?:\\.org)?|readmanga|mintmanga|mangabuff(?:\\.ru|\\.me|\\.com)?" +
@@ -131,17 +121,11 @@ object OcrTextCleaner {
         "назад", "вперёд", "вперед", "меню глав",
     )
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     fun stripPromotionalText(text: String): String {
         if (text.isBlank()) return text
         return text.lineSequence()
             .map { line ->
-<<<<<<< HEAD
-                line.replace(PROMOTIONAL_SLOGAN, "")
-                    .replace(PROMOTIONAL_SITE, "")
-                    .replace(Regex("[ \\t]{2,}"), " ")
-                    .trim()
-=======
                 val cut = line
                     .replace(PROMOTIONAL_ADBLOCK, "")
                     .replace(PROMOTIONAL_SLOGAN, "")
@@ -149,7 +133,7 @@ object OcrTextCleaner {
                     .replace(Regex("[ \\t]{2,}"), " ")
                     .trim()
                 if (cut.lowercase() in STANDALONE_AD_BUTTONS) "" else cut
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             }
             .filter(String::isNotBlank)
             .joinToString("\n")
@@ -157,9 +141,6 @@ object OcrTextCleaner {
 
     fun isPromotionalText(text: String): Boolean {
         if (text.isBlank()) return false
-<<<<<<< HEAD
-        return stripPromotionalText(text).isBlank()
-=======
         // v1.9.136: линюя-строка с водяником режется ЦЕЛИКОМ, даже если после
         // слогана стоит ещё слово («ЧИТАЙ НА САЙТЕ MANGABUFF… И ПРОЧЕЕ»): раньше
         // проверка требовала, чтобы strip обнулил строку дочиста, и любой
@@ -169,7 +150,7 @@ object OcrTextCleaner {
         return stripPromotionalText(text).isBlank() ||
             PROMOTIONAL_SITE.containsMatchIn(text) ||
             PROMOTIONAL_SLOGAN.containsMatchIn(text)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     }
 
     /**
@@ -344,10 +325,6 @@ object OcrTextCleaner {
 
     private fun restoreRun(source: String): String {
         val upper = source.uppercase()
-<<<<<<< HEAD
-        var segments = splitKnownWords(upper)
-        if (segments == null) {
-=======
         // v1.9.139: настоящие слова НЕ дробим. DP-разбиение с лексиконом
         // коротких слов резало частотную лексику на «слоги»:
         // СВОИХ→«С ВО ИХ», НЕУЖЕЛИ→«НЕ УЖ ЕЛИ», ВЫГЛЯДИТ→«ВЫ ГЛЯДИТ»,
@@ -364,7 +341,7 @@ object OcrTextCleaner {
         val solid = upper in CAPTION_WORDS || knownWord(upper)
         var segments = if (solid) null else splitKnownWords(upper)
         if (segments == null && !solid) {
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             // Слиплись слова без пробелов: разбиваем по частотному
             // словарю словоформ. Только вставка пробелов.
             val glued = splitGluedRun(upper)
@@ -410,15 +387,12 @@ object OcrTextCleaner {
      * тоже делятся на слова.
      */
     private fun splitGluedRun(run: String): List<String>? {
-<<<<<<< HEAD
-        if (run.length < 6) return null
-=======
         // v1.9.141: собственный порог длины снят — решение принимает
         // [boundaryIsJustified], общий для обоих DP-разбиений. Порог 9 букв
         // (v1.9.139) защищал от «ПРИ БЫЛИ», но заодно оставлял слипшимися
         // короткие пары со скриншотов пользователя.
         if (run.length < MIN_SPLIT_RUN) return null
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         val best = arrayOfNulls<List<String>>(run.length + 1)
         best[0] = emptyList()
         for (start in run.indices) {
@@ -432,9 +406,6 @@ object OcrTextCleaner {
                 if (current == null || candidate.size < current.size) best[end] = candidate
             }
         }
-<<<<<<< HEAD
-        return best[run.length]?.takeIf { it.size > 1 }
-=======
         val split = best[run.length]?.takeIf { it.size > 1 } ?: return null
         return split.takeIf { boundaryIsJustified(split) }
     }
@@ -471,7 +442,7 @@ object OcrTextCleaner {
         return segments.zipWithNext().all { (left, right) ->
             RuMorph.isFunctionWord(left) || RuMorph.isFunctionWord(right)
         }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     }
 
     /**
@@ -555,8 +526,6 @@ object OcrTextCleaner {
 
     private val CYRILLIC_RANGE = 0x0400..0x052F
 
-<<<<<<< HEAD
-=======
     /** Минимальная длина прогона, который вообще имеет смысл делить на слова. */
     private const val MIN_SPLIT_RUN = 4
 
@@ -566,7 +535,7 @@ object OcrTextCleaner {
     /** Кусок короче этого — только служебное слово (см. [boundaryIsJustified]). */
     private const val MIN_SEGMENT_LETTERS = 3
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     /**
      * Common closed-class words plus the proper nouns and caption vocabulary
      * demonstrated in verified device regressions. The set only authorizes

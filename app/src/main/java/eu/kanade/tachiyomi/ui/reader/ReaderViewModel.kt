@@ -127,8 +127,6 @@ class ReaderViewModel @JvmOverloads constructor(
         const val MARKED_JPEG_QUALITY = 70
     }
 
-<<<<<<< HEAD
-=======
     /**
      * Детектор панелей для «Скан-и-читай»: реплики раскладываются по панелям
      * манги, чтобы порядок чтения совпадал с порядком панелей. Без модели или
@@ -137,7 +135,7 @@ class ReaderViewModel @JvmOverloads constructor(
      */
     private val detectPanels: mihon.domain.panel.interactor.DetectPanels by lazy { Injekt.get() }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     private val mutableState = MutableStateFlow(State())
     val state = mutableState.asStateFlow()
 
@@ -1150,10 +1148,6 @@ class ReaderViewModel @JvmOverloads constructor(
                 // с авточтением: своя копия сравнивала рамки по верхнему краю и
                 // читала мангу слева направо, если баблы стояли на разной высоте.
                 val order = mihon.data.ocr.OcrRegionRules.readingOrderFor(prefs)
-<<<<<<< HEAD
-                val sorted = eu.kanade.tachiyomi.data.tts.AutoReadEngine.orderRegions(
-                    result.regions.map {
-=======
                 val direction = when (order) {
                     "ltr" -> tachiyomi.core.common.util.system.ReadingDirection.LTR
                     "vertical" -> tachiyomi.core.common.util.system.ReadingDirection.VERTICAL
@@ -1187,18 +1181,15 @@ class ReaderViewModel @JvmOverloads constructor(
                 }
                 val sorted = eu.kanade.tachiyomi.data.tts.AutoReadEngine.orderLinesByPanels(
                     lines = result.regions.map {
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                         eu.kanade.tachiyomi.data.tts.AutoReadEngine.Line(
                             text = it.text,
                             boundingBox = it.boundingBox,
                         )
                     },
-<<<<<<< HEAD
-                    order,
-=======
                     order = order,
                     panels = panelBoxes,
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 )
                 val text = sorted.joinToString(". ") {
                     mihon.domain.ocr.model.normalizeOcrTextForDisplay(it.text)
@@ -1437,7 +1428,6 @@ class ReaderViewModel @JvmOverloads constructor(
             val source: OcrTextSource? = null,
         ) : Dialog
     }
-
 
 
     enum class OcrResultOrigin {

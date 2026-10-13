@@ -102,9 +102,6 @@ object VoiceIntonationDictionary {
         rules.firstOrNull { it.matches(sentence) }
 
     fun matchRule(prefs: OcrPreferences, sentence: String): VoiceIntonationRule? =
-<<<<<<< HEAD
-        matchRule(load(prefs), sentence)
-=======
         matchRule(load(prefs).ifEmpty { DEFAULT_RULES }, sentence)
 
     /**
@@ -121,5 +118,5 @@ object VoiceIntonationDictionary {
         VoiceIntonationRule(pattern = "?", pitch = 1.05f, rate = 1.0f),
         VoiceIntonationRule(pattern = "…", pitch = 0.97f, rate = 0.93f),
     )
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 }

@@ -141,15 +141,13 @@ object OcrModelDownloader {
         "panel_detector" to listOf(
             hf("leoxs22/manga-panel-detector-yolo26n", "manga_panel_detector_int8.tflite") to "panel_detector.tflite",
         ),
-<<<<<<< HEAD
-=======
         // Языковые данные Tesseract. Без них движок не поднимается: нативная
         // библиотека есть в APK, а модель букв живёт отдельно (~8 МБ).
         "tesseract" to listOf(
             tesseract("rus.traineddata") to "rus.traineddata",
             tesseract("eng.traineddata") to "eng.traineddata",
         ),
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     )
 
     /** Asset-style paths per pack, used to check installation and delete files. */
@@ -164,10 +162,8 @@ object OcrModelDownloader {
         "manga_ocr" to listOf("ocr/encoder.tflite", "ocr/decoder.tflite", "ocr/embeddings.bin"),
         "manga_ocr_fast" to listOf("ocr_fast/encoder.tflite", "ocr_fast/decoder.tflite"),
         "panel_detector" to listOf("panel_detector/model.tflite"),
-<<<<<<< HEAD
-=======
         "tesseract" to listOf("tesseract/rus.traineddata", "tesseract/eng.traineddata"),
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     )
 
     /** Пин коммита репозитория моделей: неизменяемый источник файлов. */
@@ -177,8 +173,6 @@ object OcrModelDownloader {
         return "https://raw.githubusercontent.com/sj0404-collab/ocr-rus-cyrillic/$CYRILLIC_PIN/$path"
     }
 
-<<<<<<< HEAD
-=======
     /**
      * Пин репозитория языковых данных Tesseract: неизменяемый источник, как и
      * у кириллических моделей — файл не должен молча подменяться.
@@ -194,7 +188,7 @@ object OcrModelDownloader {
             "$TESSDATA_PIN/$file"
     }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     /** Зеркало через jsDelivr CDN (тот же пин) — резерв при сбоях raw.github. */
     private fun cyrillicMirror(path: String): String {
         return "https://cdn.jsdelivr.net/gh/sj0404-collab/ocr-rus-cyrillic@$CYRILLIC_PIN/$path"
@@ -217,8 +211,6 @@ object OcrModelDownloader {
         ),
         "cyrillic_dict_v3.txt" to listOf(cyrillicMirror("models/dicts/cyrillic_dict.txt")),
         "cyrillic_dict_v5.txt" to listOf(cyrillicMirror("models/dicts/ppocrv5_cyrillic_dict.txt")),
-<<<<<<< HEAD
-=======
         // Языковые данные Tesseract: jsDelivr отдаёт их из того же пина.
         "rus.traineddata" to listOf(
             "https://cdn.jsdelivr.net/gh/tesseract-ocr/tessdata_fast@$TESSDATA_PIN/rus.traineddata",
@@ -226,7 +218,7 @@ object OcrModelDownloader {
         "eng.traineddata" to listOf(
             "https://cdn.jsdelivr.net/gh/tesseract-ocr/tessdata_fast@$TESSDATA_PIN/eng.traineddata",
         ),
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     )
 
     private fun hf(repo: String, path: String): String {
@@ -279,8 +271,6 @@ object OcrModelDownloader {
         }
     }
 
-<<<<<<< HEAD
-=======
     /**
      * Языковые данные Tesseract, скачиваются при первом обращении.
      *
@@ -308,7 +298,7 @@ object OcrModelDownloader {
             ?.let { java.io.File(it).parentFile?.absolutePath }
     }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     fun isPackInstalled(context: Context, pack: String): Boolean {
         val paths = PACK_ASSET_PATHS[pack] ?: return false
         return OcrModelFiles.allInstalled(context, paths)

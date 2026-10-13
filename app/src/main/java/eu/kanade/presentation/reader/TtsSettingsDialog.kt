@@ -114,11 +114,7 @@ fun TtsSettingsDialog(
     var elevenVoice by remember { mutableStateOf(prefs.elevenVoiceId().get()) }
 
     // Фоновая музыка авточтения манги (та же фича, что в читалке книг).
-<<<<<<< HEAD
-    var musicEnabled by remember { mutableStateOf(prefs.autoReadMusicEnabled().get()) }
-    var musicVolume by remember { mutableFloatStateOf(prefs.autoReadMusicVolume().get()) }
-=======
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 
     var voiceFemale by remember { mutableStateOf(prefs.voiceFemale().get()) }
     var voiceMale by remember { mutableStateOf(prefs.voiceMale().get()) }
@@ -872,33 +868,11 @@ fun TtsSettingsDialog(
                     valueRange = 0.5f..2f,
                 )
 
-<<<<<<< HEAD
-                // Музыка приглушается сама на время реплики, поэтому ползунок
-                // задаёт уровень в паузах — это потолок, а не то, что слышно
-                // поверх голоса.
-                SettingSwitchRow(
-                    label = "Фоновая музыка (авточтение)",
-                    checked = musicEnabled,
-                    onCheckedChange = { musicEnabled = it },
-                )
-                if (musicEnabled) {
-                    Text(
-                        "Громкость музыки",
-                        style = MaterialTheme.typography.labelMedium,
-                    )
-                    Slider(
-                        value = musicVolume,
-                        onValueChange = { musicVolume = it },
-                        valueRange = 0.04f..0.8f,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-=======
                 // «Фоновая музыка (авточтение)» убрана: проигрывателя в приложении нет
                 // (AutoReadMusic не существует), а переключатель и ползунок
                 // только записывали преференцы, которые никто не читал. Старые
                 // значения остаются в базе без вреда.
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 
                 when (engine) {
                     TtsSpeaker.ENGINE_SYSTEM -> {
@@ -1205,11 +1179,7 @@ fun TtsSettingsDialog(
                     prefs.elevenVoiceId().set(elevenVoice.trim())
                     prefs.edgeVoice().set(edgeVoice.trim())
                     prefs.edgeLanguage().set(edgeLanguage.trim())
-<<<<<<< HEAD
-                    prefs.autoReadMusicEnabled().set(musicEnabled)
-                    prefs.autoReadMusicVolume().set(musicVolume.coerceIn(0.04f, 0.8f))
-=======
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     context.toast("Настройки озвучки сохранены")
                     onDismissRequest()
                 },
@@ -1238,11 +1208,7 @@ fun TtsSettingsDialog(
                         prefs.elevenVoiceId().set(elevenVoice.trim())
                         prefs.edgeVoice().set(edgeVoice.trim())
                         prefs.edgeLanguage().set(edgeLanguage.trim())
-<<<<<<< HEAD
-                        prefs.autoReadMusicEnabled().set(musicEnabled)
-                        prefs.autoReadMusicVolume().set(musicVolume.coerceIn(0.04f, 0.8f))
-=======
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                         TtsSpeaker.speak(context, "Проверка выбранного голоса Ёмикай.")
                     },
                 ) { Text("Проба") }

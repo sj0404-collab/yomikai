@@ -91,8 +91,6 @@ class OcrRegionRulesTest {
     }
 
     @Test
-<<<<<<< HEAD
-=======
     fun `crop bounds follow the selected region`() {
         // Вся страница — без обрезки.
         OcrRegionRules.cropBounds(1000, ScanRegion.FULL_PAGE) shouldBe (0 to 1000)
@@ -109,7 +107,7 @@ class OcrRegionRulesTest {
     }
 
     @Test
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     fun `reading order names cover every preset value`() {
         OcrContentType.entries
             .map { OcrTuning.preset(it).readingOrder }

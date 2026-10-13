@@ -111,8 +111,6 @@ internal object VoiceJson {
         return t
     }
 
-<<<<<<< HEAD
-=======
     /**
      * Значение по ключу из плоского JSON-объекта: `{ "12": [...] }` → `[...]`.
      *
@@ -276,7 +274,7 @@ internal object VoiceJson {
         }
     }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     fun jsonEscape(s: String): String = buildString(s.length) {
         for (c in s) {
             when (c) {

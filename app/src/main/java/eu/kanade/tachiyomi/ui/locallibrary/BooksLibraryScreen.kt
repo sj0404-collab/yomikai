@@ -1,14 +1,5 @@
 package eu.kanade.tachiyomi.ui.locallibrary
 
-<<<<<<< HEAD
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-=======
 import android.graphics.BitmapFactory
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -18,16 +9,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-<<<<<<< HEAD
-=======
 import androidx.compose.foundation.layout.aspectRatio
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -35,25 +24,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-<<<<<<< HEAD
-import androidx.compose.foundation.lazy.itemsIndexed
-=======
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.DeleteOutline
-<<<<<<< HEAD
-import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExtendedFloatingActionButton
-=======
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.PlayArrow
@@ -62,7 +42,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -71,19 +51,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-<<<<<<< HEAD
-=======
 import androidx.compose.material3.Surface
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-<<<<<<< HEAD
-=======
 import androidx.compose.runtime.mutableIntStateOf
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -94,43 +70,27 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-<<<<<<< HEAD
-import androidx.compose.ui.res.painterResource
-=======
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.core.screen.Screen
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
-<<<<<<< HEAD
-import eu.kanade.tachiyomi.R
-import eu.kanade.tachiyomi.data.books.BookParser
-import eu.kanade.tachiyomi.data.books.BooksStore
-=======
 import eu.kanade.tachiyomi.data.books.BooksStore
 import eu.kanade.tachiyomi.ui.books.BooksBookScreen
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import eu.kanade.tachiyomi.ui.books.BooksReaderScreen
 import kotlinx.coroutines.launch
 import tachiyomi.core.common.util.lang.withIOContext
 
 /**
-<<<<<<< HEAD
- * Экран библиотеки книг с обложками и метаданными.
- *
- * Показывает список импортированных книг (PDF, EPUB, FB2, DOCX, HTML, TXT и др.),
- * позволяет добавить новый файл (SAF picker), удалить и открыть для чтения.
- * Каждая книга отображается с обложкой (если доступна), названием из метаданных
- * и прогрессом чтения.
-=======
  * Экран библиотеки книг, во всём повторяющий возможности библиотеки манги:
  *  • сетка обложек (как BrowseSource у манги) или список — переключается;
  *  • сортировка по имени / недавним (открывали) / новым (добавлены) / размеру;
  *  • карточка «Продолжить чтение» с последней открытой книгой и временем чтения;
  *  • добавление СРАЗУ НЕСКОЛЬКИХ файлов из системного пикера;
  *  • длинное нажатие по книге — информация/открытие, отдельная кнопка удаления.
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
  */
 object BooksLibraryScreen : Screen {
 
@@ -142,10 +102,6 @@ object BooksLibraryScreen : Screen {
         val ext: String,
         val progressPercent: Int,
         val coverPath: String?,
-<<<<<<< HEAD
-    )
-
-=======
         val lastOpenedAt: Long,
         val readSeconds: Long,
         val sizeBytes: Long,
@@ -192,7 +148,7 @@ object BooksLibraryScreen : Screen {
     }
 
     @OptIn(ExperimentalFoundationApi::class)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     @Composable
     override fun Content() {
         val navigator = LocalNavigator.currentOrThrow
@@ -200,17 +156,13 @@ object BooksLibraryScreen : Screen {
         val scope = rememberCoroutineScope()
         val snackbarHostState = remember { SnackbarHostState() }
         var importing by remember { mutableStateOf(false) }
-<<<<<<< HEAD
-=======
         var importingCount by remember { mutableIntStateOf(0) }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         var loading by remember { mutableStateOf(true) }
         var books by remember { mutableStateOf(emptyList<BookItem>()) }
         var showDeleteDialog by remember { mutableStateOf<BookItem?>(null) }
         var showInfoDialog by remember { mutableStateOf<BookItem?>(null) }
 
-<<<<<<< HEAD
-=======
         val uiPrefs = remember { context.getSharedPreferences(UI_PREFS, 0) }
         // Сортировка и раскладка — сохраняем, как в библиотеке манги.
         var sort by remember {
@@ -221,16 +173,13 @@ object BooksLibraryScreen : Screen {
         }
         var gridMode by remember { mutableStateOf(uiPrefs.getBoolean("grid_mode", true)) }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         fun refresh() {
             scope.launch {
                 val items = withIOContext {
                     BooksStore.listBooks(context).map { file ->
-<<<<<<< HEAD
-                        val pct = BooksStore.load(context, file).percent
-=======
                         val snapshot = BooksStore.load(context, file)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                         val ext = file.name.orEmpty().substringAfterLast('.', "").uppercase()
                         val metadata = BooksStore.loadMetadata(context, file)
                         val cPath = BooksStore.coverPath(context, file)
@@ -242,12 +191,6 @@ object BooksLibraryScreen : Screen {
                             author = metadata.author,
                             description = metadata.description,
                             ext = ext,
-<<<<<<< HEAD
-                            progressPercent = pct,
-                            coverPath = cPath,
-                        )
-                    }
-=======
                             progressPercent = snapshot.percent,
                             coverPath = cPath,
                             lastOpenedAt = BooksStore.lastOpened(context, file),
@@ -257,7 +200,7 @@ object BooksLibraryScreen : Screen {
                             savedChapter = snapshot.chapter,
                         )
                     }.sortedByDescending { it.addedAt } // стабильная база
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 }
                 loading = false
                 books = items
@@ -266,25 +209,6 @@ object BooksLibraryScreen : Screen {
 
         LaunchedEffect(navigator.lastItem) { refresh() }
 
-<<<<<<< HEAD
-        val addLauncher = rememberLauncherForActivityResult(
-            contract = ActivityResultContracts.OpenDocument(),
-        ) { uri ->
-            if (uri == null) return@rememberLauncherForActivityResult
-            scope.launch {
-                importing = true
-                try {
-                    val result = withIOContext { BooksStore.importBook(context, uri) }
-                    if (result is BooksStore.ImportResult.Success) {
-                        snackbarHostState.showSnackbar(
-                            "Добавлена книга «${result.book.name.orEmpty()}»",
-                        )
-                    } else {
-                        val reason = (result as? BooksStore.ImportResult.Failure)?.reason
-                            ?: "Неизвестная ошибка"
-                        snackbarHostState.showSnackbar("Не удалось добавить: $reason")
-                    }
-=======
         val sortedBooks = remember(books, sort) {
             when (sort) {
                 BookSort.NAME -> books.sortedWith(
@@ -329,7 +253,7 @@ object BooksLibraryScreen : Screen {
                         if (failed > 0) append(", не удалось: $failed")
                     }
                     snackbarHostState.showSnackbar(msg)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 } finally {
                     importing = false
                     refresh()
@@ -351,11 +275,8 @@ object BooksLibraryScreen : Screen {
                             CircularProgressIndicator(modifier = Modifier.size(28.dp))
                             Spacer(modifier = Modifier.height(10.dp))
                             Text(
-<<<<<<< HEAD
-                                "Добавление книги…",
-=======
                                 "Добавление книги $importingCount…",
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                         }
@@ -374,144 +295,22 @@ object BooksLibraryScreen : Screen {
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-<<<<<<< HEAD
-                                "Добавьте книги: PDF, EPUB, FB2, DOCX, HTML, TXT, MD…",
-=======
                                 "Добавьте книги: PDF, EPUB, FB2, DOCX, HTML, TXT, MD…\n" +
                                     "(можно выбрать сразу несколько файлов)",
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             Spacer(modifier = Modifier.height(16.dp))
                             OutlinedButton(onClick = { addLauncher.launch(arrayOf("*/*")) }) {
-<<<<<<< HEAD
-                                Text("Добавить книгу")
-=======
                                 Text("Добавить книги")
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                             }
                         }
                     }
                 }
 
                 else -> {
-<<<<<<< HEAD
-                    LazyColumn(modifier = Modifier.fillMaxSize()) {
-                        item(key = "__count__") {
-                            Text(
-                                "  Книг: ${books.size}",
-                                style = MaterialTheme.typography.labelMedium,
-                                modifier = Modifier.padding(vertical = 6.dp),
-                            )
-                        }
-                        itemsIndexed(books, key = { _, it -> it.fileName }) { index, item ->
-                            if (index > 0) HorizontalDivider()
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        navigator.push(
-                                            BooksReaderScreen(item.fileName, item.displayTitle),
-                                        )
-                                    }
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                // Обложка
-                                val coverPath = item.coverPath
-                                if (coverPath != null) {
-                                    val bitmap = remember(coverPath) {
-                                        val opts = BitmapFactory.Options().apply {
-                                            inSampleSize = 4 // downsampling 4x для экономии памяти
-                                        }
-                                        BitmapFactory.decodeFile(coverPath, opts)
-                                    }
-                                    if (bitmap != null) {
-                                        Image(
-                                            bitmap = bitmap.asImageBitmap(),
-                                            contentDescription = "Обложка",
-                                            modifier = Modifier
-                                                .size(56.dp, 80.dp)
-                                                .clip(RoundedCornerShape(4.dp)),
-                                            contentScale = ContentScale.Crop,
-                                        )
-                                    } else {
-                                        // Заглушка для обложки
-                                        Box(
-                                            modifier = Modifier
-                                                .size(56.dp, 80.dp)
-                                                .clip(RoundedCornerShape(4.dp))
-                                                .background(MaterialTheme.colorScheme.surfaceVariant),
-                                            contentAlignment = Alignment.Center,
-                                        ) {
-                                            Column(
-                                                horizontalAlignment = Alignment.CenterHorizontally,
-                                            ) {
-                                                Text(
-                                                    text = item.ext,
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                )
-                                            }
-                                        }
-                                    }
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                }
-
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = item.displayTitle,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                    if (item.author != null) {
-                                        Text(
-                                            text = item.author,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                    }
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            text = item.ext,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                        if (item.progressPercent > 0) {
-                                            Text(
-                                                text = " · ${item.progressPercent}%",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.primary,
-                                            )
-                                        }
-                                    }
-                                    if (item.progressPercent > 0) {
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        LinearProgressIndicator(
-                                            progress = { item.progressPercent / 100f },
-                                            modifier = Modifier.fillMaxWidth().height(6.dp),
-                                        )
-                                    }
-                                }
-                                IconButton(onClick = { showInfoDialog = item }) {
-                                    Icon(
-                                        Icons.Outlined.Info,
-                                        contentDescription = "О книге",
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                IconButton(onClick = { showDeleteDialog = item }) {
-                                    Icon(
-                                        Icons.Outlined.DeleteOutline,
-                                        contentDescription = "Удалить",
-                                        tint = MaterialTheme.colorScheme.error,
-                                    )
-                                }
-=======
                     if (gridMode) {
                         LazyVerticalGrid(
                             columns = GridCells.Adaptive(minSize = 112.dp),
@@ -593,7 +392,7 @@ object BooksLibraryScreen : Screen {
                                     onShowInfo = { showInfoDialog = item },
                                     onShowDelete = { showDeleteDialog = item },
                                 )
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                             }
                         }
                     }
@@ -612,87 +411,6 @@ object BooksLibraryScreen : Screen {
                 Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(20.dp))
                 Text("  Добавить", style = MaterialTheme.typography.labelMedium)
             }
-<<<<<<< HEAD
-        }
-
-        showInfoDialog?.let { item ->
-            val fileSize = remember(item) {
-                runCatching {
-                    BooksStore.booksDirectory(context)?.findFile(item.fileName)?.length()
-                        ?.takeIf { it > 0 }
-                }.getOrNull()
-            }
-            AlertDialog(
-                onDismissRequest = { showInfoDialog = null },
-                title = { Text(item.displayTitle, maxLines = 3, overflow = TextOverflow.Ellipsis) },
-                text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        item.author?.takeIf { it.isNotBlank() }?.let {
-                            Text("Автор: $it", style = MaterialTheme.typography.bodySmall)
-                        }
-                        Text("Формат: ${item.ext.ifBlank { "—" }}", style = MaterialTheme.typography.bodySmall)
-                        Text(
-                            "Прогресс: ${item.progressPercent}%",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                        fileSize?.let { bytes ->
-                            val sizeText = when {
-                                bytes >= 1048576 -> "%.1f МБ".format(bytes / 1048576f)
-                                bytes >= 1024 -> "%.1f КБ".format(bytes / 1024f)
-                                else -> "$bytes Б"
-                            }
-                            Text("Размер: $sizeText", style = MaterialTheme.typography.bodySmall)
-                        }
-                        item.description?.takeIf { it.isNotBlank() }?.let {
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                it,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = {
-                        showInfoDialog = null
-                        navigator.push(
-                            BooksReaderScreen(item.fileName, item.displayTitle),
-                        )
-                    }) { Text("Открыть") }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showInfoDialog = null }) { Text("Закрыть") }
-                },
-            )
-        }
-
-        showDeleteDialog?.let { item ->
-            AlertDialog(
-                onDismissRequest = { showDeleteDialog = null },
-                title = { Text("Удалить книгу?") },
-                text = { Text("Удалить «${item.displayTitle}» из библиотеки?") },
-                confirmButton = {
-                    TextButton(onClick = {
-                        scope.launch {
-                            withIOContext {
-                                val file = BooksStore.booksDirectory(context)?.findFile(item.fileName)
-                                if (file != null) {
-                                    BooksStore.clear(context, file)
-                                    BooksStore.deleteBook(file)
-                                }
-                            }
-                            books = books.filter { it.fileName != item.fileName }
-                        }
-                        showDeleteDialog = null
-                    }) { Text("Удалить") }
-                },
-                dismissButton = { TextButton(onClick = { showDeleteDialog = null }) { Text("Отмена") } },
-            )
-        }
-    }
-}
-=======
 
             showInfoDialog?.let { item ->
                 AlertDialog(
@@ -1072,4 +790,4 @@ object BooksLibraryScreen : Screen {
     }
 }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+

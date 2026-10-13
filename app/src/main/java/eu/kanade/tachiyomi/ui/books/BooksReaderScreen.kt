@@ -4,10 +4,8 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.graphics.Bitmap
-<<<<<<< HEAD
-=======
 import android.graphics.BitmapFactory
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import android.media.MediaPlayer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
@@ -23,10 +21,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-<<<<<<< HEAD
-=======
 import androidx.compose.foundation.layout.heightIn
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -35,12 +31,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-<<<<<<< HEAD
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.List
-import androidx.compose.material.icons.outlined.DocumentScanner
-=======
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -49,7 +39,7 @@ import androidx.compose.material.icons.outlined.Bookmarks
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.History
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import androidx.compose.material.icons.outlined.FullscreenExit
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
@@ -66,21 +56,17 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
-<<<<<<< HEAD
-=======
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.Surface
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-<<<<<<< HEAD
-=======
 import androidx.compose.material3.TextButton
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -91,20 +77,16 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-<<<<<<< HEAD
-=======
 import androidx.compose.runtime.snapshotFlow
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-<<<<<<< HEAD
-=======
 import androidx.compose.ui.input.pointer.pointerInput
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -122,25 +104,18 @@ import eu.kanade.presentation.reader.TtsVoicePickerDialog
 import eu.kanade.tachiyomi.data.books.BookAmbience
 import eu.kanade.tachiyomi.data.books.BookChapter
 import eu.kanade.tachiyomi.data.books.BookOcr
-<<<<<<< HEAD
-=======
 import eu.kanade.tachiyomi.data.books.BookProgress
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import eu.kanade.tachiyomi.data.books.BookParser
 import eu.kanade.tachiyomi.data.books.BookSpeechRole
 import eu.kanade.tachiyomi.data.books.BookSpeechSegment
 import eu.kanade.tachiyomi.data.books.BookTtsScript
-<<<<<<< HEAD
-import eu.kanade.tachiyomi.data.books.BooksStore
-import eu.kanade.tachiyomi.data.tts.EdgeTts
-import kotlinx.coroutines.CompletableDeferred
-=======
 import eu.kanade.tachiyomi.data.tts.TtsSpeaker
 import eu.kanade.tachiyomi.data.books.BooksStore
 import eu.kanade.tachiyomi.data.tts.EdgeTts
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -203,15 +178,13 @@ data class BooksReaderScreen(
         val chapterSegmentsCache = remember(chapters) {
             mutableMapOf<Pair<Int, Boolean>, List<BookSpeechSegment>>()
         }
-<<<<<<< HEAD
-=======
         // Число предложений главы — для прогресса. Раньше его пересчитывали
         // заново для КАЖДОЙ главы на КАЖДУЮ озвученную реплику: splitSentences
         // разбивал весь текст книги на список строк, а нужна была только длина.
         // На книге в 40 глав это десятки тысяч аллокаций на каждое предложение
         // — прямой источник подёргиваний при авточтении.
         val sentenceCountCache = remember(chapters) { mutableMapOf<Int, Int>() }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 
         // --- TTS Engine state ---
         var ttsEngine by remember { mutableStateOf(bookPrefs.bookTtsEngine().get()) }
@@ -223,8 +196,6 @@ data class BooksReaderScreen(
         // --- System TTS ---
         val tts = remember { mutableStateOf<TextToSpeech?>(null) }
         var systemTtsInitFailed by remember { mutableStateOf(false) }
-<<<<<<< HEAD
-=======
         // Пакет системного движка, как у читалки манги (там движок ВЫБРАН
         // пользователем, а не «какой у Android настроен по умолчанию», из-за
         // чего у части устройств движок «не виден»). Пусто — по умолчанию.
@@ -248,7 +219,7 @@ data class BooksReaderScreen(
         var showBookmarks by remember { mutableStateOf(false) }
         var bookmarks by remember { mutableStateOf<List<BooksStore.Bookmark>>(emptyList()) }
         var historyPoints by remember { mutableStateOf<List<BooksStore.HistoryPoint>>(emptyList()) }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         val pendingUtterance = remember { java.util.concurrent.atomic.AtomicReference<CompletableDeferred<Unit>?>(null) }
         val expectedUtteranceId = remember { java.util.concurrent.atomic.AtomicReference<String?>(null) }
 
@@ -283,9 +254,6 @@ data class BooksReaderScreen(
             val bmp = withContext(Dispatchers.IO) {
                 bookFile?.let { BookParser.renderPage(context, it, pageNumber) }
             }
-<<<<<<< HEAD
-            val text = bmp?.let { BookOcr.recognize(it) } ?: ""
-=======
             // Причина неудачи — читателю, а не в logcat: иначе страница молчала,
             // а он гадал, что сломалось.
             var failureReason: String? = null
@@ -298,13 +266,11 @@ data class BooksReaderScreen(
                     }
                 }
             } ?: ""
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             if (bmp != null && !bmp.isRecycled) bmp.recycle()
             pageSegments = pageSegments.toMutableMap().apply {
                 put(pageNumber, segmentsForReading(text, roleVoices))
             }
-<<<<<<< HEAD
-=======
             failureReason?.let { reason ->
                 eu.kanade.tachiyomi.data.ai.AiConsole.ocr(
                     title = "Страница $pageNumber: локальный OCR не дал текста",
@@ -318,23 +284,19 @@ data class BooksReaderScreen(
                     )
                 }
             }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             pageOcrBusy = false
         }
 
         suspend fun speakSegment(segment: BookSpeechSegment): Boolean {
             if (isEdgeTts) {
                 val narratorVoice = edgeVoiceName.ifBlank { EdgeTts.DEFAULT_VOICE }
-<<<<<<< HEAD
-                val voice = if (roleVoices) {
-                    BookTtsScript.edgeVoiceFor(segment.role, segment.speaker, narratorVoice)
-=======
                 val voice = if (roleVoices && segment.role == BookSpeechRole.CHARACTER) {
                     // Явно назначенный голос персонажа важнее палитры.
                     val picked = if (segment.speaker % 2 == 0) char1VoiceSpec else char2VoiceSpec
                     picked.takeIf { it.isNotBlank() && !it.contains("::") }
                         ?: BookTtsScript.edgeVoiceFor(segment.role, segment.speaker, narratorVoice)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 } else {
                     narratorVoice
                 }
@@ -375,16 +337,6 @@ data class BooksReaderScreen(
             } else {
                 // --- System TTS ---
                 if (systemTtsInitFailed) {
-<<<<<<< HEAD
-                    readerScope.launch {
-                        snackbarHostState.showSnackbar(
-                            "Системный TTS недоступен на этом устройстве (движок не установлен). " +
-                                "Установите голосовой движок в настройках Android или выберите «🌐 Edge TTS».",
-                        )
-                    }
-                    isPlaying = false
-                    return false
-=======
                     // Один автоматический ретрай: мог быть одномоментный сбой
                     // биндинга движка (на устройстве движок ЕСТЬ — манга им
                     // пользуется, просто привязка по умолчанию хилая).
@@ -403,17 +355,13 @@ data class BooksReaderScreen(
                         isPlaying = false
                         return false
                     }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 }
                 val engine = tts.value
                 if (engine == null) {
                     isPlaying = false
                     return false
                 }
-<<<<<<< HEAD
-                if (selectedVoiceSpec.contains("::")) {
-                    val voiceName = selectedVoiceSpec.substringAfterLast("::")
-=======
                 // Ролевой голос персонажа (если выбран явно в настройках).
                 val charSpec = if (roleVoices && segment.role == BookSpeechRole.CHARACTER) {
                     if (segment.speaker % 2 == 0) char1VoiceSpec else char2VoiceSpec
@@ -421,21 +369,16 @@ data class BooksReaderScreen(
                 val effectiveVoiceSpec = charSpec.takeIf { it.contains("::") } ?: selectedVoiceSpec
                 if (effectiveVoiceSpec.contains("::")) {
                     val voiceName = effectiveVoiceSpec.substringAfterLast("::")
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     runCatching {
                         engine.voices?.firstOrNull { it.name == voiceName }?.let { engine.setVoice(it) }
                     }
                 }
                 runCatching { engine.setSpeechRate(speechRate) }
-<<<<<<< HEAD
-                val factor = if (roleVoices) {
-                    BookTtsScript.systemPitchFactorFor(segment.role, segment.speaker)
-                } else 1f
-=======
                 val factor = if (roleVoices && charSpec.isBlank()) {
                     BookTtsScript.systemPitchFactorFor(segment.role, segment.speaker)
                 } else if (roleVoices) 1f else 1f
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 runCatching { engine.setPitch((pitch * factor).coerceIn(0.5f, 2f)) }
                 val utteranceId = "book_${currentChapterIndex}_$currentSentenceIndex"
                 val promise = CompletableDeferred<Unit>()
@@ -464,8 +407,6 @@ data class BooksReaderScreen(
             }
         }
 
-<<<<<<< HEAD
-=======
         /** Переключение главы на [idx] с полной уборкой страницы/прогресса. */
         val openChapterAt: (Int) -> Unit = { idx ->
             val target = idx.coerceIn(0, chapters.lastIndex.coerceAtLeast(0))
@@ -476,7 +417,7 @@ data class BooksReaderScreen(
             }
         }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         // ---------- Загрузка и парсинг ----------
 
         LaunchedEffect(Unit) {
@@ -485,22 +426,15 @@ data class BooksReaderScreen(
                     val dir = BooksStore.booksDirectory(context) ?: throw IllegalStateException("Нет каталога книг")
                     val bk = dir.findFile(bookFileName)
                         ?: throw IllegalStateException("Файл книги не найден")
-<<<<<<< HEAD
-                    val parsed = BookParser.parse(bk, bk.uri.toString())
-                    val saved = BooksStore.load(context, bk)
-=======
                     val parsed = BookParser.parse(bk, bk.uri.toString(), context)
                     val saved = BooksStore.load(context, bk)
                     // «Недавно читалось» — карточка продолжения в библиотеке.
                     BooksStore.markOpened(context, bk)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     withContext(Dispatchers.Main) {
                         chapters = parsed.chapters
                         currentChapterIndex = saved.chapter.coerceIn(0, parsed.chapters.lastIndex.coerceAtLeast(0))
                         val currentCh = parsed.chapters.getOrNull(currentChapterIndex)
-<<<<<<< HEAD
-                        val totalSentences = splitSentences(currentCh?.resolvedText.orEmpty()).size
-=======
                         // Постраничная глава считается страницами, а не
                         // предложениями: текста в ней до распознавания нет.
                         val totalSentences = if (currentCh?.isPageBased == true) {
@@ -508,7 +442,7 @@ data class BooksReaderScreen(
                         } else {
                             splitSentences(currentCh?.resolvedText.orEmpty()).size
                         }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                         currentSentenceIndex = saved.sentence.coerceIn(0, totalSentences.coerceAtLeast(1) - 1)
                         if (currentCh?.isPageBased == true) {
                             pdfPageIndex = saved.sentence.coerceIn(
@@ -528,16 +462,6 @@ data class BooksReaderScreen(
             }
         }
 
-<<<<<<< HEAD
-        // System TTS init
-        DisposableEffect(context) {
-            val engine = TextToSpeech(context) { status ->
-                if (status == TextToSpeech.SUCCESS) {
-                    logcat(LogPriority.INFO) { "BooksReader: System TTS init OK" }
-                } else {
-                    systemTtsInitFailed = true
-                    logcat(LogPriority.WARN) { "BooksReader: System TTS init failed: $status" }
-=======
         // System TTS init. Движок — ВЫБРАННЫЙ (как в читалке манги): если он
         // не указан, при первой неудаче пробуем оставшийся единственный
         // движок устройства, а переключение делается в настройках (⚙).
@@ -561,7 +485,7 @@ data class BooksReaderScreen(
                         systemTtsInitFailed = true
                         logcat(LogPriority.WARN) { "BooksReader: System TTS init failed: $status" }
                     }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 }
             }.apply {
                 setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -589,8 +513,6 @@ data class BooksReaderScreen(
             }
         }
 
-<<<<<<< HEAD
-=======
         // Авто-лечение «движок по умолчанию не виден» (как в манге): если
         // пакет не выбран и дефолтный движок не поднялся — берём единственный
         // установленный движок, либо просто предлагаем выбрать в диалоге.
@@ -622,7 +544,7 @@ data class BooksReaderScreen(
             }
         }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         // Освобождение плееров при закрытии экрана
         DisposableEffect(Unit) {
             onDispose {
@@ -655,30 +577,6 @@ data class BooksReaderScreen(
             }
         }
 
-<<<<<<< HEAD
-        // --- Voice picker dialog ---
-        if (showVoicePicker) {
-            TtsVoicePickerDialog(
-                onDismissRequest = { showVoicePicker = false },
-                onPickSystem = { spec ->
-                    ttsEngine = "system"
-                    selectedVoiceSpec = spec
-                    selectedVoiceLabel = spec.substringAfterLast("::")
-                    bookPrefs.bookTtsEngine().set("system")
-                    bookPrefs.bookVoiceSpec().set(spec)
-                    bookPrefs.bookVoiceLabel().set(selectedVoiceLabel)
-                    showVoicePicker = false
-                },
-                onPickEdge = { shortName ->
-                    ttsEngine = "edge"
-                    edgeVoiceName = shortName
-                    selectedVoiceSpec = shortName
-                    selectedVoiceLabel = shortName
-                    bookPrefs.bookTtsEngine().set("edge")
-                    bookPrefs.bookVoiceSpec().set(shortName)
-                    bookPrefs.bookVoiceLabel().set(shortName)
-                    showVoicePicker = false
-=======
         // --- Voice picker dialog (рассказчик и персонажи 1/2) ---
         if (showVoicePicker) {
             TtsVoicePickerDialog(
@@ -931,7 +829,7 @@ data class BooksReaderScreen(
                 },
                 confirmButton = {
                     TextButton(onClick = { showBookmarks = false }) { Text("Закрыть") }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 },
             )
         }
@@ -1043,13 +941,6 @@ data class BooksReaderScreen(
             val bk = bookFile ?: return@LaunchedEffect
             val current = chapters.getOrNull(currentChapterIndex)
             val saveSentence = if (current?.isPageBased == true) pdfPageIndex else currentSentenceIndex
-<<<<<<< HEAD
-            val totalSentencesPerChapter = chapters.map { splitSentences(it.resolvedText).size }
-            val total = totalSentencesPerChapter.sum().coerceAtLeast(1)
-            val consumedBefore = totalSentencesPerChapter.subList(0, currentChapterIndex).sum() + saveSentence
-            val percent = ((consumedBefore.toLong() * 100) / total).toInt().coerceIn(0, 100)
-            runCatching { BooksStore.save(context, bk, BooksStore.Snapshot(currentChapterIndex, saveSentence, percent)) }
-=======
             // Расчёт в чистой функции: в composable он был сломан (единицы
             // прогресса у глав разные, а у PDF текст появляется только после
             // распознавания), и его не покрывали тесты.
@@ -1110,7 +1001,7 @@ data class BooksReaderScreen(
                     }
                 }
             }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         }
 
         // Рендер страниц PDF по требованию
@@ -1178,8 +1069,6 @@ data class BooksReaderScreen(
         }
         val headerCount = if (isPageBased && segments.isNotEmpty()) 1 else 0
 
-<<<<<<< HEAD
-=======
         // Лента чтения: текст вперемешку с иллюстрациями (в той же очерёдности,
         // в которой картинки шли в EPUB; TTS на них не реагирует).
         val viewItems = if (currentChapter == null || isPageBased) {
@@ -1190,7 +1079,7 @@ data class BooksReaderScreen(
             }
         }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         // Автопрокрутка к читаемому сегменту
         LaunchedEffect(currentChapterIndex, currentSentenceIndex, isPageBased) {
             if (segments.isNotEmpty()) {
@@ -1199,11 +1088,6 @@ data class BooksReaderScreen(
             }
         }
 
-<<<<<<< HEAD
-        Box(modifier = Modifier.fillMaxSize()) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                AnimatedVisibility(visible = !fullscreen) {
-=======
         // Ручной скролл двигает счётчик «Предложение i/N»: раньше он залипал
         // на последней ОЗВУЧЕННОЙ позиции. Теперь ориентир — первый видимый
         // текстовый элемент (иллюстрации цепляются к предложению после них).
@@ -1234,7 +1118,7 @@ data class BooksReaderScreen(
                     // 0,0 и ОТРИСОВЫВАЮТСЯ ВНАХЛЁСТ — топ-бар оказывался под
                     // полупрозрачным списком, и кнопки не нажимались.
                     Column {
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     TopAppBar(
                         title = {
                             Text(
@@ -1253,53 +1137,16 @@ data class BooksReaderScreen(
                             IconButton(onClick = { showChapterList = !showChapterList }) {
                                 Icon(Icons.AutoMirrored.Outlined.List, contentDescription = "Главы")
                             }
-<<<<<<< HEAD
-=======
                             IconButton(onClick = { showBookmarks = true }) {
                                 Icon(Icons.Outlined.Bookmarks, contentDescription = "Закладки и история")
                             }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                             IconButton(onClick = { showSettings = !showSettings }) {
                                 Icon(Icons.Outlined.Settings, contentDescription = "Настройки")
                             }
                         },
                     )
 
-<<<<<<< HEAD
-                    // --- Chapter list ---
-                    AnimatedVisibility(visible = showChapterList) {
-                        LazyColumn(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(200.dp)
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-                        ) {
-                            itemsIndexed(chapters, key = { _, ch -> ch.id }) { index, chapter ->
-                                Text(
-                                    text = chapter.displayTitle,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    color = if (index == currentChapterIndex)
-                                        MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            currentChapterIndex = index
-                                            currentSentenceIndex = 0
-                                            pdfPageIndex = 0
-                                            isPlaying = false
-                                        }
-                                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                                )
-                                HorizontalDivider()
-                            }
-                        }
-                    }
-
-                    // --- Settings panel ---
-=======
                     // (Оглавление рисуется оверлеем в конце Box — см. ниже.)
 
                     // --- Settings panel ---
@@ -1309,21 +1156,16 @@ data class BooksReaderScreen(
                     // панель наезжала на верхнюю панель, а список глав и текст
                     // страницы уезжали вниз и обрезались. Фон непрозрачный по
                     // той же причине — на просвете читался текст страницы.
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     AnimatedVisibility(visible = showSettings) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-<<<<<<< HEAD
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                                .padding(16.dp)
-                                .verticalScroll(rememberScrollState()),
-=======
                                 .heightIn(max = 360.dp)
                                 .background(MaterialTheme.colorScheme.surface)
                                 .verticalScroll(rememberScrollState())
                                 .padding(16.dp),
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                         ) {
                             Text(
                                 "Движок озвучки",
@@ -1350,8 +1192,6 @@ data class BooksReaderScreen(
                                     label = { Text("🌐 Edge TTS") },
                                 )
                             }
-<<<<<<< HEAD
-=======
                             if (!isEdgeTts) {
                                 val engineLabel = if (systemTtsPkg.isBlank()) {
                                     "По умолчанию (Android)"
@@ -1377,7 +1217,7 @@ data class BooksReaderScreen(
                                     )
                                 }
                             }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 
                             Spacer(modifier = Modifier.height(8.dp))
 
@@ -1442,8 +1282,6 @@ data class BooksReaderScreen(
                                     isPlaying = false
                                 },
                             )
-<<<<<<< HEAD
-=======
                             if (roleVoices) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -1480,7 +1318,7 @@ data class BooksReaderScreen(
                                     Text("▸", color = MaterialTheme.colorScheme.primary)
                                 }
                             }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                             SettingSwitchRow(
                                 label = "Распознавать страницы (OCR)",
                                 checked = pageOcrEnabled,
@@ -1524,17 +1362,12 @@ data class BooksReaderScreen(
                             )
                         }
                     }
-<<<<<<< HEAD
-=======
                     }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 }
 
                 val contentModifier = Modifier.weight(1f)
 
-<<<<<<< HEAD
-                Box(modifier = contentModifier) {
-=======
                 // Листание книги жестами: горизонтальный свайп потексту —
                 // назад/вперёд по главам (вертикальный — обычная прокрутка).
                 Box(
@@ -1557,7 +1390,7 @@ data class BooksReaderScreen(
                             )
                         },
                 ) {
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     when {
                         isPageBased && segments.isNotEmpty() -> {
                             // Распознанный текст страницы — поверхностный список с подсветкой
@@ -1633,40 +1466,14 @@ data class BooksReaderScreen(
                                 }
                             }
                         }
-<<<<<<< HEAD
-                        segments.isNotEmpty() -> {
-=======
                         viewItems.isNotEmpty() -> {
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                             LazyColumn(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .padding(horizontal = 16.dp, vertical = 8.dp),
                                 state = listState,
                             ) {
-<<<<<<< HEAD
-                                itemsIndexed(segments, key = { idx, _ -> idx }) { idx, segment ->
-                                    val isCurrent = idx == currentSentenceIndex
-                                    Text(
-                                        text = if (isCurrent) "▸ ${segment.text}" else segment.text,
-                                        style = MaterialTheme.typography.bodyLarge.copy(
-                                            fontSize = 18.sp,
-                                            lineHeight = 28.sp,
-                                        ),
-                                        color = if (isCurrent)
-                                            MaterialTheme.colorScheme.onPrimaryContainer
-                                        else MaterialTheme.colorScheme.onSurface,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .background(
-                                                if (isCurrent)
-                                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
-                                                else Color.Transparent,
-                                            )
-                                            .padding(horizontal = 6.dp, vertical = 2.dp),
-                                    )
-=======
                                 itemsIndexed(viewItems, key = { idx, _ -> idx }) { _, item ->
                                     when (item) {
                                         is BookImageItem -> {
@@ -1737,7 +1544,7 @@ data class BooksReaderScreen(
                                             )
                                         }
                                     }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                                 }
                             }
                         }
@@ -1769,10 +1576,6 @@ data class BooksReaderScreen(
                         "Страница $pNum из $totalFilePages"
                     }
                 } else {
-<<<<<<< HEAD
-                    "Глава ${currentChapterIndex + 1}/${chapters.size} · " +
-                        "Предложение ${currentSentenceIndex + 1}/${segments.size.coerceAtLeast(1)}"
-=======
                     // Как в содержании визуальной читалки: глава N/M + процент
                     // ПО КНИГЕ (а не «Предложение A/B» — пользователь путал
                     // страницы с главами). Подстрочный счётчик предложений
@@ -1781,7 +1584,7 @@ data class BooksReaderScreen(
                         chapters.size.coerceAtLeast(1) * 100f
                     "Глава ${currentChapterIndex + 1} из ${chapters.size} · " +
                         "%.1f%%".format(pct).replace('.', ',')
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 }
                 if (!fullscreen) {
                     Text(
@@ -1860,27 +1663,6 @@ data class BooksReaderScreen(
                             }
                         }
                         // Prev chapter
-<<<<<<< HEAD
-                        IconButton(onClick = {
-                            if (currentChapterIndex > 0) {
-                                currentChapterIndex--
-                                currentSentenceIndex = 0
-                                pdfPageIndex = 0
-                            }
-                        }) {
-                            Icon(Icons.Outlined.SkipPrevious, contentDescription = "Предыдущая глава")
-                        }
-
-                        // Stop
-                        IconButton(
-                            onClick = stopAll,
-                            modifier = Modifier.size(40.dp),
-                        ) {
-                            Icon(
-                                Icons.Outlined.Stop,
-                                contentDescription = "Стоп",
-                                modifier = Modifier.size(24.dp),
-=======
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             IconButton(onClick = { openChapterAt(currentChapterIndex - 1) }) {
                                 Icon(Icons.Outlined.SkipPrevious, contentDescription = "Предыдущая глава")
@@ -1908,21 +1690,11 @@ data class BooksReaderScreen(
                                 "Стоп",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                             )
                         }
 
                         // Play / Pause
-<<<<<<< HEAD
-                        IconButton(
-                            onClick = togglePlay,
-                            modifier = Modifier.size(56.dp),
-                        ) {
-                            Icon(
-                                imageVector = if (isPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                                contentDescription = if (isPlaying) "Пауза" else "Читать",
-                                modifier = Modifier.size(32.dp),
-=======
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             IconButton(
                                 onClick = togglePlay,
@@ -1938,21 +1710,11 @@ data class BooksReaderScreen(
                                 if (isPlaying) "Пауза" else "Читать",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary,
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                             )
                         }
 
                         // Next chapter
-<<<<<<< HEAD
-                        IconButton(onClick = {
-                            if (currentChapterIndex < chapters.lastIndex) {
-                                currentChapterIndex++
-                                currentSentenceIndex = 0
-                                pdfPageIndex = 0
-                            }
-                        }) {
-                            Icon(Icons.Outlined.SkipNext, contentDescription = "Следующая глава")
-=======
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             IconButton(onClick = { openChapterAt(currentChapterIndex + 1) }) {
                                 Icon(Icons.Outlined.SkipNext, contentDescription = "Следующая глава")
@@ -1962,7 +1724,7 @@ data class BooksReaderScreen(
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                         }
                     }
                 }
@@ -1999,8 +1761,6 @@ data class BooksReaderScreen(
                 }
             }
 
-<<<<<<< HEAD
-=======
             // --- Оглавление поверх: тома и главы, собственная панель, ---
             // --- задник-«скрап» по тапу закрывает, топ-бар доступен. ---
             if (showChapterList) {
@@ -2090,7 +1850,7 @@ data class BooksReaderScreen(
                 }
             }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             SnackbarHost(
                 hostState = snackbarHostState,
                 modifier = Modifier.align(Alignment.BottomCenter)
@@ -2099,13 +1859,6 @@ data class BooksReaderScreen(
         }
     }
 
-<<<<<<< HEAD
-    private fun segmentsForReading(text: String, roleVoices: Boolean): List<BookSpeechSegment> {
-        return if (roleVoices) {
-            BookTtsScript.split(text)
-        } else {
-            splitSentences(text).map { BookSpeechSegment(BookSpeechRole.NARRATOR, 0, it) }
-=======
     /**
      * Строка-маркер иллюстрации в тексте главы EPUB: «⟦путь-к-файлу⟧|подпись».
      * TTS и счётчики предложений такие строки не видят (картинки не
@@ -2203,7 +1956,7 @@ data class BooksReaderScreen(
             BookTtsScript.split(clean)
         } else {
             splitSentences(clean).map { BookSpeechSegment(BookSpeechRole.NARRATOR, 0, it) }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         }
     }
 
@@ -2211,18 +1964,13 @@ data class BooksReaderScreen(
     private val SENTENCE_SPLIT = Regex("(?<=[.!?…])\\s+")
 
     private fun splitSentences(text: String): List<String> {
-<<<<<<< HEAD
-        return text
-=======
         return stripIllustrations(text)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             .replace(MULTI_NEWLINE, "\n")
             .split(SENTENCE_SPLIT)
             .map { it.trim() }
             .filter { it.isNotBlank() }
     }
-<<<<<<< HEAD
-=======
 
     /**
      * Число предложений без построчного списка.
@@ -2250,7 +1998,7 @@ data class BooksReaderScreen(
         for (i in from until to) if (!s[i].isWhitespace()) return true
         return false
     }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 }
 
 @Composable

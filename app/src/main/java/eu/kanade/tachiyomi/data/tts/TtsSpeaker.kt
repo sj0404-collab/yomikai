@@ -164,17 +164,6 @@ object TtsSpeaker {
             // Теперь упавший движок честно пересоздаётся.
             systemEnginePkg = wantEngine
             val listener = TextToSpeech.OnInitListener { status ->
-<<<<<<< HEAD
-                systemReady = status == TextToSpeech.SUCCESS
-                initInProgress = false
-                val ready = if (systemReady) systemTts else null
-                onReady(ready)
-                // Голоса больше не «исчезают до инициализации»: всё, что было
-                // заказано во время старта движка, озвучивается сразу после него.
-                val pending = pendingReady.toList()
-                pendingReady.clear()
-                pending.forEach { it(ready) }
-=======
                 // onInit всегда приходит на ГЛАВНОМ потоке, а тело speakSystem
                 // читает voice_rules.json с /sdcard, разбирает JSON пресетов и
                 // ходит в binder за списком голосов. На главном это первые
@@ -194,7 +183,7 @@ object TtsSpeaker {
                     pendingReady.clear()
                     pending.forEach { it(ready) }
                 }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             }
             initInProgress = true
             // Конструктор TextToSpeech может бросить исключение на невалидном/
@@ -351,11 +340,8 @@ object TtsSpeaker {
     fun slotVoiceSpec(role: String, text: String? = null): String? = runCatching {
         // Словарь голосовых ролей имеет приоритет над legacy-слотами:
         // роль из {имя:Аки} или кнопки ♀/♂ может быть описана там точнее.
-<<<<<<< HEAD
-        val dictVoice = VoiceRoleDictionary.load(prefs())
-=======
         val dictVoice = currentBookRoles()
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             .firstOrNull { it.matchesName(role) || (!text.isNullOrBlank() && it.mentionedIn(text)) }
             ?.voice
             ?.takeIf { it.isNotBlank() }
@@ -368,8 +354,6 @@ object TtsSpeaker {
     }.getOrNull()
 
     /**
-<<<<<<< HEAD
-=======
      * Голос для персонажа по номеру слота, когда слот в настройках не задан.
      *
      * Берём ТОЛЬКО локальные голоса нужного пола (сетевые остаются для тех,
@@ -417,7 +401,7 @@ object TtsSpeaker {
     }
 
     /**
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
      * Разбор спецификации голоса «пакет::имя».
      *
      * Раньше [speakWithVoice] брал `substringBefore("::")`, а он для строки
@@ -631,15 +615,13 @@ object TtsSpeaker {
         gender: String?,
         speakerSlot: Int = 0,
         onState: (Boolean) -> Unit = {},
-<<<<<<< HEAD
-=======
         langHint: String? = null,
         /**
          * Эмоция реплики в виде (pitch, rate): голос ВЖИВАЕТСЯ в роль —
          * страх выше и быстрее, утешение ниже и медленнее. null = ровно.
          */
         emotionProsody: Pair<Float, Float>? = null,
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     ) {
         stop()
         onStateChange = onState
@@ -681,11 +663,8 @@ object TtsSpeaker {
         // одним голосом. Текст реплики нужен потому, что на OCR-чтении имени в
         // разметке нет — роль опознаётся по упоминанию имени в тексте.
         val resolvedRole = runCatching {
-<<<<<<< HEAD
-            VoiceRoleDictionary.resolve(prefs(), speakerName, effectiveGender, spoken)
-=======
             VoiceRoleDictionary.resolve(currentBookRoles(), speakerName, effectiveGender, spoken)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         }.getOrNull()
         // Ручной режим — выбор читателя, и словарь ролей его не перебивает:
         // голос и тон из роли на сетевых движках раньше не применялись, и
@@ -707,11 +686,8 @@ object TtsSpeaker {
             ENGINE_GOOGLE_WEB -> if (roleSpec != null && isEdgeVoiceName(roleSpec)) {
                 speakWithEdgeVoice(context, spoken, roleSpec, onState)
             } else {
-<<<<<<< HEAD
-                speakGoogleWeb(context, spoken)
-=======
                 speakGoogleWeb(context, spoken, langHint)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             }
             // У Edge женские и мужские голоса настоящие, поэтому пол и слот
             // персонажа там работают по-настоящему.
@@ -721,14 +697,11 @@ object TtsSpeaker {
                 voiceName = roleSpec,
                 gender = effectiveGender,
                 speakerSlot = slot,
-<<<<<<< HEAD
-                role = role,
-=======
                 langHint = langHint,
                 role = role,
                 emotionRate = emotionProsody?.second ?: 1f,
                 emotionPitch = emotionProsody?.first ?: 1f,
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             )
             ENGINE_ELEVENLABS -> speakElevenLabs(
                 context = context,
@@ -746,11 +719,8 @@ object TtsSpeaker {
                 speakerSlot = slot,
                 speakerName = speakerName,
             )
-<<<<<<< HEAD
-            else -> speakSystem(context, spoken, effectiveGender, slot, speakerName, role)
-=======
             else -> speakSystem(context, spoken, effectiveGender, slot, speakerName, role, emotionProsody)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         }
     }
 
@@ -795,8 +765,6 @@ object TtsSpeaker {
 
     // region SYSTEM
 
-<<<<<<< HEAD
-=======
     /**
      * Роли голосов с учётом текущей книги.
      *
@@ -816,7 +784,7 @@ object TtsSpeaker {
         mihon.data.ocr.ReaderContextBus.current.value?.mangaId
     }.getOrNull()
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     private fun speakSystem(
         context: Context,
         text: String,
@@ -828,14 +796,12 @@ object TtsSpeaker {
          * null = определить роль здесь (ручной режим голоса).
          */
         resolvedRole: VoiceRole? = null,
-<<<<<<< HEAD
-=======
         /**
          * Эмоция реплики (pitch, rate): множители поверх пресетов пола/возраста.
          * null = ровный голос.
          */
         emotionProsody: Pair<Float, Float>? = null,
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     ) {
         val slotVoiceRaw = runCatching {
             val arr = org.json.JSONArray(prefs().voiceSlots().get())
@@ -844,24 +810,19 @@ object TtsSpeaker {
                 ?.let { i -> arr.getJSONObject(i).optString("voice") }.orEmpty()
         }.getOrDefault("")
         val savedRawVoice = runCatching { prefs().voiceName().get() }.getOrDefault("")
-<<<<<<< HEAD
-=======
         // Автоголос персонажа: слот в руках не настроен — берём голос из
         // установленного локального движка ПО НОМЕРУ СЛОТА. Так персонажи
         // звучат разными голосами без ручной настройки, и главное — ОДИН И
         // ТОТ ЖЕ персонаж всегда звучит тем же голосом: номер слота у него
         // не меняется (см. voiceSlotFor), а выбор голоса детерминирован.
         val autoSlotVoice = if (speakerSlot > 0) autoVoiceForSlot(speakerSlot, gender) else ""
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         // Словарь голосовых ролей подбирает роль по имени говорящего
         // ({имя:Аки}), затем по имени/метке, упомянутым в самой реплике
         // (на OCR-чтении разметки нет), затем по полу. Голос/питч/темп роли
         // перекрывают слоты и пресеты пола, которые работают только по полу.
-<<<<<<< HEAD
-        val role = resolvedRole ?: VoiceRoleDictionary.resolve(prefs(), speakerName, gender, text)
-=======
         val role = resolvedRole ?: VoiceRoleDictionary.resolve(currentBookRoles(), speakerName, gender, text)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         // ВАЖНО: роль может как задать точный голос, так и только
         // модификаторы; распознаём оба случая отдельно.
         val rolePitch = role?.pitch?.takeIf { it > 0f && it != 1f } ?: 1f
@@ -871,15 +832,10 @@ object TtsSpeaker {
         // слота 🎙 — раньше слот перебивал выбор, и голос «не активировался».
         val primaryRaw = roleVoice
             ?: if (gender == null) {
-<<<<<<< HEAD
-                savedRawVoice.ifBlank { slotVoiceRaw }
-            } else {
-                slotVoiceRaw.ifBlank { savedRawVoice }
-=======
                 savedRawVoice.ifBlank { slotVoiceRaw }.ifBlank { autoSlotVoice }
             } else {
                 slotVoiceRaw.ifBlank { autoSlotVoice }.ifBlank { savedRawVoice }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             }
         val forcedPkg = (
             roleVoice?.takeIf { it.isNotBlank() && it.contains("::") }?.substringBefore("::")
@@ -904,17 +860,13 @@ object TtsSpeaker {
             // Пресет голоса пол/возраст: модификаторы питча и темпа.
             val presetAge = VoicePreset.Age.fromId(p.voicePresetAge().get())
             val presetGender = VoicePreset.Gender3.fromId(p.voicePresetGender().get())
-<<<<<<< HEAD
-            engine.setSpeechRate((p.speechRate().get() * presetAge.rate).coerceIn(0.5f, 2f))
-            engine.setPitch(p.speechPitch().get().coerceIn(0.5f, 2f))
-=======
             // Эмоция реплики поверх пресетов: страх выше/быстрее, утешение
             // ниже/медленнее — голос вживается в роль, а не зачитывает.
             val emoPitch = emotionProsody?.first?.takeIf { it > 0f && it.isFinite() } ?: 1f
             val emoRate = emotionProsody?.second?.takeIf { it > 0f && it.isFinite() } ?: 1f
             engine.setSpeechRate((p.speechRate().get() * presetAge.rate * emoRate).coerceIn(0.4f, 2.5f))
             engine.setPitch((p.speechPitch().get() * emoPitch).coerceIn(0.5f, 2f))
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             // Пол говорящего (логика из overlay-translator):
             // 1) явный пресет пользователя для пола; 2) VoiceHelper.pick —
             // автоподбор по классификации имён (Svetlana/Dmitry/детские);
@@ -1346,16 +1298,12 @@ object TtsSpeaker {
      * тем, что endpoint умеет, — заданным для персонажа голосом (маршрутизация
      * делается в [speakAs]); если голоса роли нет, звучит как раньше.
      */
-<<<<<<< HEAD
-    private fun speakGoogleWeb(context: Context, text: String) {
-        val lang = prefs().ttsWebLanguage().get().ifBlank { "ru" }
-=======
     private fun speakGoogleWeb(context: Context, text: String, langHint: String? = null) {
         // Переведённым текстом читает голос ЦЕЛЕВОГО языка (Google Web TTS
         // кодирует язык прямо в URL; у него один голос на язык — выбор прост).
         val lang = langHint?.takeIf { it.isNotBlank() }
             ?: prefs().ttsWebLanguage().get().ifBlank { "ru" }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         currentJob = scope.launch {
             // СВОЙ Job, а не поле: тело задачи стартует на другом потоке и
             // может выполниться ДО присваивания currentJob, увидев там null, —
@@ -1400,11 +1348,6 @@ object TtsSpeaker {
         gender: String? = null,
         speakerSlot: Int = 0,
         role: VoiceRole? = null,
-<<<<<<< HEAD
-    ) {
-        val p = prefs()
-        val voice = voiceName?.takeIf { it.isNotBlank() } ?: edgeVoiceFor(gender, speakerSlot)
-=======
         langHint: String? = null,
         /** Эмоция реплики в долях темпа/тона (1 = ровно). */
         emotionRate: Float = 1f,
@@ -1421,7 +1364,7 @@ object TtsSpeaker {
                     ?: edgeVoiceFor(gender, speakerSlot, langHint)
             else -> voiceName?.takeIf { it.isNotBlank() } ?: edgeVoiceFor(gender, speakerSlot)
         }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         // Правило интонаций ищется по всей реплике: Edge синтезирует её одним
         // запросом, разбивать её на предложения с разным тоном здесь нельзя.
         val rule = VoiceIntonationDictionary.matchRule(p, text)
@@ -1429,15 +1372,11 @@ object TtsSpeaker {
         val rolePitch = role?.pitch?.takeIf { it > 0f && it != 1f } ?: 1f
         // Prosody Edge — в процентах темпа и в герцах тона (его ratePercent/
         // pitchHz), поэтому множители роли и интонации пересчитываются туда же.
-<<<<<<< HEAD
-        val rate = (p.speechRate().get() * roleRate * (rule?.rate ?: 1f)).coerceIn(0.5f, 2f)
-        val pitch = (p.speechPitch().get() * rolePitch * (rule?.pitch ?: 1f)).coerceIn(0.5f, 2f)
-=======
         val emoRate = emotionRate.takeIf { it > 0f && it.isFinite() } ?: 1f
         val emoPitch = emotionPitch.takeIf { it > 0f && it.isFinite() } ?: 1f
         val rate = (p.speechRate().get() * roleRate * (rule?.rate ?: 1f) * emoRate).coerceIn(0.4f, 2.5f)
         val pitch = (p.speechPitch().get() * rolePitch * (rule?.pitch ?: 1f) * emoPitch).coerceIn(0.5f, 2f)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         val ratePercent = ((rate - 1f) * 100).toInt().coerceIn(-50, 100)
         val pitchHz = ((pitch - 1f) * 40).toInt().coerceIn(-50, 50)
         currentJob = scope.launch {
@@ -1490,25 +1429,6 @@ object TtsSpeaker {
      * сразу» (или одним голосом), и он тем заметнее, что у Edge голоса по полу
      * настоящие. Кто хочет один конкретный голос — задаёт его ролью.
      */
-<<<<<<< HEAD
-    private fun edgeVoiceFor(gender: String?, speakerSlot: Int): String {
-        val p = prefs()
-        val presetByGender = when (gender) {
-            "female" -> p.voiceFemale().get()
-            "male" -> p.voiceMale().get()
-            else -> ""
-        }.let { parseVoiceSpec(it).second }
-        if (!presetByGender.isNullOrBlank() && isEdgeVoiceName(presetByGender)) {
-            return presetByGender
-        }
-        if (gender == null) {
-            return p.edgeVoice().get().takeIf { it.isNotBlank() } ?: EdgeTts.DEFAULT_VOICE
-        }
-        val lang = edgeLanguage()
-        val pool = EDGE_GENDER_VOICES[lang]?.get(gender)
-            ?: EDGE_GENDER_VOICES[lang]?.values?.firstOrNull()
-            ?: EDGE_MULTILINGUAL_VOICES[gender]?.let(::listOf)
-=======
     private fun edgeVoiceFor(gender: String?, speakerSlot: Int, language: String? = null): String {
         val p = prefs()
         // Явный язык (langHint перевода) перекрывает пресеты: голос из
@@ -1532,7 +1452,7 @@ object TtsSpeaker {
         val pool = (if (gender != null) EDGE_GENDER_VOICES[lang]?.get(gender) else null)
             ?: EDGE_GENDER_VOICES[lang]?.values?.firstOrNull()
             ?: EDGE_MULTILINGUAL_VOICES[gender ?: "female"]?.let(::listOf)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             ?: listOf(EdgeTts.DEFAULT_VOICE)
         return pool.getOrNull(speakerSlot.coerceAtLeast(0) % pool.size) ?: EdgeTts.DEFAULT_VOICE
     }
@@ -1611,26 +1531,6 @@ object TtsSpeaker {
             try {
                 val conn = URL("https://api.elevenlabs.io/v1/text-to-speech/$voiceId")
                     .openConnection() as HttpURLConnection
-<<<<<<< HEAD
-                conn.requestMethod = "POST"
-                conn.doOutput = true
-                conn.connectTimeout = 20_000
-                conn.readTimeout = 60_000
-                conn.setRequestProperty("xi-api-key", apiKey)
-                conn.setRequestProperty("Content-Type", "application/json")
-                conn.setRequestProperty("Accept", "audio/mpeg")
-                val body = """{"text":${jsonQuote(text)},"model_id":"eleven_multilingual_v2"}"""
-                conn.outputStream.use { it.write(body.toByteArray()) }
-                if (conn.responseCode in 200..299) {
-                    val file = File(context.cacheDir, "tts_eleven.mp3")
-                    conn.inputStream.use { input -> file.outputStream().use { input.copyTo(it) } }
-                    playFileBlocking(file)
-                } else {
-                    logcat(LogPriority.WARN) { "ElevenLabs HTTP ${conn.responseCode}" }
-                    speakGoogleWebInline(context, text)
-                }
-                conn.disconnect()
-=======
                 try {
                     conn.requestMethod = "POST"
                     conn.doOutput = true
@@ -1654,7 +1554,7 @@ object TtsSpeaker {
                     // воспроизведения соединение висело до таймаута.
                     conn.disconnect()
                 }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             } catch (e: Exception) {
                 logcat(LogPriority.WARN, e) { "ElevenLabs TTS failed" }
                 speakGoogleWebInline(context, text)
@@ -1709,15 +1609,6 @@ object TtsSpeaker {
             conn.connectTimeout = 15_000
             conn.readTimeout = 30_000
             conn.setRequestProperty("xi-api-key", apiKey)
-<<<<<<< HEAD
-            if (conn.responseCode !in 200..299) {
-                logcat(LogPriority.WARN) { "ElevenLabs voices HTTP ${conn.responseCode}" }
-                conn.disconnect()
-                return@runCatching emptyList()
-            }
-            val body = conn.inputStream.bufferedReader().readText()
-            conn.disconnect()
-=======
             val body = try {
                 if (conn.responseCode !in 200..299) {
                     logcat(LogPriority.WARN) { "ElevenLabs voices HTTP ${conn.responseCode}" }
@@ -1729,7 +1620,7 @@ object TtsSpeaker {
                 // больше не оставляют соединение висеть до таймаута.
                 conn.disconnect()
             }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             val arr = org.json.JSONObject(body).optJSONArray("voices") ?: return@runCatching emptyList()
             buildList {
                 for (i in 0 until arr.length()) {
@@ -1807,23 +1698,6 @@ object TtsSpeaker {
     private fun downloadToCache(context: Context, url: String): File? {
         return try {
             val conn = URL(url).openConnection() as HttpURLConnection
-<<<<<<< HEAD
-            conn.connectTimeout = 15_000
-            conn.readTimeout = 30_000
-            // Без браузерного UA endpoint отдаёт 403
-            conn.setRequestProperty(
-                "User-Agent",
-                "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile Safari/537.36",
-            )
-            if (conn.responseCode !in 200..299) {
-                conn.disconnect()
-                return null
-            }
-            val file = File(context.cacheDir, "tts_web_${System.nanoTime()}.mp3")
-            conn.inputStream.use { input -> file.outputStream().use { input.copyTo(it) } }
-            conn.disconnect()
-            file
-=======
             try {
                 conn.connectTimeout = 15_000
                 conn.readTimeout = 30_000
@@ -1843,7 +1717,7 @@ object TtsSpeaker {
                 // оставляют соединение висеть.
                 conn.disconnect()
             }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         } catch (e: Exception) {
             logcat(LogPriority.WARN, e) { "TTS download failed" }
             null
@@ -1910,8 +1784,6 @@ object TtsSpeaker {
             "female" to listOf("en-US-AriaNeural", "en-US-JennyNeural", "en-US-MichelleNeural"),
             "male" to listOf("en-US-GuyNeural", "en-US-EricNeural", "en-US-ChristopherNeural"),
         ),
-<<<<<<< HEAD
-=======
         // Голоса под ручную пару языков перевода (ja↔ru и т.п.): переведённый
         // текст читается РОДНЫМ голосом целевого языка, а не мультиязычным
         // фолбэком — тот ставил русскую «постановку» на любой текст.
@@ -1927,7 +1799,7 @@ object TtsSpeaker {
             "female" to listOf("zh-CN-XiaoxiaoNeural", "zh-CN-XiaoyiNeural"),
             "male" to listOf("zh-CN-YunxiNeural", "zh-CN-YunjianNeural"),
         ),
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     )
 
     /**

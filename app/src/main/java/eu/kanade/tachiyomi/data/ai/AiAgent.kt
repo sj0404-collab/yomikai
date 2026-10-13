@@ -522,8 +522,6 @@ object AiAgent {
         // телефона посреди хода давала отрицательную или завышенную длительность.
         val turnStarted = System.nanoTime()
         onProgress?.invoke("Запрос к модели…")
-<<<<<<< HEAD
-=======
         // Живой журнал: с этого момента видно, что вообще делает агент. Раньше
         // ход был виден только внутри ответа чата — там он живёт вместе с
         // диалогом и прокручивается, а после перезапуска экрана пропадает.
@@ -536,7 +534,7 @@ object AiAgent {
                 append("лимит раундов: 12")
             },
         )
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         var totalTokens = 0
         var roundsDone = 0
 
@@ -653,8 +651,6 @@ object AiAgent {
             }
             roundsDone = round
             onProgress?.invoke("Инструменты: ${calls.joinToString(", ") { it.name }}")
-<<<<<<< HEAD
-=======
             // Раунд виден отдельно от инструментов: по журналу должно быть видно
             // и «модель позвала инструменты», и «инструментов не осталось».
             AiConsole.round(
@@ -675,7 +671,7 @@ object AiAgent {
                     level = AiConsole.Level.WARN,
                 )
             }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             val outputs = calls.map { call ->
                 val t0 = System.nanoTime()
                 // Инструменты не могут зависнуть навсегда, но и не должны
@@ -724,8 +720,6 @@ object AiAgent {
                         if (finalR.status == "error") append(" · ошибка")
                     },
                 )
-<<<<<<< HEAD
-=======
                 AiConsole.tool(
                     title = "@${finalR.name}" + (
                         finalR.fileProduced?.let { " · файл ${it.name}" } ?: ""
@@ -735,7 +729,7 @@ object AiAgent {
                     ms = finalR.tookMs,
                     level = if (finalR.status == "error") AiConsole.Level.ERROR else AiConsole.Level.OK,
                 )
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 "${finalR.name}: ${finalR.output.take(700)}"
             }
             val followUp = "Твой предыдущий ответ с вызовами:\n${answer.take(6000)}\n\n" +
@@ -751,13 +745,11 @@ object AiAgent {
                 }) +
                 "\n\nПродолжи задачу. Если всё сделано — дай полный финальный ответ без @tool."
             onProgress?.invoke("Инструменты выполнены, жду ответ модели…")
-<<<<<<< HEAD
-=======
             AiConsole.note(
                 title = "Раунд $round · результаты собраны, жду ответ модели",
                 detail = outputs.joinToString("\n").take(2000),
             )
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             val next = reliableChat(
                 chat,
                 prompt + "\n\n(вызовы выполнены приложением)\n" + followUp,

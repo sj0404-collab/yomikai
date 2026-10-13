@@ -85,12 +85,10 @@ import mihon.domain.ocr.service.ScanRegion
 import tachiyomi.presentation.core.components.SliderItem
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-<<<<<<< HEAD
-=======
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 
 /**
  * НАСТРОЙКИ-ХАБ: одна кнопка в читалке → один экран → разделы с обложками →
@@ -564,10 +562,7 @@ private fun SoundRolesTab() {
         checked = aiGender,
     ) { prefs.aiGenderVoices().set(it) }
 
-<<<<<<< HEAD
-=======
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     HubOptions(
         title = "Пресет голоса",
         options = listOf(
@@ -633,13 +628,7 @@ private fun SoundRolesTab() {
 @Composable
 private fun SoundAutoReadTab() {
     val prefs = remember { Injekt.get<OcrPreferences>() }
-<<<<<<< HEAD
-    val music by prefs.autoReadMusicEnabled().changes()
-        .collectAsState(initial = prefs.autoReadMusicEnabled().get())
-    val musicVolume by prefs.autoReadMusicVolume().changes()
-        .collectAsState(initial = prefs.autoReadMusicVolume().get())
-=======
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     val speed by prefs.autoReadWebtoonSpeed().changes()
         .collectAsState(initial = prefs.autoReadWebtoonSpeed().get())
     val autoStart by prefs.autoReadAutoStart().changes()
@@ -647,11 +636,9 @@ private fun SoundAutoReadTab() {
     val advance by prefs.autoReadAutoAdvance().changes()
         .collectAsState(initial = prefs.autoReadAutoAdvance().get())
     val icons by prefs.voiceIcons().changes().collectAsState(initial = prefs.voiceIcons().get())
-<<<<<<< HEAD
-=======
     val emotion by prefs.emotionalVoices().changes()
         .collectAsState(initial = prefs.emotionalVoices().get())
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     val autoScan by prefs.autoScanAndSpeak().changes()
         .collectAsState(initial = prefs.autoScanAndSpeak().get())
     val language by prefs.autoReadLanguage().changes()
@@ -661,26 +648,11 @@ private fun SoundAutoReadTab() {
     val target by prefs.translateTarget().changes()
         .collectAsState(initial = prefs.translateTarget().get())
 
-<<<<<<< HEAD
-    HubSwitchRow(
-        title = "Фоновая музыка",
-        subtitle = "Процедурные петли под настроение сцены; на время речи приглушаются",
-        checked = music,
-    ) { prefs.autoReadMusicEnabled().set(it) }
-    if (music) {
-        HubPercentSlider(
-            label = "Громкость музыки",
-            value = musicVolume,
-            percentRange = 4..80,
-            text = { "%.0f%%".format(it) },
-        ) { prefs.autoReadMusicVolume().set(it / 100f) }
-    }
-=======
     // «Фоновая музыка» убрана из настроек: её преференцы остались в базе, но
     // проигрывателя в приложении нет (AutoReadMusic не существует), и тумблер
     // обещал музыку, которой не было. Если понадобится — это отдельная
     // фича с выбором треков, а не переключатель в пустоту.
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 
     HubOptions(
         title = "Скорость автолистания",
@@ -721,15 +693,13 @@ private fun SoundAutoReadTab() {
         checked = icons,
     ) { prefs.voiceIcons().set(it) }
     HubSwitchRow(
-<<<<<<< HEAD
-=======
         title = "Эмоциональные голоса",
         subtitle = "Страх, утешение, гнев, шёпот: голос вживается в роль и читает " +
             "медленнее/быстрее, выше/ниже",
         checked = emotion,
     ) { prefs.emotionalVoices().set(it) }
     HubSwitchRow(
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         title = "Сканировать и озвучивать страницу целиком",
         subtitle = "Один снимок экрана и озвучка всей страницы без ожидания реплик",
         checked = autoScan,
@@ -862,13 +832,11 @@ private fun OcrPresetsTab() {
     val localMode by prefs.localMode().changes().collectAsState(initial = prefs.localMode().get())
     val ruStress by prefs.ruStress().changes().collectAsState(initial = prefs.ruStress().get())
     val model by prefs.ocrModel().changes().collectAsState(initial = prefs.ocrModel().get())
-<<<<<<< HEAD
-=======
     // Нужны для докачки языковых данных Tesseract при выборе движка:
     // LocalContext и scope нельзя брать внутри лямбды onSelect.
     val ocrSettingsContext = LocalContext.current
     val ocrSettingsScope = rememberCoroutineScope()
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     val fallbacks by prefs.useFallbackModels().changes()
         .collectAsState(initial = prefs.useFallbackModels().get())
     val fallbackPreset by prefs.fallbackPreset().changes()
@@ -915,9 +883,6 @@ private fun OcrPresetsTab() {
         title = "Движок распознавания",
         options = OcrModel.entries.map { it to (ENGINE_TITLES[it] ?: it.name) },
         selected = model,
-<<<<<<< HEAD
-        onSelect = { prefs.ocrModel().set(it) },
-=======
         onSelect = { picked ->
             prefs.ocrModel().set(picked)
             // У Tesseract нативная библиотека в APK, а буквы живут отдельными
@@ -942,7 +907,7 @@ private fun OcrPresetsTab() {
                 }
             }
         },
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     )
 
     HubSwitchRow(

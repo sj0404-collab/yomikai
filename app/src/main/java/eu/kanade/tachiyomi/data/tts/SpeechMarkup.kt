@@ -184,12 +184,9 @@ object SpeechMarkup {
      * пауза), лишние пробелы схлопнуты.
      */
     fun strip(text: String): String {
-<<<<<<< HEAD
-        var out = TAG.replace(text, " ")
-=======
         var out = normalizeSpeechPunctuation(text)
         out = TAG.replace(out, " ")
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         out = out.replace(DIVIDER, ',')
         out = out.replace(Regex("[~≈]+"), "") // тильду не озвучивать словом «тильда»
         out = out.replace(Regex("""\s+"""), " ")
@@ -211,8 +208,6 @@ object SpeechMarkup {
         return out.trim().trim(',').trim()
     }
 
-<<<<<<< HEAD
-=======
     /**
      * Нормализация «японской» и полноширинной пунктуации перед синтезом.
      *
@@ -245,7 +240,7 @@ object SpeechMarkup {
         }
     }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     /** Добавляет номер реплики в начало, если его там ещё нет. */
     fun withIndex(text: String, index: Int): String =
         if (TAG.containsMatchIn(text) && text.trimStart().startsWith("{$index}")) {

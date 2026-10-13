@@ -169,13 +169,6 @@ object AiPlugins {
                         it.write(substitute(plugin.body, args, urlEncode = false).toByteArray())
                     }
                 }
-<<<<<<< HEAD
-                val code = conn.responseCode
-                val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
-                    ?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
-                conn.disconnect()
-                "HTTP $code:\n" + text.take(1500)
-=======
                 try {
                     val code = conn.responseCode
                     val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
@@ -186,7 +179,7 @@ object AiPlugins {
                     // иначе соединение висит и держит сокет до таймаута.
                     conn.disconnect()
                 }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             }.getOrElse { "ОШИБКА плагина ${plugin.name}: ${it.message?.take(120)}" }
 
             "prompt" -> {

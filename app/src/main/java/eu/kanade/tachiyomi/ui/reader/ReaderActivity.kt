@@ -63,13 +63,10 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-<<<<<<< HEAD
-import androidx.lifecycle.lifecycleScope
-=======
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import com.google.android.material.transition.platform.MaterialContainerTransform
 import com.hippo.unifile.UniFile
@@ -140,10 +137,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.delay
-<<<<<<< HEAD
-=======
 import kotlinx.coroutines.isActive
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import kotlinx.coroutines.launch
 import logcat.LogPriority
 import mihon.domain.dictionary.model.DictionaryTerm
@@ -159,10 +154,8 @@ import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.ByteArrayOutputStream
-<<<<<<< HEAD
-=======
 import kotlin.coroutines.coroutineContext
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -173,8 +166,6 @@ class ReaderActivity : BaseActivity() {
     companion object {
         private const val READER_ACTION_PREFIX = "reader."
 
-<<<<<<< HEAD
-=======
         /**
          * Шаг вебтуна после ПОСЛЕДНЕЙ реплики кадра в режиме «плавно пофразно».
          *
@@ -229,7 +220,7 @@ class ReaderActivity : BaseActivity() {
          */
         private const val WHOLE_PAGE_CROP_TOLERANCE = 0.06f
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         fun newIntent(context: Context, mangaId: Long?, chapterId: Long?): Intent {
             return Intent(context, ReaderActivity::class.java).apply {
                 putExtra("manga", mangaId)
@@ -282,21 +273,16 @@ class ReaderActivity : BaseActivity() {
     private var autoscrollJob: kotlinx.coroutines.Job? = null
 
     /** Движок авточтения с историей и подсветкой. */
-<<<<<<< HEAD
-    private val autoReadEngine by lazy { eu.kanade.tachiyomi.data.tts.AutoReadEngine(applicationContext) }
-=======
     private var autoReadEngineOrNull: eu.kanade.tachiyomi.data.tts.AutoReadEngine? = null
     private val autoReadEngine: eu.kanade.tachiyomi.data.tts.AutoReadEngine
         get() = autoReadEngineOrNull
             ?: eu.kanade.tachiyomi.data.tts.AutoReadEngine(applicationContext)
                 .also { autoReadEngineOrNull = it }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     private var autoReadLoop: kotlinx.coroutines.Job? = null
     private val autoLookedUpChapters = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
 
     /**
-<<<<<<< HEAD
-=======
      * Главы, для которых автозапуск чтения уже сработал.
      *
      * Отдельное множество, а не флаг [autoReadActive]: ключ эффекта автозапуска —
@@ -307,7 +293,7 @@ class ReaderActivity : BaseActivity() {
     private val autoReadStartedChapters = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
 
     /**
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
      * Показ AI-чата книги. Живёт на уровне activity, а не внутри composable:
      * состояние должно пережить пересборку composable (поворот экрана, смена
      * главы) и открываться из разных точек — меню и авто-действий агента.
@@ -317,27 +303,6 @@ class ReaderActivity : BaseActivity() {
     /**
      * Реальная автопрокрутка вместо прежней тост-заглушки: вебтун плавно
      * скроллится, пейджер листает страницы с интервалом, зависящим от скорости.
-<<<<<<< HEAD
-     */
-    private fun toggleAutoscroll(active: Boolean, speed: Float) {
-        autoscrollJob?.cancel()
-        autoscrollJob = null
-        if (!active) return
-        autoscrollJob = lifecycleScope.launch {
-            while (true) {
-                when (val viewer = viewModel.state.value.viewer) {
-                    is eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer -> {
-                        // ~60 Гц; скорость 1..10 → 1..10 px за кадр
-                        viewer.recycler.scrollBy(0, speed.toInt().coerceAtLeast(1))
-                        kotlinx.coroutines.delay(16)
-                    }
-                    is eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer -> {
-                        // Скорость 1..10 → пауза 11..2 сек на страницу
-                        kotlinx.coroutines.delay((12_000L - speed.toLong() * 1_000L).coerceAtLeast(2_000L))
-                        viewer.moveToNext()
-                    }
-                    else -> kotlinx.coroutines.delay(250)
-=======
      *
      * v1.9.137 — ПЕЙСИНГ С АВТОЧТЕНИЕМ: пока кадр сканируется/распознаётся/
      * озвучивается ([autoReadFrameBusy]), прокрутка СТОИТ — на большой скорости
@@ -398,7 +363,7 @@ class ReaderActivity : BaseActivity() {
                         }
                         else -> kotlinx.coroutines.delay(250)
                     }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 }
             }
         }
@@ -671,12 +636,6 @@ class ReaderActivity : BaseActivity() {
         val state by viewModel.state.collectAsState()
         val showPageNumber by readerPreferences.showPageNumber.collectAsState()
 
-<<<<<<< HEAD
-        // Авто-чтение при открытии главы (опция «Автостарт чтения»). Один раз на
-        // главу: как только вьювер готов и выбран первый кадр, запускаем
-        // автопрокрутку со сканом и озвучкой. Повторно на том же кадре не
-        // стартуем (autoReadActive), чтобы не спамить озвучкой при поворотах.
-=======
         // Авто-чтение при открытии главы (опция «Автостарт чтения») и сценарий
         // «сканируй главу → открой и читай» ([newAutoReadIntent]).
         //
@@ -685,16 +644,12 @@ class ReaderActivity : BaseActivity() {
         // ориентации и при перелистывании. Со старой проверкой `!autoReadActive`
         // авточтение, дошедшее до конца главы, тут же стартовало заново на
         // последней странице — и читатель по кругу слышал «Глава прочитана».
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         val autoStartChapter by remember { mutableStateOf(
             uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>().autoReadAutoStart().get() ||
                 intent.getBooleanExtra("autoread_start", false),
         ) }
         androidx.compose.runtime.LaunchedEffect(state.currentChapter?.chapter?.id, state.viewer) {
-<<<<<<< HEAD
-            if (autoStartChapter && state.viewer != null && !autoReadActive) {
-                startAutoReadLoop()
-=======
             val chapterId = state.currentChapter?.chapter?.id ?: return@LaunchedEffect
             if (!autoStartChapter || state.viewer == null) return@LaunchedEffect
             if (!autoReadStartedChapters.add(chapterId)) return@LaunchedEffect
@@ -713,7 +668,7 @@ class ReaderActivity : BaseActivity() {
             if (state.currentPage != lastVisualPage) {
                 lastVisualPage = state.currentPage
                 autoReadEngine.clearVisuals()
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             }
         }
 
@@ -881,12 +836,10 @@ class ReaderActivity : BaseActivity() {
      */
     override fun onDestroy() {
         stopAutoReadLoop()
-<<<<<<< HEAD
-=======
         // Движок держит собственный CoroutineScope: без destroy фоновый OCR
         // дотягивался до конца уже после ухода с экрана.
         autoReadEngineOrNull?.destroy()
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         super.onDestroy()
         autoscrollJob?.cancel()
         viewModel.state.value.viewer?.destroy()
@@ -1314,11 +1267,9 @@ class ReaderActivity : BaseActivity() {
                 // а экран гасит переключатель и объясняет причину. Иначе читатель
                 // видел бы «чтение включено» и ждал страниц, которых не будет.
                 val voiceBlock by autoReadEngine.voiceBlock.collectAsState()
-<<<<<<< HEAD
-=======
                 // Идёт ли чтение главы — подпись и цвет кнопки «Читать главу».
                 val chapterReadActive by chapterReadActiveFlow.collectAsState()
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 androidx.compose.runtime.LaunchedEffect(voiceBlock) {
                     val reason = voiceBlock ?: return@LaunchedEffect
                     stopAutoReadLoop()
@@ -1383,11 +1334,9 @@ class ReaderActivity : BaseActivity() {
                     },
                     onAutoscrollToggle = ::toggleAutoscroll,
                     onAutoSpeakPage = ::autoSpeakVisiblePage,
-<<<<<<< HEAD
-=======
                     onAutoReadChapter = ::startAutoReadLoop,
                     chapterReadActive = chapterReadActive,
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     onStopSpeak = {
                         stopAutoReadLoop()
                         viewModel.stopAutoSpeak()
@@ -1402,12 +1351,6 @@ class ReaderActivity : BaseActivity() {
                     readingOrder = readingOrderState,
                     contentPreset = contentPresetId,
                     onContentPresetChange = { id ->
-<<<<<<< HEAD
-                        // Пресетов типа контента больше нет: порядок чтения
-                        // задаётся самой читалкой (вертикально/RTL) и явным
-                        // выбором в настройках области скана.
-                        val prefs = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
-=======
                         // v1.9.139: кнопка раньше крутила только локальную
                         // переменную и не писала ничего в настройки — пресеты
                         // «Сбаланс./Манга/…» не влияли на порядок чтения вовсе
@@ -1425,7 +1368,7 @@ class ReaderActivity : BaseActivity() {
                         }
                         prefs.contentType().set(id)
                         prefs.scanReadingOrder().set(mappedOrder)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                         contentPresetId = id
                         val order = mihon.data.ocr.OcrRegionRules.readingOrderFor(prefs)
                         readingOrderState = order
@@ -1925,8 +1868,6 @@ class ReaderActivity : BaseActivity() {
     }
 
     /**
-<<<<<<< HEAD
-=======
      * Ручная прокрутка ленты (вебтун): рамки прошлого кадра не должны висеть
      * на прокрученном содержимом. Во время автоцикла наложение обновляет сам
      * кадр, поэтому гасим только когда цикл выключен.
@@ -1937,7 +1878,7 @@ class ReaderActivity : BaseActivity() {
     }
 
     /**
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
      * «Прочитать страницу»: захватывает ВСЮ видимую область читалки,
      * прогоняет OCR по выбранному движку и сразу озвучивает результат в
      * порядке чтения (RTL/LTR/вертикально). Текст остаётся в уведомлении
@@ -2036,9 +1977,6 @@ class ReaderActivity : BaseActivity() {
     fun startAutoReadLoop() {
         stopAutoReadLoop()
         autoReadActive = true
-<<<<<<< HEAD
-        autoReadEngine.clearHistory()
-=======
         chapterReadActiveFlow.value = true
         // v1.9.137: авточтение ВКЛЮЧАЕТ штатную автопрокрутку (ту же кнопку
         // из меню справа) — вместо собственных «прыжков» по кадру. Прокрутку
@@ -2075,7 +2013,7 @@ class ReaderActivity : BaseActivity() {
             title = "Чтение главы включено",
             detail = viewModel.getCurrentChapter()?.chapter?.name,
         )
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         toast("▶ Авточтение включено")
         ensureBookAiSession(announce = true)
         readCurrentPage(thenAdvance = true)
@@ -2103,8 +2041,6 @@ class ReaderActivity : BaseActivity() {
     @Volatile
     private var autoReadActive = false
 
-<<<<<<< HEAD
-=======
     /**
      * Авточтение главы идёт — для подписи кнопки «Читать главу».
      *
@@ -2113,15 +2049,12 @@ class ReaderActivity : BaseActivity() {
      */
     private val chapterReadActiveFlow = kotlinx.coroutines.flow.MutableStateFlow(false)
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     /** Авточтение было включено читателем до ухода со screen — вернуть его в onResume. */
     @Volatile
     private var resumeAutoReadOnResume = false
 
     fun stopAutoReadLoop() {
-<<<<<<< HEAD
-        autoReadActive = false
-=======
         // Разбор кадра и определение пола голоса ходят в модель в фоне кадра:
         // без обрыва сокета «стоп» ждал бы их в тишине.
         eu.kanade.tachiyomi.data.ai.AiAssistant.abortActiveRequests("остановка чтения")
@@ -2130,13 +2063,11 @@ class ReaderActivity : BaseActivity() {
         }
         autoReadActive = false
         chapterReadActiveFlow.value = false
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         autoReadLoop?.cancel()
         autoReadLoop = null
         autoReadEngine.stop()
         eu.kanade.tachiyomi.data.tts.TtsReadingNotifier.dismiss(this)
-<<<<<<< HEAD
-=======
         // v1.9.137: прокрутку, которую включала сама авто-чтение — выключаем
         // вместе с ним (ручную настройку читателя не трогаем).
         if (autoscrollAutoEnabled) {
@@ -2154,7 +2085,7 @@ class ReaderActivity : BaseActivity() {
         chapterReadActiveFlow.value = false
         withUIContext { toast(reason) }
         stopAutoReadLoop()
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     }
 
     /**
@@ -2198,93 +2129,6 @@ class ReaderActivity : BaseActivity() {
 
     private fun argsInt(target: String): Int = target.filter { it.isDigit() }.toIntOrNull() ?: -1
 
-<<<<<<< HEAD
-    private fun readCurrentPage(thenAdvance: Boolean) {
-        autoReadLoop?.cancel()
-        autoReadLoop = lifecycleScope.launchIO {
-            try {
-                // Размеры корневого представления — тоже API View: читаем
-                // их на главном потоке, иначе гонка с компоновкой.
-                val fullRect = withUIContext {
-                    val root = binding.root
-                    android.graphics.RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
-                }
-                val frame = cropCurrentSelectionFrame(fullRect)
-                if (frame == null) {
-                    withUIContext { toast("Не удалось захватить страницу") }
-                    return@launchIO
-                }
-                val bitmap = frame.bitmap
-                val chapterId = viewModel.getCurrentChapter()?.chapter?.id ?: -1L
-                val pageIndex = (viewModel.state.value.currentPage - 1).coerceAtLeast(0)
-
-                // Скорость автолистания вебтуна в авточтении (настройка в
-                // «Озвучка» → Авточтение): плавно пофразно / медленно / обычно /
-                // быстрее / максимально.
-                val scrollSpeed = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
-                    .autoReadWebtoonSpeed().get()
-                val webtoonFraction = when (scrollSpeed) {
-                    "phrase" -> 0f // плавно: каждая реплика прокрутилась сама
-                    "slow" -> 0.15f
-                    "normal" -> 0.35f
-                    "fast" -> 0.55f
-                    "max" -> 0.8f
-                    else -> 0.35f
-                }
-
-                autoReadEngine.readFrame(
-                    bitmap = bitmap,
-                    chapterId = chapterId,
-                    pageIndex = pageIndex,
-                    // Геометрия кадра нужна записи скриншота: по ней пометки
-                    // порядка чтения возвращаются на страницу в книге.
-                    geometry = frame.geometry,
-                    onLineSpoken = if (scrollSpeed == "phrase") { box ->
-                        // Плавный ПОФРАЗНЫЙ прокрут вебтуна: реплика дочитана —
-                        // проматываю ровно на её высоту, следующая уже внизу
-                        // вьюпорта (границы кадра не перечитываются вовсе).
-                        lifecycleScope.launchIO {
-                            if (!autoReadActive) return@launchIO
-                            withUIContext {
-                                val v = viewModel.state.value.viewer
-                                if (v is eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer) {
-                                    val hF = (box.bottom - box.top).coerceAtLeast(0.03f)
-                                    val dy = (box.bottom - 0.08f).coerceAtLeast(hF + 0.05f).coerceAtMost(0.85f)
-                                    v.scrollDownByFraction(dy)
-                                }
-                            }
-                        }
-                    } else null,
-                    onPageFinished = {
-                        // Страница дочитана целиком — ТОЛЬКО теперь листаем
-                        if (thenAdvance && autoReadActive) {
-                            lifecycleScope.launchIO {
-                                kotlinx.coroutines.delay(350)
-                                if (!autoReadActive) return@launchIO
-                                withUIContext {
-                                    when (val viewer = viewModel.state.value.viewer) {
-                                        is eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer ->
-                                            // Вебтун: шаг зависит от скорости автолистания.
-                                            // Обычный шаг с перекрытием держит автопрокрутку,
-                                            // пока кадр не прочитан, и не пропускает реплики
-                                            // на границе вьюпорта (фикс «рывка»).
-                                            if (webtoonFraction > 0f) viewer.scrollDownByFraction(webtoonFraction)
-                                        is eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer ->
-                                            viewer.moveToNext() // постранично, с учётом RTL/LTR
-                                        else -> {}
-                                    }
-                                }
-                                kotlinx.coroutines.delay(900) // дать странице отрисоваться
-                                if (autoReadActive) readCurrentPage(thenAdvance = true)
-                            }
-                        }
-                    },
-                )
-            } catch (e: Exception) {
-                logcat(LogPriority.ERROR, e) { "readCurrentPage failed" }
-            }
-        }
-=======
     /** Что удалось сделать с одним кадром авточтения. */
     private enum class FrameResult {
         /** Кадр прочитан, можно листать дальше. */
@@ -2668,7 +2512,7 @@ class ReaderActivity : BaseActivity() {
             uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.interactor.GetCachedPageOcr>()
                 .await(chapterId, pageIndex)
         }.getOrNull()?.takeIf { it.regions.isNotEmpty() }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     }
 
     private fun captureRegionForOcr(

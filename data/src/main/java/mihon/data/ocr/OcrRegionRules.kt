@@ -104,8 +104,6 @@ object OcrRegionRules {
         ),
     )
 
-<<<<<<< HEAD
-=======
     /**
      * Границы обрезки страницы под выбранную область: пара `(cropTop, cropHeight)`
      * в пикселях. Единственное место, где область превращается в прямоугольник,
@@ -127,7 +125,7 @@ object OcrRegionRules {
         return top to cropHeight
     }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     /** Человекочитаемое имя области — для отчётов и подсказок. */
     fun regionTitle(region: ScanRegion): String = when (region) {
         ScanRegion.FULL_PAGE -> "вся страница"

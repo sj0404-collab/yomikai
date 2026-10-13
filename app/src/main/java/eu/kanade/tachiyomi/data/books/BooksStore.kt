@@ -34,14 +34,12 @@ object BooksStore {
     }
 
     private const val PROGRESS_PREFS = "yomikai_books_progress"
-<<<<<<< HEAD
-=======
     private const val BOOKMARKS_PREFS = "book_bookmarks"
     private const val HISTORY_PREFS = "book_history"
     private const val LASTREAD_PREFS = "book_lastread"
     private const val READTIME_PREFS = "book_readtime"
     private const val ADDEDAT_PREFS = "book_addedat"
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     private const val METADATA_PREFS = "yomikai_books_metadata"
     private const val COVER_DIR = "book_covers"
 
@@ -56,12 +54,6 @@ object BooksStore {
         return UniFile.fromFile(folder)
     }
 
-<<<<<<< HEAD
-    /** Список книг (исключая скрытые файлы), отсортированные по имени. */
-    fun listBooks(context: Context): List<UniFile> {
-        return booksDirectory(context)?.listFiles()
-            ?.filter { !it.name.orEmpty().startsWith('.') }
-=======
     /** Список книг (без папок, без скрытых «из приложения»), по имени. */
     fun listBooks(context: Context): List<UniFile> {
         val hidden = hiddenSet(context)
@@ -71,14 +63,12 @@ object BooksStore {
                     !it.name.orEmpty().startsWith('.') &&
                     !hidden.contains(it.uri.toString())
             }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             ?.sortedBy { it.name.orEmpty().lowercase() }
             .orEmpty()
             .toList()
     }
 
-<<<<<<< HEAD
-=======
     // ---------- «Удалить из приложения» (файл остаётся на телефоне) ----------
 
     private const val HIDDEN_PREFS = "book_hidden"
@@ -122,7 +112,7 @@ object BooksStore {
             .edit().putString(book.uri.toString(), mood).apply()
     }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     /**
      * Копирует выбранный пользователем файл (SAF URI) в каталог книг.
      */
@@ -170,13 +160,11 @@ object BooksStore {
                 }
                 val finalFile = dir.findFile(candidate)
                 if (finalFile?.exists() == true) {
-<<<<<<< HEAD
-=======
                     context.getSharedPreferences(ADDEDAT_PREFS, Context.MODE_PRIVATE)
                         .edit()
                         .putLong(finalFile.uri.toString(), System.currentTimeMillis())
                         .apply()
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     ImportResult.Success(finalFile)
                 } else {
                     ImportResult.Failure("Файл не появился после добавления — проверьте хранилище")
@@ -215,13 +203,11 @@ object BooksStore {
             val out = target.openOutputStream()
                 ?: return ImportResult.Failure("Не удалось открыть файл для записи")
             out.use { it.write(content) }
-<<<<<<< HEAD
-=======
             context.getSharedPreferences(ADDEDAT_PREFS, Context.MODE_PRIVATE)
                 .edit()
                 .putLong(target.uri.toString(), System.currentTimeMillis())
                 .apply()
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             return ImportResult.Success(target)
         } catch (e: Exception) {
             return ImportResult.Failure("Ошибка добавления: ${e.message ?: e.javaClass.simpleName}")
@@ -238,12 +224,6 @@ object BooksStore {
     }
 
     fun clear(context: Context, book: UniFile) {
-<<<<<<< HEAD
-        context.getSharedPreferences(PROGRESS_PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .remove(book.uri.toString())
-            .apply()
-=======
         val key = book.uri.toString()
         context.getSharedPreferences(PROGRESS_PREFS, Context.MODE_PRIVATE)
             .edit().remove(key).apply()
@@ -257,7 +237,7 @@ object BooksStore {
             .edit().remove(key).apply()
         context.getSharedPreferences(ADDEDAT_PREFS, Context.MODE_PRIVATE)
             .edit().remove(key).apply()
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         // Также очищаем кэш метаданных и обложки
         clearMetadata(context, book)
         clearCover(context, book)
@@ -276,8 +256,6 @@ object BooksStore {
         )
     }
 
-<<<<<<< HEAD
-=======
     // ---------- «Продолжить чтение»: последнее открытие, время чтения ----------
 
     /** Книга была открыта в читалке (для сортировки «Недавние» и карточки). */
@@ -419,7 +397,7 @@ object BooksStore {
             .apply()
     }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     // ---------- Метаданные ----------
 
     /**

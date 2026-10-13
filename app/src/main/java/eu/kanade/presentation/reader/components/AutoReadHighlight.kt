@@ -7,17 +7,12 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
-<<<<<<< HEAD
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-=======
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
@@ -27,10 +22,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-<<<<<<< HEAD
-=======
 import androidx.compose.ui.unit.sp
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import eu.kanade.tachiyomi.data.tts.AutoReadEngine
 import mihon.domain.ocr.service.OcrPreferences
 import uy.kohesive.injekt.Injekt
@@ -53,12 +46,10 @@ import kotlin.math.roundToInt
  *
  * Номер реплики показывается рядом с рамкой: он нужен глазами, чтобы видеть
  * порядок чтения, но в озвучку не попадает (снимается SpeechMarkup.strip).
-<<<<<<< HEAD
-=======
  *
  * Компонент молчал с v1.9.44: три настройки подсветки и переключатель «показывать
  * номера реплик» ничего не делали, потому что здесь ничего не рисовалось.
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
  */
 @Composable
 fun AutoReadHighlight(
@@ -71,27 +62,14 @@ fun AutoReadHighlight(
     imageRect: android.graphics.RectF? = null,
 ) {
     val prefs = remember { Injekt.get<OcrPreferences>() }
-<<<<<<< HEAD
-=======
     // Наложение целиком выключено — не рисуем ничего: страницу не загораживаем.
     if (!prefs.readerOverlayEnabled().get()) return
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     // Не кэшируем навсегда: пользователь меняет цвет в настройках — рамки
     // перекрашиваются со следующей реплики, без перезапуска читалки
     val accent = Color(prefs.highlightColor().get().toULong().toLong())
     val style = prefs.highlightStyle().get()
     val strokeWidth = prefs.highlightWidth().get().coerceIn(1f, 12f)
-<<<<<<< HEAD
-
-    // v1.9.44: по запросу пользователя подсветка авточтения НЕ рисует ничего:
-    // ни рамок, ни контуров, ни заливок — страница остаётся чистой.
-    @Suppress("UNUSED_PARAMETER", "UNUSED_VARIABLE")
-    val unusedKeepSignature = region
-
-    @Suppress("UNUSED_VARIABLE")
-    val unusedKeepSettings = Triple(accent, style, strokeWidth)
-}
-=======
     val showNumbers = prefs.showSpeechNumbers().get()
 
     // Рамка приходит в координатах СТРАНИЦЫ (0..1): авточтение возвращает
@@ -262,4 +240,4 @@ fun AutoReadHighlight(
         }
     }
 }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+

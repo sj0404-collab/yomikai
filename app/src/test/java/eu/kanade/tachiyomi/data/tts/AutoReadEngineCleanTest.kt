@@ -4,10 +4,8 @@ import mihon.domain.ocr.model.OcrBoundingBox
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
-<<<<<<< HEAD
-=======
 import org.junit.jupiter.api.Assertions.assertNull
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import org.junit.jupiter.api.Assertions.assertTrue
 
 /**
@@ -20,8 +18,6 @@ import org.junit.jupiter.api.Assertions.assertTrue
 class AutoReadEngineCleanTest {
 
     @Test
-<<<<<<< HEAD
-=======
     fun `ocr babble from textless artwork is dropped`() {
         // Страница-иллюстрация без текста: OCR описывает кладку повтором слога.
         assertFalse(AutoReadEngine.isMeaningful("БУБУ", "ru"))
@@ -48,7 +44,7 @@ class AutoReadEngineCleanTest {
     }
 
     @Test
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     fun `russian single-letter words are meaningful`() {
         assertTrue(AutoReadEngine.isMeaningful("Я", "ru"))
         assertTrue(AutoReadEngine.isMeaningful("и", "ru"))
@@ -218,8 +214,6 @@ class AutoReadEngineCleanTest {
         assertTrue(AutoReadEngine.ttsStartedOrGiveUp(started = true, elapsedMs = 0))
         assertTrue(AutoReadEngine.ttsStartedOrGiveUp(started = true, elapsedMs = 60_000))
     }
-<<<<<<< HEAD
-=======
 
     @Test
     fun `unlabeled dialogue alternates voices instead of cycling`() {
@@ -399,5 +393,5 @@ class AutoReadEngineCleanTest {
         assertFalse(AutoReadEngine.isSameSpokenLine("этодракон", "отойдемотсюда"))
         assertFalse(AutoReadEngine.isSameSpokenLine("нельзя", "янельзявойти"))
     }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 }

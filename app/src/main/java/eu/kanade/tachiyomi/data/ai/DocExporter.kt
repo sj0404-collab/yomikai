@@ -34,10 +34,7 @@ object DocExporter {
     // ---------- PDF ----------
 
     fun exportPdf(context: Context, items: List<Item>, fileName: String): File {
-<<<<<<< HEAD
-        val doc = PdfDocument()
-=======
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         val pageW = 595 // A4 @72dpi
         val pageH = 842
         val margin = 40f
@@ -50,60 +47,6 @@ object DocExporter {
             color = Color.DKGRAY; textSize = 11f; isAntiAlias = true
         }
 
-<<<<<<< HEAD
-        var page = doc.startPage(PdfDocument.PageInfo.Builder(pageW, pageH, doc.pages.size + 1).create())
-        var canvas = page.canvas
-        var y = margin
-
-        fun newPage() {
-            doc.finishPage(page)
-            page = doc.startPage(PdfDocument.PageInfo.Builder(pageW, pageH, doc.pages.size + 1).create())
-            canvas = page.canvas
-            y = margin
-        }
-
-        fun drawText(paint: TextPaint, text: String) {
-            if (text.isBlank()) return
-            val layout = StaticLayout.Builder.obtain(text, 0, text.length, paint, contentW)
-                .setAlignment(Layout.Alignment.ALIGN_NORMAL).setLineSpacing(2f, 1f).build()
-            var line = 0
-            while (line < layout.lineCount) {
-                val lineBottom = layout.getLineBottom(line) - layout.getLineTop(line)
-                if (y + lineBottom > pageH - margin) newPage()
-                // Рисуем построчно, чтобы уметь переносить через страницы
-                val start = layout.getLineStart(line)
-                val end = layout.getLineEnd(line)
-                canvas.drawText(text.substring(start, end).trimEnd(), margin, y + paint.textSize, paint)
-                y += lineBottom
-                line++
-            }
-            y += 6f
-        }
-
-        for (item in items) {
-            drawText(titlePaint, item.title)
-            drawText(textPaint, item.text)
-            val img = item.imagePath?.let { BitmapFactory.decodeFile(it) }
-            if (img != null) {
-                val scale = minOf(contentW.toFloat() / img.width, 1f)
-                val w = (img.width * scale).toInt()
-                val h = (img.height * scale).toInt()
-                if (y + h > pageH - margin) newPage()
-                val scaled = if (scale < 1f) Bitmap.createScaledBitmap(img, w, h, true) else img
-                canvas.drawBitmap(scaled, margin, y, Paint(Paint.FILTER_BITMAP_FLAG))
-                y += h + 10f
-                if (scaled !== img) scaled.recycle()
-                img.recycle()
-            }
-            y += 8f
-        }
-        doc.finishPage(page)
-
-        val out = File(File(AiWorkspace.root(context), "export"), fileName).apply { parentFile?.mkdirs() }
-        out.outputStream().use { doc.writeTo(it) }
-        doc.close()
-        return out
-=======
         // try/finally вместо ручного close(): PdfDocument держит нативные
         // ресурсы и не реализует Closeable (use() к нему неприменим), а при
         // исключении в цикле/записи старый код пропускал doc.close().
@@ -163,7 +106,7 @@ object DocExporter {
         } finally {
             doc.close()
         }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     }
 
     // ---------- DOCX (минимальный валидный OOXML) ----------
@@ -219,11 +162,8 @@ object DocExporter {
                 }
                 val img = images.firstOrNull { it.first == idx }
                 if (img != null) {
-<<<<<<< HEAD
-                    val bmp = BitmapFactory.decodeFile(img.third)
-=======
                     val bmp = decodeSampled(img.third)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     if (bmp != null) {
                         // EMU: 9525 на пиксель; ограничиваем ширину 15 см
                         val maxW = 5_400_000L
@@ -247,11 +187,8 @@ object DocExporter {
             )
             for ((_, name, path) in images) {
                 // Перекодируем в JPEG (вдруг это png/webp)
-<<<<<<< HEAD
-                val bmp = BitmapFactory.decodeFile(path) ?: continue
-=======
                 val bmp = decodeSampled(path) ?: continue
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 zip.putNextEntry(ZipEntry("word/media/$name"))
                 bmp.compress(Bitmap.CompressFormat.JPEG, 88, zip)
                 zip.closeEntry()
@@ -261,8 +198,6 @@ object DocExporter {
         return out
     }
 
-<<<<<<< HEAD
-=======
     /**
      * Декод картинки с уменьшением: `decodeFile` без опций разворачивал в heap
      * полноразмерный JPEG страницы (у книг это 2000–4000 px), и экспорт
@@ -282,7 +217,7 @@ object DocExporter {
         return BitmapFactory.decodeFile(path, opts)
     }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     private fun xmlEscape(s: String) = s
         .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         .replace("\"", "&quot;").replace("'", "&apos;")

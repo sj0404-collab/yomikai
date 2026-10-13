@@ -4,11 +4,9 @@ import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
-<<<<<<< HEAD
-=======
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,10 +15,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-<<<<<<< HEAD
-=======
 import androidx.compose.foundation.layout.heightIn
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material.icons.Icons
@@ -31,10 +27,8 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SmallFloatingActionButton
-<<<<<<< HEAD
-=======
 import androidx.compose.material3.LocalContentColor
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -93,10 +87,6 @@ import kotlinx.coroutines.launch
 import logcat.LogPriority
 import mihon.feature.migration.config.MigrationConfigScreen
 import mihon.feature.migration.dialog.MigrateMangaDialog
-<<<<<<< HEAD
-import tachiyomi.core.common.util.lang.withIOContext
-import tachiyomi.core.common.util.system.logcat
-=======
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import tachiyomi.core.common.util.lang.withIOContext
@@ -105,7 +95,7 @@ import eu.kanade.presentation.more.settings.screen.rememberNetworkState
 import mihon.data.ocr.OcrPlugins
 import mihon.domain.ocr.model.OcrModel
 import tachiyomi.presentation.core.components.material.DISABLED_ALPHA
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.presentation.core.screens.LoadingScreen
@@ -159,21 +149,14 @@ class MangaScreen(
 
         val autoReadState by screenModel.chapterAutoRead.collectAsStateWithLifecycle()
 
-<<<<<<< HEAD
-        // Следующая непрочитанная глава — цель скан-чтения (кнопка и диалог).
-=======
         // Следующая непрочитанная глава — цель скан-чтения с кнопки у «Начать».
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         val nextUnread = remember(successState.manga, successState.chapters) {
             screenModel.getNextUnreadChapter()
         }
 
         // Настройки скан-чтения: движок и формат документа (выбор перед стартом).
         var showScanSettings by remember { mutableStateOf(false) }
-<<<<<<< HEAD
-        var scanEngine by remember { mutableStateOf(AutoReadEngineChoice.OFFLINE) }
-        var scanFormat by remember { mutableStateOf("md") }
-=======
         var scanEngine by remember { mutableStateOf(screenModel.autoReadEngine) }
         var scanFormat by remember { mutableStateOf("md") }
         // Глава, выбранная для скана: null — ещё не выбрана, диалог закрыт.
@@ -190,16 +173,12 @@ class MangaScreen(
         var showAiConsole by remember { mutableStateOf(false) }
         // Скан занят — кнопки у глав гасим, чтобы не запустить второй поверх.
         val scanRunning = autoReadState.running || autoReadState.openChapterId != null
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 
         // Открытие читалки в режиме авточтения после фонового скана главы.
         LaunchedEffect(autoReadState.openChapterId) {
             val chapterId = autoReadState.openChapterId
             if (chapterId != null) {
-<<<<<<< HEAD
-                autoReadState.exportFile?.let { path ->
-                    context.toast("Транскрипт сохранён: $path")
-=======
                 // У пачки транскриптов по числу глав, и путь у каждого свой:
                 // показывать путь последнего молча значило бы выдать его за
                 // единственный файл.
@@ -208,7 +187,7 @@ class MangaScreen(
                         context.toast("Транскриптов сохранено: ${autoReadState.transcriptsSaved}")
                     autoReadState.exportFile != null ->
                         context.toast("Транскрипт сохранён: ${autoReadState.exportFile}")
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 }
                 val chapter = successState.chapters.firstOrNull { it.chapter.id == chapterId }?.chapter
                 if (chapter != null) {
@@ -265,8 +244,6 @@ class MangaScreen(
             onFilterButtonClicked = screenModel::showSettingsDialog,
             onRefresh = screenModel::fetchAllFromSource,
             onContinueReading = { continueReading(context, screenModel.getNextUnreadChapter()) },
-<<<<<<< HEAD
-=======
             // Вторая кнопка рядом с «Читать»: обложка с голосом = сканировать
             // главу онлайн-моделью, озвучить и открыть в авточтении. Показывает-
             // ся только когда скан ещё не идёт и глава не открыта.
@@ -284,7 +261,7 @@ class MangaScreen(
             }.takeIf {
                 !scanRunning && !successState.source.isLocalOrStub()
             },
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             onSearch = { query, global -> scope.launch { performSearch(navigator, query, global) } },
             onCoverClicked = screenModel::showCoverDialog,
             onShareClicked = { shareManga(context, screenModel.manga, screenModel.source) }.takeIf { isHttpSource },
@@ -301,8 +278,6 @@ class MangaScreen(
             onMultiMarkAsReadClicked = screenModel::markChaptersRead,
             onMarkPreviousAsReadClicked = screenModel::markPreviousChapterRead,
             onOcrClicked = screenModel::scanChapters,
-<<<<<<< HEAD
-=======
             // Пачкой по выделенным скачанным главам: тот же диалог движка и
             // формата, но сканируется весь список и открывается первая
             // удачная глава.
@@ -311,7 +286,7 @@ class MangaScreen(
                 scanTargetChapter = chapters.firstOrNull()
                 showScanSettings = true
             }.takeIf { !scanRunning },
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             onMultiDeleteClicked = screenModel::showDeleteChapterDialog,
             onChapterSwipe = screenModel::chapterSwipe,
             onChapterSelected = screenModel::toggleSelection,
@@ -319,29 +294,6 @@ class MangaScreen(
             onInvertSelection = screenModel::invertSelection,
         )
 
-<<<<<<< HEAD
-            // Кнопка «Скан и чтение»: фоновое авто-сканирование следующей
-            // непрочитанной главы с прогрессом, затем открытие читалки в
-            // авточтении. Размещается чуть выше основного FAB «Читать».
-            if (nextUnread != null && !autoReadState.running && autoReadState.openChapterId == null) {
-                SmallFloatingActionButton(
-                    onClick = { showScanSettings = true },
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(bottom = 96.dp, end = 16.dp),
-                    containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Autorenew,
-                        contentDescription = "Сканировать текущую главу и читать",
-                    )
-                }
-            }
-        }
-
-        // Выбор движка распознавания и формата документа перед стартом скана.
-        if (showScanSettings && nextUnread != null) {
-=======
         }
 
         // Выбор движка распознавания и формата документа перед стартом скана.
@@ -349,18 +301,12 @@ class MangaScreen(
         // главы был невозможен вовсе — кнопка била по «следующей непрочитанной».
         val scanTarget = scanTargetChapter
         if (showScanSettings && scanTarget != null) {
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             AlertDialog(
                 onDismissRequest = { showScanSettings = false },
                 confirmButton = {
                     TextButton(
                         onClick = {
-<<<<<<< HEAD
-                            screenModel.setAutoReadEngine(scanEngine)
-                            screenModel.setAutoReadFormat(scanFormat)
-                            showScanSettings = false
-                            screenModel.scanAndAutoReadChapter(nextUnread)
-=======
                             screenModel.selectAutoReadEngine(scanEngine)
                             screenModel.setAutoReadFormat(scanFormat)
                             showScanSettings = false
@@ -371,38 +317,25 @@ class MangaScreen(
                                 screenModel.scanAndAutoReadChapters(batch)
                             }
                             scanBatchTarget = emptyList()
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                         },
                     ) {
                         Text("Сканировать и читать")
                     }
                 },
                 dismissButton = {
-<<<<<<< HEAD
-                    TextButton(onClick = { showScanSettings = false }) {
-=======
                     TextButton(
                         onClick = {
                             showScanSettings = false
                             scanBatchTarget = emptyList()
                         },
                     ) {
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                         Text("Отмена")
                     }
                 },
                 title = { Text("Сканирование главы") },
                 text = {
-<<<<<<< HEAD
-                    Column(
-                        Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Text("Движок распознавания", fontWeight = FontWeight.Bold)
-                        ScanEngineRow("Оффлайн", AutoReadEngineChoice.OFFLINE, scanEngine) { scanEngine = it }
-                        ScanEngineRow("Glens", AutoReadEngineChoice.GLENS, scanEngine) { scanEngine = it }
-                        ScanEngineRow("GitHub-раннер", AutoReadEngineChoice.GITHUB_RUNNER, scanEngine) { scanEngine = it }
-=======
                     // Ссылка на консоль прямо в диалоге скана: скан идёт здесь же,
                     // и кнопка «консоль» стоит рядом с «Сканировать и читать».
                     TextButton(onClick = { showAiConsole = true }) { Text("Консоль ИИ") }
@@ -459,7 +392,7 @@ class MangaScreen(
                         ScanFormatRow("Строки сразу", "stream", scanMode) { scanModePref.set(it) }
                         ScanFormatRow("Баблоны с буфером слов", "bubble", scanMode) { scanModePref.set(it) }
                         ScanFormatRow("Вся страница одной озвучкой", "page", scanMode) { scanModePref.set(it) }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                         Spacer(Modifier.height(8.dp))
                         Text("Формат документа", fontWeight = FontWeight.Bold)
                         ScanFormatRow("Markdown (md)", "md", scanFormat) { scanFormat = it }
@@ -471,8 +404,6 @@ class MangaScreen(
             )
         }
 
-<<<<<<< HEAD
-=======
         // Консоль ИИ на экране манги.
         if (showAiConsole) {
             eu.kanade.presentation.reader.components.AiConsoleDialog(
@@ -492,15 +423,11 @@ class MangaScreen(
             )
         }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         // Прогресс фонового скана и результат.
         when {
             autoReadState.running -> {
                 AlertDialog(
-<<<<<<< HEAD
-                    onDismissRequest = {},
-                    confirmButton = {},
-=======
                     // Намеренно НЕ отменяем по нажатию снаружи или «назад»:
                     // поверх диалога открывается консоль, и её закрытие не должно
                     // срывать скан. Отмена — только явной кнопкой ниже.
@@ -515,7 +442,7 @@ class MangaScreen(
                         // нужно видно именно сейчас, не закрывая его.
                         TextButton(onClick = { showAiConsole = true }) { Text("Консоль ИИ") }
                     },
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     title = { Text("Сканирование главы") },
                     text = {
                         Column(
@@ -523,12 +450,6 @@ class MangaScreen(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Text(autoReadState.title.ifBlank { "Сканирование…" })
-<<<<<<< HEAD
-                            if (autoReadState.total > 0) {
-                                Text("Страница ${autoReadState.processed} из ${autoReadState.total}")
-                            } else {
-                                Text("Подготовка…")
-=======
                             // «Терминал»: что делает скан прямо сейчас. Без этой
                             // строки запрос к модели на каждую страницу выглядел
                             // как зависание — а ИИ-проверка идёт между OCR-страницами,
@@ -551,7 +472,7 @@ class MangaScreen(
                                     "Движок: $engine · ждём первую страницу",
                                     style = MaterialTheme.typography.bodySmall,
                                 )
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                             }
                             LinearProgressIndicator(
                                 progress = {
@@ -788,24 +709,6 @@ class MangaScreen(
     }
 }
 
-<<<<<<< HEAD
-/** Строка выбора OCR-движка в диалоге скан-чтения. */
-@Composable
-private fun ScanEngineRow(
-    label: String,
-    engine: AutoReadEngineChoice,
-    current: AutoReadEngineChoice,
-    onSelect: (AutoReadEngineChoice) -> Unit,
-) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clickable { onSelect(engine) },
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        RadioButton(selected = engine == current, onClick = { onSelect(engine) })
-        Text(label)
-=======
 /**
  * Строка выбора OCR-движка в диалоге скан-чтения.
  *
@@ -851,7 +754,7 @@ private fun ScanEngineRow(
                 )
             }
         }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     }
 }
 

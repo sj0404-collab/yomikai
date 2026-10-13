@@ -5,9 +5,6 @@ import eu.kanade.tachiyomi.data.books.BookParser
 import eu.kanade.tachiyomi.data.books.BooksStore
 import eu.kanade.tachiyomi.data.tts.VoiceHelper
 import eu.kanade.tachiyomi.data.tts.VoiceKind
-<<<<<<< HEAD
-import kotlinx.coroutines.runBlocking
-=======
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -15,7 +12,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.util.concurrent.ConcurrentHashMap
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import mihon.domain.ocr.service.OcrPreferences
 import logcat.LogPriority
 import org.json.JSONArray
@@ -84,8 +81,6 @@ object AiHttpServer {
 
     val isRunning: Boolean get() = server?.isClosed == false
 
-<<<<<<< HEAD
-=======
     /**
      * Идущие ходы агента по HTTP-серверу.
      *
@@ -116,7 +111,7 @@ object AiHttpServer {
         AiAssistant.abortActiveRequests(reason)
     }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     @Synchronized
     fun start(context: Context) {
         if (isRunning) return
@@ -217,13 +212,6 @@ object AiHttpServer {
                     method == "GET" && path == "/" -> respond(out, 200, "text/html; charset=utf-8", PAGE.toByteArray())
                     method == "POST" && path == "/chat" -> {
                         val text = runCatching { JSONObject(body).optString("text") }.getOrDefault("")
-<<<<<<< HEAD
-                        val reply = runBlocking { AiAgent.run(context, text) }
-                        val json = JSONObject()
-                            .put("text", reply.text)
-                            .put("tools", JSONArray(reply.toolResults.map { "${it.name}: ${it.output}" }))
-                            .put("images", JSONArray(reply.images.map { AiWorkspace.relPath(context, it) }))
-=======
                         val runReply = runBlocking {
                             // Задачу держим в карте: иначе ход нечем отменить,
                             // а socket.close() снаружи её бы просто заблокировал.
@@ -256,7 +244,7 @@ object AiHttpServer {
                                         ?: emptyList<String>(),
                                 ),
                             )
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                         respond(out, 200, "application/json; charset=utf-8", json.toString().toByteArray())
                     }
                     method == "GET" && path == "/tts/voices" -> {

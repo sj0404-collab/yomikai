@@ -67,9 +67,6 @@ class ReaderPreferences(
         true,
     )
 
-<<<<<<< HEAD
-    val imageScaleType: Preference<Int> = preferenceStore.getInt("pref_image_scale_type_key", 1)
-=======
     /**
      * Масштаб изображения: 1 — уместить в экран, 2 — растянуть (страница
      * занимает весь экран, лишнее по краям обрезается), 3 — по ширине,
@@ -79,7 +76,7 @@ class ReaderPreferences(
      * «уместить в экран», а читателю нужна картинка во весь экран.
      */
     val imageScaleType: Preference<Int> = preferenceStore.getInt("pref_image_scale_type_key", 2)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 
     val zoomStart: Preference<Int> = preferenceStore.getInt("pref_zoom_start_key", 1)
 

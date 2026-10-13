@@ -12,11 +12,9 @@ import org.json.JSONObject
 import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-<<<<<<< HEAD
-=======
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import java.net.HttpURLConnection
 import java.net.InetSocketAddress
 import java.net.Proxy
@@ -51,8 +49,6 @@ object AiAssistant {
     const val OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
     /**
-<<<<<<< HEAD
-=======
      * Потолок размера ответа модели: 4 МиБ. Обычный readBytes() тянул в heap
      * всё, что прислал сервер, — один потоковый ответ с «размышлениями» или
      * огромная HTML-ошибка роняли приложение по OutOfMemory. Обрезаем на
@@ -62,7 +58,7 @@ object AiAssistant {
     private const val MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 
     /**
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
      * Модели Zen, проверенные без ключа.
      *
      * Список взят из документации opencode Zen, а не придуман: там перечислены
@@ -234,8 +230,6 @@ object AiAssistant {
         modelCooldownUntil[model] = System.currentTimeMillis() + durationMs
     }
 
-<<<<<<< HEAD
-=======
     /**
      * Соединения, сейчас висящие на ответе модели.
      *
@@ -278,7 +272,7 @@ object AiAssistant {
         activeConnections.size
     }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     /** Запись скрытого AI-чата: что спросили, что ответила модель, сколько заняло. */
     data class LogEntry(
         val time: Long,
@@ -298,8 +292,6 @@ object AiAssistant {
     private fun addLog(e: LogEntry) {
         logBuffer.addLast(e)
         while (logBuffer.size > 40) logBuffer.removeFirst()
-<<<<<<< HEAD
-=======
         // Тот же вызов — в общую консоль. Здесь единственная воронка всех
         // обращений к модели (успех, HTTP-ошибка, сетевое исключение), поэтому
         // журнал полный, а не «только то, что дошло до разбора ответа».
@@ -314,7 +306,7 @@ object AiAssistant {
             ms = e.tookMs,
             level = if (failed) AiConsole.Level.ERROR else AiConsole.Level.INFO,
         )
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     }
 
     /** Живой список бесплатных моделей OpenRouter (":free"). */
@@ -323,20 +315,6 @@ object AiAssistant {
             val conn = openConnection("$OPENROUTER_BASE_URL/models")
             conn.connectTimeout = 10_000
             conn.readTimeout = 20_000
-<<<<<<< HEAD
-            val body = conn.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
-            conn.disconnect()
-            val arr = JSONObject(body).getJSONArray("data")
-            buildList {
-                for (i in 0 until arr.length()) {
-                    val id = arr.getJSONObject(i).optString("id")
-                    if (id.endsWith(":free")) add(id)
-                }
-            }.sorted()
-        }.getOrDefault(OPENROUTER_FREE_FALLBACK)
-    }
-
-=======
             try {
                 val body = conn.inputStream.use { it.readBoundedText() }
                 val arr = JSONObject(body).getJSONArray("data")
@@ -373,7 +351,7 @@ object AiAssistant {
         return buffer.toString("UTF-8")
     }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     /** Полный ответ модели: текст, «размышления» (reasoning), реальная модель. */
     data class ChatReply(
         val content: String,
@@ -606,10 +584,8 @@ object AiAssistant {
         maxTokens: Int = 500,
     ): Outcome {
         val startedAt = System.currentTimeMillis()
-<<<<<<< HEAD
-=======
         val myEpoch = abortEpoch.get()
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         // Соединение живёт вне try: disconnect обязан сработать и на таймауте,
         // и на SSL-ошибке, и на 5xx — иначе сокет и буферы висели до сборки GC.
         // На мобильной сети это почти каждый второй запрос, а на модель
@@ -631,10 +607,8 @@ object AiAssistant {
 
             val rawConn = openConnection(actualUrl)
             conn = rawConn
-<<<<<<< HEAD
-=======
             activeConnections += rawConn
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             rawConn.requestMethod = "POST"
             rawConn.doOutput = true
             rawConn.connectTimeout = 15_000
@@ -645,11 +619,8 @@ object AiAssistant {
             rawConn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
             val code = rawConn.responseCode
             val text = (if (code in 200..299) rawConn.inputStream else rawConn.errorStream)
-<<<<<<< HEAD
-                ?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()
-=======
                 ?.use { it.readBoundedText() }.orEmpty()
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             if (code !in 200..299) {
                 // Отдельная судьба для «бесплатных» моделей Zen: OpenCode
                 // отдаёт их только своему же клиенту (проверка по User-Agent),
@@ -704,14 +675,12 @@ object AiAssistant {
                 )
             } ?: Outcome.Fatal
         } catch (e: Exception) {
-<<<<<<< HEAD
-=======
             // Оборванный сокет не должен выглядеть как сбой сети: иначе он
             // ушёл бы в повтор, и «Стоп» означал бы три новых запроса.
             if (abortEpoch.get() != myEpoch) {
                 throw kotlinx.coroutines.CancellationException("AI-запрос прерван пользователем")
             }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             lastFailureMessage = "$model: ${e.javaClass.simpleName} — ${e.message?.take(160)}"
             addLog(LogEntry(startedAt, model, userPrompt.take(200), "ОШИБКА: ${e.message?.take(120)}", System.currentTimeMillis() - startedAt))
             logcat(LogPriority.WARN, e) { "AI assistant call failed ($model)" }
@@ -719,10 +688,8 @@ object AiAssistant {
             // UnknownHost, обрыв прокси) — ВРЕМЕННЫЕ: модель не виновата
             Outcome.Transient
         } finally {
-<<<<<<< HEAD
-=======
             conn?.let { activeConnections -= it }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             conn?.disconnect()
         }
     }

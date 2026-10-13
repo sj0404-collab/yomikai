@@ -24,13 +24,6 @@ object TtsReadingNotifier {
     private const val NOTIFICATION_ID = 0x77A1
     private const val ACTION_STOP = "app.yomikai.TTS_STOP"
 
-<<<<<<< HEAD
-    private var receiverRegistered = false
-
-    private val stopReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action == ACTION_STOP) {
-=======
     @Volatile
     private var receiverRegistered = false
 
@@ -61,7 +54,7 @@ object TtsReadingNotifier {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == ACTION_STOP) {
                 stopRequested = true
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 TtsSpeaker.stop()
                 dismiss(context)
             }
@@ -78,9 +71,6 @@ object TtsReadingNotifier {
      */
     private const val MAX_NOTIFICATION_TEXT = 800
 
-<<<<<<< HEAD
-    fun show(context: Context, text: String) {
-=======
     /**
      * Показать уведомление о чтении.
      *
@@ -89,7 +79,7 @@ object TtsReadingNotifier {
      * страницу, и без такой подсказки шторка выглядит как зависшая на первой.
      */
     fun show(context: Context, text: String, pageLabel: String? = null) {
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         if (text.isBlank()) return
         val app = context.applicationContext
         val nm = app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -129,11 +119,8 @@ object TtsReadingNotifier {
         val safeText = text.take(MAX_NOTIFICATION_TEXT)
         val notification = NotificationCompat.Builder(app, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_mihon)
-<<<<<<< HEAD
-            .setContentTitle("🔊 Читается страница")
-=======
             .setContentTitle(pageLabel?.let { "🔊 Читается глава · $it" } ?: "🔊 Читается страница")
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             .setContentText(safeText.take(120))
             .setStyle(NotificationCompat.BigTextStyle().bigText(safeText))
             .setOnlyAlertOnce(true)
@@ -155,8 +142,6 @@ object TtsReadingNotifier {
             .getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.cancel(NOTIFICATION_ID)
     }
-<<<<<<< HEAD
-=======
 
     /**
      * Снять уведомление и дать задерегистрировать приёмник «⏹ Остановить».
@@ -176,5 +161,5 @@ object TtsReadingNotifier {
             logcat(LogPriority.WARN, e) { "Failed to unregister TTS stop receiver" }
         }
     }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 }

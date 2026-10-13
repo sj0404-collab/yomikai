@@ -2,13 +2,6 @@ package eu.kanade.tachiyomi.data.ocr
 
 import android.content.Context
 import eu.kanade.tachiyomi.R
-<<<<<<< HEAD
-import eu.kanade.tachiyomi.util.ocr.toOcrImage
-import eu.kanade.tachiyomi.util.system.activeNetworkState
-import kotlinx.coroutines.CancellationException
-import logcat.LogPriority
-import mihon.domain.ocr.interactor.ClearCachedChapterOcr
-=======
 import eu.kanade.tachiyomi.data.ai.AiConsole
 import eu.kanade.tachiyomi.util.ocr.toOcrImage
 import eu.kanade.tachiyomi.util.system.activeNetworkState
@@ -20,7 +13,7 @@ import kotlinx.coroutines.sync.withPermit
 import logcat.LogPriority
 import mihon.domain.ocr.interactor.ClearCachedChapterOcr
 import mihon.domain.ocr.interactor.SaveCachedPageOcr
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import mihon.domain.ocr.interactor.ScanPageOcr
 import mihon.domain.ocr.interactor.WithOcrScanSession
 import tachiyomi.core.common.util.system.logcat
@@ -30,15 +23,13 @@ import tachiyomi.domain.manga.interactor.GetManga
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
-<<<<<<< HEAD
-=======
 // Полоса параллельного скана страниц главы: 2 страницы в полёте.
 // При пресете «online» каждая страница — сетевой вызов, так что скан главы
 // вдвое быстрее; больше 2 нельзя — в полёте не может жить много декодированных
 // битмапов страниц (память), а локальные движки всё равно очередятся в OcrEngineLocks.
 private const val CHAPTER_SCAN_PARALLELISM = 2
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 internal class OcrChapterScanner(
     private val context: Context,
     private val getChapter: GetChapter,
@@ -46,10 +37,8 @@ internal class OcrChapterScanner(
     private val clearCachedChapterOcr: ClearCachedChapterOcr,
     private val withOcrScanSession: WithOcrScanSession,
     private val scanPageOcr: ScanPageOcr,
-<<<<<<< HEAD
-=======
     private val saveCachedPageOcr: SaveCachedPageOcr,
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     private val pageSourceResolver: OcrPageSourceResolver,
     private val downloadPreferences: DownloadPreferences,
 ) {
@@ -59,10 +48,8 @@ internal class OcrChapterScanner(
         onComplete: (OcrChapterScanProgress) -> Unit,
         onError: (OcrChapterScanError) -> Unit,
         onCacheStateChanged: (chapterId: Long, hasResults: Boolean) -> Unit = { _, _ -> },
-<<<<<<< HEAD
-=======
         aiVerifier: OcrChapterAiVerifier? = null,
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     ): Boolean {
         val chapter = getChapter.await(chapterId)
         if (chapter == null) {
@@ -124,45 +111,6 @@ internal class OcrChapterScanner(
                         onProgress(lastProgress)
 
                         try {
-<<<<<<< HEAD
-                            var chapterHasCachedResults = false
-                            for ((index, page) in pages.pages.withIndex()) {
-                                val networkError = checkNetworkState()
-                                if (networkError != null) {
-                                    clearCachedChapterOcr.await(chapterId)
-                                    onCacheStateChanged(chapterId, false)
-                                    onError(
-                                        OcrChapterScanError(
-                                            mangaId = manga.id,
-                                            mangaTitle = manga.title,
-                                            chapterId = chapterId,
-                                            chapterName = chapter.name,
-                                            failure = OcrScanFailure.Unexpected(networkError),
-                                        ),
-                                    )
-                                    return@pageScope false
-                                }
-
-                                val bitmap = page.openBitmap() ?: error("Unable to decode page ${page.pageIndex + 1}")
-                                try {
-                                    scanPageOcr.await(chapterId, page.pageIndex, bitmap.toOcrImage())
-                                } finally {
-                                    if (!bitmap.isRecycled) {
-                                        bitmap.recycle()
-                                    }
-                                }
-
-                                if (!chapterHasCachedResults) {
-                                    chapterHasCachedResults = true
-                                    onCacheStateChanged(chapterId, true)
-                                }
-
-                                lastProgress = lastProgress.copy(processedPages = index + 1)
-                                onProgress(lastProgress)
-                            }
-
-                            onComplete(lastProgress)
-=======
                             val chapterHasCachedResults = java.util.concurrent.atomic.AtomicBoolean(false)
                             AiConsole.ocr(
                                 title = "Скан главы «${chapter.name}» начат",
@@ -244,7 +192,7 @@ internal class OcrChapterScanner(
                                     "${android.os.SystemClock.elapsedRealtime() - chapterStartedAt} мс",
                                 level = AiConsole.Level.OK,
                             )
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                             true
                         } catch (e: Throwable) {
                             handleUnexpectedFailure(

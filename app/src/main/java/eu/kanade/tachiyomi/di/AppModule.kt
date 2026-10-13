@@ -1,10 +1,8 @@
 package eu.kanade.tachiyomi.di
 
 import android.app.Application
-<<<<<<< HEAD
-=======
 import android.content.Context
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import androidx.core.content.ContextCompat
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import app.cash.sqldelight.db.SqlDriver
@@ -60,8 +58,6 @@ class AppModule(val app: Application) : InjektModule {
     override fun InjektRegistrar.registerInjectables() {
         addSingleton(app)
 
-<<<<<<< HEAD
-=======
         // Context САМ ПО СЕБЕ в реестре не значит: addSingleton(app) завёл
         // только Application, а Kotlin-типы разные. Места, которым нужен
         // filesDir/cacheDir без Activity, брали Injekt.get<Context>() — и падали
@@ -71,7 +67,7 @@ class AppModule(val app: Application) : InjektModule {
         // startAutoReadLoop, то есть кнопка «Читать главу» роняла приложение.
         addSingletonFactory<Context> { app }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         addSingletonFactory<SqlDriver> {
             synchronized(lock) {
                 sqlDriverRef?.get()?.let { return@synchronized it }

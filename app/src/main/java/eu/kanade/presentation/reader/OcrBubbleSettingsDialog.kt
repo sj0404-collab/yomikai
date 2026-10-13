@@ -66,13 +66,11 @@ fun OcrBubbleSettingsDialog(
     var manualOrder by remember { mutableStateOf(prefs.scanReadingOrder().get()) }
     var language by remember { mutableStateOf(prefs.autoReadLanguage().get()) }
     var translate by remember { mutableStateOf(prefs.autoReadTranslate().get()) }
-<<<<<<< HEAD
-=======
     var translateSource by remember { mutableStateOf(prefs.autoReadTranslateSource().get()) }
     var translateTarget by remember { mutableStateOf(prefs.translateTarget().get()) }
     var overlayOn by remember { mutableStateOf(prefs.readerOverlayEnabled().get()) }
     var readEverything by remember { mutableStateOf(prefs.autoReadReadEverything().get()) }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     var voiceIcons by remember { mutableStateOf(prefs.voiceIcons().get()) }
     var showNumbers by remember { mutableStateOf(prefs.showSpeechNumbers().get()) }
     var aiGender by remember { mutableStateOf(prefs.aiGenderVoices().get()) }
@@ -231,9 +229,6 @@ fun OcrBubbleSettingsDialog(
                         },
                     )
                     Column {
-<<<<<<< HEAD
-                        Text("Переводить реплики на русский", style = MaterialTheme.typography.bodyMedium)
-=======
                         Text("Переводить реплики", style = MaterialTheme.typography.bodyMedium)
                         Text(
                             "источник ${translateSource} → ${translateTarget} · обменял стрелкой «⇄» в меню OCR",
@@ -296,7 +291,7 @@ fun OcrBubbleSettingsDialog(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     }
                 }
 

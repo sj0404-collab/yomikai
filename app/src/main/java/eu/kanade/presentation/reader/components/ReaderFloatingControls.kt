@@ -28,10 +28,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.AutoMode
-<<<<<<< HEAD
-=======
 import androidx.compose.material.icons.outlined.AutoStories
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.GraphicEq
@@ -88,8 +86,6 @@ fun ReaderFloatingControls(
     onScanRegionChange: (ScanRegion) -> Unit,
     onAutoscrollToggle: (Boolean, Float) -> Unit,
     onAutoSpeakPage: () -> Unit = {},
-<<<<<<< HEAD
-=======
     /**
      * Авточтение всей главы: страница за страницей до конца, с листанием.
      *
@@ -100,7 +96,7 @@ fun ReaderFloatingControls(
     onAutoReadChapter: () -> Unit = {},
     /** Идёт ли чтение главы — для подписи и цвета кнопки. */
     chapterReadActive: Boolean = false,
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     onStopSpeak: () -> Unit = {},
     /** Мгновенный скриншот текущего кадра (Glens/любой движок): OCR сейчас,
      *  не дожидаясь авточтения, и запись в буфер «Скриншоты». */
@@ -308,8 +304,6 @@ fun ReaderFloatingControls(
                                     ),
                                 ),
                             ),
-<<<<<<< HEAD
-=======
                             rowUnlessHidden(
                                 "r_autoread_chapter",
                                 OcrMenuRow(
@@ -339,7 +333,7 @@ fun ReaderFloatingControls(
                                     ),
                                 ),
                             ),
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                             OcrMenuRow(
                                 label = "Стоп чтения",
                                 action = OcrMenuAction(

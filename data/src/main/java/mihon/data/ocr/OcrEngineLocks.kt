@@ -5,10 +5,8 @@ import kotlinx.coroutines.sync.withLock
 
 internal class OcrEngineLocks {
     private val cyrillicMutex = Mutex()
-<<<<<<< HEAD
-=======
     private val tesseractMutex = Mutex()
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     private val mlKitMutex = Mutex()
     private val legacyMutex = Mutex()
     private val fastMutex = Mutex()
@@ -61,11 +59,9 @@ internal class OcrEngineLocks {
     private fun mutexFor(type: OcrRepositoryImpl.EngineType): Mutex {
         return when (type) {
             OcrRepositoryImpl.EngineType.CYRILLIC -> cyrillicMutex
-<<<<<<< HEAD
-=======
             // Tesseract держит нативную модель и не потокобезопасен — свой mutex.
             OcrRepositoryImpl.EngineType.TESSERACT -> tesseractMutex
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             OcrRepositoryImpl.EngineType.MLKIT -> mlKitMutex
             OcrRepositoryImpl.EngineType.LEGACY -> legacyMutex
             OcrRepositoryImpl.EngineType.FAST -> fastMutex

@@ -1,10 +1,6 @@
 package eu.kanade.tachiyomi.ui.overlay
 
-<<<<<<< HEAD
-import android.app.Activity
-import android.app.Application
-=======
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -16,10 +12,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
-<<<<<<< HEAD
-=======
 import android.content.res.Configuration
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.PixelFormat
@@ -49,12 +43,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
-<<<<<<< HEAD
-=======
 import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.Memory
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
@@ -73,10 +65,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
-<<<<<<< HEAD
-=======
 import androidx.lifecycle.ProcessLifecycleOwner
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.setViewTreeLifecycleOwner
@@ -91,15 +81,11 @@ import eu.kanade.presentation.reader.components.OcrMenuAction
 import eu.kanade.presentation.reader.components.OcrMenuActionButton
 import eu.kanade.presentation.reader.components.OcrMenuRow
 import eu.kanade.tachiyomi.data.tts.AutoReadEngine
-<<<<<<< HEAD
-import eu.kanade.tachiyomi.util.view.setComposeContent
-import kotlinx.coroutines.cancel
-=======
 import eu.kanade.tachiyomi.data.tts.VoicePreset
 import eu.kanade.tachiyomi.util.view.setComposeContent
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import logcat.LogPriority
 import mihon.domain.ocr.service.OcrPreferences
 import tachiyomi.core.common.util.system.logcat
@@ -133,15 +119,13 @@ class OcrOverlayService : Service() {
         private const val ACTION_STT_STOP = "eu.kanade.tachiyomi.ocr.OVERLAY_STT_STOP"
         private const val ACTION_REFRESH = "eu.kanade.tachiyomi.ocr.OVERLAY_REFRESH"
         private const val ACTION_SELECT_REGION = "eu.kanade.tachiyomi.ocr.OVERLAY_SELECT_REGION"
-<<<<<<< HEAD
-=======
 
         /** Действия из шторки: показать/скрыть кнопку, сменить движок и голос. */
         private const val ACTION_SHOW = "eu.kanade.tachiyomi.ocr.OVERLAY_SHOW"
         private const val ACTION_HIDE = "eu.kanade.tachiyomi.ocr.OVERLAY_HIDE"
         private const val ACTION_CYCLE_ENGINE = "eu.kanade.tachiyomi.ocr.OVERLAY_CYCLE_ENGINE"
         private const val ACTION_CYCLE_VOICE = "eu.kanade.tachiyomi.ocr.OVERLAY_CYCLE_VOICE"
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         private const val EXTRA_TEXT = "text"
         private const val BASE_W_DP = 320f
         private const val BASE_H_DP = 340f
@@ -177,10 +161,8 @@ class OcrOverlayService : Service() {
 
         /** Действие: начать чтение рамки с уже полученным разрешением. */
         private const val ACTION_START_READING = "eu.kanade.tachiyomi.ocr.START_READING"
-<<<<<<< HEAD
-=======
         private const val ACTION_SCAN_ONCE = "eu.kanade.tachiyomi.ocr.SCAN_ONCE"
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         private const val EXTRA_RESULT_CODE = "resultCode"
         private const val EXTRA_RESULT_DATA = "resultData"
 
@@ -260,8 +242,6 @@ class OcrOverlayService : Service() {
          * Разрешение добывает [OcrCaptureActivity]: сервис не может
          * показать системный диалог и получить его результат.
          */
-<<<<<<< HEAD
-=======
         /** Тот же маршрут, что [startReading], но цель — разовый скан. */
         fun scanOnceNow(context: Context, resultCode: Int, data: Intent) {
             startWith(
@@ -273,7 +253,7 @@ class OcrOverlayService : Service() {
             )
         }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         fun startReading(context: Context, resultCode: Int, data: Intent) {
             startWith(
                 context,
@@ -306,8 +286,6 @@ class OcrOverlayService : Service() {
     /** Показывается ли рамка зафиксированной области: нужно подписи кнопки. */
     private val frameVisibleState = mutableStateOf(false)
 
-<<<<<<< HEAD
-=======
     /** Согласие на захват экрана УЖЕ есть: тип FGS можно усилить. */
     private var projectionGranted = false
 
@@ -317,7 +295,7 @@ class OcrOverlayService : Service() {
     /** Текущая скорость озвучки в панели (−/+ как у читалки). */
     private val speechRateUi = mutableStateOf(0f)
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     private val readEngine by lazy { AutoReadEngine(applicationContext) }
     private var stt: GameSttManager? = null
     private var expandedH = 0
@@ -364,29 +342,16 @@ class OcrOverlayService : Service() {
     private var selectorRoot: FrameLayout? = null
     private var selectorDraw: RegionDrawView? = null
 
-<<<<<<< HEAD
-=======
     /** Кнопку скрыли из шторки вручную — не показывать, пока не включат обратно. */
     private var overlayHiddenByUser = false
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     // ---- Чтение рамки поверх чужого приложения ----
     private var capture: OverlayCaptureEngine? = null
     private var autoReader: OverlayAutoReader? = null
     private var readJob: kotlinx.coroutines.Job? = null
     private var readProjection: android.media.projection.MediaProjection? = null
 
-<<<<<<< HEAD
-    /** Прямоугольник зафиксированной области в пикселях экрана. */
-    private fun fixedRegionRect(): Rect? {
-        val region = parseRegion() ?: return null
-        val dm = resources.displayMetrics
-        return Rect(
-            (region.l * dm.widthPixels).toInt(),
-            (region.t * dm.heightPixels).toInt(),
-            (region.r * dm.widthPixels).toInt(),
-            (region.b * dm.heightPixels).toInt(),
-=======
     /**
      * Геометрия экрана в координатах окон оверлея.
      *
@@ -457,7 +422,7 @@ class OcrOverlayService : Service() {
             content.top + (region.t * content.height()).toInt(),
             content.left + (region.r * content.width()).toInt(),
             content.top + (region.b * content.height()).toInt(),
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         ).takeIf { it.width() > 0 && it.height() > 0 }
     }
 
@@ -469,14 +434,12 @@ class OcrOverlayService : Service() {
      * [MediaProjection] из [MediaProjectionManager.getMediaProjection].
      */
     fun startReading(projection: android.media.projection.MediaProjection) {
-<<<<<<< HEAD
-=======
         // Согласие получено: с этого момента foreground-тип mediaProjection
         // легален — усиливаем тип (на Android 14 тип за неприкосновенность
         // потока проекции требует именно эту последовательность).
         projectionGranted = true
         runCatching { ensureForeground() }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         val rect = fixedRegionRect()
         if (rect == null) {
             toast("Сначала задайте область рамки")
@@ -534,11 +497,6 @@ class OcrOverlayService : Service() {
         super.onCreate()
         wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         runCatching { panelLifecycleOwner.registry.currentState = Lifecycle.State.RESUMED }
-<<<<<<< HEAD
-        (applicationContext as? Application)?.registerActivityLifecycleCallbacks(ownActivityWatcher)
-    }
-
-=======
         // «Наше приложение на переднем плане» берём у ProcessLifecycleOwner: он
         // подписан на жизненный цикл всех activity с самого старта процесса и
         // поэтому не теряет события. Самодельный счётчик с опросом
@@ -559,7 +517,7 @@ class OcrOverlayService : Service() {
         geomCache = null
         applyFrame()
     }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (!canDrawOverlays(this)) {
@@ -586,8 +544,6 @@ class OcrOverlayService : Service() {
                 applyClipboardWatch()
                 applyFrame()
             }
-<<<<<<< HEAD
-=======
             ACTION_SHOW -> {
                 overlayHiddenByUser = false
                 updatePanelVisibility()
@@ -601,15 +557,13 @@ class OcrOverlayService : Service() {
             }
             ACTION_CYCLE_ENGINE -> cycleOverlayEngine()
             ACTION_CYCLE_VOICE -> cycleVoice()
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             ACTION_START_READING -> {
                 val code = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
                 val data: Intent? = intent.getParcelableExtra(EXTRA_RESULT_DATA)
                 if (data == null) {
                     toast("Разрешение на захват не получено")
                 } else {
-<<<<<<< HEAD
-=======
                     // Android 14: getMediaProjection() разрешён только когда
                     // сервис уже работает в foreground с типом mediaProjection.
                     // Согласие пользователя к этому моменту получено (data !=
@@ -619,16 +573,13 @@ class OcrOverlayService : Service() {
                     // SecurityException, и оверлей не захватывал экран вовсе.
                     projectionGranted = true
                     runCatching { ensureForeground() }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     val projection = runCatching {
                         val mpm = getSystemService(Context.MEDIA_PROJECTION_SERVICE)
                             as android.media.projection.MediaProjectionManager
                         mpm.getMediaProjection(code, data)
                     }.getOrNull()
                     if (projection == null) {
-<<<<<<< HEAD
-                        toast("Не удалось начать захват экрана")
-=======
                         // Тип mediaProjection без реальной проекции оставлять
                         // нельзя: откатываем foreground к mediaPlayback.
                         projectionGranted = false
@@ -637,7 +588,7 @@ class OcrOverlayService : Service() {
                     } else if (pendingScanOnce) {
                         pendingScanOnce = false
                         scanOnceWith(projection)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     } else {
                         startReading(projection)
                     }
@@ -690,40 +641,6 @@ class OcrOverlayService : Service() {
      * собственное окно, но можно не рисовать панель поверх него: иначе
      * настройки оверлея открывались поверх самих себя.
      *
-<<<<<<< HEAD
-     * Раньше «мы на переднем плане» определялось через UsageStatsManager, и
-     * без разрешения «usage access» (оно в приложение не запрашивается)
-     * проверка всегда возвращала false — панель так и висела поверх наших
-     * же настроек. Теперь это обычные колбэки жизненного цикла Activity:
-     * ничего разрешать не нужно и ошибки быть не может.
-     */
-    private var ownActivitiesResumed = 0
-
-    private val ownActivityWatcher = object : Application.ActivityLifecycleCallbacks {
-        override fun onActivityResumed(activity: Activity) {
-            if (activity.packageName != packageName) return
-            ownActivitiesResumed++
-            updatePanelVisibility()
-        }
-
-        override fun onActivityPaused(activity: Activity) {
-            if (activity.packageName != packageName) return
-            ownActivitiesResumed = (ownActivitiesResumed - 1).coerceAtLeast(0)
-            updatePanelVisibility()
-        }
-
-        override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
-        override fun onActivityStarted(activity: Activity) = Unit
-        override fun onActivityStopped(activity: Activity) = Unit
-        override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
-        override fun onActivityDestroyed(activity: Activity) = Unit
-    }
-
-    private fun updatePanelVisibility() {
-        val view = root ?: return
-        val wanted = if (ownActivitiesResumed > 0) View.GONE else View.VISIBLE
-        if (view.visibility != wanted) view.visibility = wanted
-=======
      * Состояние «наше приложение на переднем плане» держит ProcessLifecycleOwner.
      * Он подписан на lifecycle всех activity с создания процесса, поэтому не
      * теряет переход в фон. Раньше это был самодельный счётчик по
@@ -773,7 +690,7 @@ class OcrOverlayService : Service() {
             lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         }
         runCatching { root?.let { wm.updateViewLayout(it, lp) } }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     }
 
 
@@ -784,8 +701,6 @@ class OcrOverlayService : Service() {
                 NotificationChannel(CHANNEL_ID, "OCR-оверлей", NotificationManager.IMPORTANCE_LOW),
             )
         }
-<<<<<<< HEAD
-=======
         val notification = buildNotification()
         // ИСПРАВЛЕНИЕ КРАША (Android 14+): тип mediaProjection в startForeground
         // допустим ТОЛЬКО после того, как пользователь дал согласие на захват
@@ -829,7 +744,7 @@ class OcrOverlayService : Service() {
      * разбирает их как обычные команды, поэтому сервис не поднимается заново.
      */
     private fun buildNotification(): Notification {
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         val launch = packageManager.getLaunchIntentForPackage(packageName)
         val contentIntent = launch?.let {
             PendingIntent.getActivity(
@@ -847,26 +762,6 @@ class OcrOverlayService : Service() {
         }
         val b = builder
             .setContentTitle("OCR-кнопка")
-<<<<<<< HEAD
-            .setContentText("Плавающая кнопка поверх приложений")
-            .setSmallIcon(android.R.drawable.ic_menu_view)
-            .setOngoing(true)
-        if (contentIntent != null) b.setContentIntent(contentIntent)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // Тип mediaProjection обязателен: без него на Android 14+ система
-            // не отдаст MediaProjection и захват рамки не запустится.
-            startForeground(
-                NOTIF_ID,
-                b.build(),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK or
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
-            )
-        } else {
-            startForeground(NOTIF_ID, b.build())
-        }
-    }
-
-=======
             .setContentText("Движок: ${engineShortTitle()} • Голос: ${voiceShortTitle()}")
             .setSmallIcon(android.R.drawable.ic_menu_view)
             .setOngoing(true)
@@ -911,7 +806,7 @@ class OcrOverlayService : Service() {
         VoicePreset.Gender3.fromId(prefs.voicePresetGender().get()).title
     }.getOrDefault("Авто")
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     // ---------- Озвучка (тот же движок, что в читалке) ----------
 
     private fun currentText(): String = bubble.value.trim()
@@ -1104,19 +999,13 @@ class OcrOverlayService : Service() {
     /** Полноэкранный селектор: потяните пальцем прямоугольник области. */
     private fun openSelector() {
         if (selectorRoot != null) return
-<<<<<<< HEAD
-        val dm = resources.displayMetrics
-        val layout = FrameLayout(this)
-        layout.setBackgroundColor(0x88000000.toInt())
-        val draw = RegionDrawView(this)
-=======
         val geom = screenGeom()
         val content = geom.content
         val layout = FrameLayout(this)
         layout.setBackgroundColor(0x88000000.toInt())
         val draw = RegionDrawView(this)
         draw.setContent(content)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         layout.addView(draw, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         selectorDraw = draw
 
@@ -1125,13 +1014,10 @@ class OcrOverlayService : Service() {
         hint.setTextColor(0xFFFFFFFF.toInt())
         hint.textSize = 14f
         hint.gravity = Gravity.CENTER
-<<<<<<< HEAD
-        hint.setPadding(0, dp(48f), 0, 0)
-=======
         // Подсказка уходит под строку состояния, а не под часы: выбор области
         // — тоже рамка внутри приложения.
         hint.setPadding(0, content.top + dp(48f), 0, 0)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         layout.addView(hint, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
 
         var downX = 0f
@@ -1155,11 +1041,8 @@ class OcrOverlayService : Service() {
                     if (!moved) {
                         closeSelector()
                     } else {
-<<<<<<< HEAD
-                        val r = draw.normalized(dm.widthPixels, dm.heightPixels)
-=======
                         val r = draw.normalized()
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                         if (r != null) {
                             prefs.overlayFixedRegion().set("${r.l},${r.t},${r.r},${r.b}")
                             prefs.overlayRegionMode().set("fixed")
@@ -1210,19 +1093,12 @@ class OcrOverlayService : Service() {
             return
         }
         val region = parseRegion() ?: return
-<<<<<<< HEAD
-        val dm = resources.displayMetrics
-        val x = (region.l * dm.widthPixels).toInt()
-        val y = (region.t * dm.heightPixels).toInt()
-        val w = ((region.r - region.l) * dm.widthPixels).toInt().coerceAtLeast(dp(24f))
-        val h = ((region.b - region.t) * dm.heightPixels).toInt().coerceAtLeast(dp(24f))
-=======
         val content = screenGeom().content
         val x = content.left + (region.l * content.width()).toInt()
         val y = content.top + (region.t * content.height()).toInt()
         val w = ((region.r - region.l) * content.width()).toInt().coerceAtLeast(dp(24f))
         val h = ((region.b - region.t) * content.height()).toInt().coerceAtLeast(dp(24f))
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         val thickness = dp(3f)
         val color = 0xFF4A7EAF.toInt()
 
@@ -1296,8 +1172,6 @@ class OcrOverlayService : Service() {
         regionLabelState.value = regionModeLabel()
 
         val layout = FrameLayout(this)
-<<<<<<< HEAD
-=======
         // Владельцы жизненного цикла ставим НА КОРЕНЬ ОКНА (layout), а не
         // только на ComposeView: composer ищет findViewTreeLifecycleOwner
         // идя ВВЕРХ по дереву от attach-точки, упирается в этот FrameLayout
@@ -1307,7 +1181,7 @@ class OcrOverlayService : Service() {
         layout.setViewTreeLifecycleOwner(panelLifecycleOwner)
         layout.setViewTreeSavedStateRegistryOwner(panelSavedStateOwner)
         layout.setViewTreeViewModelStoreOwner(panelViewModelOwner)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 
         // Панель рисуется тем же компонентом, что и плавающее меню читалки:
         // одинаковая карточка, одинаковые круглые кнопки, одинаковый FAB.
@@ -1342,15 +1216,6 @@ class OcrOverlayService : Service() {
         val positionPrefs = getSharedPreferences(POSITION_PREFS, Context.MODE_PRIVATE)
         p.x = positionPrefs.getInt(KEY_POS_X, dp(20f))
         p.y = positionPrefs.getInt(KEY_POS_Y, dp(140f))
-<<<<<<< HEAD
-        params = p
-
-        root = layout
-        runCatching { wm.addView(layout, p) }.onFailure {
-            toast("Нет разрешения показывать поверх приложений")
-            stopSelf()
-        }
-=======
         // Сохранённая позиция могла остаться в старой системе координат
         // (от верха всего дисплея) — прижимаем её к области приложения.
         clampToScreen(p)
@@ -1398,7 +1263,7 @@ class OcrOverlayService : Service() {
                     stopSelf()
                 }
             }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     }
 
     // ---------- Панель: тот же вид, что меню читалки ----------
@@ -1448,11 +1313,8 @@ class OcrOverlayService : Service() {
 
     /** Высота окна с раскрытой панелью, px. */
     private fun maxWindowHeightPx(): Int =
-<<<<<<< HEAD
-        (resources.displayMetrics.heightPixels * MAX_PANEL_SCREEN_FRACTION).toInt()
-=======
         (screenGeom().content.height() * MAX_PANEL_SCREEN_FRACTION).toInt()
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 
     /** Высота, доступная карточке: из окна вычитаем кнопку и отступы, dp. */
     private fun maxPanelCardHeight(): Int {
@@ -1496,15 +1358,6 @@ class OcrOverlayService : Service() {
         val reading = readingState.value
         val speaking = speakingState.value
         val listening = sttState.value
-<<<<<<< HEAD
-        return listOf(
-            OcrMenuRow(
-                label = if (reading) "Стоп-чтение" else "Читать рамку",
-                action = OcrMenuAction(
-                    icon = if (reading) Icons.Outlined.StopCircle else Icons.Outlined.PlayArrow,
-                    active = reading,
-                    contentDescription = if (reading) "Остановить чтение рамки" else "Читать рамку",
-=======
         val rate = speechRateUi.value.takeIf { it > 0f }
             ?: prefs.speechRate().get().also { speechRateUi.value = it }
         val ownEngine = prefs.overlayOwnEngine().get()
@@ -1528,13 +1381,11 @@ class OcrOverlayService : Service() {
                     icon = if (reading) Icons.Outlined.GraphicEq else Icons.Outlined.PlayArrow,
                     active = reading,
                     contentDescription = if (reading) "Остановить авточтение" else "Начать авточтение рамки",
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     onClick = ::toggleFrameReading,
                 ),
             ),
             OcrMenuRow(
-<<<<<<< HEAD
-=======
                 label = "Стоп чтения",
                 action = OcrMenuAction(
                     icon = Icons.Outlined.StopCircle,
@@ -1547,7 +1398,7 @@ class OcrOverlayService : Service() {
                 ),
             ),
             OcrMenuRow(
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 label = "Голос",
                 action = OcrMenuAction(
                     icon = if (speaking) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
@@ -1557,8 +1408,6 @@ class OcrOverlayService : Service() {
                 ),
             ),
             OcrMenuRow(
-<<<<<<< HEAD
-=======
                 label = "Скорость: ${(rate * 100).roundToInt()}%",
                 action = OcrMenuAction(
                     glyph = "−",
@@ -1588,7 +1437,7 @@ class OcrOverlayService : Service() {
                 ),
             ),
             OcrMenuRow(
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 label = "Голос ♀ / ♂ · движок",
                 action = OcrMenuAction(
                     glyph = "♀",
@@ -1726,8 +1575,6 @@ class OcrOverlayService : Service() {
      * Чтение рамки: без Службы доступности листать нечем, поэтому сразу
      * отводим читателя в настройки, а не ограничиваемся тостом.
      */
-<<<<<<< HEAD
-=======
     /** Разовый скан области: один кадр → распознать → показать и озвучить. */
     private fun scanOnce() {
         if (isReading) stopReading()
@@ -1795,7 +1642,7 @@ class OcrOverlayService : Service() {
         refreshNotification()
     }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     private fun toggleFrameReading() {
         if (isReading) {
             stopReading()
@@ -1867,17 +1714,6 @@ class OcrOverlayService : Service() {
      * до кнопки не достаёт большой палец.
      */
     private fun snapToCorner(lp: WindowManager.LayoutParams) {
-<<<<<<< HEAD
-        val dm = resources.displayMetrics
-        val margin = dp(CORNER_MARGIN_DP)
-        val toLeft = lp.x + lp.width / 2 < dm.widthPixels / 2
-        lp.x = if (toLeft) margin else (dm.widthPixels - lp.width - margin)
-        val bottomZone = dm.heightPixels * 2 / 3
-        lp.y = if (lp.y < bottomZone) {
-            margin
-        } else {
-            (dm.heightPixels - lp.height - margin).coerceAtLeast(margin)
-=======
         val content = screenGeom().content
         val margin = dp(CORNER_MARGIN_DP)
         val toLeft = lp.x + lp.width / 2 < content.left + content.width() / 2
@@ -1891,7 +1727,7 @@ class OcrOverlayService : Service() {
             content.top + margin
         } else {
             (content.bottom - lp.height - margin).coerceAtLeast(content.top + margin)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         }
     }
 
@@ -1920,11 +1756,6 @@ class OcrOverlayService : Service() {
 
 
     private fun clampToScreen(lp: WindowManager.LayoutParams) {
-<<<<<<< HEAD
-        val dm = resources.displayMetrics
-        lp.x = lp.x.coerceIn(0, (dm.widthPixels - lp.width).coerceAtLeast(0))
-        lp.y = lp.y.coerceIn(0, (dm.heightPixels - lp.height).coerceAtLeast(0))
-=======
         val content = screenGeom().content
         lp.x = lp.x.coerceIn(
             content.left,
@@ -1934,7 +1765,7 @@ class OcrOverlayService : Service() {
             content.top,
             (content.bottom - lp.height).coerceAtLeast(content.top),
         )
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     }
 
     private fun toast(msg: String) {
@@ -1946,24 +1777,18 @@ class OcrOverlayService : Service() {
         // Цикл чтения живёт в serviceScope: без отмены задача продолжала бы
         // держать сервис и захват после его смерти.
         serviceScope.cancel()
-<<<<<<< HEAD
-        (applicationContext as? Application)?.unregisterActivityLifecycleCallbacks(ownActivityWatcher)
-=======
         runCatching { ProcessLifecycleOwner.get().lifecycle.removeObserver(processLifecycleObserver) }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         // Композиция панели держит ViewTreeLifecycleOwner: без перевода
         // жизненного цикла в DESTROYED она не освободится.
         runCatching { panelLifecycleOwner.registry.currentState = Lifecycle.State.DESTROYED }
         panelViewModelOwner.viewModelStore.clear()
         runCatching { stt?.destroy() }
         stt = null
-<<<<<<< HEAD
-        runCatching { readEngine.stop() }
-=======
         // Движок держит собственный CoroutineScope: без destroy фоновый OCR
         // дотягивался до конца уже после ухода сервиса.
         runCatching { readEngine.destroy() }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipListener?.let { runCatching { cm.removePrimaryClipChangedListener(it) } }
         closeSelector()
@@ -1980,13 +1805,11 @@ class OcrOverlayService : Service() {
     private inner class RegionDrawView(context: Context) : View(context) {
         private val rect = RectF()
         private var hasRect = false
-<<<<<<< HEAD
-=======
 
         /** Область приложения без системных панелей: за неё выделять нельзя. */
         private var content: Rect = Rect()
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         private val fill = Paint().apply {
             color = 0x334A7EAF
             style = Paint.Style.FILL
@@ -1997,12 +1820,6 @@ class OcrOverlayService : Service() {
             strokeWidth = 4f
         }
 
-<<<<<<< HEAD
-        fun setRect(x1: Float, y1: Float, x2: Float, y2: Float) {
-            // Координаты касания — экранные; окно селектора полноэкранное
-            // с (0,0) в левом верхнем углу, совпадает.
-            rect.set(minOf(x1, x2), minOf(y1, y2), maxOf(x1, x2), maxOf(y1, y2))
-=======
         fun setContent(value: Rect) {
             content = Rect(value)
         }
@@ -2023,21 +1840,11 @@ class OcrOverlayService : Service() {
                 maxOf(x1, x2).coerceIn(left, right),
                 maxOf(y1, y2).coerceIn(top, bottom),
             )
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             hasRect = true
             invalidate()
         }
 
-<<<<<<< HEAD
-        /** Нормализованные доли экрана 0..1 или null, если слишком маленькая. */
-        fun normalized(wPx: Int, hPx: Int): Region? {
-            if (!hasRect || rect.width() < 40 || rect.height() < 40) return null
-            return Region(
-                (rect.left / wPx).coerceIn(0f, 1f),
-                (rect.top / hPx).coerceIn(0f, 1f),
-                (rect.right / wPx).coerceIn(0f, 1f),
-                (rect.bottom / hPx).coerceIn(0f, 1f),
-=======
         /** Нормализованные доли области приложения 0..1 или null, если мала. */
         fun normalized(): Region? {
             if (!hasRect || content.width() <= 0 || content.height() <= 0) return null
@@ -2047,7 +1854,7 @@ class OcrOverlayService : Service() {
                 ((rect.top - content.top) / content.height()).coerceIn(0f, 1f),
                 ((rect.right - content.left) / content.width()).coerceIn(0f, 1f),
                 ((rect.bottom - content.top) / content.height()).coerceIn(0f, 1f),
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             )
         }
 

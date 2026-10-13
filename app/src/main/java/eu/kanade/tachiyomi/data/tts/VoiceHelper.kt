@@ -159,9 +159,6 @@ object VoiceHelper {
         val filtered = all.filter { voice ->
             languageMatches(voice.locale, language) &&
                 blacklist.none { blocked -> voice.name.equals(blocked, true) }
-<<<<<<< HEAD
-        }.sortedBy { it.name }
-=======
             // Локальные голоса — выше сетевых. В списке настройки вперемешку стояли
             // «Другой · ru-supertonic-ru_f1» и «Распознавание… ru-ru-x-dfc-network»,
             // и сетевой оказывался первым в списке. Тот же порядок, что и при
@@ -169,7 +166,7 @@ object VoiceHelper {
         }.sortedWith(
             compareBy<Voice>({ it.isNetworkConnectionRequired }, { it.name }),
         )
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         if (isRhVoice) {
             val direct = filtered.filterNot {
                 it.name.equals("Russian", true) || it.name.equals("English", true)

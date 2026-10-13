@@ -3,14 +3,6 @@ package eu.kanade.tachiyomi.ui.overlay
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Context
-<<<<<<< HEAD
-import android.graphics.Path
-import android.os.Handler
-import android.os.Looper
-import android.view.accessibility.AccessibilityEvent
-import eu.kanade.tachiyomi.util.system.toast
-import kotlinx.coroutines.CompletableDeferred
-=======
 import android.content.Intent
 import android.graphics.Path
 import android.net.Uri
@@ -24,7 +16,7 @@ import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 
@@ -127,22 +119,6 @@ class OverlayGestureService : AccessibilityService() {
                 )
                 .build()
             val result = CompletableDeferred<Boolean>()
-<<<<<<< HEAD
-            val sent = service.dispatchGesture(
-                gesture,
-                object : AccessibilityService.GestureResultCallback() {
-                    override fun onCompleted(gestureDescription: GestureDescription?) {
-                        result.complete(true)
-                    }
-
-                    override fun onCancelled(gestureDescription: GestureDescription?) {
-                        result.complete(false)
-                    }
-                },
-                callbackHandler,
-            )
-            if (!sent) return false
-=======
             // Диспатчим с главного лупера: система привязывает службу к нему,
             // и часть прошивок молча отклоняет жест, отправленный из фонового
             // потока, даже если сам вызов возвращает true.
@@ -170,7 +146,7 @@ class OverlayGestureService : AccessibilityService() {
                 Log.w(TAG, "dispatchGesture не отправлен: служба не подключена к системе")
                 return false
             }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             return withTimeoutOrNull(GESTURE_TIMEOUT_MS) { result.await() } ?: false
         }
 
@@ -201,11 +177,9 @@ class OverlayGestureService : AccessibilityService() {
 
         /** Сколько ждать ответа системы по жесту, мс. */
         private const val GESTURE_TIMEOUT_MS = 3_000L
-<<<<<<< HEAD
-=======
 
         private const val TAG = "OverlayGestureService"
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     }
 }
 
@@ -217,17 +191,6 @@ data class GestureSwipe(
     val toY: Int,
 )
 
-<<<<<<< HEAD
-/** Показывает, что служба выключена, и ведёт в настройки доступности. */
-fun Context.requestGestureService() {
-    runCatching {
-        startActivity(
-            android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
-        )
-    }.onFailure { toast("Открой Настройки → Специальные возможности") }
-}
-=======
 /**
  * Ведёт в настройки доступности и объясняет «Ограниченные настройки».
  *
@@ -267,4 +230,4 @@ fun Context.openAppDetails() {
         )
     }.onFailure { toast("Открой Настройки → Приложения") }
 }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+

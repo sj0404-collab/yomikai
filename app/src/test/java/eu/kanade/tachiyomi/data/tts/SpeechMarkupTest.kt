@@ -79,8 +79,6 @@ class SpeechMarkupTest {
     }
 
     @Test
-<<<<<<< HEAD
-=======
     fun `fullwidth japanese punctuation becomes speech-friendly ascii`() {
         // Google Lens часто отдаёт ＂!＂, ＂?＂, ＂:＂ полноширинными — TTS
         // проговаривал их словами («восклицательный знак»), а не интонацией.
@@ -110,7 +108,7 @@ class SpeechMarkupTest {
     }
 
     @Test
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     fun `edge ssml chunks count escaped bytes without splitting text`() {
         val source = "&".repeat(1_000) + "尾"
         val chunks = EdgeTts.chunkForSsml(source, limit = 100)

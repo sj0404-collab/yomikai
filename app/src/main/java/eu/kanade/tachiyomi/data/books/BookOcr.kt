@@ -11,12 +11,6 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
 /**
-<<<<<<< HEAD
- * Распознавание текста страниц для книг (сканированные PDF, картинки внутри
- * EPUB). Использует штатный OCR-конвейер приложения (движок книг — CYRILLIC,
- * без сети и без моделей). Все ошибки обёрнуты в runCatching — OCR никогда
- * не роняет читалку.
-=======
  * Распознавание страниц книг — и только страниц.
  *
  * **Онлайн здесь не нужен и раньше не использовался по замыслу, но
@@ -36,25 +30,12 @@ import uy.kohesive.injekt.api.get
  * Все ошибки обёрнуты: OCR никогда не роняет читалку. Но отсутствие локального
  * движка теперь не тишина, а [Result]: читателю нужно знать, что поставить
  * пакет моделей, иначе он гадает, почему страница молчит.
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
  */
 object BookOcr {
 
     private val processor: OcrProcessor by lazy { Injekt.get<OcrProcessor>() }
 
-<<<<<<< HEAD
-    /** Распознаёт текст на битмапе. null при любой ошибке (без исключений). */
-    suspend fun recognize(bitmap: Bitmap): String? = withContext(Dispatchers.IO) {
-        runCatching {
-            val needsCopy = bitmap.config != Bitmap.Config.ARGB_8888
-            val bmp = if (needsCopy) bitmap.copy(Bitmap.Config.ARGB_8888, false) ?: bitmap else bitmap
-            val text = processor.getText(bmp.toOcrImage())
-            if (needsCopy && bmp !== bitmap) bmp.recycle()
-            text.trim()
-        }.onFailure { e ->
-            logcat(LogPriority.WARN, e) { "BookOcr: recognition failed" }
-        }.getOrNull()?.takeIf { it.isNotBlank() }
-=======
     /** Результат распознавания страницы с честной причиной отсутствия текста. */
     sealed interface Result {
         /** Текст страницы; пустая строка — распознали, но текста нет. */
@@ -94,6 +75,6 @@ object BookOcr {
         }.getOrElse { e ->
             Result.Unavailable(e.message ?: e.javaClass.simpleName)
         }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     }
 }

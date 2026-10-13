@@ -19,14 +19,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-<<<<<<< HEAD
-import androidx.compose.material.icons.outlined.CameraAlt
-=======
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Share
@@ -41,15 +38,11 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-<<<<<<< HEAD
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-=======
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -111,16 +104,6 @@ data object ScreenshotTab : Tab {
         val context = LocalContext.current
         val scope = rememberCoroutineScope()
         val entries by OcrScreenshotBuffer.entries.collectAsState()
-<<<<<<< HEAD
-        var showClearDialog = remember { androidx.compose.runtime.mutableStateOf(false) }
-
-        Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
-            TopAppBar(
-                title = { Text("Скриншоты") },
-                actions = {
-                    if (entries.isNotEmpty()) {
-                        IconButton(onClick = { showClearDialog.value = true }) {
-=======
         var showClearDialog by remember { mutableStateOf(false) }
         // Мультивыбор: тап по карточке в режиме выделения, «В архив»/«Удалить»
         // применяются к набору (см. clearOnSelection в ниже по файлу).
@@ -189,7 +172,7 @@ data object ScreenshotTab : Tab {
                         }
                     } else if (entries.isNotEmpty()) {
                         IconButton(onClick = { showClearDialog = true }) {
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                             Icon(
                                 Icons.Outlined.DeleteSweep,
                                 contentDescription = "Очистить",
@@ -234,13 +217,6 @@ data object ScreenshotTab : Tab {
                     items(entries, key = { it.id }) { entry ->
                         ScreenshotCard(
                             entry = entry,
-<<<<<<< HEAD
-                            onClick = {
-                                navigator.push(ScreenshotDetailScreen(entry.id))
-                            },
-                            onShare = { shareScreenshot(context, it) },
-                            onSaveToGallery = { saveScreenshotToGallery(scope, context, it) },
-=======
                             selected = entry.id in selected,
                             onClick = {
                                 if (selectionMode) {
@@ -252,25 +228,13 @@ data object ScreenshotTab : Tab {
                             onShare = { shareScreenshot(context, it) },
                             onSaveToGallery = { saveScreenshotToGallery(scope, context, it) },
                             onDelete = { OcrScreenshotBuffer.remove(entry.id) },
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                         )
                     }
                 }
             }
         }
 
-<<<<<<< HEAD
-        if (showClearDialog.value) {
-            AlertDialog(
-                onDismissRequest = { showClearDialog.value = false },
-                title = { Text("Очистить скриншоты?") },
-                text = {
-                    // Честно про границы: удаляются только внутренние копии.
-                    // Опубликованные в Pictures/Yomikai — обычные файлы
-                    // телефона, и «Очистить» их не трогает.
-                    Text("Все ${entries.size} скриншотов будут удалены из приложения. " +
-                        "Копии в Pictures/Yomikai останутся.")
-=======
         if (showClearDialog) {
             AlertDialog(
                 onDismissRequest = { showClearDialog = false },
@@ -280,26 +244,20 @@ data object ScreenshotTab : Tab {
                     // Pictures/Yomikai (запись помнит Uri публикации).
                     Text("Все ${entries.size} скриншотов будут удалены насовсем — " +
                         "и из приложения, и из галереи Pictures/Yomikai.")
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 },
                 confirmButton = {
                     TextButton(onClick = {
                         OcrScreenshotBuffer.clear()
-<<<<<<< HEAD
-                        showClearDialog.value = false
-=======
                         showClearDialog = false
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     }) {
                         Text("Очистить")
                     }
                 },
                 dismissButton = {
-<<<<<<< HEAD
-                    TextButton(onClick = { showClearDialog.value = false }) {
-=======
                     TextButton(onClick = { showClearDialog = false }) {
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                         Text("Отмена")
                     }
                 },
@@ -314,12 +272,10 @@ private fun ScreenshotCard(
     onClick: () -> Unit,
     onShare: (File) -> Unit,
     onSaveToGallery: (OcrScreenshotEntry) -> Unit,
-<<<<<<< HEAD
-=======
     onDelete: () -> Unit = {},
     /** Режим мультивыбора: карточка подсвечена и тапается как «флажок». */
     selected: Boolean = false,
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 ) {
     val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
     val imageFile = entry.imagePath?.let { File(it) }?.takeIf { it.exists() }
@@ -328,9 +284,6 @@ private fun ScreenshotCard(
             .fillMaxWidth()
             .padding(horizontal = 12.dp)
             .clip(RoundedCornerShape(8.dp))
-<<<<<<< HEAD
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-=======
             .background(
                 if (selected) {
                     MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
@@ -338,7 +291,7 @@ private fun ScreenshotCard(
                     MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                 },
             )
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             .clickable(onClick = onClick)
             .padding(12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -412,8 +365,6 @@ private fun ScreenshotCard(
                             modifier = Modifier.size(20.dp),
                         )
                     }
-<<<<<<< HEAD
-=======
                     // Удалить насовсем: приватный файл + копия в галерее.
                     IconButton(
                         onClick = onDelete,
@@ -425,7 +376,7 @@ private fun ScreenshotCard(
                             modifier = Modifier.size(20.dp),
                         )
                     }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 }
             }
         }

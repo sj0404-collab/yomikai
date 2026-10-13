@@ -78,8 +78,6 @@ object OcrPlugins {
         supportsRegions = true,
     )
 
-<<<<<<< HEAD
-=======
     /**
      * Настоящий Tesseract с русской моделью.
      *
@@ -101,7 +99,7 @@ object OcrPlugins {
         fallbackPriority = 5,
     )
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     val MLKIT = OcrPluginDescriptor(
         id = "mlkit",
         model = OcrModel.MLKIT,
@@ -175,18 +173,11 @@ object OcrPlugins {
     val LEGACY_ALIASES = listOf(
         OcrModel.LEGACY to CYRILLIC.id,
         OcrModel.FAST to CYRILLIC.id,
-<<<<<<< HEAD
-        OcrModel.TESSERACT to CYRILLIC.id,
-    )
-
-    /** Все выбираемые плагины в порядке показа в настройках. */
-    val ALL = listOf(CYRILLIC, MLKIT, GLENS, ZEN_FREE, GOOGLE_AI, OPENROUTER, OWOCR)
-=======
     )
 
     /** Все выбираемые плагины в порядке показа в настройках. */
     val ALL = listOf(CYRILLIC, TESSERACT, MLKIT, GLENS, ZEN_FREE, GOOGLE_AI, OPENROUTER, OWOCR)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 
     private val BY_ID = ALL.associateBy { it.id }
     private val BY_ENGINE_TYPE = ALL.associateBy { it.engineType }

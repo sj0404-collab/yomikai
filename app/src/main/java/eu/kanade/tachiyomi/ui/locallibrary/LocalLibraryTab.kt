@@ -163,13 +163,11 @@ data object LocalLibraryTab : Tab {
                 }
         }
 
-<<<<<<< HEAD
-=======
         // Открытая книга («Книги» → читалка) — вкладки библиотеки над ней
         // прячем: экран чтения должен быть без шапки библиотеки.
         var booksReaderOpen by remember { mutableStateOf(false) }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -177,10 +175,8 @@ data object LocalLibraryTab : Tab {
         ) {
             // Переключатель содержимого: «Манга» (архивы по папкам) /
             // «Книги» (любые форматы) / «Настройки» (OCR, голоса, словари).
-<<<<<<< HEAD
-=======
             if (!booksReaderOpen) {
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
@@ -216,10 +212,8 @@ data object LocalLibraryTab : Tab {
                     label = { Text("Настройки") },
                 )
             }
-<<<<<<< HEAD
-=======
             }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             when {
                 settingsSection -> {
                     // «Настройки»: OCR (баблы), голоса и словари — всё в одном
@@ -426,10 +420,6 @@ data object LocalLibraryTab : Tab {
             }
             } else {
                 // «Книги»: библиотека файлов любых форматов внутри локальной
-<<<<<<< HEAD
-                // библиотеки. Свой Navigator для открытия книги-читалки.
-                Navigator(screen = BooksLibraryScreen)
-=======
                 // библиотеки. Свой Navigator для открытия книги-читалки;
                 // когда он не на корне (открыта читалка) — шапка прячется.
                 Navigator(screen = BooksLibraryScreen) { inner ->
@@ -438,7 +428,7 @@ data object LocalLibraryTab : Tab {
                     }
                     DefaultNavigatorScreenTransition(navigator = inner)
                 }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             }
             }
         }

@@ -73,8 +73,6 @@ class VoiceRolesTest {
         val auto = roles + VoiceRole(id = "n", name = "Нейтрал", gender = "auto")
         VoiceRoleDictionary.resolve(auto, speakerName = null, gender = "male")?.name shouldBe "Старик"
     }
-<<<<<<< HEAD
-=======
 
     // --- Роли, привязанные к книге ---------------------------------------
     //
@@ -156,5 +154,5 @@ class VoiceRolesTest {
         // Нет ключа — null, как и раньше.
         VoiceJson.extractArray("""{"12":[{"name":"Аки"}]}""", "99") shouldBe null
     }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 }

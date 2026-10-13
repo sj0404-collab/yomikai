@@ -177,14 +177,6 @@ object EdgeTts {
             conn.setRequestProperty("Sec-Fetch-Mode", "cors")
             conn.setRequestProperty("Sec-Fetch-Dest", "empty")
             conn.setRequestProperty("Sec-CH-UA-Mobile", "?0")
-<<<<<<< HEAD
-            if (conn.responseCode !in 200..299) {
-                logcat(LogPriority.WARN) { "EdgeTTS voices HTTP ${conn.responseCode}" }
-                return@runCatching emptyList<EdgeVoice>()
-            }
-            val body = conn.inputStream.bufferedReader().readText()
-            conn.disconnect()
-=======
             val body = try {
                 if (conn.responseCode !in 200..299) {
                     logcat(LogPriority.WARN) { "EdgeTTS voices HTTP ${conn.responseCode}" }
@@ -196,7 +188,7 @@ object EdgeTts {
                 // исключении чтения: иначе соединение висит до таймаута.
                 conn.disconnect()
             }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             val arr = org.json.JSONArray(body)
             buildList {
                 for (i in 0 until arr.length()) {

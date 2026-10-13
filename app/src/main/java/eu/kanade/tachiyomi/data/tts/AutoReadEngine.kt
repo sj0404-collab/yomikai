@@ -5,10 +5,8 @@ import android.graphics.Bitmap
 import android.net.Uri
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
-<<<<<<< HEAD
-=======
 import kotlinx.coroutines.cancel
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import mihon.data.ocr.OcrScreenshotBuffer
@@ -22,10 +20,6 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-<<<<<<< HEAD
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeout
-=======
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
@@ -35,7 +29,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import logcat.LogPriority
 import mihon.data.ocr.OcrHistoryStore
 import mihon.data.ocr.OcrTextCleaner
@@ -83,9 +77,6 @@ class AutoReadEngine(
     private val bubbleOcr: mihon.domain.ocr.interactor.OcrProcessor by lazy { Injekt.get() }
 
     /** Строка кадра: текст + нормализованный box (для подсветки/порядка). */
-<<<<<<< HEAD
-    data class Line(val text: String, val boundingBox: OcrBoundingBox)
-=======
     data class Line(
         val text: String,
         val boundingBox: OcrBoundingBox,
@@ -97,7 +88,7 @@ class AutoReadEngine(
          */
         val panelIndex: Int = -1,
     )
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 
     data class SpokenRegion(
         val text: String,
@@ -150,10 +141,6 @@ class AutoReadEngine(
     // v1.9.39: озвученные строки «заморожены»: после автолистания они могут
     // остаться вверху кадра, но повторно не читаются (помечаются DONE).
     private val spokenLines = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
-<<<<<<< HEAD
-    private fun lineKey(t: String): String =
-        t.lowercase().replace(Regex("[^\\p{L}0-9]+"), " ").trim()
-=======
 
     /**
      * Нормализованный ключ реплики для карты прочитанного.
@@ -183,7 +170,7 @@ class AutoReadEngine(
         }
         return sb.toString()
     }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 
     /**
      * Сколько реплик этого кадра уже озвучено потоковым проходом, пока OCR
@@ -217,8 +204,6 @@ class AutoReadEngine(
     private val trackedSpeakers = ArrayDeque<TrackedSpeaker>()
 
     /**
-<<<<<<< HEAD
-=======
      * Книга, которую сейчас читают. Нужна для закрепления голоса персонажа:
      * карта «книга → персонаж → слот» лежит в настройках и переживает
      * перезапуск приложения.
@@ -227,7 +212,7 @@ class AutoReadEngine(
     private var currentChapterId: Long = -1L
 
     /**
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
      * Слот голоса для реплики в режиме «много голосов» / «свой голос
      * персонажу». Слот принадлежит персонажу, а не полу, поэтому порядок
      * такой:
@@ -237,11 +222,9 @@ class AutoReadEngine(
      *  • продолжение реплики (похожа на последнюю реплику известного
      *    персонажа — это и перекрытие вебтуна, и длинная реплика из двух
      *    облачков) → ТОТ ЖЕ слот;
-<<<<<<< HEAD
-=======
      *  • диалог без подписей → реплика продолжает ОТКРЫТОГО ГОВОРЯЩЕГО, а не
      *    становится новым персонажем (см. [lastSpokenGender]);
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
      *  • иначе новая реплика = новый персонаж = следующий свободный слот
      *    ВНУТРИ своего пола (нумерация по полам, чтобы слот 0 и слот 1
      *    означали первого и второго мужчину, а не «первого и третьего»).
@@ -255,25 +238,6 @@ class AutoReadEngine(
         // Короткие реплики («Да!», «Нет!») по 3-граммам неразличимы, поэтому
         // для них продолжение не ищем: иначе все «Да!» в сцене схлопнулись бы
         // в одного персонажа.
-<<<<<<< HEAD
-        val byText = if (fingerprint.length >= MIN_FINGERPRINT) {
-            sameGender.asSequence()
-                .maxByOrNull { trigramSimilarity(it.lastText, fingerprint) }
-                ?.takeIf { trigramSimilarity(it.lastText, fingerprint) >= CONTINUATION_SIMILARITY }
-        } else {
-            null
-        }
-        val known = byName ?: byText
-        if (known != null) {
-            rememberSpoken(known, fingerprint)
-            return known.slot
-        }
-        val speaker = TrackedSpeaker(
-            key = speakerName?.takeIf { it.isNotBlank() }?.let(::speakerKeyByName)
-                ?: "?" + trackedSpeakers.size + ":" + fingerprint.take(16),
-            gender = g,
-            slot = nextSlotFor(g),
-=======
         // Балл лучшего кандидата запоминаем: раньше победитель отбрасывался, и
         // его сходство считалось заново второй раз на каждой реплике.
         val byText = if (fingerprint.length >= MIN_FINGERPRINT) {
@@ -310,14 +274,11 @@ class AutoReadEngine(
             key = key,
             gender = g,
             slot = slot,
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             lastText = fingerprint,
         )
         trackedSpeakers.addLast(speaker)
         trimTrackedSpeakers()
-<<<<<<< HEAD
-        return speaker.slot
-=======
         if (persistentKey != null) rememberSlotFor(persistentKey, slot)
         return slot
     }
@@ -380,7 +341,7 @@ class AutoReadEngine(
             longLine = fingerprint.length >= MIN_FINGERPRINT,
         )
         return sameGender.getOrNull(idx)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     }
 
     /** Слот персонажа с учётом режима голоса: в обычном режиме слот не нужен. */
@@ -450,8 +411,6 @@ class AutoReadEngine(
     @Volatile
     var highlightZone: android.graphics.RectF? = null
 
-<<<<<<< HEAD
-=======
     /**
      * Какая часть СТРАНИЦЫ попала в последний кадр авточтения.
      *
@@ -486,7 +445,7 @@ class AutoReadEngine(
         return mapped?.let { OcrBoundingBox(it[0], it[1], it[2], it[3]) } ?: box
     }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     /** Box из координат обрезанного кадра -> координаты вьюпорта. */
     fun mapToViewport(box: OcrBoundingBox): OcrBoundingBox {
         val z = highlightZone ?: return box
@@ -520,8 +479,6 @@ class AutoReadEngine(
      */
     private var rejectedStreak = 0
 
-<<<<<<< HEAD
-=======
     /**
      * Сколько подряд кадров OCR не дал результата: упал движок, истёк таймаут
      * или вернулось пусто.
@@ -564,7 +521,7 @@ class AutoReadEngine(
     var lastSpokenLine: String = ""
         private set
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     /** Был ли в последнем кадре новый текст (для темпа автоскролла). */
     @Volatile
     var lastFrameHadText: Boolean = false
@@ -575,8 +532,6 @@ class AutoReadEngine(
     var lastFrameText: String = ""
         private set
 
-<<<<<<< HEAD
-=======
     /**
      * Где читатель в главе — «Страница 3 из 20».
      *
@@ -587,15 +542,13 @@ class AutoReadEngine(
     @Volatile
     var pageLabel: String? = null
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     /** Реплики прошлого кадра — передаются ассистенту для дедупликации. */
     private var prevFrameLines: List<String> = emptyList()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var job: Job? = null
 
-<<<<<<< HEAD
-=======
     /**
      * Задача ручной озвучки одного бабла ([speakSingle]).
      *
@@ -614,18 +567,12 @@ class AutoReadEngine(
      */
     private val speakMutex = Mutex()
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     /** Поколение запуска: stop() инвалидирует все колбэки прежних запусков. */
     @Volatile
     private var generation = 0
 
     /**
-<<<<<<< HEAD
-     * История прочитанного с НЕЧЁТКИМ сравнением: OCR той же реплики при
-     * смещённом кадре даёт слегка другой текст (обрезанные края, дрожание),
-     * поэтому точный хэш пропускал дубли. Храним нормализованные строки и
-     * сравниваем по включению/похожести 3-граммами (порог 0.6).
-=======
      * Счётчик запущенных кадров. Растёт ТОЛЬКО в [readFrame].
      *
      * Нужен отдельно от [generation]: та растёт ещё и при остановке по существу
@@ -654,7 +601,7 @@ class AutoReadEngine(
      * сравниваем по сходству 3-граммами (порог 0.6) и по включению — но
      * включение считается тем же баблом только когда короткий текст это почти
      * весь длинный, см. [isSameSpokenLine].
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
      *
      * Вебтун листает кадр на ~35% высоты: хвост прошлой страницы остаётся
      * вверху следующего кадра и OCR может дать его текст с искажением. Порог
@@ -664,8 +611,6 @@ class AutoReadEngine(
      */
     private val spokenTexts = ArrayDeque<String>()
 
-<<<<<<< HEAD
-=======
     /** Сырые (не сжатые) строки истории — нужны stripSpokenPrefix для
      *  пословного префикс-матча (нормы выше склеены без пробелов). */
     private val spokenRaws = ArrayDeque<String>()
@@ -702,7 +647,7 @@ class AutoReadEngine(
         return if (union <= 0f) 0f else inter / union
     }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     @Synchronized
     private fun isDuplicate(rawText: String): Boolean {
         val norm = rawText.lowercase().filter { it.isLetterOrDigit() }
@@ -711,31 +656,6 @@ class AutoReadEngine(
         // — осмысленные реплики. Раньше guard `length < 4 -> true` глушил их.
         if (norm.length < 4) return false
         for (old in spokenTexts) {
-<<<<<<< HEAD
-            if (old.contains(norm) || norm.contains(old)) return true
-            if (trigramSimilarity(old, norm) >= 0.6f) return true
-        }
-        spokenTexts.addLast(norm)
-        while (spokenTexts.size > HISTORY_LIMIT) spokenTexts.removeFirst()
-        return false
-    }
-
-    private fun trigramSimilarity(a: String, b: String): Float {
-        if (a.length < 3 || b.length < 3) return if (a == b) 1f else 0f
-        val ta = HashSet<String>(a.length)
-        for (i in 0..a.length - 3) ta.add(a.substring(i, i + 3))
-        var common = 0
-        var total = 0
-        for (i in 0..b.length - 3) {
-            total++
-            if (b.substring(i, i + 3) in ta) common++
-        }
-        return if (total == 0) 0f else common.toFloat() / total
-    }
-
-    @Synchronized
-    fun clearHistory() = spokenTexts.clear()
-=======
             // Дешёвый отсев по длине ДО сравнения: isSameSpokenLine сам эту
             // проверку делает, но через вызов функции, а история растёт до 600
             // строк и на кадре из 40 баблов это 24 000 сравнений. Здесь режем
@@ -820,7 +740,7 @@ class AutoReadEngine(
             else -> tail
         }
     }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 
     /**
      * Порядок чтения кадра: сначала выученное правило книги, иначе пресет
@@ -840,10 +760,8 @@ class AutoReadEngine(
 
     /** Старое одиночное поле `readingOrder` из файла знаний книги. */
     private fun legacyBookReadingOrder(): String? {
-<<<<<<< HEAD
-=======
         if (!prefs.bookKnowledgeEnabled().get()) return null
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         val mangaId = mihon.data.ocr.ReaderContextBus.current.value?.mangaId ?: return null
         val stored = runCatching {
             eu.kanade.tachiyomi.data.ai.BookKnowledge
@@ -869,25 +787,16 @@ class AutoReadEngine(
 
     /** Правила книги текущей книги (пусто, если книга не задана). */
     private fun loadBookRules(): List<eu.kanade.tachiyomi.data.ai.LearningRule> =
-<<<<<<< HEAD
-        eu.kanade.tachiyomi.data.ai.BookKnowledge.rulesOf(
-=======
         // Переключатель «знание о книге» (выключено по умолчанию — скорость):
         // чтение файла книги и разбора JSON на КАЖДЫЙ кадр давало лишнюю
         // секунду на странице, когда правил для книги и не было вовсе.
         if (!prefs.bookKnowledgeEnabled().get()) emptyList()
         else eu.kanade.tachiyomi.data.ai.BookKnowledge.rulesOf(
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             context,
             mihon.data.ocr.ReaderContextBus.current.value?.mangaId,
         )
 
-<<<<<<< HEAD
-    /**
-     * Прочитать кадр. [onPageFinished] вызывается ПОСЛЕ озвучки всех реплик —
-     * там вызывающая сторона листает/скроллит дальше. Если нового текста нет
-     * (всё уже в истории) — завершится сразу.
-=======
 /**
      * Прочитать кадр. [onPageFinished] вызывается ПОСЛЕ озвучки всех реплик —
      * там вызывающая сторона листает/скроллит дальше. Если нового текста нет
@@ -899,7 +808,7 @@ class AutoReadEngine(
      * на текст, который уже лежит в кэше. Для окна вебтуна кэш не годится: рамки
      * в нём нормализованы к странице, а кадр — кусок ленты, поэтому вызывающая
      * сторона его не передаёт.
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
      */
     fun readFrame(
         bitmap: Bitmap,
@@ -908,17 +817,12 @@ class AutoReadEngine(
         onPageFinished: () -> Unit,
         onLineSpoken: ((OcrBoundingBox) -> Unit)? = null,
         geometry: OcrFrameGeometry? = null,
-<<<<<<< HEAD
-=======
         cachedResult: mihon.domain.ocr.model.OcrPageResult? = null,
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     ) {
         job?.cancel()
         TtsSpeaker.stop()
         val myGen = ++generation
-<<<<<<< HEAD
-        job = scope.launch {
-=======
         // Книга для закрепления голосов персонажей: карта «книга → персонаж →
         // слот» пишется в настройки, поэтому движок должен знать, что он
         // читает именно эту книгу.
@@ -936,7 +840,7 @@ class AutoReadEngine(
                     if (cachedResult != null) append(" · текст из кэша скана")
                 },
             )
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             _isReading.value = true
             var aiRefine: Job? = null
             // Кадр передан сюда вызывающей стороной (полноэкранный снимок, до
@@ -954,13 +858,11 @@ class AutoReadEngine(
                 }
             }
             try {
-<<<<<<< HEAD
-=======
                 // Геометрия кадра нужна оверлею значков: рамки реплик он рисует
                 // относительно страницы, а распознавание отдаёт их в координатах
                 // кадра (у вебтуна кадр — окно ленты, а не страница).
                 frameGeometry = geometry
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 // Озвучивать нечем — не тратим время на распознавание кадра и
                 // не листаем страницы: читатель должен увидеть причину сразу.
                 if (!voicePathUsable()) {
@@ -974,11 +876,6 @@ class AutoReadEngine(
                 val scan = downscaleForScan(bitmap)
                 scanBitmap = scan
                 val ocrBitmap = scan
-<<<<<<< HEAD
-                val pixels = IntArray(ocrBitmap.width * ocrBitmap.height)
-                ocrBitmap.getPixels(pixels, 0, ocrBitmap.width, 0, 0, ocrBitmap.width, ocrBitmap.height)
-                val image = OcrImage(ocrBitmap.width, ocrBitmap.height, pixels)
-=======
                 // Пиксели нужны ТОЛЬКО распознаванию. Когда страница уже лежит в
                 // кэше скана, копия на несколько мегабайт и лишний проход по
                 // пикселям — пустая работа на каждой странице главы.
@@ -989,7 +886,7 @@ class AutoReadEngine(
                     ocrBitmap.getPixels(pixels, 0, ocrBitmap.width, 0, 0, ocrBitmap.width, ocrBitmap.height)
                     OcrImage(ocrBitmap.width, ocrBitmap.height, pixels)
                 }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 // Кадр в JPEG для AI-определения пола говорящих (если включено)
                 // В ручном режиме пол задан читателем — AI Vision не нужен.
                 val genderJpeg: ByteArray? = if (prefs.aiGenderVoices().get() &&
@@ -1021,12 +918,6 @@ class AutoReadEngine(
                 // проход работает только в порядке «сверху вниз» (ltr/vertical):
                 // при RTL детектор отдаёт области слева направо, и озвучка на
                 // лету читала бы реплики в обратном порядке.
-<<<<<<< HEAD
-                val streamOrder = bookReadingOrder(loadBookRules())
-                val streaming = orderAllowsStreaming(streamOrder)
-                val partials = Channel<OcrRegion>(Channel.UNLIMITED)
-                val result: mihon.domain.ocr.model.OcrPageResult = try {
-=======
                 // Правила книги читаются с диска ОДИН раз на кадр: ниже, перед
                 // разбором строк, они нужны снова (порядок чтения и «только
                 // облачки»), а файл на книгу один. Двойное чтение — лишний
@@ -1051,7 +942,7 @@ class AutoReadEngine(
                     cachedResult
                 } else try {
                     val pageImage = checkNotNull(image) { "Кадр авточтения без распознавания" }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     coroutineScope {
                         val scan = async {
                             try {
@@ -1059,10 +950,6 @@ class AutoReadEngine(
                                     scanPageOcr.await(
                                         chapterId = chapterId,
                                         pageIndex = pageIndex,
-<<<<<<< HEAD
-                                        image = image,
-                                        onPartial = { region -> partials.trySend(region) },
-=======
                                         image = pageImage,
                                         onPartial = { region -> partials.trySend(region) },
                                         // Кадр авточтения — окно вебтуна, а не
@@ -1070,7 +957,7 @@ class AutoReadEngine(
                                         // попадала с рамками от кадра, и оверлей
                                         // потом подсвечивал не там.
                                         cacheResult = false,
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                                     )
                                 }
                             } catch (e: TimeoutCancellationException) {
@@ -1100,11 +987,8 @@ class AutoReadEngine(
                                     scan.cancel()
                                     break
                                 }
-<<<<<<< HEAD
-                                if (!speakStreamingRegion(region, prefs.autoReadLanguage().get())) {
-=======
                                 if (!speakStreamingRegion(region, prefs.autoReadLanguage().get(), onLineSpoken)) {
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                                     // Озвучки нет: дочитывать страницу незачем.
                                     scan.cancel()
                                     break
@@ -1123,12 +1007,10 @@ class AutoReadEngine(
                         "OCR-кадр таймаут",
                         "${OCR_FRAME_TIMEOUT_MS / 1000}с pageIndex=$pageIndex",
                     )
-<<<<<<< HEAD
-=======
                     // Таймаут — это «не смогли», а не «текста нет»: пустой кадр
                     // дальше просто листался, и читатель терял главу без слов.
                     if (noteOcrFailure("таймаут ${OCR_FRAME_TIMEOUT_MS / 1000}с")) return@launch
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     mihon.domain.ocr.model.OcrPageResult(
                         chapterId = chapterId,
                         pageIndex = pageIndex,
@@ -1141,11 +1023,6 @@ class AutoReadEngine(
 
                 val language = prefs.autoReadLanguage().get()
                 val translate = prefs.autoReadTranslate().get()
-<<<<<<< HEAD
-                // Правила книги (порядок чтения, «только облачки») читаем один
-                // раз на кадр: файл на книгу один, а нужны они в двух местах.
-                val bookRules = loadBookRules()
-=======
                 // «Читать каждую букву»: одиночные «а…», «мгм», вздохи и любые
                 // другие короткие реплики проходят фильтр осмысленности, каким
                 // бы «мусорным» он их не счёл. Главное — чтобы были буквы.
@@ -1153,7 +1030,7 @@ class AutoReadEngine(
                 // Ручной выбор пары языков («ja→ru», «ru→ja»): «auto» ведёт
                 // себя как раньше — переводчик решает сам.
                 val translateSource = prefs.autoReadTranslateSource().get().ifBlank { "auto" }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 // Порядок чтения берём из пресета типа контента (манхва/вебтун →
                 // «vertical» сверху вниз), а не из старого `scanReadingOrder`,
                 // который по умолчанию «rtl» и ломал подсветку на вебтунах.
@@ -1207,8 +1084,6 @@ class AutoReadEngine(
                         }
                     }
                 }
-<<<<<<< HEAD
-=======
                 // Пустые страницы пролистываем дёшево: на развороте без реплик
                 // добор облачков — это второй полный проход OCR впустую, а
                 // скриншот пустой страницы только засоряет буфер. Как только на
@@ -1220,17 +1095,15 @@ class AutoReadEngine(
                     hasAnyLetters = lines.any { it.text.any(Char::isLetter) },
                 )
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 // v1.9.92: онлайн-движок вернул ПОДОЗРИТЕЛЬНО мало строк (например,
                 // только ватермарку «Читай раньше всех на Remanga», а настоящую
                 // крупную реплику модель не увидела) — дочитываем кадр локальным
                 // разбором баллонов (YOLO + Cyrillic OCR) и доклеиваем результат.
                 // Так реальный текст манхвы не пропадает, даже если AI его пропустил.
                 if (result.ocrModel in ONLINE_MODELS &&
-<<<<<<< HEAD
-=======
                     !skipEmptyWork &&
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     lines.count { it.text.count(Char::isLetter) >= 3 } < SUPPLEMENT_BUBBLES_MIN &&
                     !ocrBitmap.isRecycled
                 ) {
@@ -1247,14 +1120,11 @@ class AutoReadEngine(
 
                 // Скриншот-кадр для вкладки «Скриншоты»: JPEG сохраняем ДО recycle —
                 // после него пикселей больше нет, а сама запись пишется ниже по коду.
-<<<<<<< HEAD
-                val screenshotJpeg: ByteArray? = if (prefs.autoScreenshotEnabled().get() && !ocrBitmap.isRecycled) {
-=======
                 val screenshotJpeg: ByteArray? = if (prefs.autoScreenshotEnabled().get() &&
                     !skipEmptyWork &&
                     !ocrBitmap.isRecycled
                 ) {
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     runCatching { encodeJpeg(ocrBitmap, JPEG_QUALITY) }.getOrNull()
                 } else null
 
@@ -1270,13 +1140,6 @@ class AutoReadEngine(
                 if (!wholePage) lines = mergeBubbleLines(lines)
 
                 // 1) фильтр мусора OCR (обрывки «eS la 4», «| | > |», «о»)
-<<<<<<< HEAD
-                //    + фильтр по языку; 2) отсев уже прочитанного
-                val fresh = lines
-                    .asSequence()
-                    .map { it.copy(text = cleanOcrGarbage(it.text, language)) }
-                    .filter { isMeaningful(it.text, language) }
-=======
                 //    + фильтр по языку; 2) отсев уже прочитанного.
                 // «Читать каждую букву» (readEverything) оставляет ЛЮБУЮ строку
                 // с буквами — даже одиночную «а…» или «мгм»: фильтр
@@ -1294,7 +1157,7 @@ class AutoReadEngine(
                             seq.filter { isMeaningful(it.text, language) }
                         }
                     }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     .filter { !isDuplicate(it.text) }
                     // Рамка обязана лежать внутри страницы и иметь разумный
                     // размер: иначе голубая подсветка вылезает за текст/экран.
@@ -1307,11 +1170,6 @@ class AutoReadEngine(
                     }
                     .toList()
 
-<<<<<<< HEAD
-                // 3) порядок чтения (группировка в строки по близости центров Y,
-                // а не по фиксированным 12% полосам — убирает «лесенку»)
-                val ordered = orderRegions(fresh, order)
-=======
                 // 3) язык страницы: у переведённой манги в арте остаются
                 //    иноязычные надписи (корешок, вывески, звук). Если страница
                 //    кириллическая, такой мусор выкидываем — озвучивать его
@@ -1338,7 +1196,7 @@ class AutoReadEngine(
                     detail = "режим ${prefs.autoReadModeFor(result.ocrModel).get()} · реплик ${ordered.size} · кэш ${cachedResult != null}",
                 )
                 logcat(LogPriority.INFO) { "AutoRead ⏱ frame=$pageIndex engine=${result.ocrModel.name} ms=$frameMs lines=${ordered.size}" }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 
                 // ===== СКРИНШОТ: сохраняем распознанные регионы в буфер =====
                 // Лёгкая запись (~1-5 KB) — текст + координаты + JPEG-кадр кадра
@@ -1352,10 +1210,8 @@ class AutoReadEngine(
                             text = line.text,
                             boundingBox = line.boundingBox,
                             textOrientation = OcrTextOrientation.Horizontal,
-<<<<<<< HEAD
-=======
                             panelIndex = line.panelIndex,
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                         )
                     }
                     OcrScreenshotBuffer.add(
@@ -1396,12 +1252,6 @@ class AutoReadEngine(
                 if (prefs.aiGenderVoices().get() && ordered.isNotEmpty()) {
                     val newLines = ordered.map { it.text }
                     val prevSnapshot = prevFrameLines
-<<<<<<< HEAD
-                    val advice = eu.kanade.tachiyomi.data.ai.BookKnowledge.renderAdvice(
-                        context = context,
-                        mangaId = mihon.data.ocr.ReaderContextBus.current.value?.mangaId,
-                    )
-=======
                     val advice = if (prefs.bookKnowledgeEnabled().get()) {
                         eu.kanade.tachiyomi.data.ai.BookKnowledge.renderAdvice(
                             context = context,
@@ -1410,7 +1260,7 @@ class AutoReadEngine(
                     } else {
                         ""
                     }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     // Ссылку на задание ОБЯЗАТЕЛЬНО держим. Раньше здесь стоял
                     // голый scope.launch { … }, а следом aiRefine = null обнулял
                     // поле ещё ДО присваивания: задание ни отменялось (finally),
@@ -1447,10 +1297,6 @@ class AutoReadEngine(
                 }
 
                 lastFrameHadText = ordered.isNotEmpty()
-<<<<<<< HEAD
-                if (ordered.isNotEmpty()) {
-                    lastFrameText = ordered.joinToString("\n") { it.text }
-=======
                 emptyFrameStreak = if (ordered.isEmpty()) emptyFrameStreak + 1 else 0
                 if (ordered.isNotEmpty()) {
                     lastFrameText = ordered.joinToString("\n") { it.text }
@@ -1464,17 +1310,13 @@ class AutoReadEngine(
                     // остановить чтение, не вернувшись в приложение.
                     runCatching { TtsReadingNotifier.show(context, lastFrameText, pageLabel) }
                         .onFailure { logcat(LogPriority.WARN, it) { "Reading notification failed" } }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 }
 
                 // 3.7) перевод ВСЕЙ страницы одним запросом (раньше был
                 // отдельный HTTP-запрос на каждую реплику — на 15 бабблах
                 // это 15 последовательных обращений между озвучками).
                 val target = prefs.translateTarget().get().ifBlank { "ru" }
-<<<<<<< HEAD
-                val translations: List<String> = if (translate && language != target) {
-                    runCatching { MangaTranslatorService.translateAll(ordered.map { it.text }, target) }
-=======
                 // Гейт перевода: раньше был `language != target`, где language —
                 // ЭТАЛОННЫЙ язык реплик из настроек (по умолчанию «ru»). Из-за
                 // этого китайская манхуа НЕ переводилась: язык кадра «ru» ==
@@ -1519,21 +1361,12 @@ class AutoReadEngine(
                 } else null
                 val translations: List<String> = if (shouldTranslate && !streamMode) {
                     runCatching { MangaTranslatorService.translateAll(ordered.map { it.text }, target, effectiveTranslateSource) }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                         .getOrElse { ordered.map { it.text } }
                 } else {
                     ordered.map { it.text }
                 }
 
-<<<<<<< HEAD
-                // Публикуем карту кадра: всё, что будет прочитано
-                val frozenL = ordered.filter { lineKey(it.text) in spokenLines }
-                val speakable = ordered.filterNot { lineKey(it.text) in spokenLines }
-                _frameRegions.value = speakable.mapIndexed { i, r ->
-                    FrameRegion(r.boundingBox, i + 1, FrameRegion.State.UPCOMING, r.text)
-                } + frozenL.mapIndexed { j, r ->
-                    FrameRegion(r.boundingBox, speakable.size + j + 1, FrameRegion.State.DONE, r.text)
-=======
                 // Публикуем карту кадра: всё, что будет прочитано.
                 // Оверлей рисует рамки относительно прямоугольника СТРАНИЦЫ,
                 // а OCR отдал их в координатах кадра, поэтому здесь они
@@ -1550,7 +1383,7 @@ class AutoReadEngine(
                     FrameRegion(pageBox(r.boundingBox), i + 1, FrameRegion.State.UPCOMING, r.text)
                 } + frozenL.mapIndexed { j, r ->
                     FrameRegion(pageBox(r.boundingBox), speakable.size + j + 1, FrameRegion.State.DONE, r.text)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 }
 
                 // 4) реплика за репликой: подсветка -> озвучка -> ждём конца.
@@ -1563,11 +1396,6 @@ class AutoReadEngine(
                 // бы чужой перевод и чужой пол, а `prep.speak = false` выкидывал
                 // бы не ту реплику целиком.
                 var speakIndex = 0
-<<<<<<< HEAD
-                for ((orderedIndex, region) in ordered.withIndex()) {
-                    // Уже прозвучало потоковым проходом: в speakable её нет.
-                    if (lineKey(region.text) in spokenLines) continue
-=======
 
                 // «Сканировать и озвучивать страницу целиком»: один снимок и одна
                 // озвучка всей страницы вместо реплики за репликой. Переключатель
@@ -1642,7 +1470,7 @@ class AutoReadEngine(
                     if (lineKey(region.text) in spokenLines) continue
                     // Режим «вся страница целиком»: всё уже прозвучало одной фразой.
                     if (wholePageMode) break
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     val i = speakIndex++
                     if (job?.isActive != true) break
 
@@ -1657,11 +1485,8 @@ class AutoReadEngine(
                         val skipped = i
                         _frameRegions.value = speakable.mapIndexed { j, r ->
                             FrameRegion(
-<<<<<<< HEAD
-                                r.boundingBox,
-=======
                                 pageBox(r.boundingBox),
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                                 j + 1,
                                 if (j <= skipped) FrameRegion.State.DONE else FrameRegion.State.UPCOMING,
                                 r.text,
@@ -1676,11 +1501,8 @@ class AutoReadEngine(
                     // Обновляем статусы: до i — прочитано, i — читается, после — предстоит
                     _frameRegions.value = speakable.mapIndexed { j, r ->
                         FrameRegion(
-<<<<<<< HEAD
-                            r.boundingBox,
-=======
                             pageBox(r.boundingBox),
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                             j + 1,
                             when {
                                 j < i -> FrameRegion.State.DONE
@@ -1691,10 +1513,6 @@ class AutoReadEngine(
                         )
                     }
 
-<<<<<<< HEAD
-                    val translatedText = translations.getOrNull(orderedIndex)?.takeIf { it.isNotBlank() }
-                    val speakTextRaw = if (translate && language != target) {
-=======
                     // STREAM-режим: пакетный перевод ещё в пути — читаем
                     // оригинал; прилетел — подхватываем с этой же реплики.
                     val translatedText = when {
@@ -1704,14 +1522,12 @@ class AutoReadEngine(
                         else -> translations.getOrNull(orderedIndex)?.takeIf { it.isNotBlank() }
                     }
                     var speakTextRaw = if (shouldTranslate) {
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                         translatedText ?: region.text
                     } else {
                         prep?.text?.takeIf { it.isNotBlank() } ?: translatedText ?: region.text
                     }
 
-<<<<<<< HEAD
-=======
                     // GLens-фикс (по-баллонный путь): та же реплика пришла
                     // с новым хвостом — отрезаем уже прочитанную приставку
                     // и озвучиваем только новые слова; хвоста нет — реплика
@@ -1724,7 +1540,7 @@ class AutoReadEngine(
                         speakTextRaw = grownTail
                     }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     // Ручной режим важнее автоопределения: читатель выбрал
                     // голос кнопкой в читалке и ждёт именно его.
                     //
@@ -1783,9 +1599,6 @@ class AutoReadEngine(
                         SpeechMarkup.strip(speakTextRaw),
                         speakerName,
                     )
-<<<<<<< HEAD
-                    when (speakAndAwait(spokenText, gender, slot)) {
-=======
                     // Голос ЯЗЫКА ПЕРЕВОДА (напр. японский дублёр для
                     // переведённого на японский текста): hint ставится только
                     // если реплика реально читается переведённой, а не в
@@ -1804,23 +1617,18 @@ class AutoReadEngine(
                         null
                     }
                     when (speakAndAwait(spokenText, gender, slot, langHint, prosody)) {
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                         SpeakOutcome.SPOKEN, SpeakOutcome.SILENT -> rejectedStreak = 0
                         SpeakOutcome.NO_ENGINE -> {
                             blockAutoread(NO_VOICE_MESSAGE)
                             return@launch
                         }
-<<<<<<< HEAD
-                        SpeakOutcome.REJECTED -> {
-                            // Разовый отказ — обычное дело. Серия отказов означает,
-                            // что озвучки нет: дальше листать нечего.
-=======
                         SpeakOutcome.REJECTED, SpeakOutcome.STALLED -> {
                             // Разовый отказ — обычное дело. Серия отказов означает,
                             // что озвучки нет: дальше листать нечего. Голос,
                             // замолчавший на середине фразы, — такой же отказ:
                             // раньше он молча удерживал страницу до таймаута.
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                             rejectedStreak++
                             if (rejectedStreak >= REJECTED_STOP_AFTER) {
                                 blockAutoread(REJECTED_VOICE_MESSAGE)
@@ -1841,34 +1649,17 @@ class AutoReadEngine(
             } catch (e: Exception) {
                 logcat(LogPriority.ERROR, e) { "AutoRead frame failed" }
                 OcrHistoryStore.addAutoRead(false, "сбой страницы", e.message ?: e.javaClass.simpleName)
-<<<<<<< HEAD
-=======
                 // Сбой кадра раньше просто дочитывался, а потом колбэк листал
                 // дальше: читатель получал молча пролистанные страницы. Серия
                 // сбоев останавливает авточтение с объяснением.
                 noteOcrFailure(e.message ?: e.javaClass.simpleName)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             } finally {
                 // Кадр освобождаем на ЛЮБОМ выходе, включая отмену: иначе
                 // каждый прерванный кадр авточтения оставлял после себя
                 // полноэкранный битмап.
                 releaseFrame()
                 aiRefine?.cancel()
-<<<<<<< HEAD
-                // Общее состояние кадра — только для СВОЕГО кадра. Job.cancel()
-                // лишь помечает задачу, она завершается на следующей точке
-                // suspend, а к тому моменту новый кадр уже опубликовал свои
-                // регионы. Без проверки поколения отменённый кадр стирал их и
-                // возвращал кнопке «Стоп» состояние «старт» посреди чтения.
-                if (myGen == generation) {
-                    _currentRegion.value = null
-                    _frameRegions.value = emptyList()
-                    streamedRegionCount.set(0)
-                    _isReading.value = false
-                    // Колбэк только для АКТУАЛЬНОГО запуска: после stop() старый
-                    // цикл не имеет права листать дальше или перезапускать чтение
-                    if (job?.isCancelled != true) {
-=======
                 // Общее состояние кадра — только если его не перебил более новый
                 // кадр, и по frameCounter, а не по generation: остановка по
                 // существу (нет озвучки, OCR не отвечает) увеличивает generation,
@@ -1885,7 +1676,7 @@ class AutoReadEngine(
                     // Колбэк только для АКТУАЛЬНОГО запуска: после stop() старый
                     // цикл не имеет права листать дальше или перезапускать чтение
                     if (myGen == generation && job?.isCancelled != true) {
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                         onPageFinished()
                     }
                 }
@@ -2044,10 +1835,8 @@ class AutoReadEngine(
                     text = line.text,
                     boundingBox = line.boundingBox,
                     textOrientation = OcrTextOrientation.Horizontal,
-<<<<<<< HEAD
-=======
                     panelIndex = line.panelIndex,
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 )
             },
             // Без OCR результата виноват выбранный движок — он и остаётся
@@ -2098,14 +1887,12 @@ class AutoReadEngine(
      */
     private fun blockAutoread(message: String) {
         logcat(LogPriority.WARN) { "Autoread blocked: $message" }
-<<<<<<< HEAD
-=======
         eu.kanade.tachiyomi.data.ai.AiConsole.ocr(
             title = "Чтение остановлено: $message",
             detail = "причина: озвучка недоступна",
             level = eu.kanade.tachiyomi.data.ai.AiConsole.Level.ERROR,
         )
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         _voiceBlock.value = message
         OcrHistoryStore.addAutoRead(false, "озвучка недоступна", message)
         rejectedStreak = 0
@@ -2114,8 +1901,6 @@ class AutoReadEngine(
     }
 
     /**
-<<<<<<< HEAD
-=======
      * Кадр не распознан: таймаут движка или его исключение.
      *
      * Возвращает true, когда пора остановить авточтение. Одиночный отказ
@@ -2141,7 +1926,7 @@ class AutoReadEngine(
     }
 
     /**
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
      * Есть ли смысл начинать чтение: выбранный движок должен уметь озвучить.
      *
      * По умолчанию читаем голосом телефона, поэтому проверяется именно он.
@@ -2176,8 +1961,6 @@ class AutoReadEngine(
         }
     }
 
-<<<<<<< HEAD
-=======
     /**
      * Погасить наложение страницы НЕ останавливая озвучку главы.
      *
@@ -2195,33 +1978,27 @@ class AutoReadEngine(
         spokenLines.clear()
     }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     fun stop() {
         spokenLines.clear()
         // Голоса персонажей — память сессии: новая глава начинается с нуля,
         // иначе новый персонаж продолжил бы чужую нумерацию слотов.
         trackedSpeakers.clear()
-<<<<<<< HEAD
-        rejectedStreak = 0
-=======
         lastSpokenGender = null
         rejectedStreak = 0
         ocrFailedStreak = 0
         pageLabel = null
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         _voiceBlock.value = null
         generation++ // инвалидируем все pending-колбэки
         job?.cancel()
         job = null
-<<<<<<< HEAD
-        TtsSpeaker.stop()
-=======
         manualJob?.cancel()
         manualJob = null
         TtsSpeaker.stop()
         runCatching { TtsReadingNotifier.dismiss(context) }
             .onFailure { logcat(LogPriority.WARN, it) { "Reading notification dismiss failed" } }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         _currentRegion.value = null
         _frameRegions.value = emptyList()
         streamedRegionCount.set(0)
@@ -2229,13 +2006,6 @@ class AutoReadEngine(
     }
 
     /**
-<<<<<<< HEAD
-     * Озвучить ОДНУ реплику (бабл), выбранную пользователем (значок 🔊,
-     * перетаскивание значка или ручной бабл). В отличие от [readFrame] не
-     * трогает историю кадра и не листает: просто произносит переданный текст
-     * выбранным движком/полом. Запускается в [scope], чтобы [job] был активен
-     * во время озвучки (иначе [speakAndAwait] мгновенно прерывается).
-=======
      * Полностью освободить движок: остановить чтение и погасить собственную
      * область корутин.
      *
@@ -2262,7 +2032,7 @@ class AutoReadEngine(
      * `generation` не растёт, поэтому `onPageFinished` честно доедет и глава
      * продолжится. Если ручных тапов подряд несколько, озвучка не накапливается,
      * а ждёт очереди — движок синтеза один.
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
      */
     fun speakSingle(text: String, gender: String? = null, speakerSlot: Int = 0) {
         val clean = SpeechMarkup.strip(text).trim()
@@ -2271,24 +2041,13 @@ class AutoReadEngine(
         // авточтении: одиночный бабл, нажатый значком 🔊, тоже должен уметь
         // попасть под словарь ролей.
         val spoken = SpeechMarkup.withSpeakerName(clean, SpeechMarkup.speakerNameOrGuess(text))
-<<<<<<< HEAD
-        if (_isReading.value) TtsSpeaker.stop()
-        job?.cancel()
-        val myGen = ++generation
-        job = scope.launch {
-            _isReading.value = true
-            try {
-                speakAndAwait(spoken, gender, speakerSlot)
-            } finally {
-                if (generation == myGen) _isReading.value = false
-=======
         manualJob?.cancel()
         manualJob = scope.launch {
             try {
                 speakAndAwait(spoken, gender, speakerSlot)
             } finally {
                 if (job?.isActive != true) _isReading.value = false
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             }
         }
     }
@@ -2310,8 +2069,6 @@ class AutoReadEngine(
 
         /** Движок есть, но текст принял и не озвучил. */
         REJECTED,
-<<<<<<< HEAD
-=======
 
         /**
          * Реплика ПОШЛА, но `onDone` так и не пришёл: движок замолчал на середине.
@@ -2323,7 +2080,7 @@ class AutoReadEngine(
          * с объяснением.
          */
         STALLED,
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     }
 
     /**
@@ -2348,10 +2105,8 @@ class AutoReadEngine(
     private suspend fun speakStreamingRegion(
         region: OcrRegion,
         language: String,
-<<<<<<< HEAD
-=======
         onLineSpoken: ((mihon.domain.ocr.model.OcrBoundingBox) -> Unit)? = null,
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     ): Boolean {
         val text = normalizeOcrTextForDisplay(
             CyrillicTranslitFixer.autoFixCyrillic(region.text),
@@ -2360,11 +2115,8 @@ class AutoReadEngine(
         if (lineKey(text) in spokenLines) return true
         val index = streamedRegionCount.getAndIncrement()
         _frameRegions.value = _frameRegions.value + FrameRegion(
-<<<<<<< HEAD
-            region.boundingBox,
-=======
             pageBox(region.boundingBox),
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             index + 1,
             FrameRegion.State.CURRENT,
             text,
@@ -2383,24 +2135,20 @@ class AutoReadEngine(
             SpeakOutcome.SPOKEN -> {
                 spokenLines += lineKey(text)
                 markSpokenInFrame(text)
-<<<<<<< HEAD
-=======
                 if (onLineSpoken != null) {
                     runCatching { onLineSpoken(region.boundingBox) }
                         .onFailure { logcat(LogPriority.WARN, it) { "onLineSpoken failed" } }
                 }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 rejectedStreak = 0
                 true
             }
             SpeakOutcome.SILENT -> {
-<<<<<<< HEAD
-=======
                 if (onLineSpoken != null) {
                     runCatching { onLineSpoken(region.boundingBox) }
                         .onFailure { logcat(LogPriority.WARN, it) { "onLineSpoken failed" } }
                 }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 rejectedStreak = 0
                 true
             }
@@ -2408,11 +2156,8 @@ class AutoReadEngine(
                 blockAutoread(NO_VOICE_MESSAGE)
                 false
             }
-<<<<<<< HEAD
-            SpeakOutcome.REJECTED -> {
-=======
             SpeakOutcome.REJECTED, SpeakOutcome.STALLED -> {
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 rejectedStreak++
                 if (rejectedStreak >= REJECTED_STOP_AFTER) {
                     blockAutoread(REJECTED_VOICE_MESSAGE)
@@ -2448,13 +2193,6 @@ class AutoReadEngine(
      */
     internal fun orderAllowsStreaming(order: String): Boolean = order != "rtl"
 
-<<<<<<< HEAD
-    /** Озвучка с ожиданием реального окончания фразы. */
-    private suspend fun speakAndAwait(text: String, gender: String? = null, speakerSlot: Int = 0): SpeakOutcome {
-        // Реплика может прийти с меткой `{имя:…}` (её снимает сам движок), а в
-        // журнал и таймаут разумно класть то, что реально произносится.
-        val spoken = SpeechMarkup.strip(text).ifBlank { text }
-=======
     /**
      * Озвучка с ожиданием реального окончания фразы.
      *
@@ -2491,7 +2229,7 @@ class AutoReadEngine(
             eu.kanade.tachiyomi.data.ai.ReadingPlotAgentHolder.agent
                 .onSpoken(spoken, mihon.data.ocr.ReaderContextBus.current.value?.mangaId)
         }.onFailure { logcat(LogPriority.WARN, it) { "Reading plot agent failed" } }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         // Оба флага — MutableStateFlow: onState приходит из потока TTS, а читается
         // из этой корутины (диспетчер IO). Обычный var здесь означает гонку — цикл
         // ожидания мог бы не увидеть `started = true` и сочти фразу неозвученной.
@@ -2499,20 +2237,6 @@ class AutoReadEngine(
         // Флаг фактического завершения фразы.
         val done = MutableStateFlow(false)
         val t0 = System.currentTimeMillis()
-<<<<<<< HEAD
-        TtsSpeaker.speakAs(context, text, gender, speakerSlot) { speaking ->
-            if (speaking && !started.value) {
-                started.value = true
-                logcat(LogPriority.DEBUG) { "TTS started (${System.currentTimeMillis() - t0}ms): ${spoken.take(60)}" }
-            }
-            if (!speaking && started.value) {
-                done.value = true
-                logcat(LogPriority.DEBUG) { "TTS done in ${System.currentTimeMillis() - t0}ms" }
-                OcrHistoryStore.addAutoRead(true, "озвучено (${System.currentTimeMillis() - t0} мс)", spoken.take(60))
-            }
-        }
-        val start = System.currentTimeMillis()
-=======
         TtsSpeaker.speakAs(
             context, text, gender, speakerSlot, langHint = langHint,
             emotionProsody = prosody,
@@ -2559,20 +2283,12 @@ class AutoReadEngine(
                 }
             }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         // Фаза 1: ждём, пока движок начнёт говорить. Если за TTS_START_GRACE_MS
         // реплика не стартовала, произносить просто нечего: пустой текст после
         // снятия разметки, ремарка без звучания, незагруженный голос. Ждать
         // полный таймаут нельзя — на странице из одной реплики это и была
         // «остановка»: цикл молчал 8+ секунд, ничего не говоря.
-<<<<<<< HEAD
-        while (!ttsStartedOrGiveUp(started.value, System.currentTimeMillis() - start)) {
-            if (job?.isActive != true) {
-                TtsSpeaker.stop()
-                return SpeakOutcome.SILENT
-            }
-            delay(20)
-=======
         if (!started.value) {
             val gaveUp = speechLostWhile {
                 withTimeoutOrNull(TTS_START_GRACE_MS) { started.first { it } }
@@ -2581,7 +2297,7 @@ class AutoReadEngine(
                 TtsSpeaker.stop()
                 return SpeakOutcome.SILENT
             }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         }
         if (!started.value) {
             // Причина известна: либо движка нет вовсе, либо он отказал в тексте,
@@ -2601,14 +2317,6 @@ class AutoReadEngine(
         }
         // Фаза 2: реплика пошла — ждём завершения по onState.
         val timeoutMs = ttsTimeoutMs(spoken.length, prefs.speechRate().get())
-<<<<<<< HEAD
-        while (!done.value && System.currentTimeMillis() - start < timeoutMs) {
-            if (job?.isActive != true) {
-                TtsSpeaker.stop()
-                return SpeakOutcome.SILENT
-            }
-            delay(40) // быстрый опрос: между репликами нет лишней паузы
-=======
         if (!done.value) {
             val remaining = timeoutMs - (System.currentTimeMillis() - start)
             if (remaining > 0) {
@@ -2620,7 +2328,7 @@ class AutoReadEngine(
                     return SpeakOutcome.SILENT
                 }
             }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         }
         // Диагностика недоговорённых реплик: TTS мог прерваться без onDone.
         if (!done.value) {
@@ -2633,13 +2341,11 @@ class AutoReadEngine(
             if (TtsSpeaker.lastFailure == TtsSpeaker.SpeakFailure.REJECTED) {
                 return SpeakOutcome.REJECTED
             }
-<<<<<<< HEAD
-=======
             // Голос замолчал, не отдав ни ошибки, ни конца фразы. Считать это
             // успехом нельзя: иначе читатель полминуты слушал тишину, а потом
             // страница листалась как ни в чём не бывало.
             return SpeakOutcome.STALLED
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         }
         return SpeakOutcome.SPOKEN
     }
@@ -2650,40 +2356,12 @@ class AutoReadEngine(
      * на маркеры окружения персонажа: родственные связи и роли. Возвращаем
      * пол только при явном перевесе — иначе null (нейтральный голос).
      */
-<<<<<<< HEAD
-    private fun detectGenderByDictionary(text: String): String? {
-        val maleMarkers = listOf(
-            "брат", "отец", "папа", "дед", "сын", "мужчина", "парень",
-            "господин", "старик", "мальчик", "юноша", "принц", "король",
-        )
-        val femaleMarkers = listOf(
-            "сестра", "мать", "мама", "бабушка", "дочь", "женщина", "девушка",
-            "госпожа", "старуха", "девочка", "принцесса", "королева",
-        )
-        val lower = text.lowercase()
-        // Подстрочный поиск покрывает падежи: «моей сестры», «к отцу».
-        val maleCount = maleMarkers.count { lower.contains(it) }
-        val femaleCount = femaleMarkers.count { lower.contains(it) }
-        val byMarkers = when {
-            maleCount > femaleCount -> "male"
-            femaleCount > maleCount -> "female"
-            else -> null
-        }
-        if (byMarkers != null) return byMarkers
-        // Морфологический фолбэк: род по окончаниям словоформ (RuMorph).
-        val morph = RuMorph.guessGender(text)
-        if (morph != null) {
-            OcrHistoryStore.addAutoRead(true, "пол говорящего: морфология", "$morph: ${text.take(40)}")
-        }
-        return morph
-    }
-=======
     private fun detectGenderByDictionary(text: String): String? =
         // Делегировано LocalSpeakerAi.genderByMentions (v1.9.135): словарная
         // подстраховка с «чистым» признаком единственного пола; тестируется
         // юнит-тестами без android-контекста.
         LocalSpeakerAi.genderByMentions(text)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 
     // region Баллоны (YOLO) и чистка OCR-мусора
 
@@ -2730,17 +2408,6 @@ class AutoReadEngine(
             originalHeight = bitmap.height,
             direction = direction,
         )
-<<<<<<< HEAD
-        val bubbles = det.debugBubbles
-            .map { it.rect }
-            .filter { it.width() > 16 && it.height() > 16 }
-            .take(MAX_BUBBLES_PER_FRAME)
-        if (bubbles.isEmpty()) return emptyList()
-
-        val out = mutableListOf<Line>()
-        for ((index, r) in bubbles.withIndex()) {
-            if (job?.isActive != true) break
-=======
         val detectedBubbles = det.debugBubbles
             .filter { it.rect.width() > 16 && it.rect.height() > 16 }
             .take(MAX_BUBBLES_PER_FRAME)
@@ -2831,7 +2498,7 @@ class AutoReadEngine(
     ): List<Line> {
         val out = mutableListOf<Line>()
             if (job?.isActive != true) return out
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             // 1) Широкая рамка (ширина > 1.6 высоты) часто обнимает ДВА круглых
             //    облачка, совмещённых вплотную, с разным текстом. Прогоняем по
             //    ней панельный детектор ещё раз и распознаём ВЕСЬ текст,
@@ -2846,11 +2513,8 @@ class AutoReadEngine(
                     direction = direction,
                 )
                 out += subLines
-<<<<<<< HEAD
-                continue
-=======
                 return out
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             }
             // 2) Обычное облачко: поля 6%, круглая форма маскируется эллипсом,
             //    чтобы углы квадратного кадрирования не тащили текст соседа.
@@ -2860,11 +2524,8 @@ class AutoReadEngine(
             val top = (r.top - padY).coerceAtLeast(0)
             val right = (r.right + padX).coerceAtMost(bitmap.width)
             val bottom = (r.bottom + padY).coerceAtMost(bitmap.height)
-<<<<<<< HEAD
-            if (right - left < 16 || bottom - top < 16) continue
-=======
             if (right - left < 16 || bottom - top < 16) return out
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             var text = ocrCroppedRegion(
                 bitmap,
                 left,
@@ -2900,17 +2561,10 @@ class AutoReadEngine(
                     ),
                 )
             }
-<<<<<<< HEAD
-        }
-        return out
-    }
-
-=======
         return out
     }
 
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
     /**
      * Два круглых облачка вплотную внутри одной широкой рамки: повторный
      * панельный детектор на кадрированном фрагменте находит их по отдельности,
@@ -3152,8 +2806,6 @@ class AutoReadEngine(
 
     // endregion Склейка строк одной реплики
 
-<<<<<<< HEAD
-=======
     /**
      * Эмоция реплики и во что она превращается для синтеза.
      *
@@ -3180,16 +2832,11 @@ class AutoReadEngine(
         SURPRISE(1.22f, 1.2f, "?!"),
     }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     // region Чистка мусора OCR
 
     companion object {
         private const val HISTORY_LIMIT = 600
-<<<<<<< HEAD
-        private const val MAX_BUBBLES_PER_FRAME = 40
-
-        /**
-=======
 
         // Регулярки чистки OCR. Раньше они компилировались заново на КАЖДОЙ
         // строке кадра (чистка идёт построчно, а история дергается на каждой
@@ -3276,7 +2923,7 @@ class AutoReadEngine(
 
 
         /**
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
          * Сколько последних персонажей движок помнит по полу и имени. Память
          * нужна только чтобы отличить «тот же персонаж» от «нового»; на длинной
          * главе она росла бы без границ, и каждая реплика сравнивалась бы со
@@ -3299,12 +2946,10 @@ class AutoReadEngine(
          */
         private const val MIN_FINGERPRINT = 12
 
-<<<<<<< HEAD
-=======
         /** Сколько символов отпечатка речи входит в ключ безымянного героя. */
         private const val PERSISTENT_KEY_LENGTH = 24
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         /**
          * Максимальная длинная сторона кадра для OCR: минимальное разрешение,
          * при котором текст ещё читается. Детектор движка всё равно масштабирует
@@ -3312,15 +2957,13 @@ class AutoReadEngine(
          * пикселей и онлайн-OCR без потери слов.
          */
         private const val OCR_SCAN_MAX_EDGE = 1600
-<<<<<<< HEAD
-=======
         /** Портретные/лентовые кадры: мелкий текст требует больше пикселей. */
         private const val OCR_SCAN_MAX_EDGE_PORTRAIT = 2048
         /** Кадры мельче этой стороны уравниваем вверх. */
         private const val OCR_UPSCALE_BELOW_EDGE = 1000
         /** Больше чем в 1.5 раза мелкий кадр не растягиваем (время OCR). */
         private const val OCR_UPSCALE_MAX = 1.5f
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 
         /** Качество JPEG скриншотов во вкладку «Скриншоты». */
         private const val JPEG_QUALITY = 78
@@ -3367,16 +3010,6 @@ class AutoReadEngine(
             // на нём роняет процесс. Лучше пустой результат, чем падение.
             if (src.isRecycled) return src
             val longEdge = maxOf(src.width, src.height)
-<<<<<<< HEAD
-            if (longEdge <= OCR_SCAN_MAX_EDGE) return src
-            val scale = OCR_SCAN_MAX_EDGE.toFloat() / longEdge
-            return Bitmap.createScaledBitmap(
-                src,
-                (src.width * scale).toInt().coerceAtLeast(1),
-                (src.height * scale).toInt().coerceAtLeast(1),
-                true,
-            )
-=======
             // Портрет/лента: узкие страницы дают мелкий текст в мелком кадре —
             // детектор и рекогнайзер режут слова («недоговаривает»). Потолок
             // выше для узких, узость и есть тот самый тяжёлый случай.
@@ -3403,7 +3036,7 @@ class AutoReadEngine(
                 )
             }
             return src
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         }
 
         /** Сжимает кадр в JPEG-байты (для вкладки «Скриншоты»). */
@@ -3439,8 +3072,6 @@ class AutoReadEngine(
             started || elapsedMs >= TTS_START_GRACE_MS
 
         /**
-<<<<<<< HEAD
-=======
          * Кто из уже известных персонажей продолжает говорить в сцене без
          * подписей. Возвращает индекс в списке персонажей этого пола
          * (по порядку звучания), либо -1, если продолжающего нет.
@@ -3505,7 +3136,7 @@ class AutoReadEngine(
         }
 
         /**
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
          * Сколько подряд неозвученных реплик считается «озвучки нет».
          *
          * Разовый отказ ничего не значит: ремарка без звучания, пустой текст
@@ -3524,8 +3155,6 @@ class AutoReadEngine(
             "Авточтение остановлено: голос не озвучивает текст. Проверьте язык и данные " +
                 "голоса в Настройках → Озвучка."
 
-<<<<<<< HEAD
-=======
         /**
          * Сообщение читателю, когда распознавание кадра устойчиво не удаётся.
          *
@@ -3580,7 +3209,7 @@ class AutoReadEngine(
             return raw.coerceIn(120L, 800L)
         }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         fun ttsTimeoutMs(textLength: Int, speechRate: Float): Long {
             val rate = speechRate.takeIf { it.isFinite() && it > 0f }?.coerceIn(0.5f, 2f) ?: 1f
             return (textLength.coerceAtLeast(0) * 220L / rate).toLong() + 8_000L
@@ -3601,87 +3230,6 @@ class AutoReadEngine(
         }
 
         /**
-<<<<<<< HEAD
-         * Упорядочивает реплики кадра в читаемый порядок.
-         *
-         * Раньше реплики сортировались одним ключом: манга — по правому краю
-         * (самая правая рамка первой), комикс — по левому, вебтун — по верху.
-         * На реальной странице рамки баллонов РАЗНОЙ ширины и высоты (широкий
-         * баллон сверху и узкий справа внизу), и одноключевая сортировка
-         * читала узкий баллон в центре панели раньше верхнего широкого — «верха
-         * пропускает». [ReadingOrderSorter] делит кадр рекурсивным разрезанием:
-         *  • горизонтальный разрез — сверху вниз (первично);
-         *  • вертикальный разрез — справа налево (манга) / слева направо;
-         *  • когда чистого разреза нет (перекрытия вебтуна) — позиционный
-         *    фолбэк, где первичен верх, а не правый край.
-         * Так верхние реплики всегда читаются раньше нижних в любом вложении.
-         */
-        fun orderRegions(lines: List<Line>, order: String): List<Line> {
-            if (lines.size <= 1) return lines
-            val direction = when (order) {
-                "ltr" -> tachiyomi.core.common.util.system.ReadingDirection.LTR
-                "vertical" -> tachiyomi.core.common.util.system.ReadingDirection.VERTICAL
-                else -> tachiyomi.core.common.util.system.ReadingDirection.RTL
-            }
-            // Рамки хранятся в долях 0..1, а сортировщик работает с целыми
-            // Rect: масштабируем на 100000, геометрия и зазоры сохраняются.
-            val scale = 100_000
-            fun rectOf(line: Line) = line.boundingBox.let { b ->
-                // Поля Rect заполняем через свойства, а не через конструктор
-                // (left, top, right, bottom): mockable-android jar в юнит-тестах
-                // не пишет значения из этого конструктора, и сортировщик видел
-                // бы вырожденные рамки (0,0,0,0).
-                android.graphics.Rect().apply {
-                    left = (b.left * scale).toInt()
-                    top = (b.top * scale).toInt()
-                    right = (b.right * scale).toInt()
-                    bottom = (b.bottom * scale).toInt()
-                }
-            }
-
-            // Манга и комикс читаются по горизонтальным полосам (строкам реплик),
-            // а направление работает ВНУТРИ полосы. Без этого сортировщик при
-            // отсутствии чистого разреза выходил на фолбэк «сначала top», и бабл,
-            // стоящий на пару процентов выше слева, читался раньше правого —
-            // манга уходила в чтение слева направо.
-            if (order != "vertical") {
-                val bands = groupIntoBands(lines)
-                if (bands.size > 1) {
-                    return bands.flatMap { band ->
-                        if (band.size == 1) {
-                            band
-                        } else {
-                            tachiyomi.core.common.util.system.ReadingOrderSorter
-                                .sort(band.map(::rectOf), direction)
-                                .map { band[it] }
-                        }
-                    }
-                }
-            }
-
-            val sortedIndices =
-                tachiyomi.core.common.util.system.ReadingOrderSorter.sort(lines.map(::rectOf), direction)
-            return sortedIndices.map { lines[it] }
-        }
-
-        /**
-         * Раскладывает реплики по горизонтальным полосам: реплика попадает в
-         * текущую полосу, пока не опустилась ниже её низа (с допуском
-         * [BAND_TOLERANCE] на неточность координат OCR).
-         */
-        private fun groupIntoBands(lines: List<Line>): List<List<Line>> {
-            val bands = mutableListOf<MutableList<Line>>()
-            var bandBottom = 0f
-            for (line in lines.sortedBy { it.boundingBox.top }) {
-                val box = line.boundingBox
-                val current = bands.lastOrNull()
-                if (current == null || box.top >= bandBottom - BAND_TOLERANCE) {
-                    bands += mutableListOf(line)
-                    bandBottom = box.bottom
-                } else {
-                    current += line
-                    bandBottom = maxOf(bandBottom, box.bottom)
-=======
          * Ключ 3-граммы без выделения подстроки.
          *
          * Раньше здесь был `substring(i, i + 3)` на КАЖДУЮ позицию обеих строк.
@@ -4064,15 +3612,12 @@ class AutoReadEngine(
                     current += item
                     bandTop = minOf(bandTop, bounds.top)
                     bandBottom = maxOf(bandBottom, bounds.bottom)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 }
             }
             return bands
         }
 
-<<<<<<< HEAD
-        private const val BAND_TOLERANCE = 0.02f
-=======
         /** Перекрытие рамки с полосой хотя бы на [BAND_OVERLAP_SHARE] высоты. */
         private fun overlapsBand(
             bounds: OcrBoundingBox,
@@ -4342,7 +3887,7 @@ class AutoReadEngine(
             val dense = gaps.count { it <= height * COLUMN_MAX_GAP_RATIO }
             return dense.toFloat() / gaps.size >= COLUMN_DENSE_SHARE
         }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 
         /**
          * Чистка OCR-мусора ВНУТРИ реплики (по скриншотам пользователя:
@@ -4355,8 +3900,6 @@ class AutoReadEngine(
          *    многих) — выбрасываются;
          *  • остальные строки склеиваются пробелом.
          */
-<<<<<<< HEAD
-=======
         /**
          * Цифры ВНУТРИ кириллического слова — это не цифры, а буквы.
          *
@@ -4426,7 +3969,7 @@ class AutoReadEngine(
             return out.toString()
         }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         fun cleanOcrGarbage(text: String, language: String): String {
             val rawRows = text.lines()
                 .map { OcrTextCleaner.stripPromotionalText(it).trim() }
@@ -4444,10 +3987,6 @@ class AutoReadEngine(
             // («он цифры не говорит почему-то»). Чисто числовые строки-мусор
             // («2/89», «7») отсекаются ниже по isMeaningfulRow (нет букв).
             val rows = rawRows.map { row ->
-<<<<<<< HEAD
-                row.replace(Regex("(?<=[\\p{L}])[0-9]+|[0-9]+(?=[\\p{L}])"), " ")
-                    .replace(Regex("\\s+"), " ").trim()
-=======
                 row.replace(DIGIT_GLUE_RE, " ")
                     .replace(WHITESPACE_RE, " ").trim()
             }.map { row ->
@@ -4459,7 +3998,7 @@ class AutoReadEngine(
                 } else {
                     row
                 }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             }.filter { it.isNotBlank() }
             if (rows.isEmpty()) return ""
             val kept = rows.filter { row -> isMeaningfulRow(row, language) }
@@ -4476,28 +4015,20 @@ class AutoReadEngine(
                 if (joined.isNotEmpty()) {
                     if (joined.lastOrNull() == '-') {
                         joined.deleteCharAt(joined.length - 1)
-<<<<<<< HEAD
-=======
                     } else if (joinsWithLeadingWord(joined, row)) {
                         // v1.9.139: стык склеен в одно слово — пробел не нужен.
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     } else {
                         joined.append(' ')
                     }
                 }
                 joined.append(row)
             }
-<<<<<<< HEAD
-            var result = joined.toString().replace(Regex("\\s+"), " ").trim()
-            // Пост-обработка: убираем «застрявшие» повторы символов, которые OCR
-            // генерирует на шумных кадрах: "!!!!" → "!", "????" → "?", "......" → "…"
-            result = result.replace(Regex("(.)\\1{2,}")) { m ->
-=======
             var result = joined.toString().replace(WHITESPACE_RE, " ").trim()
             // Пост-обработка: убираем «застрявшие» повторы символов, которые OCR
             // генерирует на шумных кадрах: "!!!!" → "!", "????" → "?", "......" → "…"
             result = result.replace(REPEATED_CHAR_RE) { m ->
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 val ch = m.groupValues[1]
                 when (ch) {
                     "!", "?", ".", "…", "~" -> ch
@@ -4507,8 +4038,6 @@ class AutoReadEngine(
             return result
         }
 
-<<<<<<< HEAD
-=======
         /**
          * v1.9.139 — OCR иногда рвёт слово на стыке строк БЕЗ дефиса
          * («ЗДО-\nРОВЬЕ», «ЗДО\nРОВЬЕ»): TTS читал такое по слогам
@@ -4534,7 +4063,7 @@ class AutoReadEngine(
                 (!OcrTextCleaner.knownWord(lastWord) || !OcrTextCleaner.knownWord(firstWord))
         }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         /** Похожа ли строка на осмысленный текст (не обрывок/не мусор). */
         private fun isMeaningfulRow(row: String, language: String): Boolean {
             val letters = row.count { it.isLetter() }
@@ -4547,11 +4076,6 @@ class AutoReadEngine(
                 if (language != "ru") return false
                 val compact = row.filter(Char::isLetter).lowercase()
                 if (isShortRussianWord(compact)) return true
-<<<<<<< HEAD
-                return compact.length == 2 &&
-                    compact.all { it in '\u0400'..'\u04FF' } &&
-                    Regex("^[\\p{L}][\\s—–-]+[\\p{L}][.!?…]*$").matches(row)
-=======
                 // Короткий выкрик с сильной пунктуацией («ГХ!!», «А!») —
                 // тоже реплика. Буквы обязаны быть кириллицей: японские
                 // SFX («ガッ») при русском языке по-прежнему отбрасываем.
@@ -4561,7 +4085,7 @@ class AutoReadEngine(
                 return compact.length == 2 &&
                     compact.all { it in '\u0400'..'\u04FF' } &&
                     TWO_LETTER_SPLIT_RE.matches(row)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             }
             when (language) {
                 "ru" -> {
@@ -4570,9 +4094,6 @@ class AutoReadEngine(
                     if (cyr == 0) return false
                     if (cyr.toFloat() / letters < 0.6f) return false
                     // Должно быть хотя бы одно «слово» из 3+ кириллических букв
-<<<<<<< HEAD
-                    return Regex("[\\u0400-\\u04FF]{3,}").containsMatchIn(row)
-=======
                     if (CYRILLIC_WORD_RE.containsMatchIn(row)) return true
                     // Строка из коротких слогов, порванных дефисом переноса
                     // («НИ-КА НА»): без дефисов это цельное слово — строку
@@ -4581,16 +4102,13 @@ class AutoReadEngine(
                     // «ВЗГЛЯНИ-КА НА ЭТОТ МЕЧ!»).
                     return row.contains('-') &&
                         CYRILLIC_WORD_RE.containsMatchIn(row.replace("-", ""))
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 }
                 "en" -> {
                     val lat = row.count { it in 'a'..'z' || it in 'A'..'Z' }
                     if (lat.toFloat() / letters < 0.6f) return false
-<<<<<<< HEAD
-                    return Regex("[A-Za-z]{3,}").containsMatchIn(row)
-=======
                     return LATIN_WORD_RE.containsMatchIn(row)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 }
                 else -> return true
             }
@@ -4605,9 +4123,6 @@ class AutoReadEngine(
             // «← том 3 глава 5 →». Это шапка/футер манга-ридера, а не реплика;
             // раньше авточтение постоянно зачитывало эти подписи и стрелки.
             if (isSiteChromeNoise(text)) return false
-<<<<<<< HEAD
-            val words = text.split(Regex("\\s+"))
-=======
             // v1.9.138: мусор SFX-кадра, который GLens отдаёт как «реплику»:
             //  • одиночная заглавная кириллическая СОГЛАСНАЯ («В», «Б») —
             //    почти всегда виньетка на арте, а не реплика;
@@ -4632,7 +4147,7 @@ class AutoReadEngine(
             // удвоенные слова («мама», «папа») и смех («хаха») вынесены в
             // [REDUPLICATED_WORDS] — их терять нельзя.
             if (words.isNotEmpty() && isEchoBabbleText(words)) return false
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             return words.any { w -> w.count { it.isLetter() } >= 3 } ||
                 // Короткие настоящие русские слова (я, и, но, не…) — читаем.
                 (language == "ru" && words.any { isShortRussianWord(it.filter(Char::isLetter)) }) ||
@@ -4641,8 +4156,6 @@ class AutoReadEngine(
         }
 
         /**
-<<<<<<< HEAD
-=======
          * Мусор OCR со страницы без текста: строка из повторов одного слога
          * («БУБУ», «БЫБЫ», «ТУТУТУ») либо из таких слогов-обрывков, собранных
          * в строку («БУ БУБУ БЫБЫ»).
@@ -4700,7 +4213,7 @@ class AutoReadEngine(
         )
 
         /**
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
          * Служебная навигация манга-ридера, которую авточтение не должно
          * зачитывать: подписи «том N глава N», счётчик страниц «N/M» и
          * строки, состоящие только из стрелок/декора (нет букв).
@@ -4714,20 +4227,6 @@ class AutoReadEngine(
                 // «— том 1 глава 1 →», «том 1, глава 2», «← том 3 глава 5 →».
                 // Отсекаем только если после удаления подписи остаётся мало
                 // настоящих букв (это навигация, а не реплика с упоминанием тома).
-<<<<<<< HEAD
-                val chapter = Regex("том(а|у|е)?[\\s\\d.,-]*глава[\\s\\d.,-]*", RegexOption.IGNORE_CASE)
-                if (chapter.containsMatchIn(t)) {
-                    val left = chapter.replace(t, "")
-                        .replace(Regex("[→←⇐⇒↔—–-|/\\\\\\d\\s,.\\(\\)«»\\[\\]\\\"']"), "")
-                    if (left.count { it.isLetter() } <= 3) return true
-                }
-                // Оглавление ридера «Том 1», «Т. 12», «Том 2, глава 3» без реплики.
-                if (Regex("^том(а|у|е)?\\.?\\s*\\d+", RegexOption.IGNORE_CASE).containsMatchIn(t) &&
-                    t.count { it.isDigit() } >= 1 && letters <= 6) return true
-                // Счётчик страниц «N / M», «2/89», «стр. 2 из 89».
-                if (Regex("^\\s*[\\d.,\\s]+\\s*(/|из|оф)\\s*[\\d.,\\s]+\\s*$", RegexOption.IGNORE_CASE)
-                        .containsMatchIn(t)) {
-=======
                 if (CHAPTER_HEADER_RE.containsMatchIn(t)) {
                     val left = CHAPTER_HEADER_RE.replace(t, "")
                         .replace(CHROME_CHARS_RE, "")
@@ -4738,7 +4237,7 @@ class AutoReadEngine(
                         t.count { it.isDigit() } >= 1 && letters <= 6) return true
                 // Счётчик страниц «N / M», «2/89», «стр. 2 из 89».
                 if (PAGE_COUNTER_RE.containsMatchIn(t)) {
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     return true
                 }
             }

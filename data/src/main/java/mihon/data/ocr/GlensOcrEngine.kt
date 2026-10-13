@@ -495,8 +495,6 @@ internal class GlensOcrEngine(
     }
 
     private fun isSameBubble(a: ParsedLine, b: ParsedLine, isVertical: Boolean): Boolean {
-<<<<<<< HEAD
-=======
         // Не склеиваем строки с сильно разным размером глифа: гигантский SFX
         // («ガブッ» во весь кадр) иначе становился «мостом», стягивающим в
         // один регион соседние реплики («ВЛАДЕЛЕЦ МАГАЗИНА…» + «У-у…» + сам
@@ -507,7 +505,7 @@ internal class GlensOcrEngine(
                 maxOf(a.characterSize, b.characterSize)
             if (sizeRatio < MERGE_MIN_CHAR_SIZE_RATIO) return false
         }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         return if (isVertical) {
             val vOverlap = verticalOverlapRatio(a, b)
             val hGap = kotlin.math.abs(a.centerX - b.centerX) -
@@ -784,15 +782,13 @@ internal class GlensOcrEngine(
         private const val DEFAULT_CLIENT_REGION = "Asia/Tokyo"
         private const val MAX_IMAGE_DIMENSION = 1200
 
-<<<<<<< HEAD
-=======
         /**
          * Минимальное отношение размеров глифов двух строк, чтобы их можно было
          * считать строками одного облачка (см. [isSameBubble]).
          */
         private const val MERGE_MIN_CHAR_SIZE_RATIO = 0.45f
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         private const val CONNECT_TIMEOUT_MS = 10_000
         private const val READ_TIMEOUT_MS = 60_000
 

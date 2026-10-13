@@ -1,9 +1,7 @@
 package eu.kanade.presentation.reader.appbars
 
-<<<<<<< HEAD
-=======
 import androidx.compose.foundation.layout.padding
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Bookmark
@@ -14,13 +12,10 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-<<<<<<< HEAD
-import androidx.compose.material3.RadioButton
-=======
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -204,12 +199,10 @@ private fun OcrModelQuickSwitcher() {
                 model == OcrModel.OPENROUTER || model == OcrModel.GOOGLE -> "онлайн • нужен API-ключ"
                 else -> "онлайн • без ключа"
             }
-<<<<<<< HEAD
-=======
             // v1.9.134: замер кадра в мс — прямо у движка, чтобы было видно,
             // «кто медлит» (GLens быстрый, но вручную никто не мерил).
             val lastMsRaw = prefs.autoReadLastMs(model).changes().collectAsState(initial = prefs.autoReadLastMs(model).get()).value
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             DropdownMenuItem(
                 text = {
                     androidx.compose.foundation.layout.Column {
@@ -221,8 +214,6 @@ private fun OcrModelQuickSwitcher() {
                                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-<<<<<<< HEAD
-=======
                         if (lastMsRaw.isNotBlank()) {
                             Text(
                                 "⏱ последний кадр: $lastMsRaw мс",
@@ -230,7 +221,7 @@ private fun OcrModelQuickSwitcher() {
                                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                     }
                 },
                 leadingIcon = {
@@ -262,8 +253,6 @@ private fun OcrModelQuickSwitcher() {
                 },
             )
         }
-<<<<<<< HEAD
-=======
         // v1.9.134: режим АВТОЧТЕНИЯ СОХРАНЯЕТСЯ ОТДЕЛЬНО ДЛЯ КАЖДОЙ МОДЕЛИ.
         // GLens быстрый, но при росте области захвата перевыпускал реплики
         // целиком — «page»/«bubble» читают с отсечением прочитанных слов
@@ -436,6 +425,6 @@ private fun OcrModelQuickSwitcher() {
             trailingIcon = { Switch(checked = bookOn, onCheckedChange = null) },
             onClick = { bookPref.set(!bookOn) },
         )
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     }
 }

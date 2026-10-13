@@ -121,10 +121,8 @@ fun ReaderAiChatOverlay(
     var loading by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
     var showClearConfirm by remember { mutableStateOf(false) }
-<<<<<<< HEAD
-=======
     var showConsole by remember { mutableStateOf(false) }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     var attachedName by remember { mutableStateOf<String?>(null) }
     var attachedBytes by remember { mutableStateOf<ByteArray?>(null) }
     var activity by remember { mutableStateOf("") }
@@ -293,8 +291,6 @@ fun ReaderAiChatOverlay(
         runningJob?.cancel()
         runningJob = null
         loading = false
-<<<<<<< HEAD
-=======
         // «Сюжет» шёл своим запросом и раньше дожидался его сам: остановка
         // агента и чтения его не трогала, и пересказ дописывался на живого
         // читателя уже после «Стоп».
@@ -308,7 +304,7 @@ fun ReaderAiChatOverlay(
             detail = "агент: ${if (runningJob != null) "был в работе" else "не работал"}" +
                 (if (plotStopped) " · сюжет: запрос отменён" else ""),
         )
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         onStopRequested()
         showToast("Остановлено")
     }
@@ -452,8 +448,6 @@ fun ReaderAiChatOverlay(
                         label = { Text("Файлы") },
                         modifier = Modifier.height(30.dp),
                     )
-<<<<<<< HEAD
-=======
                     // Сюжет: пересказ того, что уже прозвучало при чтении.
                     // Отдельная вкладка, потому что это не диалог с агентом, а
                     // его наблюдение: текст пишется сам по мере чтения.
@@ -481,7 +475,7 @@ fun ReaderAiChatOverlay(
                 }
                 if (tab == 2) {
                     ReadingPlotPanel(mangaId = mangaId, showToast = showToast)
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
                 }
                 if (tab == 1) {
                     WorkspaceFilesPanel(

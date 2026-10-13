@@ -77,22 +77,14 @@ object OcrScreenshotBuffer {
     var version: Int = 0
         private set
 
-<<<<<<< HEAD
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-=======
     // Одно поток-исполнитель: add() из авточтения и clear()/clearChapter()
     // из UI иначе писали бы один JSON параллельно и перемешивали байты.
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     private var persistFile: File? = null
     private var imagesDir: File? = null
     private var initialized = false
 
-<<<<<<< HEAD
-    fun init(context: Context) {
-        if (initialized) return
-        initialized = true
-=======
     /** Контекст приложения: удаление копий из галереи идёт через ContentResolver. */
     private var appContext: Context? = null
 
@@ -100,7 +92,7 @@ object OcrScreenshotBuffer {
         if (initialized) return
         initialized = true
         appContext = context.applicationContext
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         persistFile = File(context.filesDir, FILE_NAME)
         imagesDir = File(context.filesDir, IMAGE_DIR_NAME).apply { mkdirs() }
         load()
@@ -239,9 +231,6 @@ object OcrScreenshotBuffer {
             logcat(LogPriority.WARN, e) { "OcrScreenshotBuffer: read image failed for $path" }
             return null
         }
-<<<<<<< HEAD
-        return publishToGallery(context, bytes, galleryDisplayName(entry.pageIndex, entry.timestamp))
-=======
         val uri = publishToGallery(context, bytes, galleryDisplayName(entry.pageIndex, entry.timestamp))
         // Запомнили опубликованную копию в ЗАПИСИ: иначе удаление скриншота
         // оставляло бы её в галерее висеть («удалил только в приложении»).
@@ -289,7 +278,7 @@ object OcrScreenshotBuffer {
         if (_lastEntry.value?.id in ids) _lastEntry.value = null
         version++
         persist()
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     }
 
     /**
@@ -315,11 +304,8 @@ object OcrScreenshotBuffer {
 
     /** Очистить буфер. */
     fun clear() {
-<<<<<<< HEAD
-        _entries.value.forEach { deleteImageFile(it) }
-=======
         _entries.value.forEach { deleteEverywhere(it) }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         _entries.value = emptyList()
         _lastEntry.value = null
         version++
@@ -329,11 +315,8 @@ object OcrScreenshotBuffer {
     /** Очистить скриншоты одной главы. */
     fun clearChapter(chapterId: Long) {
         val (keep, remove) = _entries.value.partition { it.chapterId != chapterId }
-<<<<<<< HEAD
-        remove.forEach { deleteImageFile(it) }
-=======
         remove.forEach { deleteEverywhere(it) }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
         _entries.value = keep
         if (_lastEntry.value?.chapterId == chapterId) _lastEntry.value = null
         version++
@@ -450,8 +433,6 @@ object OcrScreenshotBuffer {
         }
     }
 
-<<<<<<< HEAD
-=======
     /**
      * Полное удаление записи: внутренний файл + копия в галерее.
      *
@@ -475,15 +456,12 @@ object OcrScreenshotBuffer {
         }
     }
 
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
     private fun persist() {
         val file = persistFile ?: return
         val entries = _entries.value
         scope.launch {
             try {
-<<<<<<< HEAD
-                file.writeText(json.encodeToString(entries))
-=======
                 // Временный файл + rename: обрыв процесса не оставит
                 // обрезанный JSON, а единственный поток-исполнитель не даст
                 // двум записям перемешаться.
@@ -494,7 +472,7 @@ object OcrScreenshotBuffer {
                     file.writeText(encoded)
                     tmp.delete()
                 }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
             } catch (e: Exception) {
                 logcat(LogPriority.WARN, e) { "OcrScreenshotBuffer: persist failed" }
             }

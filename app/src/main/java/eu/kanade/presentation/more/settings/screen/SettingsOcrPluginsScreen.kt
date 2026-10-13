@@ -123,11 +123,6 @@ object SettingsOcrPluginsScreen : SearchableSettings {
     }
 }
 
-<<<<<<< HEAD
-@Composable
-internal fun rememberNetworkState(context: Context): Boolean =
-    remember(context) { isNetworkAvailable(context) }
-=======
 /**
  * Есть ли сеть на момент показа экрана.
  *
@@ -139,4 +134,4 @@ internal fun rememberNetworkState(context: Context): Boolean =
 @Composable
 internal fun rememberNetworkState(context: Context, refreshKey: Any? = Unit): Boolean =
     remember(context, refreshKey) { isNetworkAvailable(context) }
->>>>>>> 9b00d60 (fix(ocr): склейка коротких слов, словарь 56k словоформ, порядок реплик по панелям)
+
