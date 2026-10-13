@@ -2,6 +2,8 @@ package mihon.data.ocr
 
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.collections.shouldContain
+import io.kotest.matchers.collections.shouldContain
+import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import mihon.domain.ocr.model.OcrModel
 import mihon.domain.ocr.service.ScanRegion
@@ -134,6 +136,7 @@ class OcrPluginsTest {
     fun `legacy engine selections migrate to the cyrillic plugin`() {
         OcrPlugins.byModel(OcrModel.LEGACY) shouldBe OcrPlugins.CYRILLIC
         OcrPlugins.byModel(OcrModel.FAST) shouldBe OcrPlugins.CYRILLIC
+        OcrPlugins.byModel(OcrModel.TESSERACT) shouldBe OcrPlugins.CYRILLIC
         OcrPlugins.LEGACY_ALIASES.map { it.second }.toSet() shouldContainExactly setOf(OcrPlugins.CYRILLIC.id)
     }
 
@@ -169,6 +172,9 @@ class OcrPluginsTest {
             litertAvailable = true,
         )
         // Офлайн-движки с выполненными требованиями: PP-OCR (пак + LiteRT),
+        // Офлайн-движки с выполненными требованиями: PP-OCR (пак + LiteRT)
+        // и ML Kit (вкомпилирован, требований нет).
+        offlineOnly shouldContainExactly listOf(OcrPlugins.CYRILLIC, OcrPlugins.MLKIT)
         // Tesseract (пакет языковых данных) и ML Kit (вкомпилирован, без
         // требований).
         offlineOnly shouldContainExactly listOf(
@@ -222,6 +228,7 @@ class OcrPluginsTest {
         // Cyrillic исключён, остаётся ML Kit.
         OcrPlugins.fallbackChain(primary, "что-то-новое", networkAvailable = false)
             .map { it.id } shouldContainExactly listOf("tesseract", "mlkit")
+            .map { it.id } shouldContainExactly listOf("cyrillic_ppocr", "tesseract", "mlkit")
     }
 
     @Test
@@ -262,6 +269,8 @@ class OcrPluginsTest {
     fun `online flags match the fallback pools`() {
         OcrPlugins.ALL.filter { it.online }.map { it.id } shouldContainExactly
             listOf("google_lens", "zen_free", "google_ai", "openrouter", "owocr")
+        OcrPlugins.ALL.filterNot { it.online }.map { it.id } shouldContainExactly
+            listOf("cyrillic_ppocr", "mlkit")
         // Офлайн-пул: PP-OCR, Tesseract (второй русский движок) и ML Kit.
         OcrPlugins.ALL.filterNot { it.online }.map { it.id } shouldContainExactly
             listOf("cyrillic_ppocr", "tesseract", "mlkit")
