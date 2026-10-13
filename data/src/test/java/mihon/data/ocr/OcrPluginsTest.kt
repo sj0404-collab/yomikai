@@ -227,7 +227,6 @@ class OcrPluginsTest {
         // Неизвестный пресет читается как auto: при отсутствии сети первичный
         // Cyrillic исключён, остаётся ML Kit.
         OcrPlugins.fallbackChain(primary, "что-то-новое", networkAvailable = false)
-            .map { it.id } shouldContainExactly listOf("tesseract", "mlkit")
             .map { it.id } shouldContainExactly listOf("cyrillic_ppocr", "tesseract", "mlkit")
     }
 

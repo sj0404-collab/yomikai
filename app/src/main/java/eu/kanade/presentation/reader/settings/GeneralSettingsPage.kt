@@ -10,7 +10,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
@@ -26,8 +25,6 @@ import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.CheckboxItem
 import tachiyomi.presentation.core.components.SettingsChipRow
 import tachiyomi.presentation.core.components.SliderItem
-import tachiyomi.presentation.core.components.CollapsibleBox
-import tachiyomi.presentation.core.components.ListGroupHeader
 import tachiyomi.presentation.core.i18n.pluralStringResource
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
@@ -189,68 +186,47 @@ internal fun ColumnScope.GeneralPage(screenModel: ReaderSettingsScreenModel) {
     val ocrStress by ocrPrefs.ruStress().collectAsState()
     val ocrShape by ocrPrefs.scanShape().collectAsState()
 
-    CollapsibleBox(
-        title = stringResource(MR.strings.pref_reader_ocr_voice_section),
-        defaultExpandState = false,
-    ) {
-        PresetChipRow(
-            title = stringResource(MR.strings.pref_voice_gender),
-            options = mapOf(
-                "auto" to stringResource(MR.strings.voice_gender_auto),
-                "male" to stringResource(MR.strings.voice_gender_male),
-                "female" to stringResource(MR.strings.voice_gender_female),
-                "neutral" to stringResource(MR.strings.voice_gender_neutral),
-            ),
-            current = voiceGender,
-            onPick = { ocrPrefs.voicePresetGender().set(it) },
-        )
-        PresetChipRow(
-            title = stringResource(MR.strings.pref_voice_age),
-            options = mapOf(
-                "infant" to stringResource(MR.strings.voice_age_infant),
-                "child" to stringResource(MR.strings.voice_age_child),
-                "teen" to stringResource(MR.strings.voice_age_teen),
-                "adult" to stringResource(MR.strings.voice_age_adult),
-                "elderly" to stringResource(MR.strings.voice_age_elderly),
-            ),
-            current = voiceAge,
-            onPick = { ocrPrefs.voicePresetAge().set(it) },
-        )
-        PresetChipRow(
-            title = stringResource(MR.strings.pref_ocr_content_preset),
-            options = mihon.data.ocr.OcrContentType.entries.associate { it.id to it.title },
-            current = ocrContent,
-            onPick = { ocrPrefs.contentType().set(it) },
-        )
-        PresetChipRow(
-            title = stringResource(MR.strings.pref_ocr_highlight_style),
-            options = mapOf(
-                "box" to stringResource(MR.strings.ocr_highlight_box),
-                "underline" to stringResource(MR.strings.ocr_highlight_underline),
-                "both" to stringResource(MR.strings.ocr_highlight_both),
-                "bubble" to stringResource(MR.strings.ocr_highlight_bubble),
-            ),
-            current = ocrHighlight,
-            onPick = { ocrPrefs.highlightStyle().set(it) },
-        )
-        PresetChipRow(
-            title = stringResource(MR.strings.pref_ocr_ru_stress),
-            options = mapOf(
-                "on" to stringResource(MR.strings.pref_state_on),
-                "off" to stringResource(MR.strings.pref_state_off),
-            ),
-            current = ocrStress,
-            onPick = { ocrPrefs.ruStress().set(it) },
-        )
-        PresetChipRow(
-            title = stringResource(MR.strings.pref_ocr_scan_shape),
-            options = mihon.data.ocr.ScanShape.entries.associate { it.id to "${it.icon} ${it.title}" },
-            isScanShape = true,
-            scanShapes = mihon.data.ocr.ScanShape.entries.associate { it.id to it },
-            current = ocrShape,
-            onPick = { ocrPrefs.scanShape().set(it) },
-        )
-    }
+    Text(
+        text = "Распознавание и голос",
+        style = MaterialTheme.typography.titleSmall,
+        modifier = Modifier.padding(start = 16.dp, top = 12.dp, end = 16.dp),
+    )
+    PresetChipRow(
+        title = "Пол голоса",
+        options = mapOf("auto" to "Авто", "male" to "Мужской", "female" to "Женский", "neutral" to "Средний"),
+        current = voiceGender,
+        onPick = { ocrPrefs.voicePresetGender().set(it) },
+    )
+    PresetChipRow(
+        title = "Возраст голоса",
+        options = mapOf("infant" to "Младенец", "child" to "Ребёнок", "teen" to "Подросток", "adult" to "Взрослый", "elderly" to "Пожилой"),
+        current = voiceAge,
+        onPick = { ocrPrefs.voicePresetAge().set(it) },
+    )
+    PresetChipRow(
+        title = "Пресет типа контента",
+        options = mihon.data.ocr.OcrContentType.entries.associate { it.id to it.title },
+        current = ocrContent,
+        onPick = { ocrPrefs.contentType().set(it) },
+    )
+    PresetChipRow(
+        title = "Подсветка читаемого",
+        options = mapOf("box" to "Рамка", "underline" to "Подчёркивание", "both" to "Рамка+линия", "bubble" to "Мягкая"),
+        current = ocrHighlight,
+        onPick = { ocrPrefs.highlightStyle().set(it) },
+    )
+    PresetChipRow(
+        title = "Ударения (RHVoice)",
+        options = mapOf("on" to "Включены", "off" to "Выключены"),
+        current = ocrStress,
+        onPick = { ocrPrefs.ruStress().set(it) },
+    )
+    PresetChipRow(
+        title = "Форма рамки сканирования",
+        options = mihon.data.ocr.ScanShape.entries.associate { it.id to (it.icon + " " + it.title) },
+        current = ocrShape,
+        onPick = { ocrPrefs.scanShape().set(it) },
+    )
 }
 
 /** Подпись + горизонтальная лента чипов (русские подписи, как в SAO-панели). */
@@ -260,34 +236,23 @@ private fun ColumnScope.PresetChipRow(
     options: Map<String, String>,
     current: String,
     onPick: (String) -> Unit,
-    isScanShape: Boolean = false,
-    scanShapes: Map<String, mihon.data.ocr.ScanShape> = emptyMap(),
 ) {
-    ListGroupHeader(text = title)
+    Text(
+        text = title,
+        style = MaterialTheme.typography.labelLarge,
+        modifier = Modifier.padding(start = 16.dp, top = 8.dp, end = 16.dp),
+    )
     Row(
         modifier = Modifier
             .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, bottom = 8.dp),
+            .padding(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         options.forEach { (id, label) ->
             FilterChip(
                 selected = current == id,
                 onClick = { onPick(id) },
-                label = {
-                    if (isScanShape && scanShapes.containsKey(id)) {
-                        val shape = scanShapes[id]!!
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            Text(shape.icon)
-                            Text(shape.title)
-                        }
-                    } else {
-                        Text(label)
-                    }
-                },
+                label = { Text(label) },
             )
         }
     }
