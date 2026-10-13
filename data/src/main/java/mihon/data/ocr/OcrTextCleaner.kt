@@ -456,10 +456,16 @@ object OcrTextCleaner {
     fun knownWord(word: String): Boolean {
         if (word.isEmpty()) return false
         val up = word.uppercase()
-        if (up in RuWordList.upper) return true
-        val user = OcrVocabulary.isUserWord(up)
-        if (user) OcrTextCleanerStats.userDictHits++
-        return user
+        // Пользовательский словарь проверяется ПЕРВЫМ. Раньше он шёл вторым, и
+        // слово, добавленное пользователем, но уже есть во встроенном
+        // словаре, не попадало в userDictHits — индикатор сканирования молчал.
+        // Приоритет пользовательского словаря отражает его смысл: это слова,
+        // которые он задал сам и которым хочет доверять.
+        if (OcrVocabulary.isUserWord(up)) {
+            OcrTextCleanerStats.userDictHits++
+            return true
+        }
+        return up in RuWordList.upper
     }
 
     fun userDictionaryCoverage(text: String): Float {

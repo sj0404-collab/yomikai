@@ -3,6 +3,7 @@ package mihon.data.ocr
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.collections.shouldContain
+import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import mihon.domain.ocr.model.OcrModel
@@ -173,7 +174,7 @@ class OcrPluginsTest {
             litertAvailable = true,
         )
         // Офлайн-движки с выполненными требованиями: PP-OCR (пак + LiteRT),
-        // Tesseract (пакет языковых данных) и ML Kit (вкомпилирован, требований нет).
+        // Tesseract (пакет языковых данных) и ML Kit (вкомпилирован, без требований).
         offlineOnly shouldContainExactly listOf(
             OcrPlugins.CYRILLIC,
             OcrPlugins.TESSERACT,

@@ -113,7 +113,10 @@ class OcrTextCleanerTest {
 
     @Test
     fun `unknown cyrillic run is never split or rewritten`() {
-        OcrTextCleaner.restoreKnownCaptionWords("НЕИЗВЕСТНОЕСЛОВО") shouldBe "НЕИЗВЕСТНОЕСЛОВО"
+        // Вход должен быть незнакомым СЛОВОМ: «НЕИЗВЕСТНОЕСЛОВО» таким больше
+        // не является — и «НЕИЗВЕСТНОЕ», и «СЛОВО» есть в лексиконе, поэтому
+        // прогор законно делится. Здесь проверяется настоящая неразбиваемость.
+        OcrTextCleaner.restoreKnownCaptionWords("ХЖБВРКМТ") shouldBe "ХЖБВРКМТ"
     }
 
     @Test

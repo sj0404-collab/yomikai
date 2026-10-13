@@ -22,6 +22,16 @@ plugins {
 }
 
 val buildLogic: IncludedBuild = gradle.includedBuild("build-logic")
+
+// Тесты строят RuWordList.upper/lower — два множества примерно по 3 млн строк,
+// это ~460 МБ. Стандартных 512 МБ у Gradle не хватало: тестовый процесс
+// падал с «Java heap space» ещё до выполнения первого теста.
+subprojects {
+    tasks.withType<Test>().configureEach {
+        maxHeapSize = "3g"
+    }
+}
+
 tasks {
     listOf("clean", "spotlessApply", "spotlessCheck").forEach { task ->
         named(task) {

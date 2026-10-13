@@ -2,9 +2,11 @@
 """Генератор частотного словаря словоформ RU для OCR (RuWordList).
 
 Источники:
-  * OpenSubtitles через hermitdave/FrequencyWords (тот же источник, что и у
-    словаря Latin_to_Cyrillic в dictionaries/): словоформы с частотой >= 200
-    вхождений в корпусе;
+  * морфологический лексикон OpenCorpora (по словоформе в строке). Раньше
+    брались частоты из hermitdave/FrequencyWords, но в корпусе субтитров
+    много слипшихся токенов («КАКЖЕ», «СЕГОДНЯЯЯНЕ»): они попадали в
+    словарь, прогор «КАКЖЕ» считался целым словом, и разбиение не работало;
+  * ё/е-варианты каждой словоформы;
   * ё/е-варианты каждой отобранной формы (OCR читает ё непоследовательно);
   * формы, уже лежавшие в репозитории (литературная лексика классических
     текстов, которой в субтитрах нет);
@@ -16,16 +18,17 @@
 разбиты по файлам, чтобы не упереться в лимит размера метода JVM).
 
 Использование:
-    python3 gen_ruwordlist.py /path/to/ru_full.txt /path/to/repo
+    python3 gen_ruwordlist.py /path/to/ru_lexicon.txt /path/to/repo
 """
 import glob
 import os
 import re
 import sys
 
-FREQ_THRESHOLD = 200
+FREQ_THRESHOLD = 20
 PART_SIZE = 5000
 REPO_OCR_DIR = "data/src/main/java/mihon/data/ocr"
+RULIST_KT = "RuWordList.kt"
 
 # Однобуквенные служебные слова: DP-разбиение разрешает их как отдельные
 # сегменты («ЗА ЭТИ ГОДЫ Я»), поэтому они обязаны быть в словаре.
@@ -83,15 +86,37 @@ def repo_forms(repo):
     return forms
 
 
-def build(frequency_path, repo):
-    rows = load_frequency(frequency_path)
-    selected = {w for w, c in rows if c >= FREQ_THRESHOLD and is_wordform(w)}
+def load_lexicon(path):
+    """Морфологический лексикон (OpenCorpora): по словоформе в строке.
+
+    Именно он, а не частотник, решает, что считать словом: в корпусе
+    субтитров полно слипшихся токенов («КАКЖЕ», «СЕГОДНЯЯНЕ»), и в словарь
+    они попадали вместе с настоящими словами. Из-за этого прогор «КАКЖЕ»
+    считался целым словом, и разбиение переставало работать.
+    """
     forms = set()
-    for word in selected:
+    with open(path, encoding="utf-8") as handle:
+        for line in handle:
+            word = line.strip()
+            if is_wordform(word):
+                forms.add(word)
+    return forms
+
+
+def build(lexicon_path, repo):
+    lexicon = load_lexicon(lexicon_path)
+    forms = set()
+    for word in lexicon:
         forms |= with_yo_variants(word)
-    forms |= repo_forms(repo)
-    forms |= {w.upper() for w in SEEDS if w}
-    forms |= set(SINGLE_LETTER)
+    forms |= {w.lower().replace("ё", "е") for w in SEEDS if w}
+    forms |= {w.lower() for w in SINGLE_LETTER}
+    # Прежний словарь больше не подтягивается: OpenCorpora и есть литературная
+    # лексика, а перенос старых файлов делал сборку неидемпотентной — слипшийся
+    # токен, однажды попавший в словарь, воспроизводился при каждой пересборке,
+    # и «КАКЖЕ» снова и снова считался целым словом.
+    # Всё хранится в нижнем регистре: [RuWordList.upper] строит прописные формы
+    # в рантайме. Хранение обоих регистров удваивало и словарь, и память.
+    forms = {f.replace("ё", "е") for f in forms if f}
     return sorted(forms)
 
 
@@ -108,8 +133,9 @@ def write_parts(repo, forms):
             handle.write("package mihon.data.ocr\n\n")
             handle.write("/**\n")
             handle.write(" * Generated file — do not edit manually.\n")
-            handle.write(" * Частотные словоформы RU (OpenSubtitles/FrequencyWords, частота >= "
-                         f"{FREQ_THRESHOLD}), ё/е-варианты, сиды регрессий.\n")
+            handle.write(" * Словоформы RU из морфологического лексикона OpenCorpora,\n")
+            handle.write(" * ё/е-варианты, литературная лексика прежнего словаря,\n")
+            handle.write(" * сиды регрессий и однобуквенные служебные слова.\n")
             handle.write(" * Пересборка: scripts/gen_ruwordlist.py\n")
             handle.write(" */\n")
             handle.write(f"internal fun ruWordListPart{index:03d}(): Array<String> = arrayOf(\n")
@@ -120,10 +146,31 @@ def write_parts(repo, forms):
     return index
 
 
+def sync_parts_list(repo, parts_count):
+    """Rewrite the parts array inside RuWordList.kt.
+
+    Without this the object keeps referring to the old part count and the
+    freshly generated parts are never read — a silent, total loss of the
+    dictionary rather than a compile error.
+    """
+    path = os.path.join(repo, REPO_OCR_DIR, RULIST_KT)
+    text = open(path, encoding="utf-8").read()
+    block = "\n".join(f"        ruWordListPart{i:03d}()," for i in range(parts_count))
+    pattern = re.compile(
+        r"(private val parts: Array<Array<String>> = arrayOf\(\n).*?(\n    \))",
+        re.S,
+    )
+    if not pattern.search(text):
+        raise SystemExit(f"не найден блок parts в {path} — обнови генератор вручную")
+    text = pattern.sub(lambda m: m.group(1) + block + m.group(2), text)
+    open(path, "w", encoding="utf-8").write(text)
+
+
 def main():
-    frequency_path, repo = sys.argv[1], sys.argv[2]
-    forms = build(frequency_path, repo)
+    lexicon_path, repo = sys.argv[1], sys.argv[2]
+    forms = build(lexicon_path, repo)
     parts = write_parts(repo, forms)
+    sync_parts_list(repo, parts)
     print(f"форм: {len(forms)}, файлов: {parts}")
 
 
