@@ -1133,7 +1133,22 @@ internal class CyrillicOcrEngine(
                             .coerceIn(minOf(left + 8, image.width), image.width)
                         val bottom = ((y2 + 2) * sy).toInt()
                             .coerceIn(minOf(top + 8, image.height), image.height)
-                        boxes += Rect(left, top, right, bottom)
+                        // Узоры, скругления и декоративные рамки дают боксы с
+                        // очень низкой плотностью чернил — меньше 3% площади.
+                        // Реальный текст всегда занимает больше.
+                        val boxW = right - left
+                        val boxH = bottom - top
+                        if (boxW >= 6 && boxH >= 6) {
+                            var inkCount = 0
+                            for (yy in top until bottom) {
+                                for (xx in left until right) {
+                                    if (gray[yy * w + xx] < thr) inkCount++
+                                }
+                            }
+                            if (inkCount.toFloat() / (boxW * boxH) >= 0.03f) {
+                                boxes += Rect(left, top, right, bottom)
+                            }
+                        }
                     }
                     x = x2 + 1
                 }

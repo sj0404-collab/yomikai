@@ -251,6 +251,42 @@ object OcrTextCleaner {
         return if (kept.isEmpty()) "" else kept.joinToString(" ")
     }
 
+    /**
+     * Распознанный текст — звуковой эффект («БАХ», «ШАСТ», …), а не речь.
+     * Такие куски не читаются голосом: они уходят в плеер скрытным звуком,
+     * и «бах» больше не произносится «бэ-а-ха».
+     */
+    private val SOUND_EFFECT_LEXICON = setOf(
+        "БАХ", "БУХ", "БАБАХ", "БАХБАХ", "БУМ", "БОМ", "ХЛОП", "ХРЯСЬ",
+        "ЧМЮК", "ЧМЯК", "ЧМОК", "ТСС", "ТССТСС",
+        "ВЖУХ", "ВЖИХ", "ВЖЖ", "ЖЖЖ", "СВИСТ", "ФЬЮ", "ФИУ", "ШШШ", "ШШ",
+        "ШШШШ", "ШАСТ", "ШУХ", "ХРЯП", "ХРЯС", "ПЛЮХ", "ПЛЮС", "БАМ",
+        "БАМБАМ", "КРАШ", "КРАК", "КЛАЦ", "ХРУСТ", "СКВИРК", "КВАРК",
+        "АХ", "ОХ", "ОЙ", "ОЙОЙ", "ХАХА", "ХИХИ", "АХА",
+        "ААА", "АААА", "ААААА", "ООО", "ЭЭЭ", "УУУ", "ИИИ",
+        "БРРР", "БРРРР", "БЗЗ", "БЗЗЗ", "РРР", "ТРРР",
+        "ГРРР", "ГРР", "МРРР", "ЖЖЖЖ", "ЖРЖР", "ЖРРР",
+    )
+
+    fun isSoundEffect(rawText: String): Boolean {
+        val candidates = rawText.trim()
+            .split(WHITESPACE_RUN)
+            .map { it.trim().trim('!', '?', '…', '.', ':', ',', ';', '-') }
+            .filter { it.isNotBlank() }
+        if (candidates.size != 1) return false
+        val canon = candidates[0].uppercase().replace("\s+".toRegex(), "")
+        if (canon in SOUND_EFFECT_LEXICON) return true
+        if (canon.length < 2) return false
+        // «АААА», «ШШШ», «БРРРР» — одна буква повторяется 4+ раз.
+        val groups = canon.groupingBy { it }.eachCount()
+        if (groups.values.any { it >= 4 }) return true
+        if (groups.size <= 2 && canon.length >= 4) {
+            val maxRep = groups.values.maxOrNull() ?: 0
+            if (maxRep >= canon.length * 2 / 3) return true
+        }
+        return false
+    }
+
     fun isAcceptableCyrillicOcrText(text: String): Boolean {
         val words = text.split(WHITESPACE_RUN).filter(String::isNotBlank)
         if (words.isEmpty()) return false
@@ -561,6 +597,11 @@ return restored
         // служебный прогон на отбрасываемый токен.
         if (OcrVocabulary.isKnownWord(candidate)) return false
         if (candidate.count(Char::isLetter) > 4) return false
+        // Имена собственные («Том», «Алекс») и заголовки начинаются
+        // с заглавной. Такой токен срезать нельзя: мы бы удаляли
+        // настоящее слово, к тому же на границе реплики он бывает
+        // двойным (английское имя + перевод).
+        if (candidate.isNotEmpty() && candidate[0].isUpperCase()) return false
 
         val without = tokens.toMutableList().apply { removeAt(index) }.joinToString(" ")
         if (without.isBlank()) return false

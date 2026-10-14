@@ -1419,6 +1419,9 @@ class AutoReadEngine(
                             stripSpokenPrefix(t) ?: t
                         }
                         .filter { it.isNotBlank() }
+                        // Звуковые эффекты оборачиваем в звёздочки: SpeechMarkup
+                        // превратит «*БАХ*» в звуковую доставку, а не в речь.
+                        .map { if (OcrTextCleaner.isSoundEffect(it)) "*$it*" else it }
                         // Реплики склеиваем переводом строки, а не «. »: точка ставилась
                     // насильно и путала интонацию, а заодно делала вид, что
                     // облачка — одна длинная фраза. Теперь каждая реплика
@@ -1599,8 +1602,15 @@ class AutoReadEngine(
                     // [SpeechMarkup.strip]. Само слово имени при этом остаётся
                     // в тексте реплики, поэтому имя звучит ровно один раз —
                     // как на кадре, а не «метка + слово».
+                    // Звуковой эффект целиком — оборачиваем в звёздочки, чтобы
+                    // SpeechMarkup отправил его в звуковую доставку, а не в TTS.
+                    val cleanForSpeech = if (OcrTextCleaner.isSoundEffect(speakTextRaw)) {
+                        "*${SpeechMarkup.strip(speakTextRaw)}*"
+                    } else {
+                        SpeechMarkup.strip(speakTextRaw)
+                    }
                     val spokenText = SpeechMarkup.withSpeakerName(
-                        SpeechMarkup.strip(speakTextRaw),
+                        cleanForSpeech,
                         speakerName,
                     )
                     // Голос ЯЗЫКА ПЕРЕВОДА (напр. японский дублёр для

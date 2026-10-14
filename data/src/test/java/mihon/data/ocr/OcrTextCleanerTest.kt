@@ -301,6 +301,38 @@ class OcrTextCleanerTest {
     }
 
     @Test
+    fun `sound effects are detected`() {
+        OcrTextCleaner.isSoundEffect("БАХ") shouldBe true
+        OcrTextCleaner.isSoundEffect("бах!") shouldBe true
+        OcrTextCleaner.isSoundEffect("БУМ") shouldBe true
+        OcrTextCleaner.isSoundEffect("ВЖУХ") shouldBe true
+        OcrTextCleaner.isSoundEffect("А-А-А") shouldBe true
+        OcrTextCleaner.isSoundEffect("ШШШ") shouldBe true
+        OcrTextCleaner.isSoundEffect("АААА") shouldBe true
+        OcrTextCleaner.isSoundEffect("БРРР") shouldBe true
+        OcrTextCleaner.isSoundEffect("ХЛОП") shouldBe true
+        OcrTextCleaner.isSoundEffect("ТРРР") shouldBe true
+    }
+
+    @Test
+    fun `regular speech is not a sound effect`() {
+        OcrTextCleaner.isSoundEffect("Я плохо разбираюсь") shouldBe false
+        OcrTextCleaner.isSoundEffect("Привет") shouldBe false
+        OcrTextCleaner.isSoundEffect("Том") shouldBe false
+        OcrTextCleaner.isSoundEffect("Глава 1") shouldBe false
+        OcrTextCleaner.isSoundEffect("") shouldBe false
+    }
+
+    @Test
+    fun `proper nouns with uppercase first letter are not trimmed as edge noise`() {
+        // «Том» начинается с заглавной — trimEdgeNoise его не тронет,
+        // даже если словарь его не знает.
+        OcrTextCleaner.trimEdgeNoise("Том сказал привет") shouldBe "Том сказал привет"
+        OcrTextCleaner.trimEdgeNoise("Алекс и Том") shouldBe "Алекс и Том"
+        OcrTextCleaner.trimEdgeNoise("ХIMAРИ") shouldBe "ХIMAРИ"
+    }
+
+    @Test
     fun `inbuilt dictionary still recognises its own words`() {
         // Словарь переехал с Set<String> на хеши: проверяем, что он отвечает
         // и по прописным, и по строчным, и что чужие слова не признаёт.
