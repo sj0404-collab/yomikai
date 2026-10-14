@@ -352,14 +352,21 @@ internal class CyrillicOcrEngine(
                 if (row != null) row += item else rows += mutableListOf(item)
             }
             rows.sortBy { row -> row.minOf { it.first.rect.top } }
+            // Каждый бокс — отдельное облачко, поэтому между ними перевод
+            // строки, а НЕ пробел. Раньше боксы одного ряда склеивались
+            // пробелом, и страница читалась одной простынёй: «давай поиграем в
+            // солдатиков одному играть с мышонком скучно». Теперь реплики идут
+            // в порядке облачков (сверху вниз, в ряду слева направо) и каждая
+            // остаётся отдельным абзацем.
             val text = rows.joinToString("\n") { row ->
-                row.sortedBy { it.first.rect.left }.joinToString(" ") { it.second.trim() }
+                row.sortedBy { it.first.rect.left }.joinToString("\n") { it.second.trim() }
             }
             val out = cleanRecognition(textPostprocessor.postprocess(text))
             OcrStageBus.post(
                 OcrStageBus.Stage.DONE,
                 "${out.length} симв | словарь: ${OcrTextCleanerStats.wordDictHits}, " +
                     "пунктуация: ${OcrTextCleanerStats.punctFixes}, " +
+                    "края: ${OcrTextCleanerStats.edgeNoiseTrims}, " +
                     "разбиение: ${OcrTextCleanerStats.splitFixes}",
             )
             out
@@ -405,7 +412,7 @@ internal class CyrillicOcrEngine(
         }
         rows.sortBy { row -> row.minOf { it.first.rect.top } }
         val text = rows.joinToString("\n") { row ->
-            row.sortedBy { it.first.rect.left }.joinToString(" ") { it.second }
+            row.sortedBy { it.first.rect.left }.joinToString("\n") { it.second.trim() }
         }
         return cleanRecognition(textPostprocessor.postprocess(text))
     }
@@ -914,7 +921,9 @@ internal class CyrillicOcrEngine(
         // Склеиваем переносы с дефисом ДО того, как postprocessing превратит
         // строковые границы в пробелы. Иначе «НЕУПРАВ-\nЛЯЕМЫЙ» остаётся в
         // интерфейсе как ложное «НЕУПРАВ- ЛЯЕМЫЙ».
-        val cleaned = OcrTextCleaner.normalizeLocalCyrillicCaption(text).trim()
+        val cleaned = OcrTextCleaner.trimEdgeNoise(
+            OcrTextCleaner.normalizeLocalCyrillicCaption(text)
+        ).trim()
         if (cleaned.isEmpty() || OcrTextCleaner.looksLikeDictionaryRamp(cleaned)) return ""
         if (OcrTextCleaner.isAcceptableCyrillicOcrText(cleaned)) return cleaned
         // Один мусорный токен не обнуляет всю подпись: чистая кириллица
@@ -1034,10 +1043,12 @@ internal class CyrillicOcrEngine(
             if (area < tuning().minComponentArea || maxX - minX < 3 || maxY - minY < 3) continue
             val expandX = max(3, ((maxX - minX) * 0.16f).toInt())
             val expandY = max(2, ((maxY - minY) * 0.20f).toInt())
-            val left = offX + (((minX - expandX - offsetX) / scale).toInt()).coerceIn(0, source.width - 1)
-            val top = offY + (((minY - expandY - offsetY) / scale).toInt()).coerceIn(0, source.height - 1)
-            val right = (offX + ceil((maxX + expandX - offsetX) / scale).toInt()).coerceIn(left + 1, source.width)
-            val bottom = (offY + ceil((maxY + expandY - offsetY) / scale).toInt()).coerceIn(top + 1, source.height)
+            val left = offX + (((minX - expandX - offsetX) / scale).toInt()).coerceIn(0, max(0, source.width - 1))
+            val top = offY + (((minY - expandY - offsetY) / scale).toInt()).coerceIn(0, max(0, source.height - 1))
+            val right = (offX + ceil((maxX + expandX - offsetX) / scale).toInt())
+                .coerceIn(minOf(left + 1, source.width), source.width)
+            val bottom = (offY + ceil((maxY + expandY - offsetY) / scale).toInt())
+                .coerceIn(minOf(top + 1, source.height), source.height)
             if (right - left >= 6 && bottom - top >= 6) boxes += Rect(left, top, right, bottom)
         }
         return boxes
@@ -1113,11 +1124,31 @@ internal class CyrillicOcrEngine(
                     var x2 = x
                     while (x2 < w && colInk[x2] >= 0.02f) x2++
                     if (x2 - x >= 6) {
-                        val left = ((x - 2) * sx).toInt().coerceIn(0, image.width - 2)
-                        val top = ((y - 2) * sy).toInt().coerceIn(0, image.height - 2)
-                        val right = ((x2 + 2) * sx).toInt().coerceIn(left + 8, image.width)
-                        val bottom = ((y2 + 2) * sy).toInt().coerceIn(top + 8, image.height)
-                        boxes += Rect(left, top, right, bottom)
+                        val left = ((x - 2) * sx).toInt().coerceIn(0, max(0, image.width - 2))
+                        val top = ((y - 2) * sy).toInt().coerceIn(0, max(0, image.height - 2))
+                        // Нижняя граница не должна переезжать за правый/нижний край:
+                        // иначе coerceIn получает пустой диапазон и падает
+                        // («maximum 447 is less than minimum …») на рамках у края.
+                        val right = ((x2 + 2) * sx).toInt()
+                            .coerceIn(minOf(left + 8, image.width), image.width)
+                        val bottom = ((y2 + 2) * sy).toInt()
+                            .coerceIn(minOf(top + 8, image.height), image.height)
+                        // Узоры, скругления и декоративные рамки дают боксы с
+                        // очень низкой плотностью чернил — меньше 3% площади.
+                        // Реальный текст всегда занимает больше.
+                        val boxW = right - left
+                        val boxH = bottom - top
+                        if (boxW >= 6 && boxH >= 6) {
+                            var inkCount = 0
+                            for (yy in top until bottom) {
+                                for (xx in left until right) {
+                                    if (gray[yy * w + xx] < thr) inkCount++
+                                }
+                            }
+                            if (inkCount.toFloat() / (boxW * boxH) >= 0.03f) {
+                                boxes += Rect(left, top, right, bottom)
+                            }
+                        }
                     }
                     x = x2 + 1
                 }
@@ -1134,30 +1165,69 @@ internal class CyrillicOcrEngine(
     }
 
     private fun mergeBoxes(source: List<Rect>, tuning: OcrTuning): List<Rect> {
+        if (source.size < 2) return source.map(::Rect)
         val boxes = source.sortedWith(compareBy({ it.top }, { it.left })).map(::Rect).toMutableList()
+
+        // Прежний вариант после КАЖДОГО объединения начинал полный квадратный
+        // скан заново — O(n³). На странице с тайлингом детектор отдаёт 200–500
+        // сырых боксов, и на одних только merge'е уходили десятки-сотни мс.
+        // Теперь один проход: слиты помечаются и пропускаются, а если объединение
+        // изменило прямоугольник, его перепроверяют только те, кто сливался с ним.
+        val merged = BooleanArray(boxes.size)
         var changed = true
         while (changed) {
             changed = false
-            outer@ for (i in boxes.indices) {
+            for (i in boxes.indices) {
+                if (merged[i]) continue
                 for (j in i + 1 until boxes.size) {
-                    val a = boxes[i]
-                    val b = boxes[j]
-                    val overlapY = max(0, min(a.bottom, b.bottom) - max(a.top, b.top))
-                    val minHeight = min(a.height(), b.height()).coerceAtLeast(1)
-                    val gapX = max(0, max(a.left, b.left) - min(a.right, b.right))
-                    if (
-                        overlapY >= minHeight * tuning.mergeOverlapYFactor &&
-                        gapX <= max(a.height(), b.height()) * tuning.mergeGapXFactor
-                    ) {
-                        a.union(b)
-                        boxes.removeAt(j)
-                        changed = true
-                        break@outer
-                    }
+                    if (merged[j]) continue
+                    if (!sameBubbleOrFragment(boxes[i], boxes[j], tuning)) continue
+                    boxes[i].union(boxes[j])
+                    merged[j] = true
+                    changed = true
                 }
             }
         }
-        return boxes.sortedWith(compareBy({ it.top }, { it.left }))
+        val result = ArrayList<Rect>(boxes.size)
+        for (i in boxes.indices) if (!merged[i]) result += boxes[i]
+        return result.sortedWith(compareBy({ it.top }, { it.left }))
+    }
+
+    /**
+     * Склеивать два бокса можно только когда это один кусок текста.
+     *
+     * Склейка нужна в двух случаях и только в них:
+     *  1. ФРАГМЕНТЫ ОДНОЙ СТРОКИ — детектор бьёт строку на слова, а слова стоят
+     *     рядом и сильно перекрываются по вертикали. Их всегда склеиваем.
+     *  2. СТРОКИ ОДНОГО ОБЛАЧКА — стоят друг под другом и заметно перекрыты
+     *     по горизонтали (текст в пузыре выровнен по одной базе).
+     *
+     * Раньше проверка была только на перекрытие по вертикали плюс зазор по
+     * горизонтали, поэтому два соседних облачка, стоящие на одной высоте,
+     * становились одним кропом — и реплики приходили одной строкой. Второй
+     * случай теперь требует общего выравнивания по X.
+     */
+    private fun sameBubbleOrFragment(a: Rect, b: Rect, tuning: OcrTuning): Boolean {
+        val aHeight = a.height()
+        val bHeight = b.height()
+        val overlapY = max(0, min(a.bottom, b.bottom) - max(a.top, b.top))
+        val minHeight = min(aHeight, bHeight).coerceAtLeast(1)
+        val gapX = max(0, max(a.left, b.left) - min(a.right, b.right))
+
+        // 1. Фрагменты одной строки: слова детектора.
+        if (overlapY >= minHeight * tuning.mergeOverlapYFactor &&
+            gapX <= max(aHeight, bHeight) * tuning.mergeGapXFactor
+        ) {
+            return true
+        }
+
+        // 2. Строки одного облачка: стоят друг под другом, а не рядом.
+        if (gapX > 0) return false
+        val overlapX = min(a.right, b.right) - max(a.left, b.left)
+        val minWidth = min(a.width(), b.width()).coerceAtLeast(1)
+        if (overlapX < minWidth * tuning.mergeSameLineOverlapXFactor) return false
+        val gapY = max(0, max(a.top, b.top) - min(a.bottom, b.bottom))
+        return gapY <= max(aHeight, bHeight) * tuning.mergeSameLineGapYFactor
     }
 
     private fun pad(rect: Rect, width: Int, height: Int): Rect {

@@ -31,11 +31,16 @@ object OcrTextCleanerStats {
     @Volatile
     var splitFixes: Int = 0
 
+    /** Сколько раз срезан мусорный токен на краю реплики. */
+    @Volatile
+    var edgeNoiseTrims: Int = 0
+
     fun reset() {
         wordDictHits = 0
         userDictHits = 0
         punctFixes = 0
         splitFixes = 0
+        edgeNoiseTrims = 0
     }
 }
 
@@ -43,6 +48,25 @@ object OcrTextCleaner {
 
     private val HYPHEN_LINE_BREAK = Regex("([\\p{L}])-[ \\t]*\\n[ \\t]*([\\p{L}])")
     private val CYRILLIC_RUN = Regex("[А-Яа-яЁё]{2,}")
+
+    /** Пробелы/табуляции ВНУТРИ строки; перевод строки не трогает. */
+    private val HORIZONTAL_WHITESPACE = Regex("[ \\t\\u00A0\\u2007\\u202F]+")
+
+    /** Несколько пустых строк подряд схлопываются в один перевод строки. */
+    private val BLANK_LINES = Regex("\\n[ \\t]*\\n+")
+
+    /**
+     * Разделители токенов. Раньше эти [Regex] собирались заново на КАЖДЫЙ вызов
+     * [dictionaryCoverage] / [userDictionaryCoverage], а их дёргает ранжирование
+     * кандидатов по 2–3 раза на каждый кроп: до 36 компиляций регулярки на одну
+     * реплику только на этом.
+     */
+    private val TOKEN_SEPARATORS = Regex("[^\\p{L}\\p{N}]+")
+    private val INLINE_SPACES = Regex("[ \\t]{2,}")
+    private val WHITESPACE_RUN = Regex("\\s+")
+    private val PUNCT_BEFORE_LETTER = Regex("([,!?;:])(?=[А-Яа-яЁё])")
+    private val QUOTE_CLOSE_BEFORE_CAPS = Regex("([»”])(?=[А-ЯЁ])")
+    private val QUOTE_OPEN_AFTER_LETTER = Regex("(?<=[А-ЯЁа-яё])([«„])")
 
     private val LATIN_WHITELIST = setOf(
         "sos", "bmw", "wi-fi", "ok", "tv", "dvd", "3d", "hp", "pc", "usb", "sim", "sd",
@@ -130,7 +154,7 @@ object OcrTextCleaner {
                     .replace(PROMOTIONAL_ADBLOCK, "")
                     .replace(PROMOTIONAL_SLOGAN, "")
                     .replace(PROMOTIONAL_SITE, "")
-                    .replace(Regex("[ \\t]{2,}"), " ")
+                    .replace(INLINE_SPACES, " ")
                     .trim()
                 if (cut.lowercase() in STANDALONE_AD_BUTTONS) "" else cut
 
@@ -227,8 +251,51 @@ object OcrTextCleaner {
         return if (kept.isEmpty()) "" else kept.joinToString(" ")
     }
 
+    /**
+     * Распознанный текст — звуковой эффект («БАХ», «ШАСТ», …), а не речь.
+     * Такие куски не читаются голосом: они уходят в плеер скрытным звуком,
+     * и «бах» больше не произносится «бэ-а-ха».
+     */
+    private val SOUND_EFFECT_LEXICON = setOf(
+        "БАХ", "БУХ", "БАБАХ", "БАХБАХ", "БУМ", "БОМ", "ХЛОП", "ХРЯСЬ",
+        "ЧМЮК", "ЧМЯК", "ЧМОК", "ТСС", "ТССТСС",
+        "ВЖУХ", "ВЖИХ", "ВЖЖ", "ЖЖЖ", "СВИСТ", "ФЬЮ", "ФИУ", "ШШШ", "ШШ",
+        "ШШШШ", "ШАСТ", "ШУХ", "ХРЯП", "ХРЯС", "ПЛЮХ", "ПЛЮС", "БАМ",
+        "БАМБАМ", "КРАШ", "КРАК", "КЛАЦ", "ХРУСТ", "СКВИРК", "КВАРК",
+        "АХ", "ОХ", "ОЙ", "ОЙОЙ", "ХАХА", "ХИХИ", "АХА",
+        "ААА", "АААА", "ААААА", "ООО", "ЭЭЭ", "УУУ", "ИИИ",
+        "БРРР", "БРРРР", "БЗЗ", "БЗЗЗ", "РРР", "ТРРР",
+        "ГРРР", "ГРР", "МРРР", "ЖЖЖЖ", "ЖРЖР", "ЖРРР",
+    )
+
+    fun isSoundEffect(rawText: String): Boolean {
+        val candidates = rawText.trim()
+            .split(WHITESPACE_RUN)
+            .map { it.trim().trim('!', '?', '…', '.', ':', ',', ';', '-') }
+            .filter { it.isNotBlank() }
+        if (candidates.size != 1) return false
+        val canon = candidates[0].uppercase().replace(WHITESPACE_RUN, "")
+        if (canon in SOUND_EFFECT_LEXICON) return true
+        // Одна буква («А», «О», «Э») — междометие, а не слово.
+        if (canon.length == 1) return canon in SINGLE_LETTER_SOUNDS
+        // Две буквы — уже нормальное слово («он», «на»), не звук.
+        if (canon.length == 2) return false
+        // «ААА», «ШШШ» — одна буква повторена 3+ раз.
+        // «БРР», «ТРРР» — в слове 3+ букв, где одна повторена 2+ раз.
+        val groups = canon.groupingBy { it }.eachCount()
+        val maxRep = groups.values.maxOrNull() ?: 0
+        if (maxRep >= 3 && groups.size <= 2) return true
+        if (maxRep >= 2 && groups.size <= 2 && canon.length <= 3) return true
+        // «АААА», «БРРРР» — одна буква доминирует в слове до 6 букв.
+        if (maxRep >= 3 && canon.length <= 6) return true
+        return false
+    }
+
+    /** Однобуквенные междометия, которые не являются словами. */
+    private val SINGLE_LETTER_SOUNDS = setOf("А", "О", "Э", "У", "И", "Ы")
+
     fun isAcceptableCyrillicOcrText(text: String): Boolean {
-        val words = text.split(Regex("\\s+")).filter(String::isNotBlank)
+        val words = text.split(WHITESPACE_RUN).filter(String::isNotBlank)
         if (words.isEmpty()) return false
 
         return words.all { word ->
@@ -312,14 +379,20 @@ object OcrTextCleaner {
         // сканирования и (следом) история распознанных страниц.
         OcrTextCleanerStats.wordDictHits += hits
         OcrTextCleanerStats.punctFixes +=
-            Regex("([,!?;:])(?=[А-Яа-яЁё])").findAll(restored).count()
-        return restored
-            .replace(Regex("([»”])(?=[А-ЯЁ])"), "${'$'}1 ")
-            .replace(Regex("(?<=[А-ЯЁа-яё])([«„])"), " ${'$'}1")
+            PUNCT_BEFORE_LETTER.findAll(restored).count()
+return restored
+            .replace(QUOTE_CLOSE_BEFORE_CAPS, "$1 ")
+            .replace(QUOTE_OPEN_AFTER_LETTER, " $1")
             // Пробел после знака препинания перед буквой: модель теряла его
             // на плотной вёрстке («Я,НАКОНЕЦ,» со скриншота).
-            .replace(Regex("([,!?;:])(?=[А-Яа-яЁё])"), "${'$'}1 ")
-            .replace(Regex("\\s+"), " ")
+            .replace(PUNCT_BEFORE_LETTER, "$1 ")
+            // Границы реплик — это переводы строк, и раньше они здесь
+            // сворачивались в пробелы: все облачка страницы становились одной
+            // простынёй текста («давай поиграем… Одному играть… я плохо
+            // разбираюсь…»). Схлопываем только горизонтальные пробелы внутри
+            // строки, а перевод строк сохраняем и приводим к одному.
+            .replace(HORIZONTAL_WHITESPACE, " ")
+            .replace(BLANK_LINES, "\n")
             .trim()
     }
 
@@ -465,14 +538,14 @@ object OcrTextCleaner {
             OcrTextCleanerStats.userDictHits++
             return true
         }
-        return up in RuWordList.upper
+        return RuWordList.containsUpper(up)
     }
 
     fun userDictionaryCoverage(text: String): Float {
         if (text.isBlank()) return 0f
         var letters = 0
         var covered = 0
-        for (token in text.split(Regex("[^\\p{L}\\p{N}]+"))) {
+        for (token in text.split(TOKEN_SEPARATORS)) {
             val lexical = token.filter(Char::isLetter)
             if (lexical.count { it.code in CYRILLIC_RANGE } == 0) continue
             letters += lexical.length
@@ -480,6 +553,65 @@ object OcrTextCleaner {
         }
         if (letters == 0) return 0f
         return covered.toFloat() / letters
+    }
+
+    /**
+     * Срезает шум, которым детектор зацепил край облачка.
+     *
+     * Реплика из манги почти всегда окружена контуром пузыря или следами
+     * соседнего рисунка. Если такой кусок попадает в кроп, PP-OCR стабильно
+     * пишет его ОДНИМ токеном на начале или на конце строки — пользователь
+     * видел это как «рандомные буквы спереди и сзади».
+     *
+     * Токен считается шумом только если выполнены ВСЕ условия:
+     *  * он не словарное слово (иначе это первое слово реплики);
+     *  * он короткий — реальное слово на 5+ букв шумом не бывает;
+     *  * его удаление ПОВЫШАЕТ покрытие словарём по всей реплике.
+     *
+     * Последнее условие — главное: оно отличает мусор от настоящего слова.
+     * Реплика «Я плохо разбираюсь в военном искусстве» с прилипшим «ПШЛ»
+     * после среза покрывается словарём лучше, а реплика «ЭЙ слышишь» после
+     * среза «ЭЙ» — хуже, и потому остаётся целой.
+     *
+     * Ничего не заменяется и не додумывается: режется только крайний токен,
+     * максимум один с каждой стороны.
+     */
+    fun trimEdgeNoise(text: String): String {
+        if (text.isBlank()) return text
+        val tokens = text.split(WHITESPACE_RUN).filter(String::isNotBlank)
+        if (tokens.size < 2) return text
+
+        var start = 0
+        var end = tokens.size
+        if (isEdgeNoise(tokens, start, end - start)) start++
+        if (end - start >= 2 && isEdgeNoise(tokens, end - 1, end - start)) end--
+        if (start == 0 && end == tokens.size) return text
+
+        val trimmed = tokens.subList(start, end).joinToString(" ")
+        // Срезать нельзя, если от реплики ничего не осталось или осталось не
+        // то, что похоже на текст.
+        if (trimmed.isBlank() || trimmed.none { it.code in CYRILLIC_RANGE }) return text
+        OcrTextCleanerStats.edgeNoiseTrims += tokens.size - (end - start)
+        return trimmed
+    }
+
+    private fun isEdgeNoise(tokens: List<String>, index: Int, count: Int): Boolean {
+        if (count < 2) return false
+        val candidate = tokens[index].trimEnd('.', '!', ',', '?', '…', ':', ';', '—', '-')
+        if (candidate.isEmpty()) return false
+        // isKnownWord: проверка ничего не меняет в тексте,
+        // но knownWord увеличивает счётчики пользовательского словаря, а это
+        // служебный прогон на отбрасываемый токен.
+        if (OcrVocabulary.isKnownWord(candidate)) return false
+        if (candidate.count(Char::isLetter) > 4) return false
+        // Имена собственные («Том», «Алекс») и заголовки начинаются
+        // с заглавной. Но защиту от среза применяем только для-known слов:
+        // «ПШЛ» не в словаре → его можно срезать, «Том» — защищаем.
+        if (candidate.isNotEmpty() && candidate[0].isUpperCase() && OcrVocabulary.isKnownWord(candidate)) return false
+
+        val without = tokens.toMutableList().apply { removeAt(index) }.joinToString(" ")
+        if (without.isBlank()) return false
+        return dictionaryCoverage(without) > dictionaryCoverage(tokens.joinToString(" "))
     }
 
     /**
@@ -494,7 +626,7 @@ object OcrTextCleaner {
         if (text.isBlank()) return 0f
         var letters = 0
         var covered = 0
-        for (token in text.split(Regex("[^\\p{L}\\p{N}]+"))) {
+        for (token in text.split(TOKEN_SEPARATORS)) {
             val lexical = token.filter(Char::isLetter)
             val cyrillicCount = lexical.count { it.code in CYRILLIC_RANGE }
             if (cyrillicCount == 0) continue

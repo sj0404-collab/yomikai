@@ -133,15 +133,22 @@ internal class ReaderSelectionCropper(
      */
     private fun clipToShape(bitmap: Bitmap, shape: mihon.data.ocr.ScanShape): Bitmap {
         if (shape == mihon.data.ocr.ScanShape.RECT) return bitmap
-        return try {
-            val out = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
+        var out: Bitmap? = null
+        try {
+            out = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(out)
             canvas.clipPath(shape.buildPath(RectF(0f, 0f, bitmap.width.toFloat(), bitmap.height.toFloat())))
             canvas.drawBitmap(bitmap, 0f, 0f, null)
-            out
+            // Клип создал новый Bitmap. Исходный кадр (а это до 16–22 МБ на
+            // страницу) больше не нужен, и раньше он оставался в памяти без
+            // единого recycle — утечка срабатывала на любой фигурной рамке.
+            if (!bitmap.isRecycled) bitmap.recycle()
+            return out
         } catch (t: Throwable) {
             logcat(LogPriority.WARN, t) { "Shape clip failed; fallback to rect" }
-            bitmap
+            // Фолбэк возвращает сам вход, поэтому гасить его нельзя.
+            if (out != null && !out.isRecycled) out.recycle()
+            return bitmap
         }
     }
 

@@ -198,6 +198,7 @@ object UiActions {
 enum class UiTab(val id: String, val title: String, val pinned: Boolean = false) {
     LIBRARY("library", "Библиотека", pinned = true),
     LOCAL_LIBRARY("local_library", "Локальная библиотека"),
+    BOOKS("books", "Книги"),
     UPDATES("updates", "Обновления"),
     HISTORY("history", "История"),
     BROWSE("browse", "Каталоги"),

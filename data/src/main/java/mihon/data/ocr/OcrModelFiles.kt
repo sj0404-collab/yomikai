@@ -35,6 +35,10 @@ object OcrModelFiles {
         "ocr_fast/encoder.tflite" to "encoder_fast.tflite",
         "ocr_fast/decoder.tflite" to "decoder_fast.tflite",
         "panel_detector/model.tflite" to "panel_detector.tflite",
+        "rapidocr/det.onnx" to "det.onnx",
+        "rapidocr/rec.onnx" to "rec.onnx",
+        "rapidocr/cls.onnx" to "cls.onnx",
+        "rapidocr/ppocr_keys.txt" to "ppocr_keys.txt",
     )
 
     /**

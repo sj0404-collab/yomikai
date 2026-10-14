@@ -76,6 +76,72 @@ class AutoReadEngine(
     /** Selected OCR engine for individual balloon crops (Cyrillic by default). */
     private val bubbleOcr: mihon.domain.ocr.interactor.OcrProcessor by lazy { Injekt.get() }
 
+    // --- Фоновый эмбиент (процедурный WAV, локально) ---
+    /** Плеер фоновой музыки. null — эмбиент выключен или ещё не запущен. */
+    private var ambienceStreamer: eu.kanade.tachiyomi.data.books.BookAmbience.Streamer? = null
+
+    /** Текущий тип эмбиента. null = эмбиент выключен. */
+    var ambienceType: eu.kanade.tachiyomi.data.books.BookAmbience.AmbienceType? = null
+
+    /**
+     * Тип эмбиента, выбранный в настройках. null, если не задан или стоит
+     * "AUTO" — тогда вызывающий код подбирает тип по жанрам манги.
+     * Настройка живёт здесь, потому что [prefs] приватный.
+     */
+    fun configuredAmbienceType(): eu.kanade.tachiyomi.data.books.BookAmbience.AmbienceType? {
+        val name = prefs.ambienceType().get()
+        if (name.isBlank() || name == "AUTO") return null
+        return runCatching {
+            eu.kanade.tachiyomi.data.books.BookAmbience.AmbienceType.valueOf(name)
+        }.getOrNull()
+    }
+
+    /**
+     * Запустить фоновый эмбиент для текущего типа.
+     * Безопасно зывать повторно: если уже играет — просто обновит громкость.
+     */
+    fun startAmbience() {
+        val type = ambienceType ?: return
+        runCatching {
+            // Громкость из настроек: раньше стояло жёсткое 0.3, и ползунок
+            // pref_autoread_music_volume не влиял ни на что.
+            val vol = prefs.autoReadMusicVolume().get().coerceIn(0f, 1f)
+            val s = ambienceStreamer
+            if (s != null && s.type == type) {
+                s.baseVolume = vol
+                return
+            }
+            ambienceStreamer?.stop()
+            val fresh = eu.kanade.tachiyomi.data.books.BookAmbience.Streamer(type).apply {
+                baseVolume = vol
+                voiceActive = voiceIsActive
+            }
+            fresh.start()
+            ambienceStreamer = fresh
+        }.onFailure { e ->
+            logcat(LogPriority.WARN, e) { "Ambience start failed" }
+        }
+    }
+
+    /** Идёт ли сейчас речь — фон на это время приглушается. */
+    @Volatile
+    private var voiceIsActive: Boolean = false
+
+    /**
+     * Пометить, что сейчас говорит TTS. Пока идёт речь, фон уходит вниз
+     * (см. BookAmbience.DUCK_LEVEL), иначе музыка перебивает голос.
+     */
+    fun setVoiceActive(active: Boolean) {
+        voiceIsActive = active
+        ambienceStreamer?.voiceActive = active
+    }
+
+    /** Остановить и освободить плеер эмбиента. */
+    fun stopAmbience() {
+        runCatching { ambienceStreamer?.stop() }
+        ambienceStreamer = null
+    }
+
     /** Строка кадра: текст + нормализованный box (для подсветки/порядка). */
     data class Line(
         val text: String,
@@ -1419,7 +1485,14 @@ class AutoReadEngine(
                             stripSpokenPrefix(t) ?: t
                         }
                         .filter { it.isNotBlank() }
-                        .joinToString(". ")
+                        // Звуковые эффекты оборачиваем в звёздочки: SpeechMarkup
+                        // превратит «*БАХ*» в звуковую доставку, а не в речь.
+                        .map { if (OcrTextCleaner.isSoundEffect(it)) "*$it*" else it }
+                        // Реплики склеиваем переводом строки, а не «. »: точка ставилась
+                    // насильно и путала интонацию, а заодно делала вид, что
+                    // облачка — одна длинная фраза. Теперь каждая реплика
+                    // читается своей фразой (см. TtsSpeaker.splitSentences).
+                    .joinToString("\n")
                     val pageGender = speakerGenderFor(
                         VoiceModeResolver.currentMode(),
                         genders.get(ordered.indexOfFirst { it.text == speakable.first().text }),
@@ -1595,8 +1668,15 @@ class AutoReadEngine(
                     // [SpeechMarkup.strip]. Само слово имени при этом остаётся
                     // в тексте реплики, поэтому имя звучит ровно один раз —
                     // как на кадре, а не «метка + слово».
+                    // Звуковой эффект целиком — оборачиваем в звёздочки, чтобы
+                    // SpeechMarkup отправил его в звуковую доставку, а не в TTS.
+                    val cleanForSpeech = if (OcrTextCleaner.isSoundEffect(speakTextRaw)) {
+                        "*${SpeechMarkup.strip(speakTextRaw)}*"
+                    } else {
+                        SpeechMarkup.strip(speakTextRaw)
+                    }
                     val spokenText = SpeechMarkup.withSpeakerName(
-                        SpeechMarkup.strip(speakTextRaw),
+                        cleanForSpeech,
                         speakerName,
                     )
                     // Голос ЯЗЫКА ПЕРЕВОДА (напр. японский дублёр для
@@ -1996,6 +2076,7 @@ class AutoReadEngine(
         manualJob?.cancel()
         manualJob = null
         TtsSpeaker.stop()
+        stopAmbience()
         runCatching { TtsReadingNotifier.dismiss(context) }
             .onFailure { logcat(LogPriority.WARN, it) { "Reading notification dismiss failed" } }
 
@@ -2241,6 +2322,8 @@ class AutoReadEngine(
             context, text, gender, speakerSlot, langHint = langHint,
             emotionProsody = prosody,
             onState = { speaking ->
+                // Фон приглушается на время речи: голос должен остаться главным.
+                setVoiceActive(speaking)
                 if (speaking && !started.value) {
                     started.value = true
                     logcat(LogPriority.DEBUG) { "TTS started (${System.currentTimeMillis() - t0}ms): ${spoken.take(60)}" }
@@ -2656,12 +2739,15 @@ class AutoReadEngine(
         val h = bottom - top
         if (w < 16 || h < 16) return ""
         val crop = Bitmap.createBitmap(bitmap, left, top, w, h)
+        val ocrBitmap = if (maskRound) maskCircle(crop) else crop
         return try {
-            val ocrBitmap = if (maskRound) maskCircle(crop) else crop
             val pixels = IntArray(ocrBitmap.width * ocrBitmap.height)
             ocrBitmap.getPixels(pixels, 0, ocrBitmap.width, 0, 0, ocrBitmap.width, ocrBitmap.height)
-            bubbleOcr.getText(OcrImage(ocrBitmap.width, ocrBitmap.height, pixels))
+            bubbleOcr.getBubbleText(OcrImage(ocrBitmap.width, ocrBitmap.height, pixels))
         } finally {
+            // Маска — отдельный Bitmap. Раньше он не гасился, и на круглом
+            // облачке утекал кусок кадра за кадром на всё время авточтения.
+            if (ocrBitmap !== crop && !ocrBitmap.isRecycled) ocrBitmap.recycle()
             if (!crop.isRecycled) crop.recycle()
         }
     }

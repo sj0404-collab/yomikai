@@ -5,7 +5,6 @@
 
 - **Клон (работай здесь):** /home/runner/hub-work/yomikai/code
 - **Ветка:** master
-
 - **Только твои временные файлы (сборки, кеши, артефакты):** /home/runner/hub-work/yomikai/tmp
 - **Манифест:** /home/runner/hub-work/yomikai/code/MANIFEST.md
 

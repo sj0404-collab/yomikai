@@ -91,6 +91,7 @@ object HomeScreen : Screen() {
     private val TABS = listOf(
         UiTab.LIBRARY to LibraryTab,
         UiTab.LOCAL_LIBRARY to eu.kanade.tachiyomi.ui.locallibrary.LocalLibraryTab,
+        UiTab.BOOKS to eu.kanade.tachiyomi.ui.books.BooksTab,
         UiTab.UPDATES to UpdatesTab,
         UiTab.HISTORY to HistoryTab,
         UiTab.BROWSE to BrowseTab,

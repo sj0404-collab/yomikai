@@ -14,7 +14,12 @@ class OcrPreferences(
     private val preferenceStore: PreferenceStore,
 ) {
 
-    fun ocrModel() = preferenceStore.getEnum("pref_ocr_model", OcrModel.CYRILLIC)
+    /**
+     * По умолчанию — RapidOCR (eslav, PP-OCRv5). На страницах манхвы, где
+     * PP-OCRv3 не даёт ничего, eslav читает текст с уверенностью 0.93–0.97.
+     * Пока пак моделей не скачан, репозиторий сам откатывается на [OcrModel.CYRILLIC].
+     */
+    fun ocrModel() = preferenceStore.getEnum("pref_ocr_model", OcrModel.RAPID)
 
     /** Домен: для чего выбирается технология (игры / книги / приложения). */
     enum class OcrDomain { GAME, BOOK, APP }
@@ -26,8 +31,8 @@ class OcrPreferences(
      * пути захвата (игры/оверлей) через [engineForDomain].
      */
     fun gameOcrEngine() = preferenceStore.getEnum("pref_ocr_engine_game", OcrModel.FAST)
-    fun bookOcrEngine() = preferenceStore.getEnum("pref_ocr_engine_book", OcrModel.CYRILLIC)
-    fun appOcrEngine() = preferenceStore.getEnum("pref_ocr_engine_app", OcrModel.CYRILLIC)
+    fun bookOcrEngine() = preferenceStore.getEnum("pref_ocr_engine_book", OcrModel.RAPID)
+    fun appOcrEngine() = preferenceStore.getEnum("pref_ocr_engine_app", OcrModel.RAPID)
 
     fun engineForDomain(domain: OcrDomain): OcrModel = when (domain) {
         OcrDomain.GAME -> gameOcrEngine().get()
@@ -647,5 +652,11 @@ class OcrPreferences(
      * фильтр осмысленности отбрасывает как мусор.
      */
     fun autoReadReadEverything() = preferenceStore.getBoolean("pref_autoread_read_everything", true)
+
+    /**
+     * Тип фоновой музыки при авточтении: имя BookAmbience.AmbienceType
+     * либо "AUTO" — тогда тип подбирается по жанрам манги на лету.
+     */
+    fun ambienceType() = preferenceStore.getString("pref_ambience_type", "AUTO")
 
 }

@@ -11,4 +11,5 @@ val migrations: List<Migration>
         SetupDictionaryOcrPresentationMigration(),
         InstallationIdMigration(),
         VerticalNavigatorMigration(),
+        OcrEngineDefaultToRapidMigration(),
     )

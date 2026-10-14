@@ -420,11 +420,30 @@ object OcrQueueScreen : Screen() {
                 )
             }
 
-            PreferenceGroupHeader(title = "Офлайн-распознавание — русский Cyrillic OCR")
+            PreferenceGroupHeader(title = "Офлайн-распознавание")
             InfoWidget(
-                text = "Новый движок по умолчанию: PP-OCRv4 detector + PP-OCRv3 recognizer " +
-                    "+ PP-OCRv5 verifier. Работает полностью без сети после загрузки; " +
-                    "модели (~21 МБ) хранятся отдельно и не увеличивают APK.",
+                text = "RapidOCR eslav (PP-OCRv5) — движок по умолчанию. На страницах " +
+                    "русской манхвы он читает то, где PP-OCRv3 не даёт ничего: там, где " +
+                    "раньше было «Нет результатов», он возвращает текст с уверенностью " +
+                    "0.93–0.97. Модели (~13 МБ) хранятся отдельно и не увеличивают APK.",
+            )
+            var rapidInstalled by remember {
+                mutableStateOf(
+                    eu.kanade.tachiyomi.data.ocr.OcrModelDownloader.isPackInstalled(
+                        context,
+                        "rapidocr",
+                    ),
+                )
+            }
+            ModelPackRow(
+                pack = "rapidocr",
+                title = "RapidOCR eslav — рекомендуется",
+                sizeHint = "~13 МБ • офлайн • движок по умолчанию",
+                installed = rapidInstalled,
+                onInstalledChange = { installed ->
+                    rapidInstalled = installed
+                    if (installed) ocrModelPreference.set(OcrModel.RAPID)
+                },
             )
             var cyrillicInstalled by remember {
                 mutableStateOf(
@@ -436,8 +455,8 @@ object OcrQueueScreen : Screen() {
             }
             ModelPackRow(
                 pack = "cyrillic_ocr",
-                title = "Русский/Cyrillic PP-OCR",
-                sizeHint = "~21 МБ • офлайн • рекомендуется",
+                title = "Русский/Cyrillic PP-OCR (запасной)",
+                sizeHint = "~21 МБ • офлайн • если RapidOCR не справляется",
                 installed = cyrillicInstalled,
                 onInstalledChange = { installed ->
                     cyrillicInstalled = installed
