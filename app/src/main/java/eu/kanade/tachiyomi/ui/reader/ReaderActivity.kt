@@ -1982,7 +1982,7 @@ class ReaderActivity : BaseActivity() {
             val autoType = runCatching {
                 val keywords = listOfNotNull(
                     viewModel.manga?.title,
-                    viewModel.manga?.genres?.joinToString(","),
+                    viewModel.manga?.genre?.joinToString(","),
                 ).joinToString(" ")
                 val mood = eu.kanade.tachiyomi.data.books.BookAmbience.moodFor(keywords)
                 when (mood) {
@@ -1992,12 +1992,7 @@ class ReaderActivity : BaseActivity() {
                     else -> eu.kanade.tachiyomi.data.books.BookAmbience.AmbienceType.NEUTRAL
                 }
             }.getOrNull()
-            val prefType = runCatching {
-                val name = autoReadEngine.prefs.ambienceType().get()
-                if (name.isNotBlank() && name != "AUTO") {
-                    eu.kanade.tachiyomi.data.books.BookAmbience.AmbienceType.valueOf(name)
-                } else null
-            }.getOrNull()
+            val prefType = autoReadEngine.configuredAmbienceType()
             autoReadEngine.ambienceType = prefType ?: autoType
             if (autoReadEngine.ambienceType != null) autoReadEngine.startAmbience()
         }

@@ -84,6 +84,19 @@ class AutoReadEngine(
     var ambienceType: eu.kanade.tachiyomi.data.books.BookAmbience.AmbienceType? = null
 
     /**
+     * Тип эмбиента, выбранный в настройках. null, если не задан или стоит
+     * "AUTO" — тогда вызывающий код подбирает тип по жанрам манги.
+     * Настройка живёт здесь, потому что [prefs] приватный.
+     */
+    fun configuredAmbienceType(): eu.kanade.tachiyomi.data.books.BookAmbience.AmbienceType? {
+        val name = prefs.ambienceType().get()
+        if (name.isBlank() || name == "AUTO") return null
+        return runCatching {
+            eu.kanade.tachiyomi.data.books.BookAmbience.AmbienceType.valueOf(name)
+        }.getOrNull()
+    }
+
+    /**
      * Запустить фоновый эмбиент для текущего типа.
      * Безопасно зывать повторно: если уже играет — просто обновит громкость.
      */

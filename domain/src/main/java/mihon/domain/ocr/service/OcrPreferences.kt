@@ -648,4 +648,10 @@ class OcrPreferences(
      */
     fun autoReadReadEverything() = preferenceStore.getBoolean("pref_autoread_read_everything", true)
 
+    /**
+     * Тип фоновой музыки при авточтении: имя BookAmbience.AmbienceType
+     * либо "AUTO" — тогда тип подбирается по жанрам манги на лету.
+     */
+    fun ambienceType() = preferenceStore.getString("pref_ambience_type", "AUTO")
+
 }
