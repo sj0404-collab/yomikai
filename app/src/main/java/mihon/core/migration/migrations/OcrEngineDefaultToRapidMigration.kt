@@ -1,7 +1,6 @@
 package mihon.core.migration.migrations
 
 import mihon.core.migration.Migration
-import mihon.core.migration.Migration
 import mihon.core.migration.Migration.Companion.ALWAYS
 import mihon.core.migration.MigrationContext
 import mihon.domain.ocr.model.OcrModel
