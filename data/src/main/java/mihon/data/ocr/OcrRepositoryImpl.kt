@@ -225,7 +225,22 @@ class OcrRepositoryImpl(
         ZEN_FREE,
     }
 
-    private fun selectedEngineType(): EngineType = engineTypeOf(ocrModelPref.get())
+    /**
+     * Выбранный движок с проверкой готовности.
+     *
+     * RapidOCR — движок по умолчанию, но его модели не в APK, а скачиваются
+     * отдельно (~13 МБ). Пока пака нет, откатываемся на PP-OCR: пустая
+     * страница из-за отсутствующих весов хуже, чем прежний результат.
+     */
+    private fun selectedEngineType(): EngineType {
+        val type = engineTypeOf(ocrModelPref.get())
+        if (type != EngineType.RAPID) return type
+        if (RapidOcrEngine.modelsInstalled(context)) return type
+        logcat(LogPriority.WARN) {
+            "RapidOCR: пак моделей не установлен, читаем ${EngineType.CYRILLIC}"
+        }
+        return EngineType.CYRILLIC
+    }
 
     /**
      * Модель в тип движка.

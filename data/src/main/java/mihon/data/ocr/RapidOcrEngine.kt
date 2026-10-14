@@ -413,6 +413,15 @@ internal class RapidOcrEngine(context: Context) : LineOcrEngine {
     }
 
     companion object {
+        /**
+         * Все четыре файла на месте? Пак не в APK, поэтому без этой проверки
+         * выбор движка по умолчанию давал бы пустые страницы.
+         */
+        fun modelsInstalled(context: Context): Boolean =
+            listOf(DET_MODEL, REC_MODEL, DICT_FILE).all {
+                OcrModelFiles.resolve(context, it) != null
+            }
+
         const val DET_MODEL = "rapidocr/det.onnx"
         const val CLS_MODEL = "rapidocr/cls.onnx"
         const val REC_MODEL = "rapidocr/rec.onnx"

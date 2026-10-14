@@ -367,9 +367,7 @@ internal class CyrillicOcrEngine(
                 "${out.length} симв | словарь: ${OcrTextCleanerStats.wordDictHits}, " +
                     "пунктуация: ${OcrTextCleanerStats.punctFixes}, " +
                     "края: ${OcrTextCleanerStats.edgeNoiseTrims}, " +
-                    "разбиение: ${OcrTextCleanerStats.splitFixes}, " +
-                    "буквы-вставки: ${OcrTextCleanerStats.droppedStrayLetters}, " +
-                    "нечленые: ${OcrTextCleanerStats.dictionaryGarbage}",
+                    "разбиение: ${OcrTextCleanerStats.splitFixes}",
             )
             out
         }
@@ -905,12 +903,7 @@ internal class CyrillicOcrEngine(
     private fun acceptsConfidence(result: Recognition): Boolean {
         val letters = result.text.count(Char::isLetter)
         val threshold = if (letters in 1..3) {
-            // Местоимения и умные слова: «я», «ты», «он», «мы» важны, поэтому
-            // пол реплик без них не определится и текст читается по-другому.
-            // Возвращаем им более низкий порог, чтобы короткие местоимения
-            // в коротких облачках («я», «он») не вылетали.
-            // Сохраняем прежний запас: 0.25 через настройку короткого текста.
-            tuning().shortTextMinConfidence.coerceAtMost(0.25f)
+            tuning().shortTextMinConfidence
         } else {
             tuning().minAcceptConfidence
         }
