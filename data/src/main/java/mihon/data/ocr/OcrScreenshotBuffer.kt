@@ -139,7 +139,14 @@ object OcrScreenshotBuffer {
     ): OcrScreenshotEntry {
         val id = System.currentTimeMillis()
         val serializableRegions = regions.map { SerializableOcrRegion.fromOcrRegion(it) }
-        val summaryText = regions.joinToString(" ") { it.text.trim() }.trim()
+        // Реплики разделяем пустой строкой: в «Полном тексте» каждая реплика из
+        // своего облачка должна читаться отдельным абзацем, иначе все облачка
+        // страницы слипаются в одну простыню.
+        val summaryText = regions
+            .map { it.text.trim() }
+            .filter { it.isNotBlank() }
+            .joinToString("\n\n")
+            .trim()
         val imagePath = imageJpeg?.let { jpeg ->
             imagesDir?.let { dir ->
                 File(dir, "$id.jpg").apply { writeBytes(jpeg) }.absolutePath

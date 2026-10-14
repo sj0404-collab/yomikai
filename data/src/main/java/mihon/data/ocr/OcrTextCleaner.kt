@@ -44,6 +44,12 @@ object OcrTextCleaner {
     private val HYPHEN_LINE_BREAK = Regex("([\\p{L}])-[ \\t]*\\n[ \\t]*([\\p{L}])")
     private val CYRILLIC_RUN = Regex("[А-Яа-яЁё]{2,}")
 
+    /** Пробелы/табуляции ВНУТРИ строки; перевод строки не трогает. */
+    private val HORIZONTAL_WHITESPACE = Regex("[ \\t\\u00A0\\u2007\\u202F]+")
+
+    /** Несколько пустых строк подряд схлопываются в один перевод строки. */
+    private val BLANK_LINES = Regex("\\n[ \\t]*\\n+")
+
     private val LATIN_WHITELIST = setOf(
         "sos", "bmw", "wi-fi", "ok", "tv", "dvd", "3d", "hp", "pc", "usb", "sim", "sd",
     )
@@ -313,13 +319,19 @@ object OcrTextCleaner {
         OcrTextCleanerStats.wordDictHits += hits
         OcrTextCleanerStats.punctFixes +=
             Regex("([,!?;:])(?=[А-Яа-яЁё])").findAll(restored).count()
-        return restored
-            .replace(Regex("([»”])(?=[А-ЯЁ])"), "${'$'}1 ")
-            .replace(Regex("(?<=[А-ЯЁа-яё])([«„])"), " ${'$'}1")
+return restored
+            .replace(Regex("([»”])(?=[А-ЯЁ])"), "$1 ")
+            .replace(Regex("(?<=[А-ЯЁа-яё])([«„])"), " $1")
             // Пробел после знака препинания перед буквой: модель теряла его
             // на плотной вёрстке («Я,НАКОНЕЦ,» со скриншота).
-            .replace(Regex("([,!?;:])(?=[А-Яа-яЁё])"), "${'$'}1 ")
-            .replace(Regex("\\s+"), " ")
+            .replace(Regex("([,!?;:])(?=[А-Яа-яЁё])"), "$1 ")
+            // Границы реплик — это переводы строк, и раньше они здесь
+            // сворачивались в пробелы: все облачка страницы становились одной
+            // простынёй текста («давай поиграем… Одному играть… я плохо
+            // разбираюсь…»). Схлопываем только горизонтальные пробелы внутри
+            // строки, а перевод строк сохраняем и приводим к одному.
+            .replace(HORIZONTAL_WHITESPACE, " ")
+            .replace(BLANK_LINES, "\n")
             .trim()
     }
 

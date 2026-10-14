@@ -1419,7 +1419,11 @@ class AutoReadEngine(
                             stripSpokenPrefix(t) ?: t
                         }
                         .filter { it.isNotBlank() }
-                        .joinToString(". ")
+                        // Реплики склеиваем переводом строки, а не «. »: точка ставилась
+                    // насильно и путала интонацию, а заодно делала вид, что
+                    // облачка — одна длинная фраза. Теперь каждая реплика
+                    // читается своей фразой (см. TtsSpeaker.splitSentences).
+                    .joinToString("\n")
                     val pageGender = speakerGenderFor(
                         VoiceModeResolver.currentMode(),
                         genders.get(ordered.indexOfFirst { it.text == speakable.first().text }),

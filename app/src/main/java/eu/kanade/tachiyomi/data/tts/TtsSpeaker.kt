@@ -1667,6 +1667,11 @@ object TtsSpeaker {
             if (ch == '.' || ch == '!' || ch == '?' || ch == '…' || ch == '‼' || ch == '⁇') {
                 if (sb.isNotBlank()) result += sb.toString()
                 sb.clear()
+                // Перевод строки — граница реплики: каждое облачко читается
+                // своей фразой, даже если в нём нет знака препинания.
+            } else if (ch == '\n') {
+                if (sb.isNotBlank()) result += sb.toString()
+                sb.clear()
             } else if (sb.length >= 200 && ch == ' ') {
                 result += sb.toString()
                 sb.clear()
