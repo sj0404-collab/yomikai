@@ -113,6 +113,9 @@ class OcrRepositoryImpl(
     /** Tesseract с русской моделью — тяжёлый, держим один на всё время. */
     private var tesseractEngine: TesseractOcrEngine? = null
 
+    /** RapidOCR держит три ONNX-сессии, поэтому кэшируется как остальные. */
+    private var rapidEngine: RapidOcrEngine? = null
+
     private var legacyEngine: LegacyOcrEngine? = null
     private var fastEngine: FastOcrEngine? = null
     private var glensEngine: GlensOcrEngine? = null
@@ -163,7 +166,7 @@ class OcrRepositoryImpl(
     private fun EngineType.toOcrModel(): OcrModel = when (this) {
         EngineType.CYRILLIC -> OcrModel.CYRILLIC
         EngineType.TESSERACT -> OcrModel.TESSERACT
-
+        EngineType.RAPID -> OcrModel.RAPID
         EngineType.MLKIT -> OcrModel.MLKIT
         EngineType.GLENS -> OcrModel.GLENS
         EngineType.OWOCR -> OcrModel.OWOCR
@@ -210,6 +213,7 @@ class OcrRepositoryImpl(
     internal enum class EngineType {
         CYRILLIC,
         TESSERACT,
+        RAPID,
 
         MLKIT,
         LEGACY,
@@ -236,6 +240,7 @@ class OcrRepositoryImpl(
             OcrModel.MLKIT -> EngineType.MLKIT
             // Old offline selections migrate transparently to the Russian
             // engine; the Japanese FAST/LEGACY models are no longer defaults.
+            OcrModel.RAPID -> EngineType.RAPID
             OcrModel.LEGACY -> EngineType.CYRILLIC
             OcrModel.FAST -> EngineType.CYRILLIC
             OcrModel.GLENS -> EngineType.GLENS
@@ -305,8 +310,9 @@ class OcrRepositoryImpl(
      * проверки цепочка тратила до минуты на заведомо 401/403-ответ.
      */
     private fun onlineEngineReady(type: EngineType): Boolean = when (type) {
-        // Tesseract работает локально, сети ему не нужно.
+        // Tesseract и RapidOCR работают локально, сети им не нужно.
         EngineType.TESSERACT -> true
+        EngineType.RAPID -> true
 
         EngineType.ZEN_FREE -> ocrPreferences.zenFreeEnabled().get()
         EngineType.GOOGLE -> ocrPreferences.googleApiKey().get().isNotBlank()
@@ -377,6 +383,9 @@ class OcrRepositoryImpl(
                 ).also { tesseractEngine = it }
             }
 
+            EngineType.RAPID -> {
+                rapidEngine ?: RapidOcrEngine(context).also { rapidEngine = it }
+            }
             EngineType.MLKIT -> {
                 mlKitEngine ?: MlKitOcrEngine().also { mlKitEngine = it }
             }
@@ -887,6 +896,7 @@ class OcrRepositoryImpl(
         return when (type) {
             EngineType.CYRILLIC -> scanLocally(chapterId, pageIndex, image, OcrModel.CYRILLIC, type, onPartial)
             EngineType.TESSERACT -> scanWithTesseract(chapterId, pageIndex, image, type, onPartial)
+            EngineType.RAPID -> scanWithRapid(chapterId, pageIndex, image, OcrModel.RAPID, onPartial)
 
             EngineType.MLKIT -> scanWithMlKit(chapterId, pageIndex, image, OcrModel.MLKIT, onPartial)
             EngineType.GLENS -> scanWithGlens(chapterId, pageIndex, image, OcrModel.GLENS)
@@ -1060,6 +1070,50 @@ class OcrRepositoryImpl(
                 regions = emptyList(),
             )
         }
+
+        return OcrPageResult(
+            chapterId = chapterId,
+            pageIndex = pageIndex,
+            ocrModel = modelKey,
+            imageWidth = image.width,
+            imageHeight = image.height,
+            regions = mapped,
+        )
+    }
+
+    /**
+     * RapidOCR (eslav, PP-OCRv5 в ONNX). Движок отдаёт строки уже в порядке
+     * чтения и с очисткой, поэтому здесь только переносим их в области
+     * страницы и отдаём в озвучку по мере готовности.
+     */
+    private suspend fun scanWithRapid(
+        chapterId: Long,
+        pageIndex: Int,
+        image: Bitmap,
+        modelKey: OcrModel,
+        onPartial: ((OcrRegion) -> Unit)? = null,
+    ): OcrPageResult {
+        val lines = submitTask(PrioritizedTaskQueue.Priority.NORMAL) {
+            engineLocks.withTextEngineLock(EngineType.RAPID) {
+                val engine = engineFor(EngineType.RAPID)
+                if (engine is RapidOcrEngine) engine.recognizePage(image) else emptyList()
+            }
+        }
+
+        val mapped = lines.mapIndexedNotNull { index, raw ->
+            val text = OcrTextCleaner.joinLineHyphens(raw).trim()
+            text.takeIf { it.isNotBlank() }?.let {
+                OcrRegion(
+                    order = index,
+                    text = it,
+                    boundingBox = OcrBoundingBox(0f, 0f, 1f, 1f),
+                    textOrientation = OcrTextOrientation.Horizontal,
+                )
+            }
+        }
+        // Без рамок от движка оверлей не подсвечивает конкретную реплику, но
+        // озвучка стартует сразу, не дожидаясь конца страницы.
+        mapped.forEach { region -> onPartial?.invoke(region) }
 
         return OcrPageResult(
             chapterId = chapterId,

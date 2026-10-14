@@ -49,6 +49,8 @@ dependencies {
 
     implementation(libs.anki.android)
     implementation(libs.hoshidicts)
+    // RapidOCR: eslav-распознаватель PP-OCRv5 в ONNX, без PaddlePaddle.
+    implementation(libs.onnxruntime.android)
 
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.serialization.jsonOkio)

@@ -11,6 +11,14 @@ enum class OcrModel {
     CYRILLIC,
 
     /**
+     * RapidOCR: восточнославянский распознаватель PP-OCRv5 в ONNX, без
+     * PaddlePaddle. В репо manga-ocr на реальных страницах русской манхвы он
+     * оказался самым быстрым (~1.3 с/стр) при качестве PaddleOCR, который
+     * под Android не запускается.
+     */
+    RAPID,
+
+    /**
      * Legacy and slower model, supports GPU/CPU.
      */
     LEGACY,
