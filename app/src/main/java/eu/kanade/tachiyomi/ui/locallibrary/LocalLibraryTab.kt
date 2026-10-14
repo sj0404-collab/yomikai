@@ -111,10 +111,9 @@ data object LocalLibraryTab : Tab {
         // Сортировка списка: false — по алфавиту (OrderBy.Popular в LocalSource
         // сортирует по названию A→Я), true — сначала новые (OrderBy.Latest).
         var sortByNewest by remember { mutableStateOf(false) }
-        // Переключатель содержимого локальной библиотеки: «Манга» (архивы),
-        // «Книги» (электронные книги любых форматов) или «Настройки» (OCR,
-        // голоса, словари). Выбор запоминается.
-        var booksMode by remember { mutableStateOf(storagePreferences.booksMode.get()) }
+        // Переключатель содержимого локальной библиотеки: «Манга» (архивы)
+        // или «Настройки» (OCR, голоса, словари). Режим «Книги» ушёл в
+        // отдельную вкладку BooksTab, поэтому здесь его больше нет.
         var settingsSection by remember { mutableStateOf(storagePreferences.settingsSection.get()) }
         // Алфавитный указатель: ключ из LibraryIndex.LETTERS или null («все»).
         // Ключ превращается в служебный запрос «#а», который LocalSource
@@ -142,7 +141,9 @@ data object LocalLibraryTab : Tab {
                 .collectLatest {
                     roots = storagePreferences.externalLibraryRoots.get().toList()
                     activeRoot = storagePreferences.externalLibraryActiveRoot.get()
-                    booksMode = storagePreferences.booksMode.get()
+                    // Старый переключатель «Книги» мог остаться включённым у
+                    // пользователя — гасим, чтобы состояние не врало.
+                    storagePreferences.booksMode.set(false)
                     settingsSection = storagePreferences.settingsSection.get()
                     // Пересканируем ТОЛЬКО если изменился набор папок —
                     // обычный вход на вкладку берёт кэш и не трогает диск
@@ -163,44 +164,25 @@ data object LocalLibraryTab : Tab {
                 }
         }
 
-        // Открытая книга («Книги» → читалка) — вкладки библиотеки над ней
-        // прячем: экран чтения должен быть без шапки библиотеки.
-        var booksReaderOpen by remember { mutableStateOf(false) }
-
-
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding(),
         ) {
-            // Переключатель содержимого: «Манга» (архивы по папкам) /
-            // «Книги» (любые форматы) / «Настройки» (OCR, голоса, словари).
-            if (!booksReaderOpen) {
+            // Переключатель содержимого: «Манга» (архивы по папкам) или
+            // «Настройки» (OCR, голоса, словари). Книги — отдельная вкладка.
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
             ) {
                 FilterChip(
-                    selected = !booksMode && !settingsSection,
+                    selected = !settingsSection,
                     onClick = {
-                        booksMode = false
                         settingsSection = false
-                        storagePreferences.booksMode.set(false)
                         storagePreferences.settingsSection.set(false)
                     },
                     label = { Text("Манга") },
-                    modifier = Modifier.padding(end = 6.dp),
-                )
-                FilterChip(
-                    selected = booksMode && !settingsSection,
-                    onClick = {
-                        booksMode = true
-                        settingsSection = false
-                        storagePreferences.booksMode.set(true)
-                        storagePreferences.settingsSection.set(false)
-                    },
-                    label = { Text("Книги") },
                     modifier = Modifier.padding(end = 6.dp),
                 )
                 FilterChip(
@@ -211,7 +193,6 @@ data object LocalLibraryTab : Tab {
                     },
                     label = { Text("Настройки") },
                 )
-            }
             }
 
             when {
@@ -235,7 +216,7 @@ data object LocalLibraryTab : Tab {
                         }
                     }
                 }
-                else -> if (!booksMode) {
+                else -> if (true) {
             Surface(
                 // Фон шапки обязан совпадать с темой: surfaceVariant давал
                 // серое пятно на тёмных окрасках (жалоба пользователя).
@@ -418,20 +399,10 @@ data object LocalLibraryTab : Tab {
                     ),
                 )
             }
-            } else {
-                // «Книги»: библиотека файлов любых форматов внутри локальной
-                // библиотеки. Свой Navigator для открытия книги-читалки;
-                // когда он не на корне (открыта читалка) — шапка прячется.
-                Navigator(screen = BooksLibraryScreen) { inner ->
-                    LaunchedEffect(inner.lastItem) {
-                        booksReaderOpen = inner.lastItem !is BooksLibraryScreen
-                    }
-                    DefaultNavigatorScreenTransition(navigator = inner)
-                }
 
             }
-            }
         }
+    }
     }
 
     /**
