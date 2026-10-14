@@ -2660,12 +2660,15 @@ class AutoReadEngine(
         val h = bottom - top
         if (w < 16 || h < 16) return ""
         val crop = Bitmap.createBitmap(bitmap, left, top, w, h)
+        val ocrBitmap = if (maskRound) maskCircle(crop) else crop
         return try {
-            val ocrBitmap = if (maskRound) maskCircle(crop) else crop
             val pixels = IntArray(ocrBitmap.width * ocrBitmap.height)
             ocrBitmap.getPixels(pixels, 0, ocrBitmap.width, 0, 0, ocrBitmap.width, ocrBitmap.height)
-            bubbleOcr.getText(OcrImage(ocrBitmap.width, ocrBitmap.height, pixels))
+            bubbleOcr.getBubbleText(OcrImage(ocrBitmap.width, ocrBitmap.height, pixels))
         } finally {
+            // Маска — отдельный Bitmap. Раньше он не гасился, и на круглом
+            // облачке утекал кусок кадра за кадром на всё время авточтения.
+            if (ocrBitmap !== crop && !ocrBitmap.isRecycled) ocrBitmap.recycle()
             if (!crop.isRecycled) crop.recycle()
         }
     }

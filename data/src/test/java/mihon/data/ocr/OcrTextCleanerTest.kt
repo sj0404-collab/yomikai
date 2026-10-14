@@ -256,4 +256,59 @@ class OcrTextCleanerTest {
         OcrTextCleaner.stripPromotionalText(text) shouldBe "Столичный город Арзия"
         OcrTextCleaner.isPromotionalText("REMANGA.ORG ЧИТАЙ РАНЬШЕ ВСЕХ") shouldBe true
     }
+
+    @Test
+    fun `replica boundaries survive normalization as line breaks`() {
+        // Границы облачков — это переводы строк. Раньше словарь сворачивал их в
+        // пробелы, и все облачка страницы читались одной простынёй.
+        OcrTextCleaner.normalizeLocalCyrillicCaption(
+            "ДАВАЙ ПОИГРАЕМ В СОЛДАТИКОВ\nОДНОМУ ИГРАТЬ С МЫШОНКОМ СКУЧНО",
+        ) shouldBe "ДАВАЙ ПОИГРАЕМ В СОЛДАТИКОВ\nОДНОМУ ИГРАТЬ С МЫШОНКОМ СКУЧНО"
+    }
+
+    @Test
+    fun `blank lines collapse but replicas stay separate`() {
+        OcrTextCleaner.restoreKnownCaptionWords("Я ПЛОХО РАЗБИРАЮСЬ\n\n\nХВАТИТ") shouldBe
+            "Я ПЛОХО РАЗБИРАЮСЬ\nХВАТИТ"
+    }
+
+    @Test
+    fun `edge noise picked up from the bubble outline is cut off`() {
+        // «ПШЛ» — контур пузыря, попавший в кроп. Он не словарный и короткий,
+        // а его удаление повышает покрытие словарём — значит, это шум.
+        OcrTextCleaner.trimEdgeNoise("ПШЛ ДАВАЙ ПОИГРАЕМ В СОЛДАТИКОВ") shouldBe
+            "ДАВАЙ ПОИГРАЕМ В СОЛДАТИКОВ"
+    }
+
+    @Test
+    fun `noise at the end of a replica is cut off`() {
+        OcrTextCleaner.trimEdgeNoise("ХВАТИТ ПРИДУМЫВАТЬ ОТГОВОРКИ ХЖБ") shouldBe
+            "ХВАТИТ ПРИДУМЫВАТЬ ОТГОВОРКИ"
+    }
+
+    @Test
+    fun `real first and last words are kept`() {
+        // «ЭЙ» в словаре есть, а «СОЗИДАНИЕ» длиннее порога шума, поэтому
+        // ни одна из этих реплик не должна быть урезана.
+        OcrTextCleaner.trimEdgeNoise("ЭЙ СЛЫШИШЬ") shouldBe "ЭЙ СЛЫШИШЬ"
+        OcrTextCleaner.trimEdgeNoise("МЫ ПОРОДИЛИ СОЗИДАНИЕ") shouldBe "МЫ ПОРОДИЛИ СОЗИДАНИЕ"
+    }
+
+    @Test
+    fun `trimming never leaves an empty or non cyrillic replica`() {
+        OcrTextCleaner.trimEdgeNoise("ПШЛ") shouldBe "ПШЛ"
+        OcrTextCleaner.trimEdgeNoise("ПШЛ ДШЛ") shouldBe "ПШЛ ДШЛ"
+    }
+
+    @Test
+    fun `inbuilt dictionary still recognises its own words`() {
+        // Словарь переехал с Set<String> на хеши: проверяем, что он отвечает
+        // и по прописным, и по строчным, и что чужие слова не признаёт.
+        RuWordList.containsUpper("мышонок") shouldBe true
+        RuWordList.containsUpper("МЫШОНОК") shouldBe true
+        RuWordList.containsUpper("солдатиков") shouldBe true
+        RuWordList.containsUpper("понедельник") shouldBe true
+        RuWordList.containsUpper("жжузликцюгрукнк") shouldBe false
+        RuWordList.containsUpper("") shouldBe false
+    }
 }

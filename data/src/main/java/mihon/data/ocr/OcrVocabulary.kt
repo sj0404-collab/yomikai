@@ -134,7 +134,7 @@ object OcrVocabulary {
     fun isKnownWord(word: String): Boolean {
         if (word.isEmpty()) return false
         val up = word.uppercase()
-        if (up in RuWordList.upper) return true
+        if (RuWordList.containsUpper(up)) return true
         return lock.read { upper.contains(up) }
     }
 

@@ -516,6 +516,47 @@ class OcrRepositoryImpl(
     override suspend fun recognizeText(image: OcrImage): String = recognizeText(image, null)
 
     /**
+     * Кроп одного облачка: детектор не запускаем.
+     *
+     * Путь авточтения нарезает кадр на облачка и зовёт распознавание на каждое.
+     * Через [recognizeText] это означало полный проход детектора на каждом
+     * кропе — до 40 облачков на кадр, то есть до 200 проходов детектора,
+     * которые шли впустую: на кропе облачка детектор только дробит готовую
+     * реплику на фрагменты.
+     *
+     * Движок берётся тот же, что у страницы, и фолбэк тот же — мы поменяли
+     * только первый шаг (детектор), а не качество и не набор движков.
+     */
+    override suspend fun recognizeBubbleText(image: OcrImage): String {
+        lastRecognizedEngine = null
+        val engine = selectedEngineType()
+        return withActiveOperation {
+            submitTask(PrioritizedTaskQueue.Priority.HIGH) {
+                image.useBitmap { bitmap ->
+                    // Детектор пропускаем только у движков, которые умеют читать
+                    // готовую строку. Остальным (онлайн, Lens) кроп-облачко
+                    // ничего не даёт — у них нет детектора вовсе.
+                    val lineEngine = runCatching { engineFor(engine) as? LineOcrEngine }.getOrNull()
+                    val lineText = lineEngine?.let {
+                        runCatching { it.recognizeLine(bitmap) }.getOrNull()
+                    }
+                    if (!lineText.isNullOrBlank()) {
+                        noteEngineUsed(engine)
+                        lineText
+                    } else {
+                        recognizeWithFallback(
+                            primary = engine,
+                            image = bitmap,
+                            fallbackBudgetMs = tinyFallbackBudgetMs,
+                            allowOnlineFallback = false,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Локальное распознавание без сети — для библиотеки книг.
      *
      * Движок задан здесь, а не берётся из настройки: у манги может быть выбран

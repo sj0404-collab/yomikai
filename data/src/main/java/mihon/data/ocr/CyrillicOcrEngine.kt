@@ -366,6 +366,7 @@ internal class CyrillicOcrEngine(
                 OcrStageBus.Stage.DONE,
                 "${out.length} симв | словарь: ${OcrTextCleanerStats.wordDictHits}, " +
                     "пунктуация: ${OcrTextCleanerStats.punctFixes}, " +
+                    "края: ${OcrTextCleanerStats.edgeNoiseTrims}, " +
                     "разбиение: ${OcrTextCleanerStats.splitFixes}",
             )
             out
@@ -920,7 +921,9 @@ internal class CyrillicOcrEngine(
         // Склеиваем переносы с дефисом ДО того, как postprocessing превратит
         // строковые границы в пробелы. Иначе «НЕУПРАВ-\nЛЯЕМЫЙ» остаётся в
         // интерфейсе как ложное «НЕУПРАВ- ЛЯЕМЫЙ».
-        val cleaned = OcrTextCleaner.normalizeLocalCyrillicCaption(text).trim()
+        val cleaned = OcrTextCleaner.trimEdgeNoise(
+            OcrTextCleaner.normalizeLocalCyrillicCaption(text)
+        ).trim()
         if (cleaned.isEmpty() || OcrTextCleaner.looksLikeDictionaryRamp(cleaned)) return ""
         if (OcrTextCleaner.isAcceptableCyrillicOcrText(cleaned)) return cleaned
         // Один мусорный токен не обнуляет всю подпись: чистая кириллица
@@ -1147,21 +1150,32 @@ internal class CyrillicOcrEngine(
     }
 
     private fun mergeBoxes(source: List<Rect>, tuning: OcrTuning): List<Rect> {
+        if (source.size < 2) return source.map(::Rect)
         val boxes = source.sortedWith(compareBy({ it.top }, { it.left })).map(::Rect).toMutableList()
+
+        // Прежний вариант после КАЖДОГО объединения начинал полный квадратный
+        // скан заново — O(n³). На странице с тайлингом детектор отдаёт 200–500
+        // сырых боксов, и на одних только merge'е уходили десятки-сотни мс.
+        // Теперь один проход: слиты помечаются и пропускаются, а если объединение
+        // изменило прямоугольник, его перепроверяют только те, кто сливался с ним.
+        val merged = BooleanArray(boxes.size)
         var changed = true
         while (changed) {
             changed = false
-            outer@ for (i in boxes.indices) {
+            for (i in boxes.indices) {
+                if (merged[i]) continue
                 for (j in i + 1 until boxes.size) {
+                    if (merged[j]) continue
                     if (!sameBubbleOrFragment(boxes[i], boxes[j], tuning)) continue
                     boxes[i].union(boxes[j])
-                    boxes.removeAt(j)
+                    merged[j] = true
                     changed = true
-                    break@outer
                 }
             }
         }
-        return boxes.sortedWith(compareBy({ it.top }, { it.left }))
+        val result = ArrayList<Rect>(boxes.size)
+        for (i in boxes.indices) if (!merged[i]) result += boxes[i]
+        return result.sortedWith(compareBy({ it.top }, { it.left }))
     }
 
     /**

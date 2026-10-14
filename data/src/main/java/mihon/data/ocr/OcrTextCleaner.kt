@@ -31,11 +31,16 @@ object OcrTextCleanerStats {
     @Volatile
     var splitFixes: Int = 0
 
+    /** Сколько раз срезан мусорный токен на краю реплики. */
+    @Volatile
+    var edgeNoiseTrims: Int = 0
+
     fun reset() {
         wordDictHits = 0
         userDictHits = 0
         punctFixes = 0
         splitFixes = 0
+        edgeNoiseTrims = 0
     }
 }
 
@@ -49,6 +54,19 @@ object OcrTextCleaner {
 
     /** Несколько пустых строк подряд схлопываются в один перевод строки. */
     private val BLANK_LINES = Regex("\\n[ \\t]*\\n+")
+
+    /**
+     * Разделители токенов. Раньше эти [Regex] собирались заново на КАЖДЫЙ вызов
+     * [dictionaryCoverage] / [userDictionaryCoverage], а их дёргает ранжирование
+     * кандидатов по 2–3 раза на каждый кроп: до 36 компиляций регулярки на одну
+     * реплику только на этом.
+     */
+    private val TOKEN_SEPARATORS = Regex("[^\\p{L}\\p{N}]+")
+    private val INLINE_SPACES = Regex("[ \\t]{2,}")
+    private val WHITESPACE_RUN = Regex("\\s+")
+    private val PUNCT_BEFORE_LETTER = Regex("([,!?;:])(?=[А-Яа-яЁё])")
+    private val QUOTE_CLOSE_BEFORE_CAPS = Regex("([»”])(?=[А-ЯЁ])")
+    private val QUOTE_OPEN_AFTER_LETTER = Regex("(?<=[А-ЯЁа-яё])([«„])")
 
     private val LATIN_WHITELIST = setOf(
         "sos", "bmw", "wi-fi", "ok", "tv", "dvd", "3d", "hp", "pc", "usb", "sim", "sd",
@@ -136,7 +154,7 @@ object OcrTextCleaner {
                     .replace(PROMOTIONAL_ADBLOCK, "")
                     .replace(PROMOTIONAL_SLOGAN, "")
                     .replace(PROMOTIONAL_SITE, "")
-                    .replace(Regex("[ \\t]{2,}"), " ")
+                    .replace(INLINE_SPACES, " ")
                     .trim()
                 if (cut.lowercase() in STANDALONE_AD_BUTTONS) "" else cut
 
@@ -234,7 +252,7 @@ object OcrTextCleaner {
     }
 
     fun isAcceptableCyrillicOcrText(text: String): Boolean {
-        val words = text.split(Regex("\\s+")).filter(String::isNotBlank)
+        val words = text.split(WHITESPACE_RUN).filter(String::isNotBlank)
         if (words.isEmpty()) return false
 
         return words.all { word ->
@@ -318,13 +336,13 @@ object OcrTextCleaner {
         // сканирования и (следом) история распознанных страниц.
         OcrTextCleanerStats.wordDictHits += hits
         OcrTextCleanerStats.punctFixes +=
-            Regex("([,!?;:])(?=[А-Яа-яЁё])").findAll(restored).count()
+            PUNCT_BEFORE_LETTER.findAll(restored).count()
 return restored
-            .replace(Regex("([»”])(?=[А-ЯЁ])"), "$1 ")
-            .replace(Regex("(?<=[А-ЯЁа-яё])([«„])"), " $1")
+            .replace(QUOTE_CLOSE_BEFORE_CAPS, "$1 ")
+            .replace(QUOTE_OPEN_AFTER_LETTER, " $1")
             // Пробел после знака препинания перед буквой: модель теряла его
             // на плотной вёрстке («Я,НАКОНЕЦ,» со скриншота).
-            .replace(Regex("([,!?;:])(?=[А-Яа-яЁё])"), "$1 ")
+            .replace(PUNCT_BEFORE_LETTER, "$1 ")
             // Границы реплик — это переводы строк, и раньше они здесь
             // сворачивались в пробелы: все облачка страницы становились одной
             // простынёй текста («давай поиграем… Одному играть… я плохо
@@ -477,14 +495,14 @@ return restored
             OcrTextCleanerStats.userDictHits++
             return true
         }
-        return up in RuWordList.upper
+        return RuWordList.containsUpper(up)
     }
 
     fun userDictionaryCoverage(text: String): Float {
         if (text.isBlank()) return 0f
         var letters = 0
         var covered = 0
-        for (token in text.split(Regex("[^\\p{L}\\p{N}]+"))) {
+        for (token in text.split(TOKEN_SEPARATORS)) {
             val lexical = token.filter(Char::isLetter)
             if (lexical.count { it.code in CYRILLIC_RANGE } == 0) continue
             letters += lexical.length
@@ -492,6 +510,61 @@ return restored
         }
         if (letters == 0) return 0f
         return covered.toFloat() / letters
+    }
+
+    /**
+     * Срезает шум, которым детектор зацепил край облачка.
+     *
+     * Реплика из манги почти всегда окружена контуром пузыря или следами
+     * соседнего рисунка. Если такой кусок попадает в кроп, PP-OCR стабильно
+     * пишет его ОДНИМ токеном на начале или на конце строки — пользователь
+     * видел это как «рандомные буквы спереди и сзади».
+     *
+     * Токен считается шумом только если выполнены ВСЕ условия:
+     *  * он не словарное слово (иначе это первое слово реплики);
+     *  * он короткий — реальное слово на 5+ букв шумом не бывает;
+     *  * его удаление ПОВЫШАЕТ покрытие словарём по всей реплике.
+     *
+     * Последнее условие — главное: оно отличает мусор от настоящего слова.
+     * Реплика «Я плохо разбираюсь в военном искусстве» с прилипшим «ПШЛ»
+     * после среза покрывается словарём лучше, а реплика «ЭЙ слышишь» после
+     * среза «ЭЙ» — хуже, и потому остаётся целой.
+     *
+     * Ничего не заменяется и не додумывается: режется только крайний токен,
+     * максимум один с каждой стороны.
+     */
+    fun trimEdgeNoise(text: String): String {
+        if (text.isBlank()) return text
+        val tokens = text.split(WHITESPACE_RUN).filter(String::isNotBlank)
+        if (tokens.size < 2) return text
+
+        var start = 0
+        var end = tokens.size
+        if (isEdgeNoise(tokens, start, end - start)) start++
+        if (end - start >= 2 && isEdgeNoise(tokens, end - 1, end - start)) end--
+        if (start == 0 && end == tokens.size) return text
+
+        val trimmed = tokens.subList(start, end).joinToString(" ")
+        // Срезать нельзя, если от реплики ничего не осталось или осталось не
+        // то, что похоже на текст.
+        if (trimmed.isBlank() || trimmed.none { it.code in CYRILLIC_RANGE }) return text
+        OcrTextCleanerStats.edgeNoiseTrims += tokens.size - (end - start)
+        return trimmed
+    }
+
+    private fun isEdgeNoise(tokens: List<String>, index: Int, count: Int): Boolean {
+        if (count < 2) return false
+        val candidate = tokens[index].trimEnd('.', '!', ',', '?', '…', ':', ';', '—', '-')
+        if (candidate.isEmpty()) return false
+        // isKnownWord, а не knownWord: проверка here ничего не меняет в тексте,
+        // но knownWord увеличивает счётчики пользовательского словаря, а это
+        // служебный прогон на отбрасываемый токен.
+        if (OcrVocabulary.isKnownWord(candidate)) return false
+        if (candidate.count(Char::isLetter) > 4) return false
+
+        val without = tokens.toMutableList().apply { removeAt(index) }.joinToString(" ")
+        if (without.isBlank()) return false
+        return dictionaryCoverage(without) > dictionaryCoverage(tokens.joinToString(" "))
     }
 
     /**
@@ -506,7 +579,7 @@ return restored
         if (text.isBlank()) return 0f
         var letters = 0
         var covered = 0
-        for (token in text.split(Regex("[^\\p{L}\\p{N}]+"))) {
+        for (token in text.split(TOKEN_SEPARATORS)) {
             val lexical = token.filter(Char::isLetter)
             val cyrillicCount = lexical.count { it.code in CYRILLIC_RANGE }
             if (cyrillicCount == 0) continue
