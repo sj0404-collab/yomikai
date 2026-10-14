@@ -125,6 +125,31 @@ object BookAmbience {
         return minOf(rise, fall).coerceIn(0.0, 1.0)
     }
 
+    /** Сдвиг частоты на [semis] полутонов вверх (вниз при отрицательном). */
+    private fun transpose(freq: Double, semis: Int): Double =
+        freq * Math.pow(2.0, semis / 12.0)
+
+    /**
+     * Огибающая одного такта, сведённая с огибающей всей петли.
+     * Такт приходит и уходит плавно, а края петли гаснут — иначе зацикливание
+     * даёт щелчок на стыке.
+     */
+    private fun slotEnv(
+        iInSlot: Int,
+        slotSamples: Int,
+        totalSamples: Int,
+        i: Int,
+    ): Double {
+        val cross = (0.6 * SAMPLE_RATE).toInt().coerceAtLeast(1)
+        val slotAttack = (iInSlot.toDouble() / minOf(cross, slotSamples)).coerceAtMost(1.0)
+        val slotRelease = ((slotSamples - 1 - iInSlot).toDouble() / minOf(cross, slotSamples))
+            .coerceAtMost(1.0)
+        val edge = (1.3 * SAMPLE_RATE).toInt().coerceAtLeast(1)
+        val loopIn = (i.toDouble() / edge).coerceAtMost(1.0)
+        val loopOut = ((totalSamples - 1 - i).toDouble() / edge).coerceAtMost(1.0)
+        return minOf(slotAttack, slotRelease, loopIn, loopOut).coerceIn(0.0, 1.0)
+    }
+
     private fun wavHeader(sampleCount: Int): ByteArray {
         val byteRate = SAMPLE_RATE * 2
         val dataSize = sampleCount * 2
@@ -191,13 +216,16 @@ object BookAmbience {
         AmbienceType.MYSTERY -> "Тайна"
     }
 
-    /** Ключ для кэша файла. */
-    private fun AmbienceType.cacheKey(): String = "amb_${name.lowercase()}"
-
-    /** Параметры генерации для каждого типа. */
+    /**
+     * Параметры генерации для каждого типа.
+     *
+     * [progression] — полутоны относительно базового аккорда, по одному на
+     * такт петли. Без него звучал один застывший аккорд все [loopSec]
+     * секунд, и фон шёл ровным гудящим тоном без единой мелодии.
+     */
     private data class AmbienceParams(
-        val baseFreq: Double,
         val chordNotes: List<Double>,
+        val progression: IntArray,
         val lfoRate: Double,
         val lfoDepth: Double,
         val noiseLevel: Double,
@@ -207,86 +235,28 @@ object BookAmbience {
     )
 
     private fun paramsFor(type: AmbienceType): AmbienceParams = when (type) {
-        AmbienceType.NEUTRAL -> AmbienceParams(220.0, listOf(220.0, 261.63, 329.63), 0.09, 0.14, 0.0, 0.4, 0.8, 14)
-        AmbienceType.CALM -> AmbienceParams(220.0, listOf(220.0, 261.63, 329.63, 440.0), 0.07, 0.12, 0.0, 0.6, 1.0, 16)
-        AmbienceType.DARK -> AmbienceParams(146.83, listOf(146.83, 174.61, 220.0, 293.66), 0.05, 0.18, 0.0, 0.8, 1.2, 18)
-        AmbienceType.BRIGHT -> AmbienceParams(261.63, listOf(261.63, 329.63, 392.0, 523.25), 0.12, 0.10, 0.0, 0.3, 0.6, 12)
-        AmbienceType.RAIN -> AmbienceParams(180.0, listOf(180.0, 220.0, 270.0), 0.15, 0.20, 0.08, 0.1, 0.3, 10)
-        AmbienceType.FIREPLACE -> AmbienceParams(120.0, listOf(120.0, 150.0, 180.0), 0.08, 0.25, 0.12, 0.2, 0.5, 12)
-        AmbienceType.NIGHT -> AmbienceParams(100.0, listOf(100.0, 125.0, 150.0), 0.04, 0.15, 0.0, 1.0, 1.5, 20)
-        AmbienceType.WIND -> AmbienceParams(160.0, listOf(160.0, 200.0, 240.0), 0.20, 0.30, 0.06, 0.5, 0.8, 14)
-        AmbienceType.OCEAN -> AmbienceParams(140.0, listOf(140.0, 175.0, 210.0), 0.06, 0.22, 0.10, 0.8, 1.2, 16)
-        AmbienceType.FOREST -> AmbienceParams(200.0, listOf(200.0, 250.0, 300.0), 0.10, 0.18, 0.04, 0.4, 0.7, 14)
-        AmbienceType.CITY -> AmbienceParams(220.0, listOf(220.0, 275.0, 330.0), 0.12, 0.15, 0.05, 0.3, 0.5, 12)
-        AmbienceType.COFFEE_SHOP -> AmbienceParams(240.0, listOf(240.0, 300.0, 360.0), 0.10, 0.12, 0.03, 0.4, 0.6, 12)
-        AmbienceType.THUNDERSTORM -> AmbienceParams(90.0, listOf(90.0, 110.0, 135.0), 0.03, 0.35, 0.15, 1.5, 2.0, 20)
-        AmbienceType.SNOW -> AmbienceParams(280.0, listOf(280.0, 350.0, 420.0), 0.05, 0.10, 0.02, 0.8, 1.0, 16)
-        AmbienceType.LIBRARY -> AmbienceParams(180.0, listOf(180.0, 225.0, 270.0), 0.06, 0.08, 0.0, 0.6, 0.9, 14)
-        AmbienceType.TEMPLE -> AmbienceParams(160.0, listOf(160.0, 200.0, 240.0, 300.0), 0.04, 0.12, 0.0, 1.2, 1.8, 22)
-        AmbienceType.BATTLE -> AmbienceParams(110.0, listOf(110.0, 138.0, 165.0), 0.18, 0.25, 0.10, 0.2, 0.4, 10)
-        AmbienceType.ROMANCE -> AmbienceParams(261.63, listOf(261.63, 329.63, 392.0, 493.88), 0.08, 0.10, 0.0, 0.7, 1.1, 16)
-        AmbienceType.MYSTERY -> AmbienceParams(130.0, listOf(130.0, 162.0, 195.0), 0.06, 0.20, 0.04, 0.9, 1.3, 18)
-    }
-
-    /** Генерирует WAV для произвольного типа эмбиента. */
-    fun generateWavForType(type: AmbienceType): ByteArray {
-        val p = paramsFor(type)
-        val totalSamples = p.loopSec * SAMPLE_RATE
-        val buf = DoubleArray(totalSamples)
-
-        // Базовый тон + обертоны
-        for (i in 0 until totalSamples) {
-            val t = i.toDouble() / SAMPLE_RATE
-            var v = 0.0
-            for ((idx, f) in p.chordNotes.withIndex()) {
-                val harmonic = 1.0 / (idx + 1)
-                v += sin(2 * PI * f * t) * harmonic
-                v += 0.3 * sin(2 * PI * f * 2 * t) * harmonic
-            }
-            // LFO — медленная модуляция громкости
-            val lfo = 1.0 - p.lfoDepth + p.lfoDepth * sin(2 * PI * p.lfoRate * t)
-            // Шум (для дождя, ветра, грома)
-            val noise = if (p.noiseLevel > 0) {
-                (Math.random() * 2 - 1) * p.noiseLevel
-            } else 0.0
-            // Атака/затухание для плавной петли
-            val attackSamples = (p.attackSec * SAMPLE_RATE).toInt()
-            val releaseSamples = (p.releaseSec * SAMPLE_RATE).toInt()
-            val env = when {
-                i < attackSamples -> i.toDouble() / attackSamples
-                i > totalSamples - releaseSamples -> (totalSamples - 1 - i).toDouble() / releaseSamples
-                else -> 1.0
-            }
-            buf[i] = (v * 0.045 + noise) * lfo * env
-        }
-
-        // Нормализация
-        var peak = 0.0
-        for (v in buf) peak = max(peak, abs(v))
-        val norm = if (peak > 1e-9) 0.7 / peak else 1.0
-
-        val data = ByteArray(totalSamples * 2)
-        var di = 0
-        for (i in 0 until totalSamples) {
-            val sample = (buf[i] * norm * 32767.0).roundToInt().coerceIn(-32768, 32767)
-            data[di++] = (sample and 0xFF).toByte()
-            data[di++] = ((sample shr 8) and 0xFF).toByte()
-        }
-        return wavHeader(totalSamples) + data
-    }
-
-    /** Возвращает WAV-файл для типа эмбиента (генерирует и кэширует). */
-    fun fileForType(context: Context, type: AmbienceType): File? {
-        val dir = File(context.cacheDir, "book_ambience")
-        if (!dir.exists()) runCatching { dir.mkdirs() }
-        val f = File(dir, "${type.cacheKey()}.wav")
-        if (f.exists() && f.length() > 44L) return f
-        return runCatching {
-            if (!f.exists()) f.outputStream().use { it.write(generateWavForType(type)) }
-            f
-        }.onFailure { e ->
-            logcat(LogPriority.WARN, e) { "BookAmbience: generation failed for $type" }
-        }.getOrNull()
+        // Прогрессии записаны полутонами от базового аккорда.
+        // Светлые — мажорные (I-V-vi-IV), мрачные — натуральный минор
+        // (i-VI-III-VII), так что вместо ровного гула получается смена аккордов.
+        AmbienceType.NEUTRAL -> AmbienceParams(listOf(220.0, 261.63, 329.63), intArrayOf(0, -5, -9, -7), 0.09, 0.14, 0.0, 0.4, 0.8, 14)
+        AmbienceType.CALM -> AmbienceParams(listOf(220.0, 261.63, 329.63, 440.0), intArrayOf(0, -7, -12, -7), 0.07, 0.12, 0.0, 0.6, 1.0, 16)
+        AmbienceType.DARK -> AmbienceParams(listOf(146.83, 174.61, 220.0, 293.66), intArrayOf(0, 8, 3, 10), 0.05, 0.18, 0.0, 0.8, 1.2, 18)
+        AmbienceType.BRIGHT -> AmbienceParams(listOf(261.63, 329.63, 392.0, 523.25), intArrayOf(0, -5, -9, -7), 0.12, 0.10, 0.0, 0.3, 0.6, 12)
+        AmbienceType.RAIN -> AmbienceParams(listOf(180.0, 220.0, 270.0), intArrayOf(0, 3, 8, 3), 0.15, 0.20, 0.08, 0.1, 0.3, 10)
+        AmbienceType.FIREPLACE -> AmbienceParams(listOf(120.0, 150.0, 180.0), intArrayOf(0, 3, 5, 3), 0.08, 0.25, 0.12, 0.2, 0.5, 12)
+        AmbienceType.NIGHT -> AmbienceParams(listOf(100.0, 125.0, 150.0), intArrayOf(0, 10, 8, 10), 0.04, 0.15, 0.0, 1.0, 1.5, 20)
+        AmbienceType.WIND -> AmbienceParams(listOf(160.0, 200.0, 240.0), intArrayOf(0, 5, 7, 2), 0.20, 0.30, 0.06, 0.5, 0.8, 14)
+        AmbienceType.OCEAN -> AmbienceParams(listOf(140.0, 175.0, 210.0), intArrayOf(0, 8, 5, 8), 0.06, 0.22, 0.10, 0.8, 1.2, 16)
+        AmbienceType.FOREST -> AmbienceParams(listOf(200.0, 250.0, 300.0), intArrayOf(0, 2, 5, 2), 0.10, 0.18, 0.04, 0.4, 0.7, 14)
+        AmbienceType.CITY -> AmbienceParams(listOf(220.0, 275.0, 330.0), intArrayOf(0, -5, 3, -2), 0.12, 0.15, 0.05, 0.3, 0.5, 12)
+        AmbienceType.COFFEE_SHOP -> AmbienceParams(listOf(240.0, 300.0, 360.0), intArrayOf(0, 3, 5, 7), 0.10, 0.12, 0.03, 0.4, 0.6, 12)
+        AmbienceType.THUNDERSTORM -> AmbienceParams(listOf(90.0, 110.0, 135.0), intArrayOf(0, 1, 8, 1), 0.03, 0.35, 0.15, 1.5, 2.0, 20)
+        AmbienceType.SNOW -> AmbienceParams(listOf(280.0, 350.0, 420.0), intArrayOf(0, -7, -12, -5), 0.05, 0.10, 0.02, 0.8, 1.0, 16)
+        AmbienceType.LIBRARY -> AmbienceParams(listOf(180.0, 225.0, 270.0), intArrayOf(0, -5, 3, -2), 0.06, 0.08, 0.0, 0.6, 0.9, 14)
+        AmbienceType.TEMPLE -> AmbienceParams(listOf(160.0, 200.0, 240.0, 300.0), intArrayOf(0, 7, 12, 7), 0.04, 0.12, 0.0, 1.2, 1.8, 22)
+        AmbienceType.BATTLE -> AmbienceParams(listOf(110.0, 138.0, 165.0), intArrayOf(0, -2, 3, -2), 0.18, 0.25, 0.10, 0.2, 0.4, 10)
+        AmbienceType.ROMANCE -> AmbienceParams(listOf(261.63, 329.63, 392.0, 493.88), intArrayOf(0, -5, -9, -7), 0.08, 0.10, 0.0, 0.7, 1.1, 16)
+        AmbienceType.MYSTERY -> AmbienceParams(listOf(130.0, 162.0, 195.0), intArrayOf(0, 8, 3, 7), 0.06, 0.20, 0.04, 0.9, 1.3, 18)
     }
 
     private val CHORDS: Map<Mood, Array<DoubleArray>> = mapOf(
@@ -315,4 +285,151 @@ object BookAmbience {
             doubleArrayOf(174.61, 220.0, 261.63, 349.23),
         ),
     )
+
+    /** Громкость фона, когда говорит голос: доля от базовой. */
+    private const val DUCK_LEVEL = 0.34f
+
+    /**
+     * Фоновая музыка, посыпаемая в AudioTrack напрямую.
+     *
+     * Раньше петля писалась WAV на диск и крутилась MediaPlayer'ом — громкость
+     * была зашита на весь файл, и приглушить музыку на время речи было нечем.
+     * Здесь синтез идёт по сэмплам, поэтому [voiceActive] опускает фон
+     * мгновенно и поднимает обратно: голос всегда остаётся главным.
+     *
+     * Петля зациклена на уровне сэмплов (позиция берётся по модулю длины),
+     * поэтому ни стыка, ни щелчка на переходе.
+     */
+    class Streamer(val type: AmbienceType) {
+
+        /** Базовая громкость из настроек. Голос не перекрывает: см. [DUCK_LEVEL]. */
+        @Volatile
+        var baseVolume: Float = 0.15f
+
+        /** Идёт ли сейчас речь. true — фон уходит вниз. */
+        @Volatile
+        var voiceActive: Boolean = false
+
+        private val p = paramsFor(type)
+        private val totalSamples = p.loopSec * SAMPLE_RATE
+        private val slots = p.progression.size.coerceAtLeast(1)
+        private val slotSamples = totalSamples / slots
+        private val noiseRnd = java.util.Random(type.ordinal.toLong())
+
+        @Volatile
+        private var running = false
+        private var track: android.media.AudioTrack? = null
+        private var worker: Thread? = null
+
+        // Состояние синтеза между вызовами: позиция в петле, фильтр, огибающая.
+        private var pos = 0
+        private var filterState = 0.0
+        private var gain = 0.0
+        private var lpCutoff = 0.0
+
+        private val bufferSize = 2048
+        private val buffer = ShortArray(bufferSize)
+
+        fun start() {
+            if (running) return
+            val minBuf = android.media.AudioTrack.getMinBufferSize(
+                SAMPLE_RATE,
+                android.media.AudioFormat.CHANNEL_OUT_MONO,
+                android.media.AudioFormat.ENCODING_PCM_16BIT,
+            )
+            if (minBuf <= 0) return
+            val at = runCatching {
+                android.media.AudioTrack.Builder()
+                    .setAudioAttributes(
+                        android.media.AudioAttributes.Builder()
+                            .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                            .build(),
+                    )
+                    .setAudioFormat(
+                        android.media.AudioFormat.Builder()
+                            .setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT)
+                            .setSampleRate(SAMPLE_RATE)
+                            .setChannelMask(android.media.AudioFormat.CHANNEL_OUT_MONO)
+                            .build(),
+                    )
+                    .setBufferSizeInBytes(maxOf(minBuf, bufferSize * 2 * 4))
+                    .setTransferMode(android.media.AudioTrack.MODE_STREAM)
+                    .build()
+            }.getOrNull() ?: return
+
+            track = at
+            running = true
+            runCatching { at.play() }
+            worker = Thread({ pump(at) }, "ambience-${type.name}").apply {
+                isDaemon = true
+                priority = Thread.MIN_PRIORITY
+                start()
+            }
+        }
+
+        fun stop() {
+            running = false
+            worker?.interrupt()
+            worker = null
+            val at = track
+            track = null
+            runCatching {
+                at?.pause()
+                at?.flush()
+                at?.release()
+            }
+        }
+
+        private fun pump(at: android.media.AudioTrack) {
+            while (running) {
+                render()
+                val wrote = runCatching { at.write(buffer, 0, buffer.size) }.getOrDefault(-1)
+                if (wrote < 0) break
+            }
+        }
+
+        private fun render() {
+            for (n in 0 until bufferSize) {
+                val slot = pos / slotSamples
+                val semis = p.progression[slot.coerceIn(0, slots - 1)]
+                val tSlot = (pos % slotSamples).toDouble() / SAMPLE_RATE
+                val tLoop = pos.toDouble() / SAMPLE_RATE
+
+                // Аккорд текущего такта + второй обертон тише, чем был.
+                var v = 0.0
+                for ((idx, base) in p.chordNotes.withIndex()) {
+                    val f = base * Math.pow(2.0, semis / 12.0)
+                    val weight = 1.0 / (idx + 1)
+                    v += sin(2 * PI * f * tSlot) * weight
+                    v += 0.25 * sin(2 * PI * f * 2 * tSlot) * weight
+                }
+
+                // Шум дождя/ветра/костра — тот же, что у WAV-версии.
+                if (p.noiseLevel > 0) {
+                    v += (noiseRnd.nextDouble() * 2 - 1) * p.noiseLevel
+                }
+
+                // Медленно ползущий срез: петля перестаёт звучать застывшей.
+                val targetCut = 1400.0 + 900.0 * (0.5 + 0.5 * sin(2 * PI * 0.035 * tLoop))
+                lpCutoff += (targetCut - lpCutoff) * 0.00012
+                val a = 1.0 - Math.exp(-2.0 * PI * lpCutoff / SAMPLE_RATE)
+                filterState += (v * 0.045 - filterState) * a
+                var s = filterState
+
+                // Утилизация: быстро вниз на речи, плавно вверх в паузе.
+                val target = baseVolume * if (voiceActive) DUCK_LEVEL else 1f
+                val coef = if (target < gain) 0.0009 else 0.00006
+                gain += (target - gain) * coef
+                s *= gain
+
+                // Края петли гаснут — стык должен быть бесшумным.
+                val edge = (1.3 * SAMPLE_RATE).toInt().coerceAtLeast(1)
+                s *= min(min(pos.toDouble() / edge, (totalSamples - 1 - pos).toDouble() / edge), 1.0)
+
+                buffer[n] = (s * 32767.0).roundToInt().coerceIn(-32768, 32767).toShort()
+                pos = (pos + 1) % totalSamples
+            }
+        }
+    }
 }

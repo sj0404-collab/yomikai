@@ -367,7 +367,9 @@ internal class CyrillicOcrEngine(
                 "${out.length} симв | словарь: ${OcrTextCleanerStats.wordDictHits}, " +
                     "пунктуация: ${OcrTextCleanerStats.punctFixes}, " +
                     "края: ${OcrTextCleanerStats.edgeNoiseTrims}, " +
-                    "разбиение: ${OcrTextCleanerStats.splitFixes}",
+                    "разбиение: ${OcrTextCleanerStats.splitFixes}, " +
+                    "буквы-вставки: ${OcrTextCleanerStats.droppedStrayLetters}, " +
+                    "нечленые: ${OcrTextCleanerStats.dictionaryGarbage}",
             )
             out
         }
@@ -925,6 +927,12 @@ internal class CyrillicOcrEngine(
             OcrTextCleaner.normalizeLocalCyrillicCaption(text)
         ).trim()
         if (cleaned.isEmpty() || OcrTextCleaner.looksLikeDictionaryRamp(cleaned)) return ""
+        // Целиком неизвестные слова («тій», «Небниня» с логотипа-заставки) —
+        // не речь. Раньше проходили: гейт проверял только алфавит.
+        if (OcrTextCleaner.isDictionaryGarbage(cleaned)) {
+            OcrTextCleanerStats.dictionaryGarbage++
+            return ""
+        }
         if (OcrTextCleaner.isAcceptableCyrillicOcrText(cleaned)) return cleaned
         // Один мусорный токен не обнуляет всю подпись: чистая кириллица
         // сохраняется, оставшаяся латынь проходит только из белого списка —

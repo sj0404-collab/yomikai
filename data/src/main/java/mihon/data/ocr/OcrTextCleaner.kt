@@ -35,12 +35,27 @@ object OcrTextCleanerStats {
     @Volatile
     var edgeNoiseTrims: Int = 0
 
+    /** Сколько одиночных букв выброшено как вставки распознавателя («Х»). */
+    @Volatile
+    var droppedStrayLetters: Int = 0
+
+    /** Сколько целых результатов отброшено как нечленые по словарю («тій»). */
+    @Volatile
+    var dictionaryGarbage: Int = 0
+
+    /** Сколько страниц отброшено целиком как заставки без речи. */
+    @Volatile
+    var speechlessPages: Int = 0
+
     fun reset() {
         wordDictHits = 0
         userDictHits = 0
         punctFixes = 0
         splitFixes = 0
         edgeNoiseTrims = 0
+        droppedStrayLetters = 0
+        dictionaryGarbage = 0
+        speechlessPages = 0
     }
 }
 
@@ -245,8 +260,22 @@ object OcrTextCleaner {
         }
         if (suspicious) return text
         val kept = tokens.filter { token ->
-            token.any { it.code in CYRILLIC_RANGE } ||
-                token.trimEnd('.', '!', ',', '?', '…').lowercase() in LATIN_WHITELIST
+            val lexical = token.filter(Char::isLetter)
+            // Одиночная буква, которой нет ни в словаре, ни среди служебных
+            // предлогов, — вставка распознавателя: в скриншоте пользователя
+            // так попадало «Х» внутрь «ПОЗВАТЬ Х ВАШУ ГОРНИЧНУЮ». Настоящие
+            // «В», «К», «С», «У» словами являются и остаются на месте.
+            val strayLetter = lexical.length == 1 &&
+                lexical.any { it.code in CYRILLIC_RANGE } &&
+                !knownWord(lexical) &&
+                token !in SINGLE_LETTER_SOUNDS
+            if (strayLetter) {
+                OcrTextCleanerStats.droppedStrayLetters++
+                false
+            } else {
+                token.any { it.code in CYRILLIC_RANGE } ||
+                    token.trimEnd('.', '!', ',', '?', '…').lowercase() in LATIN_WHITELIST
+            }
         }
         return if (kept.isEmpty()) "" else kept.joinToString(" ")
     }
@@ -636,6 +665,76 @@ return restored
         if (letters == 0) return 0f
         return covered.toFloat() / letters
     }
+
+    /** Гласные русского языка. «тій» без них — не русское слово, а мусор OCR. */
+    private val RUSSIAN_VOWELS = "аеёиоуыэюя".toSet()
+
+    /** Сколько всего кириллических букв в тексте. */
+    private fun cyrillicLetterCount(text: String): Int =
+        text.count { it.code in CYRILLIC_RANGE }
+
+    /**
+     * Весь результат — мусор, а не речь.
+     *
+     * Поймано два наблюдения с реальной страницы:
+     *  * «тій» — три буквы, ни одной в словаре, и ни одной русской гласной
+     *    (там украинская «і»): такого слова в русском тексте не бывает;
+     *  * «Небниня» — распознанная «Небожития» из готического логотипа-заставки:
+     *    ни одного слова из словаря.
+     *
+     * Правила deliberately строгие, иначе потеряются редкие имена:
+     *  1. ни одного известного слова, И
+     *  2. при этом либо непустая часть токенов без русской гласной,
+     *     либо всего три кириллические буквы на весь результат.
+     *
+     * Имена вроде «Артур» длиннее трёх букв и с гласными правилом 2 не
+     * ловятся — ради них порог и поднят. Слова здесь не ЗАМЕНЯются, а целиком
+     * отбрасываются: словарная коррекция в проекте запрещена.
+     */
+    fun isDictionaryGarbage(text: String): Boolean {
+        if (text.isBlank()) return false
+        val tokens = text.split(TOKEN_SEPARATORS)
+            .map { it.filter(Char::isLetter) }
+            .filter { it.isNotEmpty() && it.any { ch -> ch.code in CYRILLIC_RANGE } }
+        if (tokens.isEmpty()) return false
+        if (tokens.any { knownWord(it) }) return false
+
+        val noVowelTokens = tokens.count { token ->
+            token.none { it.lowercaseChar() in RUSSIAN_VOWELS }
+        }
+        if (noVowelTokens > 0) return true
+
+        // Короткий результат из одних неизвестных букв — надёжный признак шума.
+        return cyrillicLetterCount(text) <= 3
+    }
+
+    /**
+     * Страница без речи: всё, что распозналось, — мусор из картинки.
+     *
+     * Наблюдение со скриншотов: на титульном листе с готическим логотипом
+     * движок выдавал «Небниня», и страница уезжала в озвучку. Разбор по
+     * одному результату бессилен — «Небниня» лексически неотличима от
+     * имени «Артур». А по странице решение надёжное: если на листе всего
+     * пара коротких незнакомых слов, речи там нет.
+     *
+     * Намеренно консервативно, чтобы не съесть редкие имена:
+     *  * не больше [MAX_GARBAGE_REGIONS] регионов на странице;
+     *  * ни одного известного слова суммарно;
+     *  * очень мало кириллицы — у настоящей реплики её больше.
+     */
+    fun isSpeechlessPage(texts: List<String>): Boolean {
+        if (texts.isEmpty() || texts.size > MAX_GARBAGE_REGIONS) return false
+        val joined = texts.filter { it.isNotBlank() }
+        if (joined.isEmpty()) return false
+        if (cyrillicLetterCount(joined.joinToString(" ")) > MAX_GARBAGE_LETTERS) return false
+        return joined.none { dictionaryCoverage(it) > 0f }
+    }
+
+    /** Больше регионов — значит это уже сцена со словами, а не заставка. */
+    private const val MAX_GARBAGE_REGIONS = 2
+
+    /** Столько букв на всей «реплики» — предел для страницы-заставки. */
+    private const val MAX_GARBAGE_LETTERS = 24
 
     private fun normalizeCaptionWord(word: String): String = CAPTION_NORMALIZATIONS[word] ?: word
 

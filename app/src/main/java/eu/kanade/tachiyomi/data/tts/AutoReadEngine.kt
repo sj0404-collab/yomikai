@@ -78,7 +78,7 @@ class AutoReadEngine(
 
     // --- Фоновый эмбиент (процедурный WAV, локально) ---
     /** Плеер фоновой музыки. null — эмбиент выключен или ещё не запущен. */
-    private var ambiencePlayer: android.media.MediaPlayer? = null
+    private var ambienceStreamer: eu.kanade.tachiyomi.data.books.BookAmbience.Streamer? = null
 
     /** Текущий тип эмбиента. null = эмбиент выключен. */
     var ambienceType: eu.kanade.tachiyomi.data.books.BookAmbience.AmbienceType? = null
@@ -103,27 +103,43 @@ class AutoReadEngine(
     fun startAmbience() {
         val type = ambienceType ?: return
         runCatching {
-            val file = eu.kanade.tachiyomi.data.books.BookAmbience.fileForType(context, type)
-            if (file == null) return
-            val mp = ambiencePlayer ?: android.media.MediaPlayer().also { ambiencePlayer = it }
-            if (!mp.isPlaying) {
-                mp.reset()
-                mp.setDataSource(file.absolutePath)
-                mp.isLooping = true
-                mp.setVolume(0.3f, 0.3f)
-                mp.prepare()
-                mp.start()
+            // Громкость из настроек: раньше стояло жёсткое 0.3, и ползунок
+            // pref_autoread_music_volume не влиял ни на что.
+            val vol = prefs.autoReadMusicVolume().get().coerceIn(0f, 1f)
+            val s = ambienceStreamer
+            if (s != null && s.type == type) {
+                s.baseVolume = vol
+                return
             }
+            ambienceStreamer?.stop()
+            val fresh = eu.kanade.tachiyomi.data.books.BookAmbience.Streamer(type).apply {
+                baseVolume = vol
+                voiceActive = voiceIsActive
+            }
+            fresh.start()
+            ambienceStreamer = fresh
         }.onFailure { e ->
             logcat(LogPriority.WARN, e) { "Ambience start failed" }
         }
     }
 
+    /** Идёт ли сейчас речь — фон на это время приглушается. */
+    @Volatile
+    private var voiceIsActive: Boolean = false
+
+    /**
+     * Пометить, что сейчас говорит TTS. Пока идёт речь, фон уходит вниз
+     * (см. BookAmbience.DUCK_LEVEL), иначе музыка перебивает голос.
+     */
+    fun setVoiceActive(active: Boolean) {
+        voiceIsActive = active
+        ambienceStreamer?.voiceActive = active
+    }
+
     /** Остановить и освободить плеер эмбиента. */
     fun stopAmbience() {
-        runCatching { ambiencePlayer?.stop() }
-        runCatching { ambiencePlayer?.release() }
-        ambiencePlayer = null
+        runCatching { ambienceStreamer?.stop() }
+        ambienceStreamer = null
     }
 
     /** Строка кадра: текст + нормализованный box (для подсветки/порядка). */
@@ -2306,6 +2322,8 @@ class AutoReadEngine(
             context, text, gender, speakerSlot, langHint = langHint,
             emotionProsody = prosody,
             onState = { speaking ->
+                // Фон приглушается на время речи: голос должен остаться главным.
+                setVoiceActive(speaking)
                 if (speaking && !started.value) {
                     started.value = true
                     logcat(LogPriority.DEBUG) { "TTS started (${System.currentTimeMillis() - t0}ms): ${spoken.take(60)}" }
