@@ -54,6 +54,7 @@ private val NOTIF_IDS = mapOf(
     "manga_ocr" to 77002,
     "manga_ocr_fast" to 77003,
     "panel_detector" to 77004,
+    "rapidocr" to 77005,
 )
 
 private fun notifIdFor(pack: String): Int = NOTIF_IDS[pack] ?: NOTIF_ID
@@ -147,7 +148,15 @@ object OcrModelDownloader {
             tesseract("rus.traineddata") to "rus.traineddata",
             tesseract("eng.traineddata") to "eng.traineddata",
         ),
-
+        // RapidOCR: eslav-распознаватель PP-OCRv5 в ONNX. На реальных страницах
+        // русской манхвы он читает то, где PP-OCRv3 не даёт ничего (проверено
+        // прогоном на страницах пользователя). Итого ~11 МБ, APK не растёт.
+        "rapidocr" to listOf(
+            rapid("det/ch_PP-OCRv5_det_mobile.onnx") to "det.onnx",
+            rapid("rec/eslav_PP-OCRv5_rec_mobile.onnx") to "rec.onnx",
+            rapid("cls/ch_PP-LCNet_x0_25_textline_ori_cls_mobile.onnx") to "cls.onnx",
+            rapidDict() to "ppocr_keys.txt",
+        ),
     )
 
     /** Asset-style paths per pack, used to check installation and delete files. */
@@ -163,7 +172,12 @@ object OcrModelDownloader {
         "manga_ocr_fast" to listOf("ocr_fast/encoder.tflite", "ocr_fast/decoder.tflite"),
         "panel_detector" to listOf("panel_detector/model.tflite"),
         "tesseract" to listOf("tesseract/rus.traineddata", "tesseract/eng.traineddata"),
-
+        "rapidocr" to listOf(
+            "rapidocr/det.onnx",
+            "rapidocr/rec.onnx",
+            "rapidocr/cls.onnx",
+            "rapidocr/ppocr_keys.txt",
+        ),
     )
 
     /** Пин коммита репозитория моделей: неизменяемый источник файлов. */
@@ -224,6 +238,19 @@ object OcrModelDownloader {
     private fun hf(repo: String, path: String): String {
         return "https://huggingface.co/$repo/resolve/main/$path"
     }
+
+    /**
+     * Файлы RapidOCR из репозитория RapidAI на ModelScope — там же, откуда
+     * их берёт сам rapidocr (версия v3.10.0), чтобы набор точно совпадал:
+     * словарь и веса обязаны быть одной конверсии.
+     */
+    private fun rapid(file: String): String =
+        "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv5/$file"
+
+    /** Словарь eslav: 517 символов, а у модели 519 классов (blank плюс запас). */
+    private fun rapidDict(): String =
+        "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/paddle/PP-OCRv5/" +
+            "rec/eslav_PP-OCRv5_rec_mobile/ppocrv5_eslav_dict.txt"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val downloadMutex = Mutex()

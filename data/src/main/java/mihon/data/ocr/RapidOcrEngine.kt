@@ -311,12 +311,12 @@ internal class RapidOcrEngine(context: Context) : LineOcrEngine {
     /** Классификатор угла 0/180. Без сети возвращает исходный bitmap. */
     private fun straighten(src: Bitmap): Bitmap {
         val session = clsSession ?: return src
-        val pixels = IntArray(CLS_SIZE * CLS_SIZE)
-        val small = Bitmap.createScaledBitmap(src, CLS_SIZE, CLS_SIZE, true)
-        small.getPixels(pixels, 0, CLS_SIZE, 0, 0, CLS_SIZE, CLS_SIZE)
+        val pixels = IntArray(CLS_H * CLS_W)
+        val small = Bitmap.createScaledBitmap(src, CLS_W, CLS_H, true)
+        small.getPixels(pixels, 0, CLS_W, 0, 0, CLS_W, CLS_H)
         if (!small.isRecycled) small.recycle()
 
-        val input = FloatArray(3 * CLS_SIZE * CLS_SIZE)
+        val input = FloatArray(3 * CLS_H * CLS_W)
         var p = 0
         for (i in pixels.indices) {
             val c = pixels[i]
@@ -325,7 +325,7 @@ internal class RapidOcrEngine(context: Context) : LineOcrEngine {
             input[p++] = (c and 0xFF) / 255f - 0.5f
         }
 
-        val shape = longArrayOf(1, 3, CLS_SIZE.toLong(), CLS_SIZE.toLong())
+        val shape = longArrayOf(1, 3, CLS_H.toLong(), CLS_W.toLong())
         val scores = infer(session, shape, input) { _, data -> Triple(0, 0, data) }?.third
             ?: return src
 
@@ -413,10 +413,10 @@ internal class RapidOcrEngine(context: Context) : LineOcrEngine {
     }
 
     companion object {
-        const val DET_MODEL = "rapidocr/ch_PP-OCRv5_det_mobile.onnx"
-        const val CLS_MODEL = "rapidocr/ch_ppocr_mobile_v2.0_cls_mobile.onnx"
-        const val REC_MODEL = "rapidocr/eslav_PP-OCRv5_rec_mobile.onnx"
-        const val DICT_FILE = "rapidocr/eslav_dict.txt"
+        const val DET_MODEL = "rapidocr/det.onnx"
+        const val CLS_MODEL = "rapidocr/cls.onnx"
+        const val REC_MODEL = "rapidocr/rec.onnx"
+        const val DICT_FILE = "rapidocr/ppocr_keys.txt"
 
         /** Длинная сторона детектора: больше — медленнее без заметного выигрыша. */
         private const val DET_MAX_SIDE = 960
@@ -430,6 +430,9 @@ internal class RapidOcrEngine(context: Context) : LineOcrEngine {
         private const val REC_HEIGHT = 48
         private const val REC_MIN_WIDTH = 16
         private const val REC_MAX_WIDTH = 320
-        private const val CLS_SIZE = 48
+        // Классификатор угла жёстко требует ровно 80×160 — проверено на модели:
+        // при 48×48 ONNX Runtime отклоняет вход по размерности.
+        private const val CLS_H = 80
+        private const val CLS_W = 160
     }
 }
