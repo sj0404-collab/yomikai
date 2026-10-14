@@ -260,22 +260,8 @@ object OcrTextCleaner {
         }
         if (suspicious) return text
         val kept = tokens.filter { token ->
-            val lexical = token.filter(Char::isLetter)
-            // Одиночная буква, которой нет ни в словаре, ни среди служебных
-            // предлогов, — вставка распознавателя: в скриншоте пользователя
-            // так попадало «Х» внутрь «ПОЗВАТЬ Х ВАШУ ГОРНИЧНУЮ». Настоящие
-            // «В», «К», «С», «У» словами являются и остаются на месте.
-            val strayLetter = lexical.length == 1 &&
-                lexical.any { it.code in CYRILLIC_RANGE } &&
-                !knownWord(lexical) &&
-                token !in SINGLE_LETTER_SOUNDS
-            if (strayLetter) {
-                OcrTextCleanerStats.droppedStrayLetters++
-                false
-            } else {
-                token.any { it.code in CYRILLIC_RANGE } ||
-                    token.trimEnd('.', '!', ',', '?', '…').lowercase() in LATIN_WHITELIST
-            }
+            token.any { it.code in CYRILLIC_RANGE } ||
+                token.trimEnd('.', '!', ',', '?', '…').lowercase() in LATIN_WHITELIST
         }
         return if (kept.isEmpty()) "" else kept.joinToString(" ")
     }

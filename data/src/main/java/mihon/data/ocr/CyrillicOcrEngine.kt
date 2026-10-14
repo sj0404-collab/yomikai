@@ -905,7 +905,12 @@ internal class CyrillicOcrEngine(
     private fun acceptsConfidence(result: Recognition): Boolean {
         val letters = result.text.count(Char::isLetter)
         val threshold = if (letters in 1..3) {
-            tuning().shortTextMinConfidence
+            // Местоимения и умные слова: «я», «ты», «он», «мы» важны, поэтому
+            // пол реплик без них не определится и текст читается по-другому.
+            // Возвращаем им более низкий порог, чтобы короткие местоимения
+            // в коротких облачках («я», «он») не вылетали.
+            // Сохраняем прежний запас: 0.25 через настройку короткого текста.
+            tuning().shortTextMinConfidence.coerceAtMost(0.25f)
         } else {
             tuning().minAcceptConfidence
         }
@@ -927,12 +932,6 @@ internal class CyrillicOcrEngine(
             OcrTextCleaner.normalizeLocalCyrillicCaption(text)
         ).trim()
         if (cleaned.isEmpty() || OcrTextCleaner.looksLikeDictionaryRamp(cleaned)) return ""
-        // Целиком неизвестные слова («тій», «Небниня» с логотипа-заставки) —
-        // не речь. Раньше проходили: гейт проверял только алфавит.
-        if (OcrTextCleaner.isDictionaryGarbage(cleaned)) {
-            OcrTextCleanerStats.dictionaryGarbage++
-            return ""
-        }
         if (OcrTextCleaner.isAcceptableCyrillicOcrText(cleaned)) return cleaned
         // Один мусорный токен не обнуляет всю подпись: чистая кириллица
         // сохраняется, оставшаяся латынь проходит только из белого списка —

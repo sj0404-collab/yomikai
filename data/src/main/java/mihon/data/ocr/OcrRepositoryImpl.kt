@@ -721,23 +721,7 @@ class OcrRepositoryImpl(
                 } finally {
                     if (crop !== originalBitmap && !crop.isRecycled) crop.recycle()
                 }
-                // Титульный лист и прочие заставки: движок выдаёт одну-две
-                // короткие незнакомые «реплики» из логотипа («Небниня» вместо
-                // «Небожития»), и они уезжают в озвучку. Разбор по одному
-                // результату бессилен — лексически это неотличимо от имени,
-                // — а по странице решение надёжно.
-                val speechless = OcrTextCleaner.isSpeechlessPage(
-                    croppedResult.regions.map { it.text },
-                )
-                if (speechless) {
-                    OcrTextCleanerStats.speechlessPages++
-                    logcat(LogPriority.INFO) {
-                        "OCR: страница ${pageIndex + 1} без речи — " +
-                            "${croppedResult.regions.size} регион(ов), текст отброшен"
-                    }
-                }
-                if (speechless) croppedResult.copy(regions = emptyList()) else croppedResult
-                croppedResult.copy(
+            croppedResult.copy(
                     imageHeight = sourceHeight,
                     regions = croppedResult.regions.mapNotNull { region ->
                         OcrBoxGeometry.restoreVerticalCrop(
