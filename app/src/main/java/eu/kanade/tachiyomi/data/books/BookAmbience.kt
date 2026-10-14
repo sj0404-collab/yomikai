@@ -159,6 +159,136 @@ object BookAmbience {
         return out
     }
 
+    // --- 15 дополнительных типов эмбиента для разных ситуаций ---
+
+    enum class AmbienceType {
+        NEUTRAL, CALM, DARK, BRIGHT,
+        RAIN, FIREPLACE, NIGHT, WIND, OCEAN, FOREST,
+        CITY, COFFEE_SHOP, THUNDERSTORM, SNOW, LIBRARY,
+        TEMPLE, BATTLE, ROMANCE, MYSTERY,
+    }
+
+    /** Человекочитаемое имя типа эмбиента. */
+    fun AmbienceType.label(): String = when (this) {
+        AmbienceType.NEUTRAL -> "Нейтральный"
+        AmbienceType.CALM -> "Спокойный"
+        AmbienceType.DARK -> "Мрачный"
+        AmbienceType.BRIGHT -> "Светлый"
+        AmbienceType.RAIN -> "Дождь"
+        AmbienceType.FIREPLACE -> "Камин"
+        AmbienceType.NIGHT -> "Ночь"
+        AmbienceType.WIND -> "Ветер"
+        AmbienceType.OCEAN -> "Океан"
+        AmbienceType.FOREST -> "Лес"
+        AmbienceType.CITY -> "Город"
+        AmbienceType.COFFEE_SHOP -> "Кофейня"
+        AmbienceType.THUNDERSTORM -> "Гроза"
+        AmbienceType.SNOW -> "Снег"
+        AmbienceType.LIBRARY -> "Библиотека"
+        AmbienceType.TEMPLE -> "Храм"
+        AmbienceType.BATTLE -> "Битва"
+        AmbienceType.ROMANCE -> "Романтика"
+        AmbienceType.MYSTERY -> "Тайна"
+    }
+
+    /** Ключ для кэша файла. */
+    private fun AmbienceType.cacheKey(): String = "amb_${name.lowercase()}"
+
+    /** Параметры генерации для каждого типа. */
+    private data class AmbienceParams(
+        val baseFreq: Double,
+        val chordNotes: List<Double>,
+        val lfoRate: Double,
+        val lfoDepth: Double,
+        val noiseLevel: Double,
+        val attackSec: Double,
+        val releaseSec: Double,
+        val loopSec: Int,
+    )
+
+    private fun paramsFor(type: AmbienceType): AmbienceParams = when (type) {
+        AmbienceType.NEUTRAL -> AmbienceParams(220.0, listOf(220.0, 261.63, 329.63), 0.09, 0.14, 0.0, 0.4, 0.8, 14)
+        AmbienceType.CALM -> AmbienceParams(220.0, listOf(220.0, 261.63, 329.63, 440.0), 0.07, 0.12, 0.0, 0.6, 1.0, 16)
+        AmbienceType.DARK -> AmbienceParams(146.83, listOf(146.83, 174.61, 220.0, 293.66), 0.05, 0.18, 0.0, 0.8, 1.2, 18)
+        AmbienceType.BRIGHT -> AmbienceParams(261.63, listOf(261.63, 329.63, 392.0, 523.25), 0.12, 0.10, 0.0, 0.3, 0.6, 12)
+        AmbienceType.RAIN -> AmbienceParams(180.0, listOf(180.0, 220.0, 270.0), 0.15, 0.20, 0.08, 0.1, 0.3, 10)
+        AmbienceType.FIREPLACE -> AmbienceParams(120.0, listOf(120.0, 150.0, 180.0), 0.08, 0.25, 0.12, 0.2, 0.5, 12)
+        AmbienceType.NIGHT -> AmbienceParams(100.0, listOf(100.0, 125.0, 150.0), 0.04, 0.15, 0.0, 1.0, 1.5, 20)
+        AmbienceType.WIND -> AmbienceParams(160.0, listOf(160.0, 200.0, 240.0), 0.20, 0.30, 0.06, 0.5, 0.8, 14)
+        AmbienceType.OCEAN -> AmbienceParams(140.0, listOf(140.0, 175.0, 210.0), 0.06, 0.22, 0.10, 0.8, 1.2, 16)
+        AmbienceType.FOREST -> AmbienceParams(200.0, listOf(200.0, 250.0, 300.0), 0.10, 0.18, 0.04, 0.4, 0.7, 14)
+        AmbienceType.CITY -> AmbienceParams(220.0, listOf(220.0, 275.0, 330.0), 0.12, 0.15, 0.05, 0.3, 0.5, 12)
+        AmbienceType.COFFEE_SHOP -> AmbienceParams(240.0, listOf(240.0, 300.0, 360.0), 0.10, 0.12, 0.03, 0.4, 0.6, 12)
+        AmbienceType.THUNDERSTORM -> AmbienceParams(90.0, listOf(90.0, 110.0, 135.0), 0.03, 0.35, 0.15, 1.5, 2.0, 20)
+        AmbienceType.SNOW -> AmbienceParams(280.0, listOf(280.0, 350.0, 420.0), 0.05, 0.10, 0.02, 0.8, 1.0, 16)
+        AmbienceType.LIBRARY -> AmbienceParams(180.0, listOf(180.0, 225.0, 270.0), 0.06, 0.08, 0.0, 0.6, 0.9, 14)
+        AmbienceType.TEMPLE -> AmbienceParams(160.0, listOf(160.0, 200.0, 240.0, 300.0), 0.04, 0.12, 0.0, 1.2, 1.8, 22)
+        AmbienceType.BATTLE -> AmbienceParams(110.0, listOf(110.0, 138.0, 165.0), 0.18, 0.25, 0.10, 0.2, 0.4, 10)
+        AmbienceType.ROMANCE -> AmbienceParams(261.63, listOf(261.63, 329.63, 392.0, 493.88), 0.08, 0.10, 0.0, 0.7, 1.1, 16)
+        AmbienceType.MYSTERY -> AmbienceParams(130.0, listOf(130.0, 162.0, 195.0), 0.06, 0.20, 0.04, 0.9, 1.3, 18)
+    }
+
+    /** Генерирует WAV для произвольного типа эмбиента. */
+    fun generateWavForType(type: AmbienceType): ByteArray {
+        val p = paramsFor(type)
+        val totalSamples = p.loopSec * SAMPLE_RATE
+        val buf = DoubleArray(totalSamples)
+
+        // Базовый тон + обертоны
+        for (i in 0 until totalSamples) {
+            val t = i.toDouble() / SAMPLE_RATE
+            var v = 0.0
+            for ((idx, f) in p.chordNotes.withIndex()) {
+                val harmonic = 1.0 / (idx + 1)
+                v += sin(2 * PI * f * t) * harmonic
+                v += 0.3 * sin(2 * PI * f * 2 * t) * harmonic
+            }
+            // LFO — медленная модуляция громкости
+            val lfo = 1.0 - p.lfoDepth + p.lfoDepth * sin(2 * PI * p.lfoRate * t)
+            // Шум (для дождя, ветра, грома)
+            val noise = if (p.noiseLevel > 0) {
+                (Math.random() * 2 - 1) * p.noiseLevel
+            } else 0.0
+            // Атака/затухание для плавной петли
+            val attackSamples = (p.attackSec * SAMPLE_RATE).toInt()
+            val releaseSamples = (p.releaseSec * SAMPLE_RATE).toInt()
+            val env = when {
+                i < attackSamples -> i.toDouble() / attackSamples
+                i > totalSamples - releaseSamples -> (totalSamples - 1 - i).toDouble() / releaseSamples
+                else -> 1.0
+            }
+            buf[i] = (v * 0.045 + noise) * lfo * env
+        }
+
+        // Нормализация
+        var peak = 0.0
+        for (v in buf) peak = max(peak, abs(v))
+        val norm = if (peak > 1e-9) 0.7 / peak else 1.0
+
+        val data = ByteArray(totalSamples * 2)
+        var di = 0
+        for (i in 0 until totalSamples) {
+            val sample = (buf[i] * norm * 32767.0).roundToInt().coerceIn(-32768, 32767)
+            data[di++] = (sample and 0xFF).toByte()
+            data[di++] = ((sample shr 8) and 0xFF).toByte()
+        }
+        return wavHeader(totalSamples) + data
+    }
+
+    /** Возвращает WAV-файл для типа эмбиента (генерирует и кэширует). */
+    fun fileForType(context: Context, type: AmbienceType): File? {
+        val dir = File(context.cacheDir, "book_ambience")
+        if (!dir.exists()) runCatching { dir.mkdirs() }
+        val f = File(dir, "${type.cacheKey()}.wav")
+        if (f.exists() && f.length() > 44L) return f
+        return runCatching {
+            if (!f.exists()) f.outputStream().use { it.write(generateWavForType(type)) }
+            f
+        }.onFailure { e ->
+            logcat(LogPriority.WARN, e) { "BookAmbience: generation failed for $type" }
+        }.getOrNull()
+    }
+
     private val CHORDS: Map<Mood, Array<DoubleArray>> = mapOf(
         Mood.NEUTRAL to arrayOf(
             doubleArrayOf(220.0, 261.63, 329.63),

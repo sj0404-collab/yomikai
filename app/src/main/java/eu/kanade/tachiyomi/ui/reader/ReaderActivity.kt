@@ -1977,6 +1977,30 @@ class ReaderActivity : BaseActivity() {
     fun startAutoReadLoop() {
         stopAutoReadLoop()
         autoReadActive = true
+        // Фоновый эмбиент: тип из настроек, либо авто по жанрам манги.
+        runCatching {
+            val autoType = runCatching {
+                val keywords = listOfNotNull(
+                    viewModel.manga?.title,
+                    viewModel.manga?.genres?.joinToString(","),
+                ).joinToString(" ")
+                val mood = eu.kanade.tachiyomi.data.books.BookAmbience.moodFor(keywords)
+                when (mood) {
+                    eu.kanade.tachiyomi.data.books.BookAmbience.Mood.DARK -> eu.kanade.tachiyomi.data.books.BookAmbience.AmbienceType.MYSTERY
+                    eu.kanade.tachiyomi.data.books.BookAmbience.Mood.CALM -> eu.kanade.tachiyomi.data.books.BookAmbience.AmbienceType.CALM
+                    eu.kanade.tachiyomi.data.books.BookAmbience.Mood.BRIGHT -> eu.kanade.tachiyomi.data.books.BookAmbience.AmbienceType.BRIGHT
+                    else -> eu.kanade.tachiyomi.data.books.BookAmbience.AmbienceType.NEUTRAL
+                }
+            }.getOrNull()
+            val prefType = runCatching {
+                val name = autoReadEngine.prefs.ambienceType().get()
+                if (name.isNotBlank() && name != "AUTO") {
+                    eu.kanade.tachiyomi.data.books.BookAmbience.AmbienceType.valueOf(name)
+                } else null
+            }.getOrNull()
+            autoReadEngine.ambienceType = prefType ?: autoType
+            if (autoReadEngine.ambienceType != null) autoReadEngine.startAmbience()
+        }
         chapterReadActiveFlow.value = true
         // v1.9.137: авточтение ВКЛЮЧАЕТ штатную автопрокрутку (ту же кнопку
         // из меню справа) — вместо собственных «прыжков» по кадру. Прокрутку
@@ -2066,6 +2090,8 @@ class ReaderActivity : BaseActivity() {
 
         autoReadLoop?.cancel()
         autoReadLoop = null
+        autoReadEngine.ambienceType = null
+        autoReadEngine.stopAmbience()
         autoReadEngine.stop()
         eu.kanade.tachiyomi.data.tts.TtsReadingNotifier.dismiss(this)
         // v1.9.137: прокрутку, которую включала сама авто-чтение — выключаем

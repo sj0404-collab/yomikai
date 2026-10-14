@@ -274,18 +274,25 @@ object OcrTextCleaner {
             .map { it.trim().trim('!', '?', '…', '.', ':', ',', ';', '-') }
             .filter { it.isNotBlank() }
         if (candidates.size != 1) return false
-        val canon = candidates[0].uppercase().replace("\s+".toRegex(), "")
+        val canon = candidates[0].uppercase().replace(WHITESPACE_RUN, "")
         if (canon in SOUND_EFFECT_LEXICON) return true
-        if (canon.length < 2) return false
-        // «АААА», «ШШШ», «БРРРР» — одна буква повторяется 4+ раз.
+        // Одна буква («А», «О», «Э») — междометие, а не слово.
+        if (canon.length == 1) return canon in SINGLE_LETTER_SOUNDS
+        // Две буквы — уже нормальное слово («он», «на»), не звук.
+        if (canon.length == 2) return false
+        // «ААА», «ШШШ» — одна буква повторена 3+ раз.
+        // «БРР», «ТРРР» — в слове 3+ букв, где одна повторена 2+ раз.
         val groups = canon.groupingBy { it }.eachCount()
-        if (groups.values.any { it >= 4 }) return true
-        if (groups.size <= 2 && canon.length >= 4) {
-            val maxRep = groups.values.maxOrNull() ?: 0
-            if (maxRep >= canon.length * 2 / 3) return true
-        }
+        val maxRep = groups.values.maxOrNull() ?: 0
+        if (maxRep >= 3 && groups.size <= 2) return true
+        if (maxRep >= 2 && groups.size <= 2 && canon.length <= 3) return true
+        // «АААА», «БРРРР» — одна буква доминирует в слове до 6 букв.
+        if (maxRep >= 3 && canon.length <= 6) return true
         return false
     }
+
+    /** Однобуквенные междометия, которые не являются словами. */
+    private val SINGLE_LETTER_SOUNDS = setOf("А", "О", "Э", "У", "И", "Ы")
 
     fun isAcceptableCyrillicOcrText(text: String): Boolean {
         val words = text.split(WHITESPACE_RUN).filter(String::isNotBlank)
@@ -592,16 +599,15 @@ return restored
         if (count < 2) return false
         val candidate = tokens[index].trimEnd('.', '!', ',', '?', '…', ':', ';', '—', '-')
         if (candidate.isEmpty()) return false
-        // isKnownWord, а не knownWord: проверка here ничего не меняет в тексте,
+        // isKnownWord: проверка ничего не меняет в тексте,
         // но knownWord увеличивает счётчики пользовательского словаря, а это
         // служебный прогон на отбрасываемый токен.
         if (OcrVocabulary.isKnownWord(candidate)) return false
         if (candidate.count(Char::isLetter) > 4) return false
         // Имена собственные («Том», «Алекс») и заголовки начинаются
-        // с заглавной. Такой токен срезать нельзя: мы бы удаляли
-        // настоящее слово, к тому же на границе реплики он бывает
-        // двойным (английское имя + перевод).
-        if (candidate.isNotEmpty() && candidate[0].isUpperCase()) return false
+        // с заглавной. Но защиту от среза применяем только для-known слов:
+        // «ПШЛ» не в словаре → его можно срезать, «Том» — защищаем.
+        if (candidate.isNotEmpty() && candidate[0].isUpperCase() && OcrVocabulary.isKnownWord(candidate)) return false
 
         val without = tokens.toMutableList().apply { removeAt(index) }.joinToString(" ")
         if (without.isBlank()) return false

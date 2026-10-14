@@ -76,6 +76,43 @@ class AutoReadEngine(
     /** Selected OCR engine for individual balloon crops (Cyrillic by default). */
     private val bubbleOcr: mihon.domain.ocr.interactor.OcrProcessor by lazy { Injekt.get() }
 
+    // --- Фоновый эмбиент (процедурный WAV, локально) ---
+    /** Плеер фоновой музыки. null — эмбиент выключен или ещё не запущен. */
+    private var ambiencePlayer: android.media.MediaPlayer? = null
+
+    /** Текущий тип эмбиента. null = эмбиент выключен. */
+    var ambienceType: eu.kanade.tachiyomi.data.books.BookAmbience.AmbienceType? = null
+
+    /**
+     * Запустить фоновый эмбиент для текущего типа.
+     * Безопасно зывать повторно: если уже играет — просто обновит громкость.
+     */
+    fun startAmbience() {
+        val type = ambienceType ?: return
+        runCatching {
+            val file = eu.kanade.tachiyomi.data.books.BookAmbience.fileForType(context, type)
+            if (file == null) return
+            val mp = ambiencePlayer ?: android.media.MediaPlayer().also { ambiencePlayer = it }
+            if (!mp.isPlaying) {
+                mp.reset()
+                mp.setDataSource(file.absolutePath)
+                mp.isLooping = true
+                mp.setVolume(0.3f, 0.3f)
+                mp.prepare()
+                mp.start()
+            }
+        }.onFailure { e ->
+            logcat(LogPriority.WARN, e) { "Ambience start failed" }
+        }
+    }
+
+    /** Остановить и освободить плеер эмбиента. */
+    fun stopAmbience() {
+        runCatching { ambiencePlayer?.stop() }
+        runCatching { ambiencePlayer?.release() }
+        ambiencePlayer = null
+    }
+
     /** Строка кадра: текст + нормализованный box (для подсветки/порядка). */
     data class Line(
         val text: String,
@@ -2010,6 +2047,7 @@ class AutoReadEngine(
         manualJob?.cancel()
         manualJob = null
         TtsSpeaker.stop()
+        stopAmbience()
         runCatching { TtsReadingNotifier.dismiss(context) }
             .onFailure { logcat(LogPriority.WARN, it) { "Reading notification dismiss failed" } }
 

@@ -315,6 +315,28 @@ class OcrTextCleanerTest {
     }
 
     @Test
+    fun `short repeated glyphs are sound effects`() {
+        OcrTextCleaner.isSoundEffect("ААА") shouldBe true
+        OcrTextCleaner.isSoundEffect("ШШШ") shouldBe true
+        OcrTextCleaner.isSoundEffect("БРР") shouldBe true
+        OcrTextCleaner.isSoundEffect("АААА") shouldBe true
+    }
+
+    @Test
+    fun `two letter words are not sound effects`() {
+        OcrTextCleaner.isSoundEffect("Он") shouldBe false
+        OcrTextCleaner.isSoundEffect("на") shouldBe false
+        OcrTextCleaner.isSoundEffect("АА") shouldBe false
+    }
+
+    @Test
+    fun `single letter interjections are sound effects`() {
+        OcrTextCleaner.isSoundEffect("А") shouldBe true
+        OcrTextCleaner.isSoundEffect("О") shouldBe true
+        OcrTextCleaner.isSoundEffect("Э") shouldBe true
+    }
+
+    @Test
     fun `regular speech is not a sound effect`() {
         OcrTextCleaner.isSoundEffect("Я плохо разбираюсь") shouldBe false
         OcrTextCleaner.isSoundEffect("Привет") shouldBe false
