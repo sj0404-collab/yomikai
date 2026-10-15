@@ -14,6 +14,21 @@ import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 import mihon.domain.ocr.model.OcrBoundingBox
 
+/**
+ * Компактный верх стека для каналов диагностики: «length=4; index=4» без
+ * фреймов ни о чём пользователю не говорит, а с фреймами — это готовый
+ * bug report (file:line) прямо на экране настроек.
+ */
+private fun Throwable.brief(): String {
+    val frames = stackTrace
+        .asSequence()
+        .filter { it.className.startsWith("mihon.") || it.className.startsWith("ai.onnxruntime") }
+        .take(6)
+        .map { "${it.className.substringAfterLast('.')}.${it.methodName}(${it.fileName}:${it.lineNumber})" }
+        .joinToString(" <- ")
+    return "${message ?: javaClass.simpleName} @ $frames"
+}
+
 /** Aссеты локальной onnx-модели CRNN+CTC (кириллица), вкомпилированы в APK. */
 private const val MODEL_ASSET = "onnx_crnn/best.onnx"
 private const val META_ASSET = "onnx_crnn/best.meta.json"
@@ -77,7 +92,7 @@ internal class OnnxRuOcrEngine(
                 env = e
                 e.createSession(modelPath()).also { session = it }
             }.onFailure { t ->
-                sessionError = t.message ?: t.javaClass.simpleName
+                sessionError = t.brief()
                 // Если модель в кэше оказалась битой (оборванная копия, не хватило
                 // места) — удаляем её: следующая попытка перекачает файл из
                 // ассетов, вместо того чтобы падать на битом файле вечно.
@@ -247,7 +262,7 @@ internal class OnnxRuOcrEngine(
                 } ?: ""
             } as String
         }.onFailure { t ->
-            sessionError = "inference: " + (t.message ?: t.javaClass.simpleName)
+            sessionError = "inference: " + t.brief()
         }.getOrDefault("")
     }
 
