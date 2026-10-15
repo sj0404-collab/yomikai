@@ -461,6 +461,40 @@ object OcrQueueScreen : Screen() {
                 onInstalledChange = { onnxRuInstalled = it },
             )
 
+            // Самопроверка движка в один тап: рендерит тестовую строку и
+            // прогоняет весь локальный пайплайн (сегментер → сессия → декод),
+            // показывая прочитанный текст или точную ошибку. Придумано как
+            // разгадка «нет результатов»: сразу ясно, жив ли движок вообще.
+            var onnxSelfcheck by remember { mutableStateOf<String?>(null) }
+            val scope = androidx.compose.runtime.rememberCoroutineScope()
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                androidx.compose.material3.FilledTonalButton(
+                    onClick = {
+                        onnxSelfcheck = "…проверка…"
+                        scope.launch {
+                            onnxSelfcheck = withContext(Dispatchers.Default) {
+                                mihon.data.ocr.OnnxRuSelfcheck.run(context)
+                            }
+                        }
+                    },
+                ) { Text("Проверить локальный ONNX") }
+            }
+            onnxSelfcheck?.let { result ->
+                Text(
+                    result,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (result.startsWith("ОК")) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.error
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+            }
+
             PreferenceGroupHeader(title = "Управление локальными OCR-моделями")
             InfoWidget(
                 text = "Все локальные модели хранятся вне APK в Android/data/…/files/ocr_models " +
