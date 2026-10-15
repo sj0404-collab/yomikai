@@ -216,7 +216,10 @@ jobs:
           # 3. Отпечаток сертификата: ловим случай, когда APK подписан не релизным
           #    ключом (например, дебаг-ключом раннера) — такой APK не встанет поверх
           #    установленного приложения.
-          fp=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' apksigner.txt | head -1 | tr -d '[:space:]' | tr 'A-F' 'a-f')
+          # apksigner печатает отпечаток по-разному в зависимости от версии:
+          # в одних образах раннеров — «Signer #1 certificate SHA-256 digest: …»,
+          # в свежих — «V2 Signer: certificate SHA-256 digest: …» (тело не меняется).
+          fp=$(grep -E '^(Signer #1 certificate|V2 Signer: certificate) SHA-256 digest: ' apksigner.txt | head -1 | sed -E 's/^.*SHA-256 digest: //' | tr -d '[:space:]' | tr 'A-F' 'a-f')
           [ -n "$fp" ] || { echo "::error::apksigner не назвал отпечаток сертификата"; exit 1; }
           echo "Отпечаток подписи (SHA-256): $fp"
           if [ -n "${EXPECTED_CERT_SHA256:-}" ]; then
