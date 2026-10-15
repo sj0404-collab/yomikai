@@ -25,3 +25,7 @@
 *.tar.xz binary
 *.tflite binary
 *.traineddata binary
+
+# OCR-модели и прочие бинарные форматы (иначе eol=lf ломает protobuf: CRLF→LF жрёт байт 0x0D)
+*.onnx binary
+*.pb binary
