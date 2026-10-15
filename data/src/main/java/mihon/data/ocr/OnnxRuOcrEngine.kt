@@ -161,8 +161,14 @@ internal class OnnxRuOcrEngine(
             val sh = maxOf(1, (h * scaleIn).roundToInt())
             val scaled = if (sw == w && sh == h) page
             else Bitmap.createScaledBitmap(page, sw, sh, true)
-            val gray = IntArray(sw * sh)
-            scaled.getPixels(gray, 0, sw, 0, 0, sw, sh)
+            // ВНИМАНИЕ на преобразование в яркость: getPixels отдаёт упакованный
+            // ARGB Int, а не полутон 0..255. Пиксели с альфой 0xFF — отрицательные
+            // Int, поэтому сырое `gray < 170` в бинаризаторе сегментера считало
+            // бы ВСЕ пиксели чернилами: маска сплошная → один бокс на всю
+            // страницу → «нет результатов» при любой рабочей модели.
+            val argb = IntArray(sw * sh)
+            scaled.getPixels(argb, 0, sw, 0, 0, sw, sh)
+            val gray = IntArray(sw * sh) { i -> luma(argb[i]) }
             val boxes = OnnxRuPageSegmenter.findLineBoxes(gray, sw, sh)
             val scaleOut = if (scaleIn < 1f) 1f / scaleIn else 1f
             boxes.map { box ->
