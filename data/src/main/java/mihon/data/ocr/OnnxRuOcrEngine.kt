@@ -76,16 +76,46 @@ internal class OnnxRuOcrEngine(
                 val e = OrtEnvironment.getEnvironment()
                 env = e
                 e.createSession(assetFile(MODEL_ASSET).absolutePath).also { session = it }
-            }.onFailure { t -> sessionError = t.message ?: t.javaClass.simpleName }
+            }.onFailure { t ->
+                sessionError = t.message ?: t.javaClass.simpleName
+                // Если модель в кэше оказалась битой (оборванная копия, не хватило
+                // места) — удаляем её: следующая попытка перекачает файл из
+                // ассетов, вместо того чтобы падать на битом файле вечно.
+                runCatching { modelCacheFile(MODEL_ASSET).delete() }
+            }
                 .getOrThrow()
         }
     }
 
+    private fun modelCacheFile(name: String): File =
+        File(context.cacheDir, name.replace('/', '_'))
+
+    /**
+     * Скопировать ассет в кэш для нативного createSession (нужен путь МФайла).
+     * Раньше проверялось только наличие файла length()>0: первое оборванное
+     * копирование (нет места, убит процесс) оставляло обрезанный файл, и ORT
+     * падал на нём при КАЖДОМ запуске, навсегда. Теперь копируем атомарно
+     * (tmp → rename) и сверяем размер с ассетом; кривой файл перезаписываем.
+     */
     private fun assetFile(name: String): File {
-        val dest = File(context.cacheDir, name.replace('/', '_'))
-        if (dest.isFile && dest.length() > 0) return dest
+        val dest = modelCacheFile(name)
+        val expected = runCatching {
+            context.assets.openFd(name).use { it.length }
+        }.getOrDefault(-1L)
+        if (dest.isFile && expected > 0 && dest.length() == expected) return dest
+        dest.delete()
+        val tmp = File(dest.parentFile, dest.name + ".tmp")
+        runCatching { tmp.delete() }
         context.assets.open(name).use { input ->
-            dest.outputStream().use { input.copyTo(it) }
+            tmp.outputStream().use { input.copyTo(it) }
+        }
+        val copied = tmp.length()
+        if (expected > 0 && copied != expected) {
+            tmp.delete()
+            throw java.io.IOException("asset copy truncated: $name ($copied != $expected)")
+        }
+        if (!tmp.renameTo(dest)) {
+            throw java.io.IOException("cannot place asset cache: ${dest.absolutePath}")
         }
         return dest
     }

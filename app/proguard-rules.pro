@@ -102,3 +102,11 @@
 # причина подтверждена логом logs/tts.log с устройства (v1.9.16/17).
 -keep class com.k2fsa.sherpa.onnx.** { *; }
 -dontwarn com.k2fsa.sherpa.onnx.**
+
+# onnxruntime-android: классы ai.onnxruntime.** создаются из НАТИВНОГО
+# libonnxruntime.so (в т.ч. OrtException.<init>(ILjava/lang/String;)V с
+# пути ошибок createSession). R8 не видит JNI-вызовы и вырезает такие
+# «неиспользуемые» конструкторы: вместо OrtException процесс получал
+# NoSuchMethodError → SIGABRT (jni abort) при первой ошибке сессии.
+-keep class ai.onnxruntime.** { *; }
+-dontwarn ai.onnxruntime.**
