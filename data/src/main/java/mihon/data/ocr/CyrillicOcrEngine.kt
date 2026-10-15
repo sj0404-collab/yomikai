@@ -352,9 +352,9 @@ internal class CyrillicOcrEngine(
                 if (row != null) row += item else rows += mutableListOf(item)
             }
             rows.sortBy { row -> row.minOf { it.first.rect.top } }
-            val text = rows.joinToString("\n") { row ->
+            val text = OcrTextCleaner.sentencesToLines(rows.joinToString("\n") { row ->
                 row.sortedBy { it.first.rect.left }.joinToString(" ") { it.second.trim() }
-            }
+            }.trim())
             val out = cleanRecognition(textPostprocessor.postprocess(text))
             OcrStageBus.post(
                 OcrStageBus.Stage.DONE,
@@ -404,9 +404,9 @@ internal class CyrillicOcrEngine(
             if (row != null) row += item else rows += mutableListOf(item)
         }
         rows.sortBy { row -> row.minOf { it.first.rect.top } }
-        val text = rows.joinToString("\n") { row ->
+        val text = OcrTextCleaner.sentencesToLines(rows.joinToString("\n") { row ->
             row.sortedBy { it.first.rect.left }.joinToString(" ") { it.second }
-        }
+        }.trim())
         return cleanRecognition(textPostprocessor.postprocess(text))
     }
 
@@ -1360,7 +1360,12 @@ internal class CyrillicOcrEngine(
         } else {
             chars.size + 1
         }
-        val decoded = decodeCtc(values, chars, classes)
+        // Зона текста на холсте 320px = 40 шагов × 8px: всё ПРАВЕЕ
+        // targetWidth — серая подкладка, из которой CTC время от времени
+        // выдавливает мусорные хвосты (« …», « №», «— !»). Эмиссии с шагов
+        // глубже usedSteps принадлежат подкладке и в декод не берём.
+        val usedSteps = ((targetWidth + 7) / 8 + 1).coerceIn(1, RECOGNIZER_STEPS)
+        val decoded = decodeCtc(values, chars, classes, usedSteps)
         return Recognition(
             text = decoded.text,
             confidence = decoded.confidence,
@@ -1373,9 +1378,11 @@ internal class CyrillicOcrEngine(
         values: FloatArray,
         chars: List<String>,
         classes: Int,
+        activeSteps: Int = Int.MAX_VALUE,
     ): CtcDecode {
         if (classes <= 1 || values.size < classes) return CtcDecode("", 0f, 0, 0, 0)
         val steps = values.size / classes
+        val cutoff = minOf(steps, activeSteps)
         val text = StringBuilder(steps)
         var previous = -1
         var confidenceSum = 0f
@@ -1383,7 +1390,11 @@ internal class CyrillicOcrEngine(
         // Шаги, на которых победил blank между первым и последним символом.
         var blankSteps = 0
         var countingBlanks = false
-        for (step in 0 until steps) {
+        // Позиция предыдущей выданной БУКВЫ и флаг, что она была буквой —
+        // для восстановления пробелов по ширине blank-промежутка.
+        var lastLetterStep = -1
+        var lastLetterEmitted = false
+        for (step in 0 until cutoff) {
             val base = step * classes
             val probabilities = CtcScoring.softmax(values, base, classes)
             var bestIndex = 0
@@ -1399,7 +1410,26 @@ internal class CyrillicOcrEngine(
             }
             when {
                 bestIndex != 0 && bestIndex != previous -> {
-                    chars.getOrNull(bestIndex - 1)?.let(text::append)
+                    val emitted = chars.getOrNull(bestIndex - 1).orEmpty()
+                    val isLetter = emitted.isNotEmpty() && emitted.single().isLetterOrDigit()
+                    // Восстановление пробела: у их дообученной модели класс ' '
+                    // фактически не работает (метки обучались без пробелов), но
+                    // gap между словами на холсте — это длинная серия blank'ов:
+                    // 3 пустых шага = 24px при 8px/шаг — внутри слова таких
+                    // провалов бывает только при едва видимых буквах, между
+                    // словами — постоянно. Вставляем пробел только между
+                    // буквами/цифрами, чтобы не плодить пробелы вокруг
+                    // пунктуации (её расставит OcrTextCleaner).
+                    if (isLetter && lastLetterEmitted &&
+                        lastLetterStep >= 0 && step - lastLetterStep >= 3
+                    ) {
+                        text.append(' ')
+                    }
+                    text.append(emitted)
+                    if (isLetter) {
+                        lastLetterStep = step
+                        lastLetterEmitted = true
+                    }
                     confidenceSum += bestScore
                     confidenceCount++
                     countingBlanks = true

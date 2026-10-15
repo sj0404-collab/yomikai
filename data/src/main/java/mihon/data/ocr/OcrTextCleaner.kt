@@ -355,6 +355,20 @@ object OcrTextCleaner {
      * Доля букв, которые уже можно безопасно читать как кириллицу. Нужна не
      * для словарной подмены, а для выбора между двумя визуальными моделями.
      */
+    /**
+     * Каждое предложение — своим абзацем (по запросу пользователя читать
+     * распознанный текст сверху вниз с прокруткой, а не одним блоком):
+     * перенос строки после завершающей пунктуации (. ? ! …) перед новой
+     * буквой/кавычкой. Текст не меняется, только разметка абзацев.
+     */
+    fun sentencesToLines(text: String): String {
+        if (text.isEmpty()) return text
+        return text.replace(
+            Regex("""([.!?…]+)[\t ]+(?=[А-ЯЁA-Z0-9«„"'([\]])"""),
+            "$1\n",
+        ).replace(Regex("\\n\\s+"), "\n")
+    }
+
     fun cyrillicFitness(text: String): Float {
         val repaired = fixLookalikesPerWord(text)
         val letters = repaired.filter(Char::isLetter)
