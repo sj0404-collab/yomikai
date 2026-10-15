@@ -1034,10 +1034,17 @@ internal class CyrillicOcrEngine(
             if (area < tuning().minComponentArea || maxX - minX < 3 || maxY - minY < 3) continue
             val expandX = max(3, ((maxX - minX) * 0.16f).toInt())
             val expandY = max(2, ((maxY - minY) * 0.20f).toInt())
+            // КЛЕЙ: координаты бокса — в системе ИСХОДНОЙ страницы (offX/offY
+            // добавлены слева и справа). Прошлый вариант тянул правый край до
+            // source.width без offX: на тайловом проходе (offX > 0) нижняя
+            // граница coerceIn(left + 1) оказывалась больше верхней — краш
+            // «Cannot coerce value to an empty range» на любом тексте хайреса.
             val left = offX + (((minX - expandX - offsetX) / scale).toInt()).coerceIn(0, source.width - 1)
             val top = offY + (((minY - expandY - offsetY) / scale).toInt()).coerceIn(0, source.height - 1)
-            val right = (offX + ceil((maxX + expandX - offsetX) / scale).toInt()).coerceIn(left + 1, source.width)
-            val bottom = (offY + ceil((maxY + expandY - offsetY) / scale).toInt()).coerceIn(top + 1, source.height)
+            val right = (offX + ceil((maxX + expandX - offsetX) / scale).toInt())
+                .coerceIn(left + 1, offX + source.width)
+            val bottom = (offY + ceil((maxY + expandY - offsetY) / scale).toInt())
+                .coerceIn(top + 1, offY + source.height)
             if (right - left >= 6 && bottom - top >= 6) boxes += Rect(left, top, right, bottom)
         }
         return boxes
@@ -1115,9 +1122,14 @@ internal class CyrillicOcrEngine(
                     if (x2 - x >= 6) {
                         val left = ((x - 2) * sx).toInt().coerceIn(0, image.width - 2)
                         val top = ((y - 2) * sy).toInt().coerceIn(0, image.height - 2)
-                        val right = ((x2 + 2) * sx).toInt().coerceIn(left + 8, image.width)
-                        val bottom = ((y2 + 2) * sy).toInt().coerceIn(top + 8, image.height)
-                        boxes += Rect(left, top, right, bottom)
+                        // Клеим верхние границы к краю изображения: инвертный
+                        // диапазон coerceIn(left + 8 … width) у самого края
+                        // крашил весь проход OCR.
+                        val right = ((x2 + 2) * sx).toInt().coerceIn(0, image.width)
+                        val bottom = ((y2 + 2) * sy).toInt().coerceIn(0, image.height)
+                        if (right - left >= 8 && bottom - top >= 8) {
+                            boxes += Rect(left, top, right, bottom)
+                        }
                     }
                     x = x2 + 1
                 }
@@ -1161,8 +1173,11 @@ internal class CyrillicOcrEngine(
     }
 
     private fun pad(rect: Rect, width: Int, height: Int): Rect {
-        val px = max(2, (rect.width() * 0.04f).toInt())
-        val py = max(2, (rect.height() * 0.12f).toInt())
+        // Бенч на синтетике и AI-комиксах: тайт-кроп «съедает» крайние буквы
+        // (CRNN обучена с белыми полями), отступ ~20% высоты строки возвращает
+        // CER 20–29% → 2.7%. Было 4% от ширины / 12% от высоты — мало.
+        val px = max(4, (rect.height() * 0.20f).toInt())
+        val py = px
         return Rect(
             (rect.left - px).coerceAtLeast(0),
             (rect.top - py).coerceAtLeast(0),
