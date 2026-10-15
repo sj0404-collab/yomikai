@@ -177,8 +177,10 @@ object OcrModelDownloader {
     /** Пин коммита репозитория моделей: неизменяемый источник файлов. */
     private const val CYRILLIC_PIN = "0279620ace18256b36850d6773bad03ffad03fa7"
 
-    /** Канал модели CRNN кириллицы: пре-релиз с прямыми активами, без git. */
-    private const val ONNX_RU_RELEASE = "onnx-ru-r3"
+    /** Канал модели CRNN кириллицы: пре-релиз с прямыми активами, без git.
+     *  r4 — дообученная на синтетике в декоре приложения (bench: CER на
+     *  страницах с тёмным текстом 2.7% → 0.8%, валидация в отчёте релиза). */
+    private const val ONNX_RU_RELEASE = "onnx-ru-r4"
 
     private fun onnxRu(file: String): String {
         return "https://github.com/sj0404-collab/yomikai/" +
