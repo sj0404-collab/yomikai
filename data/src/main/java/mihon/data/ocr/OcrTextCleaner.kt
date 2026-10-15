@@ -231,19 +231,88 @@ object OcrTextCleaner {
         val words = text.split(Regex("\\s+")).filter(String::isNotBlank)
         if (words.isEmpty()) return false
 
-        return words.all { word ->
-            val lexical = word.filter(Char::isLetterOrDigit)
-            if (lexical.isEmpty()) return@all false
+        return words.all { wordAcceptedAsOcr(it, allowDigitOnly = false) }
+    }
 
-            val cyrillicCount = lexical.count { it.code in CYRILLIC_RANGE }
-            val latinCount = lexical.count { it.isLetter() && it.code < 0x80 }
-            if (cyrillicCount > 0) {
-                latinCount == 0
-            } else {
-                word.trimEnd('.', '!', ',', '?', '…').lowercase() in LATIN_WHITELIST
+    /**
+     * Пословная проверка «похоже ли слово на настоящее».
+     *
+     * Главная защита от мусорных строк из одной-двух согласных
+     * («н», «бт», «цк»), которые PP-OCR сыплет на рёбрах букв:
+     *
+     *  1. кириллическое «слово» из одной буквы допускается только из
+     *     фиксированного списка настоящих союзов/предлогов
+     *     ([CYRILLIC_ONE_LETTER_WORDS]);
+     *  2. короткая безгласная цепочка (2–3 буквы) — обязана звучать
+     *     (хотя бы одна гласная) или быть известным звукоподражанием
+     *     из [CYRILLIC_VOWELLESS_SHORT_WORDS];
+     *  3. смешение кириллицы и латиницы внутри слова всегда отказ;
+     *  4. чисто латинское — только белый список [LATIN_WHITELIST];
+     *  5. «слова» без букв (числа, «№12») — опционально ([allowDigitOnly])
+     *     для фильтра презентабельности, но не для salvage-гейта.
+     */
+    private fun wordAcceptedAsOcr(word: String, allowDigitOnly: Boolean): Boolean {
+        val lexical = word.filter(Char::isLetterOrDigit)
+        if (lexical.isEmpty()) return false
+
+        val cyrillicCount = lexical.count { it.code in CYRILLIC_RANGE }
+        val latinCount = lexical.count { it.isLetter() && it.code < 0x80 }
+        return when {
+            cyrillicCount > 0 -> {
+                if (latinCount != 0) {
+                    false
+                } else {
+                    val w = lexical.lowercase()
+                    when {
+                        w.length == 1 -> w in CYRILLIC_ONE_LETTER_WORDS
+                        w.length in 2..3 ->
+                            w.any { it in CYRILLIC_VOWELS } ||
+                                w in CYRILLIC_VOWELLESS_SHORT_WORDS
+                        else -> true
+                    }
+                }
             }
+            latinCount > 0 ->
+                word.trimEnd('.', '!', ',', '?', '…').lowercase() in LATIN_WHITELIST
+            else -> allowDigitOnly
         }
     }
+
+    /**
+     * «Строку можно показывать пользователю / скармливать TTS».
+     *
+     * Более мягкий вариант [isAcceptableCyrillicOcrText]: раньше любая
+     * строка со «словом» без кириллицы и не из белого списка (например, с
+     * номером «12») полностью вычёркивалась; здесь фильтруем лишь явный
+     * мусор из 1–2 букв, а цифры и №-нумерацию оставляем. Используется в
+     * путях сохранения снимков/истории.
+     */
+    fun isPresentableOcrLine(text: String): Boolean {
+        val words = text.split(Regex("\\s+")).filter(String::isNotBlank)
+        if (words.isEmpty()) return false
+        if (words.none { w -> w.any(Char::isLetter) }) return true
+        return words.all { wordAcceptedAsOcr(it, allowDigitOnly = true) }
+    }
+
+    /** Настоящие однобуквенные слова кириллицы (союзы, предлоги, частицы). */
+    private val CYRILLIC_ONE_LETTER_WORDS = setOf(
+        "а", "в", "и", "к", "о", "с", "у", "я", "і", "ї",
+    )
+
+    /** Гласные кириллических алфавитов (валидируют двубуквенные слова). */
+    private val CYRILLIC_VOWELS = setOf(
+        'а', 'е', 'ё', 'и', 'о', 'у', 'ы', 'э', 'ю', 'я', 'і', 'ї', 'є',
+    )
+
+    /**
+     * Короткие звукоподражания БЕЗ гласных («мгм!», «хм», «гг…»): короткая
+     * безгласная цепочка (пары согласных «бт», «нр») — это почти всегда мусор
+     * с рёбер глифов, а эти слова должны выживать.
+     */
+    private val CYRILLIC_VOWELLESS_SHORT_WORDS = setOf(
+        "мгм", "хм", "гм", "гг", "мм", "ммм", "жж", "тс", "ц", "пф", "бр",
+        "брр", "хр", "ш", "шш", "хх", "псс", "тсс", "тш", "гх",
+    )
 
     /**
      * Безопасная очистка одной строки Google ML Kit: переносы слов
@@ -456,7 +525,7 @@ object OcrTextCleaner {
     fun knownWord(word: String): Boolean {
         if (word.isEmpty()) return false
         val up = word.uppercase()
-        if (up in RuWordList.upper) return true
+        if (RuWordList.contains(up)) return true
         val user = OcrVocabulary.isUserWord(up)
         if (user) OcrTextCleanerStats.userDictHits++
         return user

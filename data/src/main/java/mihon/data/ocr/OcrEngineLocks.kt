@@ -5,6 +5,7 @@ import kotlinx.coroutines.sync.withLock
 
 internal class OcrEngineLocks {
     private val cyrillicMutex = Mutex()
+    private val onnxRuMutex = Mutex()
     private val tesseractMutex = Mutex()
 
     private val mlKitMutex = Mutex()
@@ -34,16 +35,20 @@ internal class OcrEngineLocks {
 
     suspend fun <T> withAllLocks(block: suspend () -> T): T {
         return cyrillicMutex.withLock {
-            mlKitMutex.withLock {
-                legacyMutex.withLock {
-                    fastMutex.withLock {
-                        glensMutex.withLock {
-                            owOcrMutex.withLock {
-                                openRouterMutex.withLock {
-                                    googleAiMutex.withLock {
-                                        zenFreeMutex.withLock {
-                                            detectionMutex.withLock {
-                                                block()
+            onnxRuMutex.withLock {
+                tesseractMutex.withLock {
+                    mlKitMutex.withLock {
+                        legacyMutex.withLock {
+                            fastMutex.withLock {
+                                glensMutex.withLock {
+                                    owOcrMutex.withLock {
+                                        openRouterMutex.withLock {
+                                            googleAiMutex.withLock {
+                                                zenFreeMutex.withLock {
+                                                    detectionMutex.withLock {
+                                                        block()
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -59,6 +64,8 @@ internal class OcrEngineLocks {
     private fun mutexFor(type: OcrRepositoryImpl.EngineType): Mutex {
         return when (type) {
             OcrRepositoryImpl.EngineType.CYRILLIC -> cyrillicMutex
+            // ONNX CRNN держит свою OrtSession — тоже свой mutex.
+            OcrRepositoryImpl.EngineType.ONNX_RU -> onnxRuMutex
             // Tesseract держит нативную модель и не потокобезопасен — свой mutex.
             OcrRepositoryImpl.EngineType.TESSERACT -> tesseractMutex
 

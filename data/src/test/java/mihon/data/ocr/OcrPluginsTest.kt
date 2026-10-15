@@ -3,6 +3,7 @@ package mihon.data.ocr
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.collections.shouldContain
+import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import mihon.domain.ocr.model.OcrModel
@@ -134,9 +135,10 @@ class OcrPluginsTest {
 
     @Test
     fun `legacy engine selections migrate to the cyrillic plugin`() {
+        // Tesseract здесь НЕ мигрирует: с v1.10.18 это самостоятельный плагин,
+        // а не алиас кириллического (см. следующий тест).
         OcrPlugins.byModel(OcrModel.LEGACY) shouldBe OcrPlugins.CYRILLIC
         OcrPlugins.byModel(OcrModel.FAST) shouldBe OcrPlugins.CYRILLIC
-        OcrPlugins.byModel(OcrModel.TESSERACT) shouldBe OcrPlugins.CYRILLIC
         OcrPlugins.LEGACY_ALIASES.map { it.second }.toSet() shouldContainExactly setOf(OcrPlugins.CYRILLIC.id)
     }
 
@@ -158,6 +160,18 @@ class OcrPluginsTest {
     }
 
     @Test
+    fun `onnx ru is a bundled offline plugin that needs nothing`() {
+        // Локальная CRNN внутри APK: ни скачанного пакета, ни сети, ни ключа.
+        OcrPlugins.byModel(OcrModel.ONNX_RU) shouldBe OcrPlugins.ONNX_RU
+        OcrPlugins.byId("onnx_ru") shouldBe OcrPlugins.ONNX_RU
+        OcrPlugins.ONNX_RU.online shouldBe false
+        OcrPlugins.ONNX_RU.requirements shouldBe emptySet()
+        OcrPlugins.ONNX_RU.supportsRegions shouldBe true
+        OcrPlugins.ONNX_RU.engineType shouldBe "ONNX_RU"
+        OcrPlugins.ALL[1] shouldBe OcrPlugins.ONNX_RU
+    }
+
+    @Test
     fun `tesseract needs downloaded models`() {
         // Нативная библиотека в APK, а буквы в .traineddata — без пакета
         // движок молча отдаёт пустоту, и это должно быть видно в UI.
@@ -172,13 +186,11 @@ class OcrPluginsTest {
             litertAvailable = true,
         )
         // Офлайн-движки с выполненными требованиями: PP-OCR (пак + LiteRT),
-        // Офлайн-движки с выполненными требованиями: PP-OCR (пак + LiteRT)
-        // и ML Kit (вкомпилирован, требований нет).
-        offlineOnly shouldContainExactly listOf(OcrPlugins.CYRILLIC, OcrPlugins.MLKIT)
-        // Tesseract (пакет языковых данных) и ML Kit (вкомпилирован, без
-        // требований).
+        // ONNX CRNN (модель в APK), Tesseract (пакет языковых данных) и
+        // ML Kit (вкомпилирован, без требований).
         offlineOnly shouldContainExactly listOf(
             OcrPlugins.CYRILLIC,
+            OcrPlugins.ONNX_RU,
             OcrPlugins.TESSERACT,
             OcrPlugins.MLKIT,
         )
@@ -189,8 +201,8 @@ class OcrPluginsTest {
             modelsInstalled = false,
             litertAvailable = false,
         )
-        // Без скачанных пакетов доступен только вкомпилированный ML Kit.
-        nothing shouldContainExactly listOf(OcrPlugins.MLKIT)
+        // Без скачанных пакетов — вкомпилированные ONNX CRNN и ML Kit.
+        nothing shouldContainExactly listOf(OcrPlugins.ONNX_RU, OcrPlugins.MLKIT)
 
         val withKeys = OcrPlugins.available(
             networkAvailable = true,
@@ -208,32 +220,32 @@ class OcrPluginsTest {
 
         OcrPlugins.fallbackChain(primary, "single", networkAvailable = true) shouldBe emptyList()
 
-        // offline: остаются локальные движки после основного — Tesseract
-        // (второй русский) и ML Kit (латиница).
+        // offline: остаются локальные движки после основного — ONNX CRNN,
+        // затем Tesseract (второй русский) и ML Kit (латиница).
         OcrPlugins.fallbackChain(primary, "offline", networkAvailable = true)
-            .map { it.id } shouldContainExactly listOf("tesseract", "mlkit")
+            .map { it.id } shouldContainExactly listOf("onnx_ru", "tesseract", "mlkit")
 
         OcrPlugins.fallbackChain(primary, "online", networkAvailable = true).map { it.id } shouldContainExactly
             listOf("google_lens", "zen_free", "google_ai", "openrouter", "owocr")
 
         // auto без сети не пробует онлайн-движки вовсе: локальные по приоритету.
         OcrPlugins.fallbackChain(OcrPlugins.GLENS, "auto", networkAvailable = false).map { it.id } shouldContainExactly
-            listOf("cyrillic_ppocr", "tesseract", "mlkit")
+            listOf("cyrillic_ppocr", "onnx_ru", "tesseract", "mlkit")
 
         // auto с сетью: сначала онлайн по приоритету, потом локальный.
         OcrPlugins.fallbackChain(OcrPlugins.GLENS, "auto", networkAvailable = true).map { it.id } shouldContainExactly
-            listOf("zen_free", "google_ai", "openrouter", "owocr", "cyrillic_ppocr", "tesseract", "mlkit")
+            listOf("zen_free", "google_ai", "openrouter", "owocr", "cyrillic_ppocr", "onnx_ru", "tesseract", "mlkit")
 
         // Неизвестный пресет читается как auto: при отсутствии сети первичный
-        // Cyrillic исключён, остаётся ML Kit.
+        // Cyrillic исключён, остаются ONNX CRNN, Tesseract и ML Kit.
         OcrPlugins.fallbackChain(primary, "что-то-новое", networkAvailable = false)
-            .map { it.id } shouldContainExactly listOf("cyrillic_ppocr", "tesseract", "mlkit")
+            .map { it.id } shouldContainExactly listOf("onnx_ru", "tesseract", "mlkit")
     }
 
     @Test
     fun `region-capable plugins expose their capability`() {
         OcrPlugins.ALL.filter { it.supportsRegions }.map { it.id } shouldContainExactly
-            listOf(OcrPlugins.CYRILLIC.id, OcrPlugins.MLKIT.id, OcrPlugins.ZEN_FREE.id)
+            listOf(OcrPlugins.CYRILLIC.id, OcrPlugins.ONNX_RU.id, OcrPlugins.MLKIT.id, OcrPlugins.ZEN_FREE.id)
     }
 
     @Test
@@ -268,11 +280,9 @@ class OcrPluginsTest {
     fun `online flags match the fallback pools`() {
         OcrPlugins.ALL.filter { it.online }.map { it.id } shouldContainExactly
             listOf("google_lens", "zen_free", "google_ai", "openrouter", "owocr")
+        // Офлайн-пул: PP-OCR, ONNX CRNN (в APK), Tesseract и ML Kit.
         OcrPlugins.ALL.filterNot { it.online }.map { it.id } shouldContainExactly
-            listOf("cyrillic_ppocr", "mlkit")
-        // Офлайн-пул: PP-OCR, Tesseract (второй русский движок) и ML Kit.
-        OcrPlugins.ALL.filterNot { it.online }.map { it.id } shouldContainExactly
-            listOf("cyrillic_ppocr", "tesseract", "mlkit")
+            listOf("cyrillic_ppocr", "onnx_ru", "tesseract", "mlkit")
     }
 
     @Test

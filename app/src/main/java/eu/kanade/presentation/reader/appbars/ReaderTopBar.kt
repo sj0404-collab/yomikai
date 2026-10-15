@@ -176,6 +176,7 @@ private fun OcrModelQuickSwitcher() {
     DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
         listOf(
             OcrModel.CYRILLIC,
+            OcrModel.ONNX_RU,
             OcrModel.MLKIT,
             OcrModel.ZEN_FREE,
             OcrModel.GLENS,
@@ -192,6 +193,7 @@ private fun OcrModelQuickSwitcher() {
                 downloading -> "загрузка ${(progressMap[pack]!! * 100).toInt()}%"
                 model == OcrModel.CYRILLIC && !installed -> "офлайн • скачать ~21 МБ"
                 model == OcrModel.CYRILLIC -> "офлайн • русский PP-OCR ✅"
+                model == OcrModel.ONNX_RU -> "офлайн • кириллица CRNN, встроена в APK ✅"
                 model == OcrModel.MLKIT -> "офлайн • латиница, встроена в APK ✅"
                 pack != null && !installed -> "локальная • нажмите, чтобы скачать"
                 pack != null -> "локальная • скачана ✅"

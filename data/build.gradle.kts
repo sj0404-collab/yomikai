@@ -45,6 +45,7 @@ dependencies {
     // Настоящий Tesseract с русской моделью: APK без него ввёл полем
     // «Tesseract», который молча уходил в PP-OCR.
     implementation(libs.tesseract4android)
+    implementation(libs.onnxruntime.android)
 
 
     implementation(libs.anki.android)

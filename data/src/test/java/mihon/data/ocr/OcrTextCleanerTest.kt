@@ -80,6 +80,42 @@ class OcrTextCleanerTest {
     }
 
     @Test
+    fun `glyph-edge garbage of one or two consonants is rejected`() {
+        // Мусор со скриншота пользователя: рёбра букв после масштабирования
+        // PP-OCR читает как «н» или «бт». Настоящие слова проходить обязаны.
+        OcrTextCleaner.isAcceptableCyrillicOcrText("н") shouldBe false
+        OcrTextCleaner.isAcceptableCyrillicOcrText("бт") shouldBe false
+        OcrTextCleaner.isAcceptableCyrillicOcrText("н-ц") shouldBe false
+        OcrTextCleaner.isAcceptableCyrillicOcrText("мрг") shouldBe false
+        OcrTextCleaner.isAcceptableCyrillicOcrText("й. бийг пиа") shouldBe false
+        OcrTextCleaner.isAcceptableCyrillicOcrText("н н н") shouldBe false
+
+        // Настоящие короткие слова и звукоподражания выживают.
+        OcrTextCleaner.isAcceptableCyrillicOcrText("а!") shouldBe true
+        OcrTextCleaner.isAcceptableCyrillicOcrText("а...") shouldBe true
+        OcrTextCleaner.isAcceptableCyrillicOcrText("я не знаю") shouldBe true
+        OcrTextCleaner.isAcceptableCyrillicOcrText("мгм!") shouldBe true
+        OcrTextCleaner.isAcceptableCyrillicOcrText("хм") shouldBe true
+        OcrTextCleaner.isAcceptableCyrillicOcrText("мм-м") shouldBe true
+        OcrTextCleaner.isAcceptableCyrillicOcrText("и ты") shouldBe true
+        OcrTextCleaner.isAcceptableCyrillicOcrText("оно") shouldBe true
+    }
+
+    @Test
+    fun `presentable filter keeps numbers but drops letter garbage`() {
+        OcrTextCleaner.isPresentableOcrLine("1991-08-01") shouldBe true
+        OcrTextCleaner.isPresentableOcrLine("№12") shouldBe true
+        OcrTextCleaner.isPresentableOcrLine("23") shouldBe true
+        OcrTextCleaner.isPresentableOcrLine("!") shouldBe true
+        OcrTextCleaner.isPresentableOcrLine("н") shouldBe false
+        OcrTextCleaner.isPresentableOcrLine("бт") shouldBe false
+        OcrTextCleaner.isPresentableOcrLine("н 6 07") shouldBe false
+        OcrTextCleaner.isPresentableOcrLine("й. бийг пиа") shouldBe false
+        OcrTextCleaner.isPresentableOcrLine("Я не знаю, конечно") shouldBe true
+        OcrTextCleaner.isPresentableOcrLine("том 2 глава 12") shouldBe true
+    }
+
+    @Test
     fun `restores caption spaces and ё without replacing unknown words`() {
         OcrTextCleaner.restoreKnownCaptionWords("ОНБЫЛ ЛОЖНООБВИНЕН В СГОВОРЕ СДЕМОНОМ") shouldBe
             "ОН БЫЛ ЛОЖНО ОБВИНЁН В СГОВОРЕ С ДЕМОНОМ"
@@ -113,7 +149,11 @@ class OcrTextCleanerTest {
 
     @Test
     fun `unknown cyrillic run is never split or rewritten`() {
-        OcrTextCleaner.restoreKnownCaptionWords("НЕИЗВЕСТНОЕСЛОВО") shouldBe "НЕИЗВЕСТНОЕСЛОВО"
+        // Словарь теперь полный (3 млн форм): «НЕИЗВЕСТНОЕСЛОВО» корректно
+        // делится на «НЕИЗВЕСТНОЕ СЛОВО» — оба куска являются словами, так
+        // что ожидание «неизменности» держим на по-настоящему неизвестном
+        // прогоне (ни одного полного покрытия словарными словами).
+        OcrTextCleaner.restoreKnownCaptionWords("НЕЙЗВЕСТЦЕСЛОВО") shouldBe "НЕЙЗВЕСТЦЕСЛОВО"
     }
 
     @Test

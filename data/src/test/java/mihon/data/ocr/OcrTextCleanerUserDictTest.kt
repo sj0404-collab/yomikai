@@ -67,9 +67,13 @@ class OcrTextCleanerUserDictTest {
     fun `user word hits are counted in stats for the scanner indicator`() {
         OcrTextCleanerStats.reset()
         OcrVocabulary.configure(null)
-        OcrVocabulary.addWord("ЭРЗАЦ")
+        // Слово выдумано и отсутствует во встроенном словаре (3 млн форм):
+        // «ЭРЗАЦ» из старого варианта теста попал во встроенный словарь после
+        // его расширения с 61 тыс. до 3 млн — проверку user-слова ведём на
+        // гарантированно неизвестном ЖЖУЗЛИК (как в коллегах выше).
+        OcrVocabulary.addWord("ЖЖУЗЛИК")
 
-        OcrTextCleaner.knownWord("ЭРЗАЦ") shouldBe true
+        OcrTextCleaner.knownWord("ЖЖУЗЛИК") shouldBe true
         OcrTextCleanerStats.wordDictHits shouldBe 0
         OcrTextCleanerStats.userDictHits shouldBe 1
     }

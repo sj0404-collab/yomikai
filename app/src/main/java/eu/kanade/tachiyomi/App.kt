@@ -149,6 +149,16 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
             java.io.File(filesDir, "ocr_vocab.txt").absolutePath,
         )
 
+        // Встроенный частотный словарь OCR: ~3M словоформ, компактный
+        // хеш-индекс (~24 МБ) из ассета. Раньше словарь жил в 602
+        // сгенерированных Kotlin-файлах: два HashSet по 3М строк съедали
+        // ~0.5 ГБ кучи, и первый knownWord() из чистки уходил в OOM/ANR —
+        // поэтому «слова перестали находиться» на устройстве.
+        mihon.data.ocr.RuWordList.configure(applicationContext)
+        // Тёплый старт словаря в фоне (~1 с): иначе первый скан страницы
+        // подвисает на загрузке 3M форм прямо в OCR-потоке.
+        Thread { runCatching { mihon.data.ocr.RuWordList.preload() } }
+
         // Буфер скриншотов авточтения (вкладка «Скриншоты»): загружает
         // сохранённые скрины и JPEG-файлы при старте приложения.
         mihon.data.ocr.OcrScreenshotBuffer.init(applicationContext)

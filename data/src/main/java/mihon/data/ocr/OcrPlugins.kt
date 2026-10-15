@@ -79,6 +79,30 @@ object OcrPlugins {
     )
 
     /**
+     * Локальный ONNX-движок (CRNN+CTC), обученный на кириллических репликах
+     * манги. Модель (~3.7 МБ) собрана прямо в APK — ни пакета `cyrillic_ocr`,
+     * ни LiteRT, ни сети не требуется, поэтому движок доступен «из коробки»
+     * и является первым офлайн-резервом после основного PP-OCR.
+     */
+    val ONNX_RU = OcrPluginDescriptor(
+        id = "onnx_ru",
+        model = OcrModel.ONNX_RU,
+        title = "Локальный ONNX (CRNN, кириллица)",
+        summary = "Собственная CRNN+CTC, обученная на манга-репликах. " +
+            "Модель внутри APK, скачивать нечего. Читает кириллицу, цифры " +
+            "и пунктуацию; чистую латиницу в алфавит модели не включали.",
+        engineType = "ONNX_RU",
+        online = false,
+        requirements = emptySet(),
+        // После PP-OCR, до Tesseract: та же качественная кириллица, но без
+        // зависимости от скачанного пакета.
+        fallbackPriority = 1,
+        supportsRegions = true,
+    )
+
+    
+
+    /**
      * Настоящий Tesseract с русской моделью.
      *
      * До v1.10.18 пункт «Tesseract» в настройках был фикцией: он молча
@@ -176,7 +200,7 @@ object OcrPlugins {
     )
 
     /** Все выбираемые плагины в порядке показа в настройках. */
-    val ALL = listOf(CYRILLIC, TESSERACT, MLKIT, GLENS, ZEN_FREE, GOOGLE_AI, OPENROUTER, OWOCR)
+    val ALL = listOf(CYRILLIC, ONNX_RU, TESSERACT, MLKIT, GLENS, ZEN_FREE, GOOGLE_AI, OPENROUTER, OWOCR)
 
 
     private val BY_ID = ALL.associateBy { it.id }

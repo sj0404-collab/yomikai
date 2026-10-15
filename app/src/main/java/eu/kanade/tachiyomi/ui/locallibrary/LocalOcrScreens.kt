@@ -152,6 +152,7 @@ private fun OptionsBlock(
 
 internal val ENGINE_TITLES = mapOf(
     OcrModel.CYRILLIC to "Кириллица (офлайн, точно)",
+    OcrModel.ONNX_RU to "ONNX CRNN (кириллица, встроена в APK)",
     OcrModel.MLKIT to "Google ML Kit (офлайн, встроена в APK)",
     OcrModel.FAST to "Быстрый (офлайн, для ARM)",
     OcrModel.LEGACY to "Старый (медленно)",

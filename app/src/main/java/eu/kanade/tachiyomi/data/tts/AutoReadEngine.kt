@@ -1824,6 +1824,19 @@ class AutoReadEngine(
                 )
             }
             .orEmpty()
+            // Мусорные строки из 1–2 букв («н», «бт», «й. бийг пиа») — рёбра
+            // глифов после масштабирования — не показываем в скриншотах: для
+            // кириллических языков строка обязана пройти presentable-гейт
+            // (одна буква — только союз/предлог; короткая безгласная — либо
+            // гласная есть, либо это известное звукоподражание «мгм»/«хм»).
+            .let { lines ->
+                val language = prefs.autoReadLanguage().get()
+                if (language == "ru" || language == "uk" || language == "be") {
+                    lines.filter { line -> OcrTextCleaner.isPresentableOcrLine(line.text) }
+                } else {
+                    lines
+                }
+            }
 
         val entry = OcrScreenshotBuffer.add(
             chapterId = chapterId,

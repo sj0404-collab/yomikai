@@ -108,6 +108,7 @@ class OcrRepositoryImpl(
     )
 
     private var cyrillicEngine: CyrillicOcrEngine? = null
+    private var onnxRuEngine: OnnxRuOcrEngine? = null
     private var mlKitEngine: MlKitOcrEngine? = null
 
     /** Tesseract с русской моделью — тяжёлый, держим один на всё время. */
@@ -162,6 +163,7 @@ class OcrRepositoryImpl(
      */
     private fun EngineType.toOcrModel(): OcrModel = when (this) {
         EngineType.CYRILLIC -> OcrModel.CYRILLIC
+        EngineType.ONNX_RU -> OcrModel.ONNX_RU
         EngineType.TESSERACT -> OcrModel.TESSERACT
 
         EngineType.MLKIT -> OcrModel.MLKIT
@@ -209,6 +211,7 @@ class OcrRepositoryImpl(
 
     internal enum class EngineType {
         CYRILLIC,
+        ONNX_RU,
         TESSERACT,
 
         MLKIT,
@@ -233,6 +236,7 @@ class OcrRepositoryImpl(
     private fun engineTypeOf(model: OcrModel): EngineType {
         val engine = when (model) {
             OcrModel.CYRILLIC -> EngineType.CYRILLIC
+            OcrModel.ONNX_RU -> EngineType.ONNX_RU
             OcrModel.MLKIT -> EngineType.MLKIT
             // Old offline selections migrate transparently to the Russian
             // engine; the Japanese FAST/LEGACY models are no longer defaults.
@@ -279,6 +283,9 @@ class OcrRepositoryImpl(
         // Один основной офлайн-движок для кириллицы. LEGACY и FAST — только
         // миграционные значения перечислений.
         EngineType.CYRILLIC,
+        // Локальный ONNX CRNN: модель внутри APK, ничего скачивать не нужно,
+        // кириллица читается по-настоящему. В цепочке сразу после PP-OCR.
+        EngineType.ONNX_RU,
         // Tesseract — второй офлайн-движок с русской моделью. Раньше он был
         // фикцией и в цепочку не попадал, поэтому «прочитал не то → попробуй
         // другой» для него просто не работало. Ставим после PP-OCR: тот и
@@ -313,7 +320,9 @@ class OcrRepositoryImpl(
         EngineType.OPENROUTER -> ocrPreferences.openrouterApiKey().get().isNotBlank()
         EngineType.OWOCR -> ocrPreferences.owocrAddress().get().isNotBlank()
         EngineType.GLENS -> true
-        EngineType.CYRILLIC, EngineType.MLKIT, EngineType.FAST, EngineType.LEGACY -> false
+        EngineType.CYRILLIC, EngineType.ONNX_RU,
+        EngineType.MLKIT, EngineType.FAST, EngineType.LEGACY,
+        -> false
     }
 
     /**
@@ -366,6 +375,9 @@ class OcrRepositoryImpl(
                     textPostprocessor,
                     ::currentTuning,
                 ).also { cyrillicEngine = it }
+            }
+            EngineType.ONNX_RU -> {
+                onnxRuEngine ?: OnnxRuOcrEngine(context).also { onnxRuEngine = it }
             }
             EngineType.TESSERACT -> {
                 tesseractEngine ?: TesseractOcrEngine(
@@ -845,6 +857,7 @@ class OcrRepositoryImpl(
         noteEngineUsed(type)
         return when (type) {
             EngineType.CYRILLIC -> scanLocally(chapterId, pageIndex, image, OcrModel.CYRILLIC, type, onPartial)
+            EngineType.ONNX_RU -> scanWithOnnxRu(chapterId, pageIndex, image, type, onPartial)
             EngineType.TESSERACT -> scanWithTesseract(chapterId, pageIndex, image, type, onPartial)
 
             EngineType.MLKIT -> scanWithMlKit(chapterId, pageIndex, image, OcrModel.MLKIT, onPartial)
@@ -979,6 +992,53 @@ class OcrRepositoryImpl(
         )
     }
 
+    /**
+     * Полная страница через локальный ONNX CRNN (кириллица, модель в APK).
+     *
+     * Движок сам находит строки (сегментатор — порт эталонного pipeline),
+     * поэтому отдельный детектор, как у ML Kit, не нужен: каждая строка
+     * становится регионом, и тап по реплике открывает именно её. Движок
+     * никогда не требует пакета `cyrillic_ocr` — это «всегда с собой»
+     * русскоязычная OCR.
+     */
+    private suspend fun scanWithOnnxRu(
+        chapterId: Long,
+        pageIndex: Int,
+        image: Bitmap,
+        type: EngineType,
+        onPartial: ((OcrRegion) -> Unit)? = null,
+    ): OcrPageResult {
+        val regions = submitTask(PrioritizedTaskQueue.Priority.NORMAL) {
+            engineLocks.withTextEngineLock(type) {
+                val engine = engineFor(type)
+                if (engine is OnnxRuOcrEngine) engine.recognizeRegions(image) else emptyList()
+            }
+        }
+
+        val mapped = regions.mapIndexedNotNull { index, region ->
+            val text = OcrTextCleaner.joinLineHyphens(region.text).trim()
+            text.takeIf { it.isNotBlank() }?.let {
+                OcrRegion(
+                    order = index,
+                    text = it,
+                    boundingBox = region.boundingBox,
+                    textOrientation = OcrTextOrientation.Horizontal,
+                )
+            }
+        }
+        // Прогресс по мере готовности: движок уже вернул все области, но
+        // авточтение может начать читать их, не дожидаясь сборки страницы.
+        mapped.forEach { region -> onPartial?.invoke(region) }
+
+        return OcrPageResult(
+            chapterId = chapterId,
+            pageIndex = pageIndex,
+            ocrModel = type.toOcrModel(),
+            imageWidth = image.width,
+            imageHeight = image.height,
+            regions = mapped,
+        )
+    }
 
     private suspend fun scanWithMlKit(
         chapterId: Long,
@@ -1343,6 +1403,9 @@ class OcrRepositoryImpl(
 
             cyrillicEngine?.close()
             cyrillicEngine = null
+
+            onnxRuEngine?.close()
+            onnxRuEngine = null
 
             mlKitEngine?.close()
             mlKitEngine = null

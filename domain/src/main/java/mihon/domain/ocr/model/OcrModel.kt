@@ -11,6 +11,13 @@ enum class OcrModel {
     CYRILLIC,
 
     /**
+     * Локальный ONNX-движок (CRNN+CTC), обученный на кириллических репликах
+     * манги. Модель (~3.7 МБ) собрана прямо в APK: ни пакета `cyrillic_ocr`,
+     * ни сети не нужно. Отдаёт строки с координатами.
+     */
+    ONNX_RU,
+
+    /**
      * Legacy and slower model, supports GPU/CPU.
      */
     LEGACY,

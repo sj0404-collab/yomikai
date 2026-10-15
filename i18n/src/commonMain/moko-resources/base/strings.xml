@@ -1241,6 +1241,8 @@
     <string name="ocr_model_zen_free">Space Bunny Free (OpenCode Zen)</string>
     <string name="ocr_model_tesseract">Tesseract (устаревший)</string>
     <string name="ocr_model_cyrillic">Русский Cyrillic OCR (офлайн, PP-OCR)</string>
+    <string name="ocr_model_onnx_ru">ONNX CRNN (кириллица, встроено в APK)</string>
+    <string name="ocr_model_onnx_ru">ONNX CRNN (кириллица, встроено в APK)</string>
     <string name="ocr_model_mlkit">Google ML Kit (латиница, офлайн)</string>
     <string name="ocr_recognized_by">Распознано: %1$s</string>
     <string name="ocr_recognized_by_fallback">Распознано: %1$s (выбранный %2$s не ответил)</string>

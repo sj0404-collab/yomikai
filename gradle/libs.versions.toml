@@ -86,6 +86,7 @@ wanakana-core-version = "1.1.1"
 
 [libraries]
 tesseract4android = { module = "cz.adaptech.tesseract4android:tesseract4android", version = "4.7.0" }
+onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android", version = "1.20.0" }
 aboutLibraries-compose = { module = "com.mikepenz:aboutlibraries-compose-m3", version.ref = "aboutLibraries" }
 anki-android = { module = "com.github.ankidroid:Anki-Android", version.ref = "anki-android-version" }
 android-desugar = { module = "com.android.tools:desugar_jdk_libs", version.ref = "android-desugar" }

@@ -10,6 +10,8 @@ import uy.kohesive.injekt.api.get
 val OcrModel.titleRes: StringResource
     get() = when (this) {
         OcrModel.CYRILLIC -> MR.strings.ocr_model_cyrillic
+        OcrModel.ONNX_RU -> MR.strings.ocr_model_onnx_ru
+        OcrModel.ONNX_RU -> MR.strings.ocr_model_onnx_ru
         OcrModel.LEGACY -> MR.strings.ocr_model_legacy
         OcrModel.FAST -> MR.strings.ocr_model_fast
         OcrModel.GLENS -> MR.strings.ocr_model_glens
