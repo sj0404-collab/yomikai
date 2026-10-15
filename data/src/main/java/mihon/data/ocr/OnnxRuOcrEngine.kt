@@ -75,7 +75,7 @@ internal class OnnxRuOcrEngine(
             return runCatching {
                 val e = OrtEnvironment.getEnvironment()
                 env = e
-                e.createSession(assetFile(MODEL_ASSET).absolutePath).also { session = it }
+                e.createSession(modelPath()).also { session = it }
             }.onFailure { t ->
                 sessionError = t.message ?: t.javaClass.simpleName
                 // Если модель в кэше оказалась битой (оборванная копия, не хватило
@@ -91,7 +91,16 @@ internal class OnnxRuOcrEngine(
         File(context.cacheDir, name.replace('/', '_'))
 
     /**
-     * Скопировать ассет в кэш для нативного createSession (нужен путь МФайла).
+     * Путь к модели: сначала скачанная пользователем копия (пакет
+     * `onnx_ru` в «Управлении локальными OCR-моделями» — загружается
+     * прямо с релиза GitHub, в обход APK), затем встроенный asset.
+     * Канал спасает, если копия в APK окажется устаревшей или битой.
+     */
+    private fun modelPath(): String =
+        OcrModelFiles.resolve(context, MODEL_ASSET) ?: assetFile(MODEL_ASSET).absolutePath
+
+    /**
+     * Скопировать ассет в кэш для нативного createSession (нужен путь файла).
      * Раньше проверялось только наличие файла length()>0: первое оборванное
      * копирование (нет места, убит процесс) оставляло обрезанный файл, и ORT
      * падал на нём при КАЖДОМ запуске, навсегда. Теперь копируем атомарно
@@ -124,6 +133,13 @@ internal class OnnxRuOcrEngine(
     fun obtainCharset(): Boolean = runCatching {
         context.assets.open(META_ASSET).use { it.readBytes().isNotEmpty() }
     }.getOrDefault(false)
+
+    /**
+     * Текст последней ошибки сессии/инференса — для каналов диагностики
+     * (стадий OCR-прохода, истории сканирований), чтобы «нет результатов»
+     * не было молчаливой чёрной дырой.
+     */
+    fun lastError(): String? = sessionError
 
     // ---- LineOcrEngine --------------------------------------------------
 
@@ -224,6 +240,8 @@ internal class OnnxRuOcrEngine(
                     }
                 } ?: ""
             } as String
+        }.onFailure { t ->
+            sessionError = "inference: " + (t.message ?: t.javaClass.simpleName)
         }.getOrDefault("")
     }
 

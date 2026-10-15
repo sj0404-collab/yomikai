@@ -147,6 +147,13 @@ object OcrModelDownloader {
             tesseract("rus.traineddata") to "rus.traineddata",
             tesseract("eng.traineddata") to "eng.traineddata",
         ),
+        // Обновляемая копия встроенной CRNN-модели кириллицы (движок
+        // «Локальный ONNX (CRNN)»). Качается с релизного актива GitHub
+        // напрямую (не через git — исключает поломки от eol-нормализации)
+        // и имеет приоритет над копией внутри APK.
+        "onnx_ru" to listOf(
+            onnxRu("best.onnx") to "onnx_crnn_best.onnx",
+        ),
 
     )
 
@@ -163,11 +170,20 @@ object OcrModelDownloader {
         "manga_ocr_fast" to listOf("ocr_fast/encoder.tflite", "ocr_fast/decoder.tflite"),
         "panel_detector" to listOf("panel_detector/model.tflite"),
         "tesseract" to listOf("tesseract/rus.traineddata", "tesseract/eng.traineddata"),
+        "onnx_ru" to listOf("onnx_crnn/best.onnx"),
 
     )
 
     /** Пин коммита репозитория моделей: неизменяемый источник файлов. */
     private const val CYRILLIC_PIN = "0279620ace18256b36850d6773bad03ffad03fa7"
+
+    /** Канал модели CRNN кириллицы: пре-релиз с прямыми активами, без git. */
+    private const val ONNX_RU_RELEASE = "onnx-ru-r3"
+
+    private fun onnxRu(file: String): String {
+        return "https://github.com/sj0404-collab/yomikai/" +
+            "releases/download/$ONNX_RU_RELEASE/$file"
+    }
 
     private fun cyrillic(path: String): String {
         return "https://raw.githubusercontent.com/sj0404-collab/ocr-rus-cyrillic/$CYRILLIC_PIN/$path"

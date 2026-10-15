@@ -35,6 +35,11 @@ object OcrModelFiles {
         "ocr_fast/encoder.tflite" to "encoder_fast.tflite",
         "ocr_fast/decoder.tflite" to "decoder_fast.tflite",
         "panel_detector/model.tflite" to "panel_detector.tflite",
+        // Встроенная в APK CRNN кириллицы: скачанная копия (релиз-актив GitHub)
+        // имеет ПРИОРИТЕТ над ассетным файлом — спасает от битых/устаревших
+        // копий внутри APK без перевыпуска приложения.
+        "onnx_crnn/best.onnx" to "onnx_crnn_best.onnx",
+        "onnx_crnn/best.meta.json" to "onnx_crnn_best.meta.json",
     )
 
     /**

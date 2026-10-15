@@ -133,7 +133,7 @@ class OcrRepositoryImpl(
     private val onlineMinSidePx = 160
 
     /** Суммарный бюджет резервной цепочки для интерактивного распознавания. */
-    private val defaultFallbackBudgetMs = 20_000L
+    private val defaultFallbackBudgetMs = 30_000L
 
     /** Для мелкого кропа: только локальные движки и почти без ожидания. */
     private val tinyFallbackBudgetMs = 4_000L
@@ -586,7 +586,7 @@ class OcrRepositoryImpl(
      * Отдельный бюджет от [defaultFallbackBudgetMs]: там цепочка заканчивается
      * облаком за десятки секунд, а здесь её не будет, и ждать незачем.
      */
-    private val localOnlyFallbackBudgetMs = 20_000L
+    private val localOnlyFallbackBudgetMs = 30_000L
 
 
     override suspend fun recognizeText(image: OcrImage, model: OcrModel?): String {
@@ -1029,6 +1029,20 @@ class OcrRepositoryImpl(
         // Прогресс по мере готовности: движок уже вернул все области, но
         // авточтение может начать читать их, не дожидаясь сборки страницы.
         mapped.forEach { region -> onPartial?.invoke(region) }
+
+        // Аудит в историю сканирований (OcrStageBus → OcrHistoryStore): на
+        // фоне жалоб «ONNX молча ничего не выдаёт» пишем честную причину —
+        // ошибку сессии/инференса движка, либо факт «0 боксов».
+        val engine = engineFor(type) as? OnnxRuOcrEngine
+        val error = engine?.lastError()
+        OcrStageBus.post(
+            if (mapped.isEmpty()) OcrStageBus.Stage.FAILED else OcrStageBus.Stage.DONE,
+            when {
+                mapped.isNotEmpty() -> "ONNX(CRNN) боксов: ${mapped.size}"
+                !error.isNullOrBlank() -> "ONNX(CRNN) ошибка: $error"
+                else -> "ONNX(CRNN): 0 строк на странице"
+            },
+        )
 
         return OcrPageResult(
             chapterId = chapterId,

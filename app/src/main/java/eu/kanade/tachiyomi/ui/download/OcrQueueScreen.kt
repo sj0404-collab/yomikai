@@ -445,6 +445,22 @@ object OcrQueueScreen : Screen() {
                 },
             )
 
+            var onnxRuInstalled by remember {
+                mutableStateOf(
+                    eu.kanade.tachiyomi.data.ocr.OcrModelDownloader.isPackInstalled(
+                        context,
+                        "onnx_ru",
+                    ),
+                )
+            }
+            ModelPackRow(
+                pack = "onnx_ru",
+                title = "ONNX (CRNN) — кириллица, обновлённая",
+                sizeHint = "~3,7 МБ • офлайн • встроена в APK; качать — только если встроенная «не видит» текста",
+                installed = onnxRuInstalled,
+                onInstalledChange = { onnxRuInstalled = it },
+            )
+
             PreferenceGroupHeader(title = "Управление локальными OCR-моделями")
             InfoWidget(
                 text = "Все локальные модели хранятся вне APK в Android/data/…/files/ocr_models " +
