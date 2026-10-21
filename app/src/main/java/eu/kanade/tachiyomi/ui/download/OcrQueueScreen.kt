@@ -491,8 +491,8 @@ object OcrQueueScreen : Screen() {
             }
 
             InfoWidget(text = "Состояние ONNX: $onnxStatus")
-            val onnxDead = eu.kanade.tachiyomi.data.ocr.OcrEngineHealth.onnxState(diagContext) ==
-                eu.kanade.tachiyomi.data.ocr.OcrEngineHealth.State.DEAD
+            val onnxDead = mihon.data.ocr.OcrEngineHealth.onnxState(diagContext) ==
+                mihon.data.ocr.OcrEngineHealth.State.DEAD
             if (onnxDead) {
                 // Честно и без «вылетов»: ONNX на этом устройстве не работает,
                 // кириллицу читает Tesseract, а не падающая модель.
