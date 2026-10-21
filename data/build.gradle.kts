@@ -41,6 +41,8 @@ dependencies {
 
     implementation(libs.androidx.sqlite.bundled)
     implementation(libs.litert)
+    // KOMA-путь кириллицы: ONNX Runtime + PP-OCRv4 det / PP-OCRv5 East Slavic rec.
+    implementation(libs.onnxruntime.android)
     implementation(libs.mlkit.text.recognition)
     // Настоящий Tesseract с русской моделью: APK без него ввёл полем
     // «Tesseract», который молча уходил в PP-OCR.

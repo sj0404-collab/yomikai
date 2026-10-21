@@ -92,6 +92,7 @@ object SettingsOcrScreen : SearchableSettings {
         return listOf(
             getContentTypeGroup(prefs = prefs, contentType = contentType),
             getLocalModeGroup(prefs = prefs, localMode = localMode),
+            getCyrillicEngineGroup(prefs = prefs),
             getRegionGroup(prefs = prefs, presetRegion = presetRegion),
             getTuningGroup(prefs = prefs),
             getVocabularyGroup(onOpenVocabulary = { showVocabulary = true }),
@@ -100,6 +101,33 @@ object SettingsOcrScreen : SearchableSettings {
             getGlensLanguageGroup(prefs = prefs),
             getPageOverlayGroup(prefs = prefs),
             getHistoryGroup(onOpenHistory = { showHistory = true }),
+        )
+    }
+
+    /**
+     * Второй путь распознавания кириллицы.
+     *
+     * Прежний путь (LiteRT: PP-OCRv3 + верификатор) и KOMA-путь (ONNX: детектор
+     * PP-OCRv4 + независимый CTC PP-OCRv5) — разные модели с разными числами на
+     * одном и том же кропе, поэтому это переключатель, а не тихая замена: если
+     * новый путь на конкретном устройстве окажется хуже, откат — одно касание.
+     * Модели лежат снаружи APK, поэтому без пакета `koma_ocr` переключатель
+     * ничего не сломает: движок просто не инициализируется.
+     */
+    @Composable
+    private fun getCyrillicEngineGroup(prefs: OcrPreferences): Preference.PreferenceGroup {
+        return Preference.PreferenceGroup(
+            title = "Кириллица",
+            preferenceItems = listOf(
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = prefs.komaOnnxCyrillic(),
+                    title = "Движок KOMA (ONNX): PP-OCRv4 + PP-OCRv5",
+                    subtitle = "Второй путь для кириллицы: один детектор и один CTC-распознаватель " +
+                        "вместо связки LiteRT с верификатором — быстрее и стабильнее на чистых " +
+                        "облачках. Нужны koma_det.onnx, koma_rec.onnx и koma_dict.txt в папке " +
+                        "ocr_models; без них остаётся прежний движок.",
+                ),
+            ),
         )
     }
 

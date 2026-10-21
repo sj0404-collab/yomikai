@@ -35,6 +35,10 @@ object OcrModelFiles {
         "ocr_fast/encoder.tflite" to "encoder_fast.tflite",
         "ocr_fast/decoder.tflite" to "decoder_fast.tflite",
         "panel_detector/model.tflite" to "panel_detector.tflite",
+        // KOMA-путь: ONNX-детектор PP-OCRv4, CTC-распознаватель East Slavic PP-OCRv5 и его словарь.
+        "koma_ocr/det.onnx" to "koma_det.onnx",
+        "koma_ocr/rec.onnx" to "koma_rec.onnx",
+        "koma_ocr/dict.txt" to "koma_dict.txt",
     )
 
     /**

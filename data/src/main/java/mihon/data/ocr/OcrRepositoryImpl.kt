@@ -40,6 +40,7 @@ class OcrRepositoryImpl(
     private val ocrModelPref = preferenceStore.getEnum("pref_ocr_model", OcrModel.CYRILLIC)
     private val useFallbackModelsPref = preferenceStore.getBoolean("pref_use_fallback_models", true)
 
+
     /**
      * Страница без текста — это картинка, а не сбой движка.
      *
@@ -108,6 +109,9 @@ class OcrRepositoryImpl(
     )
 
     private var cyrillicEngine: CyrillicOcrEngine? = null
+
+    /** KOMA-путь кириллицы (ONNX). Держим рядом с LiteRT-движком, а не вместо. */
+    private var komaEngine: KomaOnnxOcrEngine? = null
     private var mlKitEngine: MlKitOcrEngine? = null
 
     /** Tesseract с русской моделью — тяжёлый, держим один на всё время. */
@@ -360,12 +364,18 @@ class OcrRepositoryImpl(
     private fun engineFor(type: EngineType): OcrEngine {
         return when (type) {
             EngineType.CYRILLIC -> {
-                cyrillicEngine ?: CyrillicOcrEngine(
-                    context,
-                    requireEnvironment(),
-                    textPostprocessor,
-                    ::currentTuning,
-                ).also { cyrillicEngine = it }
+                // Настройка читается через OcrPreferences: тот же ключ, что
+                // у переключателя в «Настройки → Распознавание».
+                if (ocrPreferences.komaOnnxCyrillic().get()) {
+                    komaEngine ?: KomaOnnxOcrEngine(context).also { komaEngine = it }
+                } else {
+                    cyrillicEngine ?: CyrillicOcrEngine(
+                        context,
+                        requireEnvironment(),
+                        textPostprocessor,
+                        ::currentTuning,
+                    ).also { cyrillicEngine = it }
+                }
             }
             EngineType.TESSERACT -> {
                 tesseractEngine ?: TesseractOcrEngine(
@@ -421,7 +431,9 @@ class OcrRepositoryImpl(
             // Детектор живёт в паке cyrillic_ocr вместе с распознавателями.
             // Пока модели не скачаны (или LiteRT недоступен) — заглушка, и
             // scanLocally честно деградирует на распознавание всей страницы.
-            if (localOcrAvailable() && cyrillicModelsInstalled()) {
+            if (ocrPreferences.komaOnnxCyrillic().get() && komaModelsInstalled()) {
+                KomaDetOcrEngine { engineFor(EngineType.CYRILLIC) as KomaOnnxOcrEngine }
+            } else if (localOcrAvailable() && cyrillicModelsInstalled()) {
                 CyrillicDetOcrEngine { engineFor(EngineType.CYRILLIC) as CyrillicOcrEngine }
             } else {
                 UnavailableDetOcrEngine()
@@ -432,6 +444,18 @@ class OcrRepositoryImpl(
     }
 
     /** Пак cyrillic_ocr установлен целиком (детектор + распознаватель + словарь). */
+    /** Пак KOMA установлен целиком (детектор + распознаватель + словарь). */
+    private fun komaModelsInstalled(): Boolean {
+        return OcrModelFiles.allInstalled(
+            context,
+            listOf(
+                KomaOnnxOcrEngine.DET_PATH,
+                KomaOnnxOcrEngine.REC_PATH,
+                KomaOnnxOcrEngine.DICT_PATH,
+            ),
+        )
+    }
+
     private fun cyrillicModelsInstalled(): Boolean {
         return OcrModelFiles.allInstalled(
             context,
@@ -1343,6 +1367,9 @@ class OcrRepositoryImpl(
 
             cyrillicEngine?.close()
             cyrillicEngine = null
+
+            komaEngine?.close()
+            komaEngine = null
 
             mlKitEngine?.close()
             mlKitEngine = null

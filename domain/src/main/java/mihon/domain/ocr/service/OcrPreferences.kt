@@ -455,6 +455,16 @@ class OcrPreferences(
      */
     fun ocrPageTextOverlay() = preferenceStore.getBoolean("pref_ocr_page_text_overlay", true)
 
+    /**
+     * Кириллица через KOMA-путь (ONNX Runtime): детектор PP-OCRv4 +
+     * независимый CTC-распознаватель East Slavic PP-OCRv5.
+     *
+     * По умолчанию выключено: модели лежат снаружи APK, и пока пакет
+     * `koma_ocr` не установлен, включённый переключатель просто не даст
+     * движку инициализироваться. Меняется в «Настройки → Распознавание».
+     */
+    fun komaOnnxCyrillic() = preferenceStore.getBoolean("pref_ocr_use_koma_onnx", false)
+
     /** Дублировать распознанный текст в шторку уведомлений */
     fun ocrToNotification() = preferenceStore.getBoolean("pref_ocr_to_notification", false)
 
