@@ -243,7 +243,7 @@ object OcrOverlaySettingsScreen : Screen {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 )
-                OcrModel.entries.forEach { model ->
+                eu.kanade.tachiyomi.ui.locallibrary.SELECTABLE_OCR_MODELS.forEach { model ->
                     OptionsRow(
                         label = ENGINE_TITLES[model] ?: model.name,
                         selected = appEngine == model,

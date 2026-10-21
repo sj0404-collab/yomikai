@@ -254,7 +254,7 @@ dependencies {
     implementation(libs.commons.compress)
     // KOMA-читалка: CBR-архивы, локальный OCR (ML Kit + ONNX), детектор строк
     implementation(libs.junrar)
-    implementation(libs.onnxruntime.android)
+    implementation(libs.onnxruntime.mobile)
     implementation(libs.mlkit.text.recognition)
     implementation(libs.mlkit.text.recognition.japanese)
     implementation(libs.xz)

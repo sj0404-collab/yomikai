@@ -13,9 +13,11 @@
   * ручные сиды: слова из device-регрессий пользователя и однобуквенные
     служебные слова, без которых не делятся слипшиеся прогоны («ЗАЭТИГОДЫЯ»).
 
-Файлы кладутся в data/src/main/java/mihon/data/ocr/RuWordListPartNNN.kt —
-по 5000 форм на файл (тот же формат, что у vocabFastPart*: arrayOf-литералы
-разбиты по файлам, чтобы не упереться в лимит размера метода JVM).
+Результат — один бинарный ресурс `data/src/main/resources/ru_words.bin`:
+заголовок "RUW1", int32 big-endian — количество, далее так же — отсортированные
+хеши FNV-1a всех форм в нижнем регистре. Никаких Kotlin-файлов: 3 млн
+строковых литералов раздували DEX на ~30 МБ и собирались в HashSet из 3 млн
+строк при первом распознавании (OOM на телефоне).
 
 Использование:
     python3 gen_ruwordlist.py /path/to/ru_lexicon.txt /path/to/repo
@@ -23,12 +25,13 @@
 import glob
 import os
 import re
+import struct
 import sys
 
 FREQ_THRESHOLD = 20
-PART_SIZE = 5000
 REPO_OCR_DIR = "data/src/main/java/mihon/data/ocr"
-RULIST_KT = "RuWordList.kt"
+RESOURCES_DIR = "data/src/main/resources"
+BINARY_NAME = "ru_words.bin"
 
 # Однобуквенные служебные слова: DP-разбиение разрешает их как отдельные
 # сегменты («ЗА ЭТИ ГОДЫ Я»), поэтому они обязаны быть в словаре.
@@ -120,58 +123,52 @@ def build(lexicon_path, repo):
     return sorted(forms)
 
 
-def write_parts(repo, forms):
-    out_dir = os.path.join(repo, REPO_OCR_DIR)
-    for stale in glob.glob(os.path.join(out_dir, "RuWordListPart*.kt")):
-        os.remove(stale)
-    index = 0
-    for start in range(0, len(forms), PART_SIZE):
-        part = forms[start:start + PART_SIZE]
-        path = os.path.join(out_dir, f"RuWordListPart{index:03d}.kt")
-        with open(path, "w", encoding="utf-8") as handle:
-            handle.write('@file:Suppress("SpellCheckingInspection")\n\n')
-            handle.write("package mihon.data.ocr\n\n")
-            handle.write("/**\n")
-            handle.write(" * Generated file — do not edit manually.\n")
-            handle.write(" * Словоформы RU из морфологического лексикона OpenCorpora,\n")
-            handle.write(" * ё/е-варианты, литературная лексика прежнего словаря,\n")
-            handle.write(" * сиды регрессий и однобуквенные служебные слова.\n")
-            handle.write(" * Пересборка: scripts/gen_ruwordlist.py\n")
-            handle.write(" */\n")
-            handle.write(f"internal fun ruWordListPart{index:03d}(): Array<String> = arrayOf(\n")
-            for word in part:
-                handle.write(f'    "{word}",\n')
-            handle.write(")\n")
-        index += 1
-    return index
+def write_binary(repo, forms):
+    """Кладёт формы одним бинарным ресурсом вместо 603 файлов Kotlin.
 
-
-def sync_parts_list(repo, parts_count):
-    """Rewrite the parts array inside RuWordList.kt.
-
-    Without this the object keeps referring to the old part count and the
-    freshly generated parts are never read — a silent, total loss of the
-    dictionary rather than a compile error.
+    Раньше генератор писал `RuWordListPartNNN.kt`: 3 млн строковых литералов
+    попадали в DEX (~30 МБ в APK) и при первом распознавании собирались в
+    HashSet из 3 млн строк — на телефоне это OutOfMemoryError. Теперь пишем
+    отсортированные 32-битные хеши FNV-1a: 12 МБ файла, 12 МБ памяти, поиск
+    бинарный, и ни одной строки в куче.
     """
-    path = os.path.join(repo, REPO_OCR_DIR, RULIST_KT)
-    text = open(path, encoding="utf-8").read()
-    block = "\n".join(f"        ruWordListPart{i:03d}()," for i in range(parts_count))
-    pattern = re.compile(
-        r"(private val parts: Array<Array<String>> = arrayOf\(\n).*?(\n    \))",
-        re.S,
-    )
-    if not pattern.search(text):
-        raise SystemExit(f"не найден блок parts в {path} — обнови генератор вручную")
-    text = pattern.sub(lambda m: m.group(1) + block + m.group(2), text)
-    open(path, "w", encoding="utf-8").write(text)
+    out_dir = os.path.join(repo, RESOURCES_DIR)
+    os.makedirs(out_dir, exist_ok=True)
+    for stale in glob.glob(os.path.join(repo, REPO_OCR_DIR, "RuWordListPart*.kt")):
+        os.remove(stale)
+    hashes = sorted({signed_int(fnv1a(form, casefold=True)) for form in forms})
+    path = os.path.join(out_dir, BINARY_NAME)
+    with open(path, "wb") as handle:
+        handle.write(b"RUW1")
+        # Big-endian: Kotlin читает файл обычным DataInputStream.
+        handle.write(struct.pack(">i", len(hashes)))
+        handle.write(struct.pack(f">{len(hashes)}i", *hashes))
+    return len(hashes)
+
+
+def signed_int(value):
+    return value - 2 ** 32 if value >= 2 ** 31 else value
+
+
+def fnv1a(word, casefold=False):
+    """FNV-1a по code units — ровно как в RuWordList.hash().
+
+    Русские формы целиком в BMP, поэтому code point == UTF-16 code unit.
+    """
+    if casefold:
+        word = word.lower()
+    h = 2166136261
+    for ch in word:
+        h ^= ord(ch)
+        h = (h * 0x01000193) & 0xFFFFFFFF
+    return h
 
 
 def main():
     lexicon_path, repo = sys.argv[1], sys.argv[2]
     forms = build(lexicon_path, repo)
-    parts = write_parts(repo, forms)
-    sync_parts_list(repo, parts)
-    print(f"форм: {len(forms)}, файлов: {parts}")
+    count = write_binary(repo, forms)
+    print(f"форм: {len(forms)}, хешей: {count} -> {BINARY_NAME}")
 
 
 if __name__ == "__main__":

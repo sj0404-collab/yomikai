@@ -114,9 +114,6 @@ class OcrRepositoryImpl(
     private var komaEngine: KomaOnnxOcrEngine? = null
     private var mlKitEngine: MlKitOcrEngine? = null
 
-    /** Tesseract с русской моделью — тяжёлый, держим один на всё время. */
-    private var tesseractEngine: TesseractOcrEngine? = null
-
     private var legacyEngine: LegacyOcrEngine? = null
     private var fastEngine: FastOcrEngine? = null
     private var glensEngine: GlensOcrEngine? = null
@@ -364,15 +361,10 @@ class OcrRepositoryImpl(
                 // (assets/koma/models), поэтому движок доступен сразу.
                 komaEngine ?: KomaOnnxOcrEngine(context).also { komaEngine = it }
             }
-            EngineType.TESSERACT -> {
-                tesseractEngine ?: TesseractOcrEngine(
-                    dataDir = OcrModelFiles.resolve(
-                        context,
-                        TESSERACT_DATA_PATH,
-                    )?.let { java.io.File(it).parentFile },
-                    prefs = ocrPreferences,
-                ).also { tesseractEngine = it }
-            }
+            // Tesseract убран из сборки (−6 МБ нативных библиотек): его модель
+            // жила отдельным пакетом и без неё движок молча отдавал пустоту.
+            // Старое значение настройки ведёт в KOMA/ONNX.
+            EngineType.TESSERACT -> komaEngine ?: KomaOnnxOcrEngine(context).also { komaEngine = it }
 
             EngineType.MLKIT -> {
                 mlKitEngine ?: MlKitOcrEngine().also { mlKitEngine = it }
@@ -855,7 +847,8 @@ class OcrRepositoryImpl(
         noteEngineUsed(type)
         return when (type) {
             EngineType.CYRILLIC -> scanLocally(chapterId, pageIndex, image, OcrModel.CYRILLIC, type, onPartial)
-            EngineType.TESSERACT -> scanWithTesseract(chapterId, pageIndex, image, type, onPartial)
+            // Tesseract-движка в сборке нет: старое значение настройки читается KOMA.
+            EngineType.TESSERACT -> scanLocally(chapterId, pageIndex, image, OcrModel.CYRILLIC, EngineType.CYRILLIC, onPartial)
 
             EngineType.MLKIT -> scanWithMlKit(chapterId, pageIndex, image, OcrModel.MLKIT, onPartial)
             EngineType.GLENS -> scanWithGlens(chapterId, pageIndex, image, OcrModel.GLENS)
@@ -946,50 +939,6 @@ class OcrRepositoryImpl(
      * отдаётся одним регионом на всю страницу: приложение дальше разобьёт его
      * на реплики само (см. splitWholePageToLines в AutoReadEngine).
      */
-    private suspend fun scanWithTesseract(
-        chapterId: Long,
-        pageIndex: Int,
-        image: Bitmap,
-        type: EngineType,
-        onPartial: ((OcrRegion) -> Unit)? = null,
-    ): OcrPageResult {
-        val text = submitTask(PrioritizedTaskQueue.Priority.NORMAL) {
-            engineLocks.withTextEngineLock(type) {
-                runCatching { engineFor(type).recognizeText(image) }
-                    .getOrElse { e ->
-                        logcat(LogPriority.WARN, e) { "Tesseract scan failed" }
-                        ""
-                    }
-            }
-        }.trim()
-        if (text.isBlank()) {
-            return OcrPageResult(
-                chapterId = chapterId,
-                pageIndex = pageIndex,
-                ocrModel = OcrModel.TESSERACT,
-                imageWidth = image.width,
-                imageHeight = image.height,
-                regions = emptyList(),
-            )
-        }
-        val region = OcrRegion(
-            order = 0,
-            text = OcrTextCleaner.joinLineHyphens(text).trim(),
-            boundingBox = OcrBoundingBox(0f, 0f, 1f, 1f),
-            textOrientation = OcrTextOrientation.Horizontal,
-        )
-        onPartial?.invoke(region)
-        return OcrPageResult(
-            chapterId = chapterId,
-            pageIndex = pageIndex,
-            ocrModel = OcrModel.TESSERACT,
-            imageWidth = image.width,
-            imageHeight = image.height,
-            regions = listOf(region),
-        )
-    }
-
-
     private suspend fun scanWithMlKit(
         chapterId: Long,
         pageIndex: Int,
@@ -1383,15 +1332,6 @@ class OcrRepositoryImpl(
 
             detEngine?.close()
             detEngine = null
-
-            tesseractEngine?.close()
-            tesseractEngine = null
         }
     }
-
-    private companion object {
-        /** Каталог с языковыми данными Tesseract (rus.traineddata и др.). */
-        const val TESSERACT_DATA_PATH = "tesseract/rus.traineddata"
-    }
-
 }

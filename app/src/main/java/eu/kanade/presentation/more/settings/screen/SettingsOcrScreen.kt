@@ -383,7 +383,7 @@ object SettingsOcrScreen : SearchableSettings {
                 ),
                 Preference.PreferenceItem.ListPreference(
                     preference = prefs.ocrModel(),
-                    entries = OcrModel.entries
+                    entries = eu.kanade.tachiyomi.ui.locallibrary.SELECTABLE_OCR_MODELS
                         .filter { model ->
                             // LEGACY/FAST/TESSERACT — алиасы кириллического
                             // плагина, отдельными пунктами их показывать нельзя.

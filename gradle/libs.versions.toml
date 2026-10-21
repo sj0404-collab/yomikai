@@ -54,6 +54,9 @@ ktlint = "1.8.0"
 leakCanary = "2.14"
 litert = "2.1.6"
 onnxruntime = "1.22.0"
+# Мобильная сборка ORT: arm64-библиотека 4.3 МБ вместо 17.5 МБ при том же наборе
+# операторов, который используют модели KOMA (PP-OCRv4 det / PP-OCRv5 rec).
+onnxruntimeMobile = "1.18.0"
 mlkitTextRecognition = "16.0.1"
 mlkitTextRecognitionJapanese = "16.0.1"
 junrar = "7.5.5"
@@ -88,7 +91,6 @@ xmlutil = "1.0.1"
 wanakana-core-version = "1.1.1"
 
 [libraries]
-tesseract4android = { module = "cz.adaptech.tesseract4android:tesseract4android", version = "4.7.0" }
 aboutLibraries-compose = { module = "com.mikepenz:aboutlibraries-compose-m3", version.ref = "aboutLibraries" }
 anki-android = { module = "com.github.ankidroid:Anki-Android", version.ref = "anki-android-version" }
 android-desugar = { module = "com.android.tools:desugar_jdk_libs", version.ref = "android-desugar" }
@@ -169,6 +171,7 @@ leakCanary-plumber = { module = "com.squareup.leakcanary:plumber-android", versi
 logcat = { module = "com.squareup.logcat:logcat", version.ref = "logcat" }
 litert = { module = "com.google.ai.edge.litert:litert", version.ref = "litert" }
 onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android", version.ref = "onnxruntime" }
+onnxruntime-mobile = { module = "com.microsoft.onnxruntime:onnxruntime-mobile", version.ref = "onnxruntimeMobile" }
 mlkit-text-recognition = { module = "com.google.mlkit:text-recognition", version.ref = "mlkitTextRecognition" }
 mlkit-text-recognition-japanese = { module = "com.google.mlkit:text-recognition-japanese", version.ref = "mlkitTextRecognitionJapanese" }
 junrar = { module = "com.github.junrar:junrar", version.ref = "junrar" }
