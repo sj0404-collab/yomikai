@@ -34,7 +34,7 @@ import java.util.Locale
 object RuWordList {
 
     private const val RESOURCE = "ru_words.bin"
-    private const val MAGIC = 0x52555731 // "RUW1", как его читает DataInputStream
+    private const val MAGIC = 0x52555732 // "RUW2", как его читает DataInputStream
 
     /** FNV-1a offset basis 0x811C9DC5. */
     private const val FNV_OFFSET = -0x7EE3623B
@@ -78,11 +78,24 @@ object RuWordList {
         return runCatching {
             DataInputStream(BufferedInputStream(stream, 1 shl 16)).use { input ->
                 val magic = input.readInt()
-                require(magic == MAGIC) { "Ожидался заголовок RUW1, получено $magic" }
+                require(magic == MAGIC) { "Ожидался заголовок RUW2, получено $magic" }
                 val count = input.readInt()
                 require(count in 0..16_000_000) { "Некорректный размер словаря: $count" }
                 val table = IntArray(count)
-                for (index in 0 until count) table[index] = input.readInt()
+                var previous = 0
+                for (index in 0 until count) {
+                    // Unsigned LEB128: сумма дельт по модулю 2^32 даёт исходный хеш.
+                    var delta = 0
+                    var shift = 0
+                    while (true) {
+                        val next = input.readUnsignedByte()
+                        delta = delta or ((next and 0x7F) shl shift)
+                        if (next and 0x80 == 0) break
+                        shift += 7
+                    }
+                    previous += delta
+                    table[index] = previous
+                }
                 table
             }
         }.getOrElse { error ->
