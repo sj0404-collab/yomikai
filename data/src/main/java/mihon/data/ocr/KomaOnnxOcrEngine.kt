@@ -81,9 +81,21 @@ internal class KomaOnnxOcrEngine(
         }
     }
 
-    private fun ensureDet(): OrtSession = det ?: session(DET_PATH).also { det = it }
+    private fun ensureDet(): OrtSession = det ?: run {
+        OcrBreadcrumbs.mark(context, "onnx: открываю детектор")
+        session(DET_PATH).also {
+            det = it
+            OcrBreadcrumbs.mark(context, "onnx: детектор открыт")
+        }
+    }
 
-    private fun ensureRec(): OrtSession = rec ?: session(REC_PATH).also { rec = it }
+    private fun ensureRec(): OrtSession = rec ?: run {
+        OcrBreadcrumbs.mark(context, "onnx: открываю распознаватель")
+        session(REC_PATH).also {
+            rec = it
+            OcrBreadcrumbs.mark(context, "onnx: распознаватель открыт")
+        }
+    }
 
     suspend fun ensureInitialized() {
         withContext(Dispatchers.Default) {
@@ -258,6 +270,7 @@ internal class KomaOnnxOcrEngine(
         }
 
         val session = det ?: return emptyList()
+        OcrBreadcrumbs.mark(context, "onnx: детекция ${w}x$h")
         val map = OnnxTensor.createTensor(env, FloatBuffer.wrap(data), longArrayOf(1, 3, h.toLong(), w.toLong())).use { tensor ->
             session.run(mapOf(session.inputNames.first() to tensor)).use { result ->
                 ((result[0].value as Array<Array<Array<FloatArray>>>)[0][0])
@@ -405,6 +418,7 @@ internal class KomaOnnxOcrEngine(
             FloatBuffer.wrap(data),
             longArrayOf(1, 3, REC_HEIGHT.toLong(), padded.toLong()),
         ).use { tensor ->
+            OcrBreadcrumbs.mark(context, "onnx: распознавание строки ${padded}px")
             session.run(mapOf(session.inputNames.first() to tensor)).use { result ->
                 val values = (result[0].value as Array<Array<FloatArray>>)[0]
                 val text = StringBuilder(values.size)

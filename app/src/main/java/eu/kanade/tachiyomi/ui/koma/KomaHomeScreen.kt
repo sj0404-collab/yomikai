@@ -51,7 +51,7 @@ fun KomaSection(onReaderOpen: (Boolean) -> Unit = {}) {
     val scope=rememberCoroutineScope()
     fun update(list: List<Book>) { books=list;repo.save(list) }
     val picker=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if(uri!=null) scope.launch { busy=true;try { val b=repo.import(uri,if(category=="Все")"Манга" else category);update(listOf(b)+books);message="${b.title} добавлена в библиотеку" }catch(e:Exception){message=e.message ?: "Ошибка импорта"};busy=false }
+        if(uri!=null) scope.launch { busy=true;try { val b=repo.import(uri,if(category=="Все")"Манга" else category);update(listOf(b)+books);message="${b.title} добавлена в библиотеку" }catch(e:Throwable){message=e.message ?: "Ошибка импорта: ${e::class.simpleName}"};busy=false }
     }
     val dark=theme=="dark" || (theme=="system" && isSystemInDarkTheme())
     LaunchedEffect(selected) { onReaderOpen(selected!=null) }

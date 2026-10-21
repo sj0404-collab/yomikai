@@ -34,6 +34,32 @@ object OcrSelfCheck {
     }
 
     /**
+     * Короткий статус для экрана настроек: поднимаются ли сессии и читается
+     * ли тестовая картинка. Ровно одна строка, без трейса.
+     */
+    suspend fun status(context: Context): String {
+        val started = System.currentTimeMillis()
+        return try {
+            val engine = KomaOnnxOcrEngine(context)
+            try {
+                engine.ensureInitialized()
+                val bitmap = sampleBitmap(480, 160)
+                val lines = try {
+                    engine.recognizeRegions(bitmap)
+                } finally {
+                    if (!bitmap.isRecycled) bitmap.recycle()
+                }
+                "OK · сессии открыты, строк: ${lines.size}, ${System.currentTimeMillis() - started} мс"
+            } finally {
+                runCatching { engine.close() }
+            }
+        } catch (t: Throwable) {
+            if (t is kotlinx.coroutines.CancellationException) throw t
+            "ОШИБКА · ${t::class.simpleName}: ${t.message}"
+        }
+    }
+
+    /**
      * Полный прогон основного (KOMA/ONNX) движка. Исключения не пробрасываются:
      * отчёт обязан получиться даже если движок не поднялся.
      */

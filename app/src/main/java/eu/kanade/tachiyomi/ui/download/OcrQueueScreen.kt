@@ -18,8 +18,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.Pause
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -28,6 +32,7 @@ import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
@@ -38,8 +43,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -70,7 +81,6 @@ import eu.kanade.tachiyomi.data.tts.VoiceKind
 import eu.kanade.tachiyomi.databinding.DownloadListBinding
 import kotlinx.collections.immutable.toPersistentList
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import mihon.domain.ocr.model.OcrModel
 import mihon.domain.ocr.service.OcrPreferences
@@ -218,6 +228,37 @@ object OcrQueueScreen : Screen() {
                     )
                     else -> VoicesTab(ocrPreferences = ocrPreferences)
                 }
+            }
+        }
+    }
+
+    /** Строка диагностики: нажатие запускает проверку, справа — спиннер/стрелка. */
+    @Composable
+    private fun DiagRow(
+        title: String,
+        subtitle: String,
+        busy: Boolean = false,
+        onClick: () -> Unit,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = !busy) { onClick() }
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (busy) {
+                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            } else {
+                Icon(Icons.Default.KeyboardArrowRight, contentDescription = null)
             }
         }
     }
@@ -417,6 +458,84 @@ object OcrQueueScreen : Screen() {
                         "single" to "Один движок, без фолбэков",
                     ),
                     onValueChange = fallbackPresetPref::set,
+                )
+            }
+
+            PreferenceGroupHeader(title = "Движок и диагностика")
+            // Пользователь жаловался «не понимаю, работает ONNX или нет»:
+            // состояние движка видно сразу, без похода в другие экраны, а
+            // «Проверка OCR» прогоняет его на картинке с известным текстом.
+            val diagContext = LocalContext.current
+            val diagScope = rememberCoroutineScope()
+            val clipboard = LocalClipboardManager.current
+            var diagBusy by remember { mutableStateOf(false) }
+            var diagReport by remember { mutableStateOf<String?>(null) }
+            var diagTitle by remember { mutableStateOf("Проверка OCR") }
+            var onnxStatus by remember { mutableStateOf(eu.kanade.tachiyomi.data.ocr.OcrDiagnostics.onnxStatus(diagContext)) }
+            val hasCrash = remember { eu.kanade.tachiyomi.data.ocr.OcrDiagnostics.lastCrash(diagContext) != null }
+            // Первый заход на экран — сами проверяем ONNX (в фоне). Не на
+            // старте приложения: если нативный слой сломан, пусть это выяснится
+            // при открытии настроек, а не при каждом запуске.
+            LaunchedEffect(Unit) {
+                if (onnxStatus.startsWith("ещё не проверялся")) {
+                    onnxStatus = "проверяем…"
+                    onnxStatus = eu.kanade.tachiyomi.data.ocr.OcrDiagnostics.preflight(diagContext)
+                }
+            }
+
+            InfoWidget(text = "Состояние ONNX: $onnxStatus")
+
+            DiagRow(
+                title = "Проверка OCR",
+                subtitle = if (diagBusy) {
+                    "Идёт проверка… это занимает несколько секунд"
+                } else {
+                    "Прочитать тестовую картинку обоими движками и показать отчёт"
+                },
+                busy = diagBusy,
+            ) {
+                diagBusy = true
+                diagScope.launch {
+                    diagTitle = "Проверка OCR"
+                    diagReport = runCatching { eu.kanade.tachiyomi.data.ocr.OcrDiagnostics.report(diagContext) }
+                        .getOrElse { "Не удалось собрать отчёт: ${it.message}" }
+                    onnxStatus = eu.kanade.tachiyomi.data.ocr.OcrDiagnostics.onnxStatus(diagContext)
+                    diagBusy = false
+                }
+            }
+            if (hasCrash) {
+                DiagRow(
+                    title = "Последняя ошибка",
+                    subtitle = "Что именно упало в прошлый раз (журнал падений)",
+                ) {
+                    diagTitle = "Последняя ошибка"
+                    diagReport = listOfNotNull(
+                        eu.kanade.tachiyomi.data.ocr.OcrDiagnostics.lastCrash(diagContext),
+                        eu.kanade.tachiyomi.data.ocr.OcrDiagnostics.breadcrumbs(diagContext)
+                            ?.let { "След действий:\n$it" },
+                    ).joinToString("\n\n").ifBlank { "Записей нет" }
+                }
+            }
+            if (diagReport != null) {
+                AlertDialog(
+                    onDismissRequest = { diagReport = null },
+                    title = { Text(diagTitle) },
+                    text = {
+                        Text(
+                            diagReport!!,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { clipboard.setText(AnnotatedString(diagReport!!)) }) {
+                            Text("Копировать")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { diagReport = null }) { Text("Закрыть") }
+                    },
                 )
             }
 
