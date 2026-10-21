@@ -183,7 +183,7 @@ object OcrSelfCheck {
         val env = ai.onnxruntime.OrtEnvironment.getEnvironment()
         val opts = OrtSession.SessionOptions()
         val started = System.currentTimeMillis()
-        OrtSession(env, path, opts).use { session ->
+        env.createSession(path, opts).use { session ->
             OnnxTensor.createTensor(env, FloatBuffer.wrap(FloatArray(3 * 32 * 32)), longArrayOf(1, 3, 32, 32))
                 .use { tensor ->
                     session.run(mapOf(session.inputNames.first() to tensor)).use { result ->
