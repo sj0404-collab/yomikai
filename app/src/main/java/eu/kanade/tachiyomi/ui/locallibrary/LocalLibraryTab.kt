@@ -254,7 +254,17 @@ data object LocalLibraryTab : Tab {
                         }
                     }
                 }
-                komaSection -> KomaSection(onReaderOpen = { booksReaderOpen = it })
+                komaSection -> KomaSection(
+                    onOpenLibrary = {
+                        // Книги KOMA читает главная читалка: уводим на чип «Манга»,
+                        // где они и лежат (папка local хранилища).
+                        komaSection = false
+                        booksMode = false
+                        settingsSection = false
+                        storagePreferences.booksMode.set(false)
+                        storagePreferences.settingsSection.set(false)
+                    },
+                )
                 else -> if (!booksMode) {
             Surface(
                 // Фон шапки обязан совпадать с темой: surfaceVariant давал

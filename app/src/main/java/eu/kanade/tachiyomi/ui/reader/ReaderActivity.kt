@@ -220,6 +220,19 @@ class ReaderActivity : BaseActivity() {
          */
         private const val WHOLE_PAGE_CROP_TOLERANCE = 0.06f
 
+        /**
+         * Сколько пустых кадров подряд терпим, прежде чем остановить авточтение.
+         *
+         * Манга-страницы без текста бывают (развороты, панорамы, конец главы),
+         * но восемь пустых кадров подряд — это уже не книга, а неработающий
+         * движок: раньше цикл молча пролистывал так всю главу.
+         */
+        private const val AUTO_READ_EMPTY_FRAME_LIMIT = 8
+
+        private const val AUTO_READ_EMPTY_FRAMES_MESSAGE =
+            "Авточтение остановлено: OCR не находит текст на страницах. " +
+                "Проверьте язык чтения и движок в «Настройки → Распознавание»."
+
 
         fun newIntent(context: Context, mangaId: Long?, chapterId: Long?): Intent {
             return Intent(context, ReaderActivity::class.java).apply {
@@ -2192,6 +2205,8 @@ class ReaderActivity : BaseActivity() {
         }
 
         var pagesRead = 0
+        // Подряд идущие кадры без текста (см. обработку FrameResult.READ).
+        var emptyFrames = 0
         while (coroutineContext.isActive && autoReadActive) {
             // «⏹ Остановить» в шторке. Раньше кнопка только глушила синтез, а
             // цикл листал главу дальше в тишину — читатель терял остаток
@@ -2201,7 +2216,23 @@ class ReaderActivity : BaseActivity() {
                 return
             }
             when (readOneFrame(phraseMode = phraseMode, chapterRead = true)) {
-                FrameResult.READ -> Unit
+                FrameResult.READ -> {
+                    // Кадр «прочитан», но текста в нём не нашлось. Одна пустая
+                    // страница — это нормально (панорама без реплик), а вот
+                    // длинная серия — признак того, что локальный OCR молчит
+                    // (нет модели, не тот язык, чёрный кадр). Раньше цикл в этом
+                    // случае просто листал дальше и прогонял всю главу за пару
+                    // секунд без единого слова.
+                    if (autoReadEngine.lastFrameHadText) {
+                        emptyFrames = 0
+                    } else {
+                        emptyFrames++
+                        if (emptyFrames >= AUTO_READ_EMPTY_FRAME_LIMIT) {
+                            stopAutoReadLoopWith(AUTO_READ_EMPTY_FRAMES_MESSAGE)
+                            return
+                        }
+                    }
+                }
                 FrameResult.BLOCKED -> {
                     stopAutoReadLoop()
                     return

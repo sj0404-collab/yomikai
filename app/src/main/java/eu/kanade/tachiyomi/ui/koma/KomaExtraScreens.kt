@@ -40,8 +40,19 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.URL
 
+/** Языки, которые реально есть в сборке: ML Kit (японский/латиница) + KOMA ONNX (кириллица). */
+val ocrLanguages = listOf("Авто", "Японский", "Латиница", "Кириллица")
+
 @Composable
-fun CatalogScreen(repo:LibraryRepository,books:List<Book>,onAdded:(Book)->Unit,onMessage:(String)->Unit) {
+fun SectionLabel(text:String){Text(text,Modifier.padding(top=22.dp,bottom=9.dp),fontSize=10.sp,fontWeight=FontWeight.Bold,letterSpacing=1.3.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+
+@Composable
+fun LanguageChooser(selected:String,onSelect:(String)->Unit) {
+    Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)){ocrLanguages.forEach { name->FilterChip(selected=selected==name,onClick={onSelect(name)},label={Text(name,fontSize=11.sp)},shape=RoundedCornerShape(10.dp))}}
+}
+
+@Composable
+fun CatalogScreen(repo:LibraryRepository,onAdded:(LocalArchive)->Unit,onMessage:(String)->Unit,knownTitles:Set<String> = emptySet()) {
     val scope=rememberCoroutineScope();val context=LocalContext.current
     var search by remember{mutableStateOf("")}
     var results by remember{mutableStateOf(curatedCatalog)}
@@ -68,7 +79,7 @@ fun CatalogScreen(repo:LibraryRepository,books:List<Book>,onAdded:(Book)->Unit,o
         else if(error!=null)item{Column(Modifier.padding(20.dp)){Text(error!!,fontSize=13.sp);TextButton(onClick={find()}){Text("Повторить")}}}
         else if(results.isEmpty())item{Column(Modifier.padding(20.dp)){Icon(Icons.Outlined.SearchOff,null,tint=Orange);Text("История пока не нашлась",fontWeight=FontWeight.Bold,modifier=Modifier.padding(top=12.dp));Text("Поиск ограничен архивными изданиями 1800–1930 годов. Попробуйте Hokusai или добавьте собственную ссылку.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=8.dp))}}
         else items(results,key={it.id}) { item ->
-            val exists=books.any{it.source=="https://archive.org/details/${item.id}"}
+            val exists=knownTitles.contains(item.title.lowercase())
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(17.dp)).background(MaterialTheme.colorScheme.surface).border(1.dp,MaterialTheme.colorScheme.outlineVariant,RoundedCornerShape(17.dp)).padding(12.dp),verticalAlignment=Alignment.CenterVertically) {
                 AsyncImage(item.cover,item.title,Modifier.width(76.dp).height(105.dp).clip(RoundedCornerShape(9.dp)).background(MaterialTheme.colorScheme.surfaceVariant),contentScale=ContentScale.Crop)
                 Column(Modifier.weight(1f).padding(start=14.dp)) {
@@ -76,7 +87,7 @@ fun CatalogScreen(repo:LibraryRepository,books:List<Book>,onAdded:(Book)->Unit,o
                     Text(item.title,fontSize=14.sp,fontWeight=FontWeight.Bold,maxLines=2,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(top=6.dp))
                     Text(item.author,fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(top=5.dp))
                     Row(verticalAlignment=Alignment.CenterVertically){
-                        TextButton(enabled=downloading==null && !exists,onClick={scope.launch {downloading=item.id;try{onAdded(repo.download(item));onMessage("Книга сохранена в локальную библиотеку")}catch(e:Exception){onMessage(e.message ?: "Не удалось скачать книгу")};downloading=null}},contentPadding=PaddingValues(0.dp)) {
+                        TextButton(enabled=downloading==null && !exists,onClick={scope.launch {downloading=item.id;try{onAdded(repo.download(item))}catch(e:Exception){onMessage(e.message ?: "Не удалось скачать книгу")};downloading=null}},contentPadding=PaddingValues(0.dp)) {
                             if(downloading==item.id)CircularProgressIndicator(Modifier.size(14.dp),strokeWidth=2.dp)else Icon(if(exists)Icons.Outlined.CheckCircle else Icons.Outlined.FileDownload,null,Modifier.size(15.dp))
                             Text(if(downloading==item.id)"  Скачиваем…" else if(exists)"  На вашей полке" else "  В библиотеку",fontSize=11.sp)
                         }
@@ -87,11 +98,11 @@ fun CatalogScreen(repo:LibraryRepository,books:List<Book>,onAdded:(Book)->Unit,o
         }
         item{Text("Доступность зависит от источника. Проверяйте права на скачивание в вашей стране. Для авторских библиотек используйте собственные легальные архивы и HTTPS-ссылки.",fontSize=10.sp,lineHeight=16.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
     }
-    if(urlDialog)AlertDialog(onDismissRequest={if(downloading==null)urlDialog=false},title={Text("Книга по ссылке")},text={Column{Text("Прямая HTTPS-ссылка на CBZ, CBR или PDF, до 200 МБ.",fontSize=12.sp);OutlinedTextField(url,{url=it},label={Text("https://…")},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Uri),modifier=Modifier.padding(top=12.dp));Row(Modifier.horizontalScroll(rememberScrollState())){categories.drop(1).forEach{c->FilterChip(selected=category==c,onClick={category=c},label={Text(c,fontSize=10.sp)},modifier=Modifier.padding(end=5.dp))}};if(downloading=="url")LinearProgressIndicator(Modifier.fillMaxWidth())}},confirmButton={TextButton(enabled=url.startsWith("https://")&&downloading==null,onClick={scope.launch{downloading="url";try{onAdded(repo.downloadUrl(url,category));urlDialog=false;url="";onMessage("Книга добавлена")}catch(e:Exception){onMessage(e.message ?: "Ошибка загрузки")};downloading=null}}){Text("Скачать")}},dismissButton={TextButton(enabled=downloading==null,onClick={urlDialog=false}){Text("Отмена")}})
+    if(urlDialog)AlertDialog(onDismissRequest={if(downloading==null)urlDialog=false},title={Text("Книга по ссылке")},text={Column{Text("Прямая HTTPS-ссылка на CBZ, CBR или PDF, до 200 МБ.",fontSize=12.sp);OutlinedTextField(url,{url=it},label={Text("https://…")},singleLine=true,keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Uri),modifier=Modifier.padding(top=12.dp));Row(Modifier.horizontalScroll(rememberScrollState())){categories.drop(1).forEach{c->FilterChip(selected=category==c,onClick={category=c},label={Text(c,fontSize=10.sp)},modifier=Modifier.padding(end=5.dp))}};if(downloading=="url")LinearProgressIndicator(Modifier.fillMaxWidth())}},confirmButton={TextButton(enabled=url.startsWith("https://")&&downloading==null,onClick={scope.launch{downloading="url";try{onAdded(repo.downloadUrl(url));urlDialog=false;url=""}catch(e:Exception){onMessage(e.message ?: "Ошибка загрузки")};downloading=null}}){Text("Скачать")}},dismissButton={TextButton(enabled=downloading==null,onClick={urlDialog=false}){Text("Отмена")}})
 }
 
 @Composable
-fun AiStudioScreen(repo:LibraryRepository,engine:KomaOcrEngine,onMessage:(String)->Unit) {
+fun AiStudioScreen(repo:LibraryRepository,onMessage:(String)->Unit) {
     val scope=rememberCoroutineScope();val context=LocalContext.current
     var language by remember{mutableStateOf(repo.prefs.getString("ocrLanguage","Авто") ?: "Авто")}
     var auto by remember{mutableStateOf(repo.prefs.getBoolean("autoOcr",false))}
@@ -115,7 +126,7 @@ fun AiStudioScreen(repo:LibraryRepository,engine:KomaOcrEngine,onMessage:(String
         }
         item{SectionLabel("РАСПОЗНАВАНИЕ");Text("Язык оригинала",fontSize=17.sp,fontWeight=FontWeight.Bold);Spacer(Modifier.height(8.dp));LanguageChooser(language){language=it;repo.prefs.edit().putString("ocrLanguage",it).apply()};Text("Авто выбирает движок по категории: манга — японский, манхва — корейский, маньхуа — китайский, комиксы — латиница. Для русского выберите кириллицу.",fontSize=11.sp,lineHeight=17.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=7.dp,bottom=12.dp))}
         item{SettingsSwitch(Icons.Outlined.DocumentScanner,"Распознавать при чтении","Автоматически для каждой открытой страницы",auto){auto=it;repo.prefs.edit().putBoolean("autoOcr",it).apply()}}
-        item{Spacer(Modifier.height(14.dp));EngineRow("ML Kit Text Recognition","Латиница · 日本語 · 中文 · 한국어",Icons.Outlined.Translate);Spacer(Modifier.height(8.dp));EngineRow("PaddleOCR + ONNX","Кириллица · детектор + CTC-распознавание",Icons.Outlined.Memory)}
+        item{Spacer(Modifier.height(14.dp));EngineRow("ML Kit Text Recognition","Японский и латиница · модель в APK",Icons.Outlined.Translate);Spacer(Modifier.height(8.dp));EngineRow("KOMA + ONNX","Кириллица · PP-OCRv4 детектор + CTC, модели в APK",Icons.Outlined.Memory)}
         item{SectionLabel("ТИПОГРАФИКА ПО КАТЕГОРИЯМ");Text("У каждой истории свой голос",fontSize=18.sp,fontWeight=FontWeight.Bold);Row(Modifier.horizontalScroll(rememberScrollState()).padding(top=9.dp),horizontalArrangement=Arrangement.spacedBy(6.dp)){categories.drop(1).forEach { c->FilterChip(selected=category==c,onClick={category=c},label={Text(c,fontSize=11.sp)})}}}
         item{
             Column(Modifier.fillMaxWidth().padding(top=12.dp).clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(18.dp)){
@@ -139,18 +150,16 @@ fun AiStudioScreen(repo:LibraryRepository,engine:KomaOcrEngine,onMessage:(String
 private fun EngineRow(title:String,subtitle:String,icon:ImageVector){Row(Modifier.fillMaxWidth().border(1.dp,MaterialTheme.colorScheme.outlineVariant,RoundedCornerShape(14.dp)).padding(14.dp),verticalAlignment=Alignment.CenterVertically){Icon(icon,null,tint=MaterialTheme.colorScheme.secondary,modifier=Modifier.size(24.dp));Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(title,fontSize=13.sp,fontWeight=FontWeight.SemiBold);Text(subtitle,fontSize=9.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=4.dp))};Icon(Icons.Outlined.CheckCircle,null,tint=MaterialTheme.colorScheme.secondary,modifier=Modifier.size(18.dp))}}
 
 @Composable
-fun SettingsScreenKoma(repo:LibraryRepository,engine:KomaOcrEngine,books:List<Book>,theme:String,onTheme:(String)->Unit,onMessage:(String)->Unit){
-    val context=LocalContext.current;var awake by remember{mutableStateOf(repo.prefs.getBoolean("keepAwake",true))};var cache by remember{mutableIntStateOf(engine.cacheCount())};var about by remember{mutableStateOf(false)}
+fun SettingsScreenKoma(repo:LibraryRepository,archives:List<LocalArchive>,theme:String,onTheme:(String)->Unit,onMessage:(String)->Unit){
+    val context=LocalContext.current;var about by remember{mutableStateOf(false)}
     LazyColumn(contentPadding=PaddingValues(start=22.dp,end=22.dp,bottom=28.dp)) {
         item{Text("В своём ритме",fontSize=30.sp,fontWeight=FontWeight.Bold,letterSpacing=(-.8).sp);Text("Маленькие детали большого чтения",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=7.dp,bottom=14.dp))}
         item{SectionLabel("ВНЕШНИЙ ВИД");Row(horizontalArrangement=Arrangement.spacedBy(8.dp),modifier=Modifier.fillMaxWidth()){listOf("light" to "Бумага","dark" to "Ночь","system" to "Система").forEach{(value,title)->Column(Modifier.weight(1f).clip(RoundedCornerShape(16.dp)).border(if(theme==value)2.dp else 1.dp,if(theme==value)Orange else MaterialTheme.colorScheme.outlineVariant,RoundedCornerShape(16.dp)).clickable{onTheme(value)}.padding(vertical=18.dp),horizontalAlignment=Alignment.CenterHorizontally){Icon(when(value){"light"->Icons.Outlined.LightMode;"dark"->Icons.Outlined.DarkMode;else->Icons.Outlined.BrightnessAuto},null,tint=if(theme==value)Orange else MaterialTheme.colorScheme.onSurfaceVariant);Text(title,fontSize=11.sp,modifier=Modifier.padding(top=8.dp))}}}}
-        item{SectionLabel("ЧИТАЛКА");SettingsSwitch(Icons.Outlined.WbSunny,"Не гасить экран","Пока открыта книга",awake){awake=it;repo.prefs.edit().putBoolean("keepAwake",it).apply()}}
-        item{SectionLabel("НА УСТРОЙСТВЕ");Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant,RoundedCornerShape(16.dp)).padding(18.dp),horizontalArrangement=Arrangement.SpaceBetween){Stat("${books.size}","книги");Stat("${books.sumOf{it.pages.size}}","страниц");Stat("$cache","OCR-страниц")}}
-        item{ActionRow(Icons.Outlined.CleaningServices,"Очистить кэш OCR","Книги и исходные страницы останутся"){engine.clear();cache=0;onMessage("Кэш распознавания очищен")}}
-        item{SectionLabel("О ПРИЛОЖЕНИИ");ActionRow(Icons.Outlined.Info,"KOMA · часть Yomikai","Читалка архивов без лишнего шума"){about=true};ActionRow(Icons.Outlined.Code,"Исходники и APK","Kotlin + Compose · GitHub Releases"){runCatching{context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://github.com/sj0404-collab/yomikai/releases")))}};ActionRow(Icons.Outlined.Language,"Открыть Internet Archive","Источники и права на архивные книги"){runCatching{context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://archive.org")))}}}
+        item{SectionLabel("НА УСТРОЙСТВЕ");Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant,RoundedCornerShape(16.dp)).padding(18.dp),horizontalArrangement=Arrangement.SpaceBetween){Stat("${archives.size}","книг");Stat("${archives.sumOf{it.size}/(1024*1024)}","МБ");Stat("KOMA","движок")}}
+                item{SectionLabel("О ПРИЛОЖЕНИИ");ActionRow(Icons.Outlined.Info,"KOMA · часть Yomikai","Читалка архивов без лишнего шума"){about=true};ActionRow(Icons.Outlined.Code,"Исходники и APK","Kotlin + Compose · GitHub Releases"){runCatching{context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://github.com/sj0404-collab/yomikai/releases")))}};ActionRow(Icons.Outlined.Language,"Открыть Internet Archive","Источники и права на архивные книги"){runCatching{context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://archive.org")))}}}
         item{Column(Modifier.fillMaxWidth().padding(top=26.dp),horizontalAlignment=Alignment.CenterHorizontally){Text("KOMA",fontSize=25.sp,letterSpacing=4.sp,fontWeight=FontWeight.Black,color=MaterialTheme.colorScheme.onSurfaceVariant.copy(.5f));Text("Твоя история. Твой ритм.",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=6.dp))}}
     }
-    if(about)AlertDialog(onDismissRequest={about=false},title={Text("Сделано для историй")},text={Column(Modifier.verticalScroll(rememberScrollState())){Text("KOMA — раздел Yomikai\n\nCBZ (ZIP), CBR (RAR4) и PDF. RAR5 и защищённые архивы не поддерживаются.\n\nOCR работает локально: ML Kit (японский, латиница) и PaddleOCR / ONNX (кириллица). Точность не гарантируется.\n\nВ комплекте — демонстрационные сканы: «Хокусай. Манга», тома II и VI (Кацусика Хокусай), Blue Beetle № 15, 1942 (Holyoke Publishing), по 10 страниц. Полные издания — в каталоге Internet Archive, источник доступен в меню каждой книги.\n\nManrope — SIL Open Font License. PaddleOCR — Apache 2.0. ONNX Runtime — MIT. Junrar — UnRAR license. Обложки книг — страницы архивов; декоративный баннер создан AI и не является страницей манги.\n\nПриложение не отправляет изображения на сервер и не требует аккаунта. Сеть нужна только для каталога, загрузки книг и внешних шрифтов.",fontSize=12.sp,lineHeight=19.sp)}},confirmButton={TextButton(onClick={about=false}){Text("Продолжить историю")}})
+    if(about)AlertDialog(onDismissRequest={about=false},title={Text("Сделано для историй")},text={Column(Modifier.verticalScroll(rememberScrollState())){Text("KOMA — раздел Yomikai\n\nКниги (CBZ/ZIP, CBR (RAR4), PDF) импортируются в локальную библиотеку и читаются ГЛАВНОЙ читалкой приложения: своей читалки у KOMA больше нет.\n\nCBZ (ZIP), CBR (RAR4) и PDF. RAR5 и защищённые архивы не поддерживаются.\n\nOCR работает локально: ML Kit (японский, латиница) и KOMA / ONNX (кириллица). Модели вкомпилированы в APK. Точность не гарантируется.\n\nВ комплекте — демонстрационные сканы: «Хокусай. Манга», тома II и VI (Кацусика Хокусай), Blue Beetle № 15, 1942 (Holyoke Publishing), по 10 страниц. Полные издания — в каталоге Internet Archive, источник доступен в меню каждой книги.\n\nManrope — SIL Open Font License. PaddleOCR — Apache 2.0. ONNX Runtime — MIT. Junrar — UnRAR license. Обложки книг — страницы архивов; декоративный баннер создан AI и не является страницей манги.\n\nПриложение не отправляет изображения на сервер и не требует аккаунта. Сеть нужна только для каталога, загрузки книг и внешних шрифтов.",fontSize=12.sp,lineHeight=19.sp)}},confirmButton={TextButton(onClick={about=false}){Text("Продолжить историю")}})
 }
 
 @Composable

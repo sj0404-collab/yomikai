@@ -112,7 +112,11 @@ internal class KomaOnnxOcrEngine(
         mutex.withLock {
             require(!image.isRecycled) { "Input bitmap is recycled" }
             ensureDet()
-            val boxes = detectBoxes(image)
+            // Детектор PP-OCRv4 режет страницу на слова и даже на куски слов.
+            // Для читалки это плохо дважды: CTC-декодер на коротком кропе
+            // выдаёт мусор («TH E», «1/1/22»), и озвучка идёт по обрывкам.
+            // Склеиваем фрагменты в строки — так же, как их видит человек.
+            val boxes = mergeIntoLines(detectBoxes(image))
             boxes.mapNotNull { box ->
                 OcrBoxGeometry.normalize(
                     left = box.left,
@@ -172,7 +176,7 @@ internal class KomaOnnxOcrEngine(
 
     private fun recognizeTile(tile: Bitmap): List<KomaRegion> {
         val out = mutableListOf<KomaRegion>()
-        val boxes = detectBoxes(tile).take(MAX_BOXES)
+        val boxes = mergeIntoLines(detectBoxes(tile)).take(MAX_BOXES)
         for (box in boxes) {
             val x1 = box.left.coerceIn(0, tile.width - 1)
             val x2 = box.right.coerceIn(x1 + 1, tile.width)
@@ -235,6 +239,47 @@ internal class KomaOnnxOcrEngine(
                 (unit.bottom.toFloat() / h * bitmap.height).toInt().coerceIn(1, bitmap.height),
             )
         }.filter { it.width() > 2 && it.height() > 2 }
+    }
+
+    /**
+     * Склейка фрагментов детектора в строки.
+     *
+     * PP-OCRv4 на манга-странице отдаёт по компоненту на слово (а на стилизованном
+     * шрифте — на пару букв). Распознаватель ждёт строку: на обрывке он выдаёт
+     * огрызки вида «TH E» или «1/1/22», и порядок чтения рассыпается на десятки
+     * «реплик». Склеиваем прямоугольники, у которых совпадает вертикальная полоса
+     * и между которыми нет большого горизонтального разрыва.
+     */
+    private fun mergeIntoLines(boxes: List<Rect>): List<Rect> {
+        if (boxes.size < 2) return boxes
+        // Полосы сверху вниз: соседние фрагменты одной строки почти всегда идут
+        // подряд после сортировки по верхней границе.
+        val sorted = boxes.sortedWith(compareBy<Rect> { it.top }.thenBy { it.left })
+        val lines = mutableListOf<Rect>()
+        for (box in sorted) {
+            val target = lines.indexOfLast { line ->
+                val lineHeight = line.height().coerceAtLeast(1)
+                val overlap = min(line.bottom, box.bottom) - max(line.top, box.top)
+                val sameBand = overlap > lineHeight * LINE_MIN_VERTICAL_OVERLAP
+                val gap = box.left - line.right
+                val closeEnough = gap <= lineHeight * LINE_MAX_GAP_FACTOR && gap > -box.width()
+                sameBand && closeEnough
+            }
+            if (target >= 0) {
+                val line = lines[target]
+                lines[target] = Rect(
+                    min(line.left, box.left),
+                    min(line.top, box.top),
+                    max(line.right, box.right),
+                    max(line.bottom, box.bottom),
+                )
+            } else {
+                lines += box
+            }
+        }
+        // Строка-«мусор» высотой в несколько строк текста (вертикальная колонка,
+        // слипшиеся баблы) не должна уходить в распознаватель одним куском.
+        return lines.filter { it.width() > 2 && it.height() > 2 }
     }
 
     /** Заливка по порогу 0.3 — без OpenCV, как в KOMA: BFS + отбраковка мелочи. */
@@ -383,5 +428,11 @@ internal class KomaOnnxOcrEngine(
         private const val MIN_REC_WIDTH = 320
         private const val MAX_REC_WIDTH = 960
         private const val MIN_LINE_SCORE = 0.25f
+
+        /** Перекрытие по вертикали, при котором фрагменты — одна строка. */
+        private const val LINE_MIN_VERTICAL_OVERLAP = 0.5f
+
+        /** Допустимый горизонтальный разрыв между фрагментами строки (в высотах строки). */
+        private const val LINE_MAX_GAP_FACTOR = 0.9f
     }
 }
