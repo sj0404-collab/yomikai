@@ -84,9 +84,25 @@ fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine
         scanJob=scope.launch {
             scanning=true;batchTotal=if(all)book.pages.size else 0;batchProgress=0
             try {
-                if(all) for(n in book.pages.indices) { val r=engine.recognize(book,n,language,force);if(n==currentPage)result=r;batchProgress=n+1 }
-                else { val current=page;val r=engine.recognize(book,current,language,force);if(current==currentPage)result=r }
-            } catch(e:CancellationException){throw e}catch(e:Exception){error=e.localizedMessage ?: "Распознавание не удалось"}finally{scanning=false;batchTotal=0}
+                if(all) {
+                    // Одна плохая страница не должна обрывать распознавание книги
+                    // и, тем более, ронять приложение.
+                    var failed=0
+                    for(n in book.pages.indices) {
+                        runCatching { engine.recognize(book,n,language,force) }
+                            .onSuccess { if(n==currentPage)result=it }
+                            .onFailure { failed++ }
+                        batchProgress=n+1
+                    }
+                    engine.lastError?.let { error=it }
+                    if(failed>0) error=(error?.plus("\n\n") ?: "")+"Не удалось обработать страниц: $failed"
+                } else {
+                    val current=page
+                    val r=engine.recognize(book,current,language,force)
+                    if(current==currentPage)result=r
+                    engine.lastError?.let { error=it }
+                }
+            } catch(e:CancellationException){throw e}catch(e:Throwable){error=e.localizedMessage ?: e::class.simpleName ?: "Распознавание не удалось"}finally{scanning=false;batchTotal=0}
         }
     }
     LaunchedEffect(page,language,scanning) {
@@ -160,7 +176,7 @@ fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine
                 TextButton(onClick={deleteConfirm=true}){Icon(Icons.Outlined.DeleteOutline,null,Modifier.size(18.dp));Text("  Удалить из библиотеки")}
             }
             "ocr" -> Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).imePadding().padding(horizontal=24.dp).padding(bottom=22.dp)) {
-                Row(verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text("Текст страницы ${page+1}",fontSize=23.sp,fontWeight=FontWeight.Bold);Text(result?.engine ?: "Распознавание на устройстве",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=5.dp))};Icon(Icons.Outlined.VerifiedUser,null,tint=MaterialTheme.colorScheme.secondary)}
+                Row(verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text("Текст страницы ${page+1}",fontSize=23.sp,fontWeight=FontWeight.Bold);Text(result?.engine ?: "$ENGINE_NAME · офлайн",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=5.dp))};Icon(Icons.Outlined.VerifiedUser,null,tint=MaterialTheme.colorScheme.secondary)}
                 Spacer(Modifier.height(12.dp))
                 LanguageChooser(language){language=it}
                 if(scanning){LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical=16.dp));Text(if(batchTotal>0)"Обработано $batchProgress из $batchTotal страниц" else "Нейросеть читает изображение…",fontSize=12.sp)}
@@ -198,7 +214,10 @@ private fun PageImage(path:String,engine:KomaOcrEngine,vertical:Boolean,result:P
     var retry by remember(path){mutableIntStateOf(0)}
     var scale by remember(path){mutableFloatStateOf(1f)}
     var offset by remember(path){mutableStateOf(Offset.Zero)}
-    LaunchedEffect(path,retry){try{bitmap=withContext(Dispatchers.IO){engine.bitmap(path)}}catch(e:Exception){error=e.message}}
+    LaunchedEffect(path,retry){try{bitmap=withContext(Dispatchers.IO){engine.bitmap(path)}}catch(e:Throwable){error=e.message ?: "Не удалось открыть страницу"}}
+    // Без этого битмап страницы жил до конца чтения: в вебтуне на 40 страниц
+    // это гигабайты и гарантированный вылет по памяти.
+    DisposableEffect(path){onDispose{bitmap?.let { if(!it.isRecycled) it.recycle() };bitmap=null}}
     val b=bitmap
     if(b==null) Box(Modifier.fillMaxWidth().then(if(vertical)Modifier.height(320.dp)else Modifier.fillMaxHeight()),contentAlignment=Alignment.Center){if(error==null)CircularProgressIndicator(color=Orange)else TextButton(onClick={error=null;retry++}){Text("Не удалось открыть. Повторить")}}
     else BoxWithConstraints(Modifier.fillMaxWidth().then(if(vertical)Modifier.aspectRatio(b.width.toFloat()/b.height)else Modifier.fillMaxHeight()).clip(RoundedCornerShape(0.dp)),contentAlignment=Alignment.Center) {

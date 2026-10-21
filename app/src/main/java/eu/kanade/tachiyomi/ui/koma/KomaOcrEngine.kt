@@ -39,6 +39,9 @@ data class PageOcr(val regions: List<OcrRegion>, val engine: String, val millis:
     }
 }
 
+/** Как движок называется в интерфейсе: без «Paddle», которого в сборке нет. */
+const val ENGINE_NAME="KOMA/ONNX · PP-OCRv4 + CTC PP-OCRv5"
+
 class KomaOcrEngine(private val context: Context) {
     private val mutex=Mutex()
     private val root=File(context.filesDir,"ocr").apply { mkdirs() }
@@ -54,16 +57,38 @@ class KomaOcrEngine(private val context: Context) {
     fun clear(){root.listFiles()?.forEach{it.delete()}}
     fun bitmap(path:String):Bitmap {
         fun stream()=if(path.startsWith("file:///android_asset/")) context.assets.open(path.removePrefix("file:///android_asset/")) else File(path.removePrefix("file://")).inputStream()
-        val bounds=BitmapFactory.Options().apply { inJustDecodeBounds=true };stream().use{BitmapFactory.decodeStream(it,null,bounds)}
-        require(bounds.outWidth>0 && bounds.outHeight>0) { "Не удалось прочитать изображение" }
+        val bounds=BitmapFactory.Options().apply { inJustDecodeBounds=true }
+        stream().use{BitmapFactory.decodeStream(it,null,bounds)}
+        if(bounds.outWidth<=0 || bounds.outHeight<=0) throw IllegalStateException("Не удалось прочитать изображение: $path")
+        // 10 Мпкс — это ~40 МБ на страницу в ARGB_8888. Раньше допускалось
+        // 20 Мпкс (80 МБ): на телефоне с 3 ГБ такой кадр вместе с OOM давал
+        // вылет при распознавании. Плюс RGB_565 на больших кадрах: цвет для
+        // чтения текста не нужен, а память вдвое меньше.
         var sample=1
-        while(bounds.outWidth.toLong()*bounds.outHeight/(sample*sample)>20_000_000 || bounds.outWidth/sample>3000)sample*=2
-        return stream().use { BitmapFactory.decodeStream(it,null,BitmapFactory.Options().apply{inSampleSize=sample}) } ?: error("Повреждённая страница")
+        while(bounds.outWidth.toLong()*bounds.outHeight/(sample*sample)>10_000_000L || bounds.outWidth/sample>2800)sample*=2
+        val options=BitmapFactory.Options().apply{inSampleSize=sample}
+        if(bounds.outWidth/sample>1400)options.inPreferredConfig=Bitmap.Config.RGB_565
+        return stream().use { BitmapFactory.decodeStream(it,null,options) } ?: throw IllegalStateException("Повреждённая страница: $path")
     }
+    /** Последняя ошибка распознавания в читалке: её показывает экран. */
+    var lastError:String?=null
+        private set
+
+    private fun describe(t:Throwable):String = when(t) {
+        is OutOfMemoryError -> "Не хватило памяти на страницу. Закройте другие приложения и повторите."
+        is UnsatisfiedLinkError -> "Не загрузилось ядро ONNX для этого телефона: ${t.message}"
+        else -> listOfNotNull(t::class.simpleName, t.message).joinToString(": ").ifBlank { "неизвестная ошибка" }
+    }
+
     suspend fun recognize(book:Book,page:Int,language:String,force:Boolean=false):PageOcr = withContext(Dispatchers.Default) {
         mutex.withLock {
+            lastError=null
+            eu.kanade.tachiyomi.data.ocr.OcrDiagnostics.mark(context,"KOMA reader: страница ${page+1}, язык $language")
+            val start=System.currentTimeMillis()
             if(!force) cached(book.id,page,language)?.let{return@withLock it}
-            val start=System.currentTimeMillis(); val image=bitmap(book.pages[page])
+            val path=book.pages.getOrNull(page)
+                ?: run { lastError="Страница ${page+1} отсутствует в файле"; return@withLock PageOcr(emptyList(),ENGINE_NAME,System.currentTimeMillis()-start) }
+            val image=try { bitmap(path) } catch(t:Throwable) { lastError=describe(t); return@withLock PageOcr(emptyList(),ENGINE_NAME,System.currentTimeMillis()-start) }
             try {
                 val script=if(language=="Авто")if(book.category=="Комиксы")"Латиница" else "Японский" else language
                 val regions=mutableListOf<OcrRegion>()
@@ -83,8 +108,14 @@ class KomaOcrEngine(private val context: Context) {
                     y+=tileHeight-160
                 }
                 val sorted=if(book.mode=="rtl" && script=="Японский") regions.sortedWith(compareByDescending<OcrRegion> { (it.left*40).toInt() }.thenBy { it.top }) else regions.sortedWith(compareBy<OcrRegion> { (it.top*80).toInt() }.thenBy { if(book.mode=="rtl")-it.left else it.left })
-                PageOcr(sorted,if(script=="Кириллица")"PaddleOCR · кириллица" else "ML Kit · $script",System.currentTimeMillis()-start).also { store(book.id,page,language,it) }
-            } finally { image.recycle() }
+                PageOcr(sorted,if(script=="Кириллица")ENGINE_NAME else "ML Kit · $script",System.currentTimeMillis()-start).also { store(book.id,page,language,it) }
+            } catch(t:Throwable) {
+                if(t is kotlinx.coroutines.CancellationException) throw t
+                // Битая страница, нехватка памяти, сбой нативного ONNX — всё
+                // остаётся сообщением на экране, а приложение продолжает жить.
+                lastError=describe(t)
+                PageOcr(emptyList(),ENGINE_NAME,System.currentTimeMillis()-start)
+            } finally { if(!image.isRecycled) image.recycle() }
         }
     }
     private suspend fun ml(bitmap:Bitmap,script:String):List<OcrRegion> {
@@ -95,10 +126,51 @@ class KomaOcrEngine(private val context: Context) {
         val result=com.google.android.gms.tasks.Tasks.await(recognizer.process(InputImage.fromBitmap(bitmap,0)))
         return result.textBlocks.flatMap { it.lines }.mapNotNull { line -> line.boundingBox?.let { r -> OcrRegion(line.text,r.left.toFloat()/bitmap.width,r.top.toFloat()/bitmap.height,r.right.toFloat()/bitmap.width,r.bottom.toFloat()/bitmap.height) } }
     }
-    private fun session(name:String):OrtSession {
-        val f=File(context.filesDir,name)
-        if(!f.exists())context.assets.open("koma/models/$name").use { i->f.outputStream().use { i.copyTo(it) } }
-        return OrtSession.SessionOptions().use { opts->opts.setIntraOpNumThreads(2); env.createSession(f.absolutePath,opts) }
+    private fun session(name:String):OrtSession = try {
+        // Копия помечена versionCode: без этого после обновления приложения
+        // в filesDir оставалась ПРЕЖНЯЯ модель, и новые веса молча не ехали.
+        val version=runCatching{appVersionCode()}.getOrDefault(0L)
+        // Старые копии моделей удаляем: 12 МБ в filesDir никому не нужны.
+        runCatching{context.filesDir.listFiles()?.filter{it.isDirectory && it.name.startsWith("koma-models-") && it.name!="koma-models-$version"}?.forEach{it.deleteRecursively()}}
+        val dir=File(context.filesDir,"koma-models-$version").apply{mkdirs()}
+        val f=File(dir,name)
+        if(!f.exists()||f.length()==0L)context.assets.open("koma/models/$name").use { i->f.outputStream().use { i.copyTo(it) } }
+        OrtSession.SessionOptions().use { opts->opts.setIntraOpNumThreads(2); env.createSession(f.absolutePath,opts) }
+    } catch(t:Throwable) {
+        throw IllegalStateException("Модель KOMA/ONNX $name не открылась: ${t.message ?: t::class.simpleName}",t)
+    }
+
+    /**
+     * Самопроверка движка читалки KOMA: открыть модели, прочитать картинку с
+     * известным текстом. Возвращает отчёт, ничего не бросая.
+     */
+    suspend fun selfTest():String = withContext(Dispatchers.Default) {
+        val started=System.currentTimeMillis()
+        try {
+            mutex.withLock {
+                val sample=mihon.data.ocr.OcrSelfCheck.sampleBitmap()
+                try {
+                    val regions=paddle(sample)
+                    "Движок читалки KOMA: OK, ${regions.size} строк за ${System.currentTimeMillis()-started} мс" +
+                        "\nТекст: "+regions.joinToString(" | ") { it.text }.take(200).ifBlank { "(пусто)" }
+                } finally { if(!sample.isRecycled) sample.recycle() }
+            }
+        } catch(t:Throwable) {
+            "Движок читалки KOMA: ОШИБКА "+describe(t)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun appVersionCode():Long {
+        val info=context.packageManager.getPackageInfo(context.packageName,0)
+        return if(android.os.Build.VERSION.SDK_INT>=28)info.longVersionCode else info.versionCode.toLong()
+    }
+
+    /** Освобождение моделей: вызывается при выходе из читалки. */
+    fun close() {
+        runCatching { det?.close() };det=null
+        runCatching { rec?.close() };rec=null
+        mlModels.values.forEach { runCatching { it.close() } };mlModels.clear()
     }
     @Suppress("UNCHECKED_CAST")
     private fun paddle(bitmap:Bitmap):List<OcrRegion> {
@@ -147,6 +219,7 @@ class KomaOcrEngine(private val context: Context) {
     }
     @Suppress("UNCHECKED_CAST")
     private fun decode(bitmap:Bitmap):Pair<String,Float> {
+        if(bitmap.width<2 || bitmap.height<2) return "" to 0f
         val width=(48f*bitmap.width/bitmap.height).roundToInt().coerceIn(8,960);val padded=max(320,width)
         val scaled=Bitmap.createScaledBitmap(bitmap,width,48,true);val pixels=IntArray(width*48);scaled.getPixels(pixels,0,width,0,0,width,48)
         if(scaled!==bitmap)scaled.recycle()

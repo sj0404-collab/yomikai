@@ -420,35 +420,21 @@ object OcrQueueScreen : Screen() {
                 )
             }
 
-            PreferenceGroupHeader(title = "Офлайн-распознавание — русский Cyrillic OCR")
+            PreferenceGroupHeader(title = "Офлайн-распознавание — KOMA/ONNX")
+            // Кириллический пакет больше не скачивается: детектор PP-OCRv4,
+            // распознаватель CTC PP-OCRv5 и словарь лежат в APK. Кнопка
+            // «Скачать ~21 МБ» осталась от прежней сборки и только путала:
+            // пользователь жаловался, что модели «не установлены», хотя
+            // распознавание уже работает.
             InfoWidget(
-                text = "Новый движок по умолчанию: PP-OCRv4 detector + PP-OCRv3 recognizer " +
-                    "+ PP-OCRv5 verifier. Работает полностью без сети после загрузки; " +
-                    "модели (~21 МБ) хранятся отдельно и не увеличивают APK.",
+                text = "Движок ONNX (PP-OCRv4 детектор + CTC PP-OCRv5 распознаватель) " +
+                    "и его модели уже внутри APK: скачивать нечего, интернет для " +
+                    "распознавания не нужен.",
             )
-            var cyrillicInstalled by remember {
-                mutableStateOf(
-                    eu.kanade.tachiyomi.data.ocr.OcrModelDownloader.isPackInstalled(
-                        context,
-                        "cyrillic_ocr",
-                    ),
-                )
-            }
-            ModelPackRow(
-                pack = "cyrillic_ocr",
-                title = "Русский/Cyrillic PP-OCR",
-                sizeHint = "~21 МБ • офлайн • рекомендуется",
-                installed = cyrillicInstalled,
-                onInstalledChange = { installed ->
-                    cyrillicInstalled = installed
-                    if (installed) ocrModelPreference.set(OcrModel.CYRILLIC)
-                },
-            )
-
-            PreferenceGroupHeader(title = "Управление локальными OCR-моделями")
+            PreferenceGroupHeader(title = "Дополнительные модели")
             InfoWidget(
-                text = "Все локальные модели хранятся вне APK в Android/data/…/files/ocr_models " +
-                    "или Yomihon/OCR и скачиваются только по запросу.",
+                text = "Ниже — необязательные модели. Их отсутствие не мешает " +
+                    "распознаванию: без них просто отключаются отдельные улучшения.",
             )
             // Manga OCR (Legacy) и Fast Manga OCR удалены из UI: это
             // ЯПОНСКИЕ модели (bluolightning/manga-ocr), кириллицу не читают —
