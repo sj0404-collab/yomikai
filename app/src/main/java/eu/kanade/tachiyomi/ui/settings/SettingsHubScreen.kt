@@ -841,13 +841,6 @@ private fun OcrPresetsTab() {
     val localMode by prefs.localMode().changes().collectAsState(initial = prefs.localMode().get())
     val ruStress by prefs.ruStress().changes().collectAsState(initial = prefs.ruStress().get())
     val model by prefs.ocrModel().changes().collectAsState(initial = prefs.ocrModel().get())
-    // Диагностика OCR: отчёт со самопроверкой движков и последним падением.
-    val ocrDiagContext = LocalContext.current
-    val ocrDiagScope = rememberCoroutineScope()
-    var ocrDiagReport by remember { mutableStateOf<String?>(null) }
-    var ocrDiagBusy by remember { mutableStateOf(false) }
-    val ocrClipboard = LocalClipboardManager.current
-
     val fallbacks by prefs.useFallbackModels().changes()
         .collectAsState(initial = prefs.useFallbackModels().get())
     val fallbackPreset by prefs.fallbackPreset().changes()
@@ -903,61 +896,9 @@ private fun OcrPresetsTab() {
 
     )
     HubNote(
-        "Движок ONNX (PP-OCRv4 + CTC PP-OCRv5) и его модели лежат внутри APK: " +
-            "сеть и загрузка моделей не нужны, распознавание работает офлайн.",
+        "Движок кириллицы — из KOMA (PP-OCRv4 + CTC PP-OCRv5), ONNX Runtime 1.22: " +
+            "модели лежат внутри APK, сеть и загрузка моделей не нужны.",
     )
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(enabled = !ocrDiagBusy) {
-                ocrDiagBusy = true
-                ocrDiagScope.launch {
-                    val report = eu.kanade.tachiyomi.data.ocr.OcrDiagnostics.runProbe(ocrDiagContext)
-                    ocrDiagReport = report
-                    ocrDiagBusy = false
-                }
-            }
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text("Проверка OCR", style = MaterialTheme.typography.bodyLarge)
-            Text(
-                "Открыть движки на тестовой картинке: покажет, что именно не работает, " +
-                    "и последнее падение",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        if (ocrDiagBusy) {
-            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-        } else {
-            Icon(Icons.Default.KeyboardArrowRight, contentDescription = null)
-        }
-    }
-    if (ocrDiagReport != null) {
-        AlertDialog(
-            onDismissRequest = { ocrDiagReport = null },
-            title = { Text("Проверка OCR") },
-            text = {
-                Text(
-                    ocrDiagReport!!,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    ocrClipboard.setText(AnnotatedString(ocrDiagReport!!))
-                }) { Text("Копировать") }
-            },
-            dismissButton = {
-                TextButton(onClick = { ocrDiagReport = null }) { Text("Закрыть") }
-            },
-        )
-    }
 
     HubSwitchRow(
         title = "Пробовать другие движки при неудаче",

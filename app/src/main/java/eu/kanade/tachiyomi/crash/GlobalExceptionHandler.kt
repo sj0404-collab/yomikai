@@ -31,11 +31,6 @@ class GlobalExceptionHandler private constructor(
 
     override fun uncaughtException(thread: Thread, exception: Throwable) {
         logcat(priority = LogPriority.ERROR, throwable = exception)
-        // Трейс сохраняем на диск: экран падения пользователь закрывает, а
-        // «Проверка OCR» в настройках показывает этот же трейс и копирует его.
-        runCatching {
-            eu.kanade.tachiyomi.data.ocr.OcrDiagnostics.saveCrash(applicationContext, exception)
-        }
         launchActivity(applicationContext, activityToBeLaunched, exception)
         defaultHandler.uncaughtException(thread, exception)
     }

@@ -163,7 +163,6 @@ private fun OcrModelQuickSwitcher() {
     fun packOf(model: OcrModel): String? = when (model) {
         // Кириллица — KOMA/ONNX, модели вкомпилированы в APK: качать нечего.
         OcrModel.CYRILLIC -> null
-        // Русская модель Tesseract лежит в APK: качать нечего.
         OcrModel.TESSERACT -> null
         OcrModel.FAST -> "manga_ocr_fast"
         OcrModel.LEGACY -> "manga_ocr"
@@ -179,7 +178,6 @@ private fun OcrModelQuickSwitcher() {
     DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
         listOf(
             OcrModel.CYRILLIC,
-            OcrModel.TESSERACT,
             OcrModel.MLKIT,
             OcrModel.ZEN_FREE,
             OcrModel.GLENS,
@@ -198,7 +196,6 @@ private fun OcrModelQuickSwitcher() {
                 // «не установлено» быть не должно.
                 model == OcrModel.CYRILLIC -> "офлайн • KOMA/ONNX, модели в APK ✅"
                 model == OcrModel.MLKIT -> "офлайн • латиница, встроена в APK ✅"
-                model == OcrModel.TESSERACT -> "офлайн • рус. модель в APK ✅"
                 pack != null && !installed -> "локальная • нажмите, чтобы скачать"
                 pack != null -> "локальная • скачана ✅"
                 model == OcrModel.OWOCR -> "внешний сервер OwOCR (ПК, WebSocket)"

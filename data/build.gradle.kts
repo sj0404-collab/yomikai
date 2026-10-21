@@ -49,8 +49,6 @@ dependencies {
     // обожглись дважды, поэтому здесь 17 МБ вместо 3.6 — зато без сюрпризов.
     implementation(libs.onnxruntime.android)
     implementation(libs.mlkit.text.recognition)
-    // Страховочный движок кириллицы: Tesseract с русской моделью (в APK).
-    implementation(libs.tesseract4android)
     implementation(libs.anki.android)
     implementation(libs.hoshidicts)
 

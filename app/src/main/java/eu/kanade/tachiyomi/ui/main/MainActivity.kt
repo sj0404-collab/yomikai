@@ -176,20 +176,6 @@ class MainActivity : BaseActivity() {
         // бросал SecurityException прямо в обработчик прогресса.
         (application as? eu.kanade.tachiyomi.App)?.ensureOcrModelsInstalled()
 
-        // Если в прошлый раз приложение закрылось аварийно, говорим об этом
-        // прямо при запуске: раньше падение исчезало молча («просто вылет»), а
-        // трейс лежал в файле, о котором никто не знал.
-        if (isLaunch) {
-            val crash = eu.kanade.tachiyomi.data.ocr.OcrDiagnostics.lastCrash(this)
-            if (crash != null) {
-                android.widget.Toast.makeText(
-                    this,
-                    "В прошлый раз приложение закрылось. Журнал: Text Recognition → «Последняя ошибка»",
-                    android.widget.Toast.LENGTH_LONG,
-                ).show()
-            }
-        }
-
         Migrator.awaitAndRelease()
 
         // Do not let the launcher create a new activity http://stackoverflow.com/questions/16283079
