@@ -280,18 +280,11 @@ class OcrRepositoryImpl(
         EngineType.OPENROUTER, EngineType.GOOGLE,
     )
     private val offlineEngines = listOf(
-        // Один основной офлайн-движок для кириллицы. LEGACY и FAST — только
-        // миграционные значения перечислений.
+        // KOMA/ONNX — единственный офлайн-движок кириллицы (модели в APK).
         EngineType.CYRILLIC,
-        // Tesseract — второй офлайн-движок с русской моделью. Раньше он был
-        // фикцией и в цепочку не попадал, поэтому «прочитал не то → попробуй
-        // другой» для него просто не работало. Ставим после PP-OCR: тот и
-        // быстрее, и в среднем точнее, а Tesseract страхует, когда PP-OCR
-        // засомневался (мусор, пустые строки, нечитаемая вёрстка).
-        EngineType.TESSERACT,
 
-        // ML Kit вкомпилирован в APK и не требует ни сети, ни пакета моделей,
-        // поэтому годится как офлайн-фолбэк, когда PP-OCR не установлен.
+        // ML Kit (латиница) остаётся фолбэком для не-кириллических языков:
+        // в кириллической цепочке его отфильтровывает fallbackChain().
         EngineType.MLKIT,
     )
 
@@ -364,18 +357,12 @@ class OcrRepositoryImpl(
     private fun engineFor(type: EngineType): OcrEngine {
         return when (type) {
             EngineType.CYRILLIC -> {
-                // Настройка читается через OcrPreferences: тот же ключ, что
-                // у переключателя в «Настройки → Распознавание».
-                if (ocrPreferences.komaOnnxCyrillic().get()) {
-                    komaEngine ?: KomaOnnxOcrEngine(context).also { komaEngine = it }
-                } else {
-                    cyrillicEngine ?: CyrillicOcrEngine(
-                        context,
-                        requireEnvironment(),
-                        textPostprocessor,
-                        ::currentTuning,
-                    ).also { cyrillicEngine = it }
-                }
+                // Кириллица — ТОЛЬКО KOMA/ONNX. Прежний Paddle-путь
+                // (CyrillicOcrEngine на LiteRT + верификатор v5) убран: две
+                // разные модели на одном кропе давали разное, а их «спасательные»
+                // проходы роняли читалку. Модели KOMA вкомпилированы в APK
+                // (assets/koma/models), поэтому движок доступен сразу.
+                komaEngine ?: KomaOnnxOcrEngine(context).also { komaEngine = it }
             }
             EngineType.TESSERACT -> {
                 tesseractEngine ?: TesseractOcrEngine(
@@ -428,13 +415,12 @@ class OcrRepositoryImpl(
 
     private fun detectionEngine(): DetOcrEngine {
         return detEngine ?: (
-            // Детектор живёт в паке cyrillic_ocr вместе с распознавателями.
-            // Пока модели не скачаны (или LiteRT недоступен) — заглушка, и
-            // scanLocally честно деградирует на распознавание всей страницы.
-            if (ocrPreferences.komaOnnxCyrillic().get() && komaModelsInstalled()) {
+            // Детектор — тот же KOMA/ONNX, что и распознаватель: модели в APK,
+            // отдельного пакета для скачивания больше не нужно. Заглушка
+            // остаётся только на случай, если распаковка ассетов не удалась —
+            // тогда scanLocally честно пойдёт путём «вся страница».
+            if (komaModelsInstalled()) {
                 KomaDetOcrEngine { engineFor(EngineType.CYRILLIC) as KomaOnnxOcrEngine }
-            } else if (localOcrAvailable() && cyrillicModelsInstalled()) {
-                CyrillicDetOcrEngine { engineFor(EngineType.CYRILLIC) as CyrillicOcrEngine }
             } else {
                 UnavailableDetOcrEngine()
             }

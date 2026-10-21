@@ -22,6 +22,22 @@ object OcrModelFiles {
 
     const val MODELS_DIR = "ocr_models"
 
+    /**
+     * Модели, вкомпилированные в APK. KOMA-детектор и CTC-распознаватель лежат
+     * в `assets/koma/models/` (13 МБ), поэтому кириллица работает сразу после
+     * установки — без пакета моделей и без «модель не установлена» в момент
+     * первого распознавания (это исключение роняло читалку).
+     */
+    private const val BUNDLED_DIR = "koma/models"
+    private const val BUNDLED_CACHE_DIR = "bundled_models"
+
+    /** asset-путь → имя файла внутри `assets/koma/models`. */
+    private val bundledAssets = mapOf(
+        "koma_ocr/det.onnx" to "detection.onnx",
+        "koma_ocr/rec.onnx" to "cyrillic.onnx",
+        "koma_ocr/dict.txt" to "cyrillic.txt",
+    )
+
     /** Maps asset-style paths to flat file names used in external folders and model packages. */
     private val flatNames = mapOf(
         "cyrillic_ocr/detector.tflite" to "cyrillic_detector.tflite",
@@ -68,7 +84,40 @@ object OcrModelFiles {
             }
         }
 
-        return candidates.firstOrNull { it.isFile && it.canRead() && it.length() > 0 }?.absolutePath
+        candidates.firstOrNull { it.isFile && it.canRead() && it.length() > 0 }?.absolutePath
+            ?.let { return it }
+
+        // Ничего не установлено вручную — отдаём модель из APK. Копия нужна
+        // потому, что ONNX Runtime умеет открывать только файл по пути, а не
+        // сжатый asset внутри APK.
+        return bundledAsset(context, assetPath)
+    }
+
+    /**
+     * Распаковывает модель из `assets/koma/models` в filesDir (один раз на
+     * версию приложения). Имя файла содержит versionCode: после обновления
+     * APK модели пересоздаются, а на обычном запуске повторного копирования
+     * 13 МБ нет.
+     */
+    private fun bundledAsset(context: Context, assetPath: String): String? {
+        val assetName = bundledAssets[assetPath] ?: return null
+        val version = runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionCode
+        }.getOrDefault(0)
+        val dir = File(context.filesDir, BUNDLED_CACHE_DIR).apply { mkdirs() }
+        val target = File(dir, "$version-$assetName")
+        if (target.isFile && target.length() > 0) return target.absolutePath
+        return runCatching {
+            val temp = File(dir, "$version-$assetName.tmp")
+            context.assets.open("$BUNDLED_DIR/$assetName").use { input ->
+                temp.outputStream().use { output -> input.copyTo(output) }
+            }
+            if (!temp.renameTo(target)) {
+                temp.copyTo(target, overwrite = true)
+                temp.delete()
+            }
+            target.takeIf { it.length() > 0 }?.absolutePath
+        }.getOrNull()
     }
 
     /** True when every given asset-style path resolves to an installed external file. */

@@ -105,27 +105,34 @@ object SettingsOcrScreen : SearchableSettings {
     }
 
     /**
-     * Второй путь распознавания кириллицы.
+     * Кириллица: единственный движок — KOMA/ONNX.
      *
-     * Прежний путь (LiteRT: PP-OCRv3 + верификатор) и KOMA-путь (ONNX: детектор
-     * PP-OCRv4 + независимый CTC PP-OCRv5) — разные модели с разными числами на
-     * одном и том же кропе, поэтому это переключатель, а не тихая замена: если
-     * новый путь на конкретном устройстве окажется хуже, откат — одно касание.
-     * Модели лежат снаружи APK, поэтому без пакета `koma_ocr` переключатель
-     * ничего не сломает: движок просто не инициализируется.
+     * Прежний Paddle-путь (LiteRT: PP-OCRv3 + верификатор v5) убран целиком: две
+     * разные модели на одном кропе давали разный текст, а «спасательные» проходы
+     * роняли читалку. Модели KOMA (детектор PP-OCRv4 + CTC PP-OCRv5 + словарь)
+     * вкомпилированы в APK, поэтому переключателя больше нет — распознавание
+     * работает сразу после установки и без пакетов для скачивания.
      */
     @Composable
     private fun getCyrillicEngineGroup(prefs: OcrPreferences): Preference.PreferenceGroup {
+        val context = LocalContext.current
+        val bundled = remember {
+            runCatching {
+                mihon.data.ocr.OcrModelFiles.resolve(context, "koma_ocr/det.onnx") != null
+            }.getOrDefault(false)
+        }
         return Preference.PreferenceGroup(
             title = "Кириллица",
             preferenceItems = listOf(
-                Preference.PreferenceItem.SwitchPreference(
-                    preference = prefs.komaOnnxCyrillic(),
+                Preference.PreferenceItem.TextPreference(
                     title = "Движок KOMA (ONNX): PP-OCRv4 + PP-OCRv5",
-                    subtitle = "Второй путь для кириллицы: один детектор и один CTC-распознаватель " +
-                        "вместо связки LiteRT с верификатором — быстрее и стабильнее на чистых " +
-                        "облачках. Нужны koma_det.onnx, koma_rec.onnx и koma_dict.txt в папке " +
-                        "ocr_models; без них остаётся прежний движок.",
+                    subtitle = if (bundled) {
+                        "Единственный путь для кириллицы. Модели уже в приложении — " +
+                            "скачивать ничего не нужно, страницы никуда не отправляются."
+                    } else {
+                        "Модели не распаковались. Переустановите приложение: без них " +
+                            "кириллица не распознаётся."
+                    },
                 ),
             ),
         )

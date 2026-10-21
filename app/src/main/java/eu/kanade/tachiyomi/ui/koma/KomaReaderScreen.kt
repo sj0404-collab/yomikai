@@ -49,10 +49,22 @@ import kotlinx.coroutines.CancellationException
 @Composable
 fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine,onClose: ()->Unit,onUpdate: (Book)->Unit,onDelete: (Book)->Unit) {
     val context=LocalContext.current;val scope=rememberCoroutineScope()
+    // Книга без страниц (пустой архив, удалённые файлы, битые ассеты) раньше
+    // роняла читалку на coerceIn(0, -1) ещё до первой отрисовки: пользователь
+    // видел «вылет» сразу после тапа по книге. Теперь это сообщение и кнопка
+    // «назад».
+    if(initial.pages.isEmpty()) {
+        Column(Modifier.fillMaxSize().background(Color(0xFF171A17)).padding(24.dp),verticalArrangement=Arrangement.Center,horizontalAlignment=Alignment.CenterHorizontally) {
+            Text("В этой книге нет страниц",color=Color.White,fontSize=18.sp,fontWeight=FontWeight.Bold)
+            Text("Архив пуст или файлы страниц удалены. Импортируйте книгу заново.",color=Color(0xFFB2B8AD),fontSize=13.sp,textAlign=androidx.compose.ui.text.style.TextAlign.Center,modifier=Modifier.padding(top=10.dp))
+            Button(onClick=onClose,modifier=Modifier.padding(top=20.dp)){Text("Назад")}
+        }
+        return
+    }
     var book by remember(initial.id){mutableStateOf(initial)}
     var mode by remember { mutableStateOf(book.mode) }
-    val pager=rememberPagerState(initialPage=book.progress.coerceIn(0,book.pages.lastIndex)){book.pages.size}
-    val scroll=rememberLazyListState(initialFirstVisibleItemIndex=book.progress.coerceIn(0,book.pages.lastIndex))
+    val pager=rememberPagerState(initialPage=book.progress.coerceIn(0,book.pages.lastIndex.coerceAtLeast(0))){book.pages.size}
+    val scroll=rememberLazyListState(initialFirstVisibleItemIndex=book.progress.coerceIn(0,book.pages.lastIndex.coerceAtLeast(0)))
     val page=if(mode=="vertical")scroll.firstVisibleItemIndex else pager.currentPage
     val currentPage by rememberUpdatedState(page)
     val autoRequested=remember{mutableSetOf<String>()}
