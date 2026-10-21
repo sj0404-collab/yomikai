@@ -1124,6 +1124,7 @@ class ReaderViewModel @JvmOverloads constructor(
     private var autoScanJob: kotlinx.coroutines.Job? = null
 
     fun autoScanAndSpeak(context: android.content.Context, bitmap: Bitmap, chapterId: Long, pageIndex: Int) {
+        eu.kanade.tachiyomi.data.ocr.OcrDiagnostics.mark(application, "autoScan&speak: глава $chapterId, страница $pageIndex")
         autoScanJob?.cancel()
         autoScanJob = viewModelScope.launchIO {
             try {
@@ -1204,8 +1205,14 @@ class ReaderViewModel @JvmOverloads constructor(
                 }
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // В том числе OutOfMemoryError: скан-и-читай не должен закрывать
+                // читалку, он должен честно промолчать и оставить след в отчёте.
                 logcat(LogPriority.ERROR, e) { "Auto scan & speak failed" }
+                eu.kanade.tachiyomi.data.ocr.OcrDiagnostics.mark(
+                    application,
+                    "autoScan&speak: ошибка ${e::class.simpleName}: ${e.message}",
+                )
             } finally {
                 if (!bitmap.isRecycled) bitmap.recycle()
             }

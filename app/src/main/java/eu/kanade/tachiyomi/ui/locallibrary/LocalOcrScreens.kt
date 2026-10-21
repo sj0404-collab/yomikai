@@ -160,8 +160,8 @@ private fun OptionsBlock(
 internal val SELECTABLE_OCR_MODELS: List<OcrModel> = OcrModel.entries.filter { it != OcrModel.TESSERACT }
 
 internal val ENGINE_TITLES = mapOf(
-    OcrModel.CYRILLIC to "Кириллица (офлайн, точно)",
-    OcrModel.MLKIT to "Google ML Kit (офлайн, встроена в APK)",
+    OcrModel.CYRILLIC to "KOMA/ONNX — кириллица (в APK, офлайн)",
+    OcrModel.MLKIT to "Google ML Kit — латиница/японский (в APK)",
     OcrModel.FAST to "Быстрый (офлайн, для ARM)",
     OcrModel.LEGACY to "Старый (медленно)",
     // Движка Tesseract в сборке нет (нативные библиотеки убраны ради размера),
