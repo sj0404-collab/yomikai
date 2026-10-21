@@ -161,7 +161,8 @@ private fun OcrModelQuickSwitcher() {
 
     /** Пак моделей, который нужен движку (null = скачивать нечего). */
     fun packOf(model: OcrModel): String? = when (model) {
-        OcrModel.CYRILLIC -> "cyrillic_ocr"
+        // Кириллица — KOMA/ONNX, модели вкомпилированы в APK: качать нечего.
+        OcrModel.CYRILLIC -> null
         OcrModel.FAST -> "manga_ocr_fast"
         OcrModel.LEGACY -> "manga_ocr"
         else -> null
@@ -190,8 +191,9 @@ private fun OcrModelQuickSwitcher() {
             val downloading = pack != null && progressMap.containsKey(pack)
             val subtitle = when {
                 downloading -> "загрузка ${(progressMap[pack]!! * 100).toInt()}%"
-                model == OcrModel.CYRILLIC && !installed -> "офлайн • скачать ~21 МБ"
-                model == OcrModel.CYRILLIC -> "офлайн • русский PP-OCR ✅"
+                // Кириллица — KOMA/ONNX, модели в APK: ни скачивания, ни статуса
+                // «не установлено» быть не должно.
+                model == OcrModel.CYRILLIC -> "офлайн • KOMA/ONNX, модели в APK ✅"
                 model == OcrModel.MLKIT -> "офлайн • латиница, встроена в APK ✅"
                 pack != null && !installed -> "локальная • нажмите, чтобы скачать"
                 pack != null -> "локальная • скачана ✅"

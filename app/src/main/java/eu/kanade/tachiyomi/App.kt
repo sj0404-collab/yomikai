@@ -348,34 +348,38 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
     }
 
     /**
- * Кириллический PP-OCR — единственный офлайн-движок, и его пак (~21 МБ, 5 файлов)
- * лежит вне APK и скачивается один раз. Зовётся из MainActivity после того,
- * как спросили разрешение POST_NOTIFICATIONS: раньше загрузка стартовала в
- * Application.onCreate, раньше диалога разрешения, и весь её прогресс (~21 МБ
- * пятью файлами) был не виден — уведомления уходили в пустоту.
- * Сбой не фатален: повторить можно из настроек распознавания текста.
- */
-fun ensureOcrModelsInstalled() {
-    Thread {
-        runCatching {
-            val ocrPrefs = Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
-            if (
-                ocrPrefs.ocrModel().get() in setOf(
-                    mihon.domain.ocr.model.OcrModel.LEGACY,
-                    mihon.domain.ocr.model.OcrModel.FAST,
-                    mihon.domain.ocr.model.OcrModel.TESSERACT,
-                )
-            ) {
-                // Старые значения — алиасы кириллицы; выбираем её явно.
-                ocrPrefs.ocrModel().set(mihon.domain.ocr.model.OcrModel.CYRILLIC)
+     * Кириллица больше НЕ качается при запуске.
+     *
+     * Раньше здесь стояла автозагрузка пака `cyrillic_ocr` (~21 МБ, пять файлов
+     * с raw.githubusercontent): на первом запуске она стартовала молча, а при
+     * сбое сети/уведомлений роняла приложение — пользователь видел «вылет при
+     * запуске». Теперь модели KOMA (детектор PP-OCRv4 + CTC PP-OCRv5 + словарь)
+     * лежат в APK и распаковываются по требованию из `assets/koma/models`,
+     * качать нечего. Функция оставлена как точка миграции старых значений
+     * движка и как безопасная проверка готовности моделей.
+     */
+    fun ensureOcrModelsInstalled() {
+        Thread {
+            runCatching {
+                val ocrPrefs = Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+                if (
+                    ocrPrefs.ocrModel().get() in setOf(
+                        mihon.domain.ocr.model.OcrModel.LEGACY,
+                        mihon.domain.ocr.model.OcrModel.FAST,
+                        mihon.domain.ocr.model.OcrModel.TESSERACT,
+                    )
+                ) {
+                    // Старые значения — алиасы кириллицы; выбираем её явно.
+                    ocrPrefs.ocrModel().set(mihon.domain.ocr.model.OcrModel.CYRILLIC)
+                }
+                // Только проверка: модели в APK. Никаких сетевых загрузок на
+                // старте, иначе отсутствие интернета = падение приложения.
+                mihon.data.ocr.OcrModelFiles.resolve(applicationContext, "koma_ocr/det.onnx")
+            }.onFailure {
+                logcat(LogPriority.WARN, it) { "OCR bundled models check failed" }
             }
-            val downloader = eu.kanade.tachiyomi.data.ocr.OcrModelDownloader
-            if (!downloader.isPackInstalled(applicationContext, "cyrillic_ocr")) {
-                downloader.downloadPack(applicationContext, "cyrillic_ocr")
-            }
-        }
-    }.apply { name = "cyrillic-ocr-init"; priority = Thread.MIN_PRIORITY }.start()
-}
+        }.apply { name = "cyrillic-ocr-init"; priority = Thread.MIN_PRIORITY }.start()
+    }
 
     private fun setupNotificationChannels() {
         try {
