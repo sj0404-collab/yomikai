@@ -151,22 +151,23 @@ private fun OptionsBlock(
 }
 
 /**
- * Движки, которые реально можно выбрать. Tesseract убран из сборки: его
- * нативные библиотеки стоили ~6 МБ, а буквы жили отдельным пакетом на 8 МБ,
- * который приходилось качать. Кириллицу теперь читает KOMA/ONNX, модели
- * которого вкомпилированы в APK. Старое сохранённое значение настройки
- * мигрирует в [OcrModel.CYRILLIC] при старте.
+ * Движки, которые реально можно выбрать.
+ *
+ * Кириллицу читает KOMA/ONNX, пока он жив на устройстве. Если проверка в
+ * отдельном процессе показала нативное падение ONNX Runtime, приложение само
+ * переключается на Tesseract — русская модель для него лежит в APK
+ * (`assets/tessdata/rus.traineddata`). Выбрать Tesseract руками тоже можно: он
+ * медленнее и хуже держит вертикальный текст, зато не падает.
  */
-internal val SELECTABLE_OCR_MODELS: List<OcrModel> = OcrModel.entries.filter { it != OcrModel.TESSERACT }
+internal val SELECTABLE_OCR_MODELS: List<OcrModel> =
+    OcrModel.entries.filter { it != OcrModel.LEGACY && it != OcrModel.FAST }
 
 internal val ENGINE_TITLES = mapOf(
     OcrModel.CYRILLIC to "KOMA/ONNX — кириллица (в APK, офлайн)",
     OcrModel.MLKIT to "Google ML Kit — латиница/японский (в APK)",
     OcrModel.FAST to "Быстрый (офлайн, для ARM)",
     OcrModel.LEGACY to "Старый (медленно)",
-    // Движка Tesseract в сборке нет (нативные библиотеки убраны ради размера),
-    // в списках выбора он скрыт — см. SELECTABLE_OCR_MODELS.
-    OcrModel.TESSERACT to "KOMA / ONNX (замена Tesseract)",
+    OcrModel.TESSERACT to "Tesseract — страховочный (рус. модель в APK)",
     OcrModel.GLENS to "Google Lens (онлайн)",
     OcrModel.ZEN_FREE to "Space Bunny Free (OpenCode Zen, онлайн)",
     OcrModel.GOOGLE to "Gemini (онлайн, по ключу)",

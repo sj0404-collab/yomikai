@@ -49,10 +49,8 @@ dependencies {
     // обожглись дважды, поэтому здесь 17 МБ вместо 3.6 — зато без сюрпризов.
     implementation(libs.onnxruntime.android)
     implementation(libs.mlkit.text.recognition)
-    // Tesseract убран из сборки: libtesseract + libleptonica стоили ~6 МБ в APK,
-    // а языковые данные (~8 МБ) приходилось качать отдельным пакетом. Кириллицу
-    // читает KOMA/ONNX, латиницу и японский — ML Kit, оба вкомпилированы.
-
+    // Страховочный движок кириллицы: Tesseract с русской моделью (в APK).
+    implementation(libs.tesseract4android)
     implementation(libs.anki.android)
     implementation(libs.hoshidicts)
 

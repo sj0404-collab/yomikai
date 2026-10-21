@@ -491,6 +491,19 @@ object OcrQueueScreen : Screen() {
             }
 
             InfoWidget(text = "Состояние ONNX: $onnxStatus")
+            val onnxDead = mihon.data.ocr.OcrEngineHealth.onnxState(diagContext) ==
+                mihon.data.ocr.OcrEngineHealth.State.DEAD
+            if (onnxDead) {
+                // Честно и без «вылетов»: ONNX на этом устройстве не работает,
+                // кириллицу читает Tesseract, а не падающая модель.
+                InfoWidget(
+                    text = "ONNX на этом устройстве падает нативно (это не лечится " +
+                        "настройками). Кириллица читается Tesseract — русская модель " +
+                        "уже в APK, скачивать ничего не нужно. Кнопка «Проверка OCR» " +
+                        "пробует ONNX ещё раз: если он оживёт, движок вернётся " +
+                        "автоматически.",
+                )
+            }
 
             DiagRow(
                 title = "Проверка OCR",

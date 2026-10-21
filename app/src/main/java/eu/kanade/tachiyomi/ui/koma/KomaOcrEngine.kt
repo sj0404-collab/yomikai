@@ -42,6 +42,9 @@ data class PageOcr(val regions: List<OcrRegion>, val engine: String, val millis:
 /** Как движок называется в интерфейсе: без «Paddle», которого в сборке нет. */
 const val ENGINE_NAME="KOMA/ONNX · PP-OCRv4 + CTC PP-OCRv5"
 
+/** Подпись, когда ONNX недоступен и страницу читает Tesseract. */
+const val ENGINE_NAME_TESSERACT="Tesseract · русская модель (в APK)"
+
 class KomaOcrEngine(private val context: Context) {
     private val mutex=Mutex()
     private val root=File(context.filesDir,"ocr").apply { mkdirs() }
@@ -98,7 +101,14 @@ class KomaOcrEngine(private val context: Context) {
                     ensureActive()
                     val h=min(tileHeight,image.height-y)
                     val tile=Bitmap.createBitmap(image,0,y,image.width,h)
-                    val found=if(script=="Кириллица")paddle(tile)else ml(tile,script)
+                    val found=when {
+                        script!="Кириллица" -> ml(tile,script)
+                        // ONNX на этом устройстве уже падал нативно — в него не лезем,
+                        // страницу читает Tesseract (модель в APK).
+                        mihon.data.ocr.OcrEngineHealth.onnxState(context)==mihon.data.ocr.OcrEngineHealth.State.DEAD ->
+                            tesseract(tile)
+                        else -> paddle(tile)
+                    }
                     found.forEach { r ->
                         val mapped=r.copy(top=(y+r.top*h)/image.height,bottom=(y+r.bottom*h)/image.height)
                         if(regions.none { it.text==mapped.text && abs(it.top-mapped.top)<.015f })regions.add(mapped)
@@ -108,7 +118,12 @@ class KomaOcrEngine(private val context: Context) {
                     y+=tileHeight-160
                 }
                 val sorted=if(book.mode=="rtl" && script=="Японский") regions.sortedWith(compareByDescending<OcrRegion> { (it.left*40).toInt() }.thenBy { it.top }) else regions.sortedWith(compareBy<OcrRegion> { (it.top*80).toInt() }.thenBy { if(book.mode=="rtl")-it.left else it.left })
-                PageOcr(sorted,if(script=="Кириллица")ENGINE_NAME else "ML Kit · $script",System.currentTimeMillis()-start).also { store(book.id,page,language,it) }
+                val engineName=when {
+                    script!="Кириллица" -> "ML Kit · $script"
+                    mihon.data.ocr.OcrEngineHealth.onnxState(context)==mihon.data.ocr.OcrEngineHealth.State.DEAD -> ENGINE_NAME_TESSERACT
+                    else -> ENGINE_NAME
+                }
+                PageOcr(sorted,engineName,System.currentTimeMillis()-start).also { store(book.id,page,language,it) }
             } catch(t:Throwable) {
                 if(t is kotlinx.coroutines.CancellationException) throw t
                 // Битая страница, нехватка памяти, сбой нативного ONNX — всё
@@ -118,6 +133,20 @@ class KomaOcrEngine(private val context: Context) {
             } finally { if(!image.isRecycled) image.recycle() }
         }
     }
+    /**
+     * Tesseract вместо ONNX: одна область на всю плитку (рамок по строкам нет,
+     * но текст честный). Используется, когда ONNX на устройстве падает нативно.
+     */
+    private suspend fun tesseract(bitmap:Bitmap):List<OcrRegion> {
+        val text=runCatching { mihon.data.ocr.TesseractData.recognizeText(context,bitmap) }
+            .getOrElse { t:Throwable ->
+                lastError=describe(t)
+                return emptyList()
+            }
+        if(text.isBlank())return emptyList()
+        return listOf(OcrRegion(text,0f,0f,1f,1f,null,"Tesseract"))
+    }
+
     private suspend fun ml(bitmap:Bitmap,script:String):List<OcrRegion> {
         val recognizer=mlModels.getOrPut(script) { when(script){
             "Японский"->TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())

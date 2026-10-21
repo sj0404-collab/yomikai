@@ -57,6 +57,9 @@ onnxruntime = "1.18.0"
 # Мобильная сборка ORT: arm64-библиотека 4.3 МБ вместо 17.5 МБ при том же наборе
 # операторов, который используют модели KOMA (PP-OCRv4 det / PP-OCRv5 rec).
 onnxruntimeMobile = "1.18.0"
+# Tesseract — страховочный движок кириллицы: ONNX Runtime на части устройств
+# убивает процесс нативно на выводе моделей KOMA, и это ничем не перехватить.
+tesseract4android = "4.7.0"
 mlkitTextRecognition = "16.0.1"
 mlkitTextRecognitionJapanese = "16.0.1"
 junrar = "7.5.5"
@@ -172,6 +175,7 @@ logcat = { module = "com.squareup.logcat:logcat", version.ref = "logcat" }
 litert = { module = "com.google.ai.edge.litert:litert", version.ref = "litert" }
 onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android", version.ref = "onnxruntime" }
 onnxruntime-mobile = { module = "com.microsoft.onnxruntime:onnxruntime-mobile", version.ref = "onnxruntimeMobile" }
+tesseract4android = { module = "cz.adaptech.tesseract4android:tesseract4android", version.ref = "tesseract4android" }
 mlkit-text-recognition = { module = "com.google.mlkit:text-recognition", version.ref = "mlkitTextRecognition" }
 mlkit-text-recognition-japanese = { module = "com.google.mlkit:text-recognition-japanese", version.ref = "mlkitTextRecognitionJapanese" }
 junrar = { module = "com.github.junrar:junrar", version.ref = "junrar" }
