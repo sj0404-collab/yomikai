@@ -55,16 +55,46 @@ object OcrDiagnostics {
     private const val ONNX_STATUS_FILE = "onnx_status.txt"
 
     /**
-     * Проверка ОДНОГО факта: поднимаются ли сессии ONNX с моделями из APK.
-     * Запускается в фоне при старте, поэтому состояние видно в настройках без
-     * нажатия кнопки — и его достаточно, чтобы понять «ONNX не работает».
+     * Короткий статус «сработал ли ONNX» — для строки в настройках.
+     * Саму проверку делает модуль data: движок там internal.
      */
     suspend fun preflight(context: Context): String {
-        // Саму проверку делает модуль data (движок там internal): из app видно
-        // только готовый статус одной строкой.
         val result = mihon.data.ocr.OcrSelfCheck.status(context)
         runCatching { File(context.filesDir, ONNX_STATUS_FILE).writeText("${timestamp()} $result") }
         return result
+    }
+
+    /**
+     * Запуск проверки в отдельном процессе и ожидание результата.
+     *
+     * Возвращает человекочитаемый итог. Если процесс проверки умер, не дописав
+     * DONE, — это нативное падение: приложение при этом остаётся живым, а в
+     * отчёте так и сказано (иначе пользователь видел «простой вылет»).
+     */
+    suspend fun runProbe(context: Context, timeoutMs: Long = 25_000): String {
+        val file = File(context.filesDir, OcrProbeService.PROBE_FILE)
+        OcrProbeService.start(context)
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            kotlinx.coroutines.delay(400)
+            val text = runCatching { file.takeIf { it.isFile }?.readText() }.getOrNull().orEmpty()
+            if (text.contains("\nDONE\n")) {
+                return text.substringAfter("\nDONE\n").trim()
+            }
+            if (text.startsWith("FAILED")) {
+                return "Не удалось запустить проверку в отдельном процессе:\n" + text.substringAfter('\n').trim()
+            }
+        }
+        val text = runCatching { file.takeIf { it.isFile }?.readText() }.getOrNull().orEmpty()
+        return if (text.startsWith("START")) {
+            "ПРОЦЕСС ПРОВЕРКИ УПАЛ НАТИВНО (без DONE).\n" +
+                "Это значит, что падает именно ONNX Runtime на этом устройстве, а не код приложения.\n" +
+                "Приложение при этом осталось живым — проверка шла в отдельном процессе.\n\n" +
+                "Последние шаги OCR:\n" + (breadcrumbs(context)?.takeLast(1200) ?: "нет записи")
+        } else {
+            "Проверка не завершилась за ${timeoutMs / 1000} с (процесс не ответил).\n" +
+                "Последние шаги OCR:\n" + (breadcrumbs(context) ?: "нет записи")
+        }
     }
 
     /** Последний результат preflight (или «ещё не проверялся»). */

@@ -478,8 +478,15 @@ object OcrQueueScreen : Screen() {
             // при открытии настроек, а не при каждом запуске.
             LaunchedEffect(Unit) {
                 if (onnxStatus.startsWith("ещё не проверялся")) {
-                    onnxStatus = "проверяем…"
-                    onnxStatus = eu.kanade.tachiyomi.data.ocr.OcrDiagnostics.preflight(diagContext)
+                    onnxStatus = "проверяем… (в отдельном процессе, это безопасно)"
+                    val full = eu.kanade.tachiyomi.data.ocr.OcrDiagnostics.runProbe(diagContext, 20_000)
+                    diagTitle = "Проверка OCR"
+                    diagReport = full
+                    onnxStatus = full.lineSequence().map { it.trim() }
+                        .filter { it.startsWith("Сессии ONNX") || it.startsWith("Распознавание") ||
+                            it.startsWith("ПРОЦЕСС") || it.startsWith("ОШИБКА") }
+                        .joinToString(" · ")
+                        .ifBlank { full.lineSequence().firstOrNull()?.trim() ?: "неизвестно" }
                 }
             }
 
@@ -497,8 +504,8 @@ object OcrQueueScreen : Screen() {
                 diagBusy = true
                 diagScope.launch {
                     diagTitle = "Проверка OCR"
-                    diagReport = runCatching { eu.kanade.tachiyomi.data.ocr.OcrDiagnostics.report(diagContext) }
-                        .getOrElse { "Не удалось собрать отчёт: ${it.message}" }
+                    // В отдельном процессе: нативное падение ONNX не уронит приложение.
+                    diagReport = eu.kanade.tachiyomi.data.ocr.OcrDiagnostics.runProbe(diagContext)
                     onnxStatus = eu.kanade.tachiyomi.data.ocr.OcrDiagnostics.onnxStatus(diagContext)
                     diagBusy = false
                 }

@@ -919,8 +919,7 @@ private fun OcrPresetsTab() {
             .clickable(enabled = !ocrDiagBusy) {
                 ocrDiagBusy = true
                 ocrDiagScope.launch {
-                    val report = runCatching { eu.kanade.tachiyomi.data.ocr.OcrDiagnostics.report(ocrDiagContext) }
-                        .getOrElse { "Не удалось собрать отчёт: ${it.message}" }
+                    val report = eu.kanade.tachiyomi.data.ocr.OcrDiagnostics.runProbe(ocrDiagContext)
                     ocrDiagReport = report
                     ocrDiagBusy = false
                 }

@@ -254,7 +254,12 @@ dependencies {
     implementation(libs.commons.compress)
     // KOMA-читалка: CBR-архивы, локальный OCR (ML Kit + ONNX), детектор строк
     implementation(libs.junrar)
-    implementation(libs.onnxruntime.mobile)
+    // ПОЛНАЯ сборка ONNX Runtime, а не onnxruntime-mobile.
+    // Mobile-сборка идёт с урезанным набором операторов (109 штук, без
+    // BatchNormalization/HardSwish/Constant): любая модель вне списка либо не
+    // открывается, либо роняет процесс нативно, без Java-трейса. На этом уже
+    // обожглись дважды, поэтому здесь 17 МБ вместо 3.6 — зато без сюрпризов.
+    implementation(libs.onnxruntime.android)
     implementation(libs.mlkit.text.recognition)
     implementation(libs.mlkit.text.recognition.japanese)
     implementation(libs.xz)
