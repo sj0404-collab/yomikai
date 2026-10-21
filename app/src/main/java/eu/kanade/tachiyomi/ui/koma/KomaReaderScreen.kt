@@ -215,9 +215,10 @@ private fun PageImage(path:String,engine:KomaOcrEngine,vertical:Boolean,result:P
     var scale by remember(path){mutableFloatStateOf(1f)}
     var offset by remember(path){mutableStateOf(Offset.Zero)}
     LaunchedEffect(path,retry){try{bitmap=withContext(Dispatchers.IO){engine.bitmap(path)}}catch(e:Throwable){error=e.message ?: "Не удалось открыть страницу"}}
-    // Без этого битмап страницы жил до конца чтения: в вебтуне на 40 страниц
-    // это гигабайты и гарантированный вылет по памяти.
-    DisposableEffect(path){onDispose{bitmap?.let { if(!it.isRecycled) it.recycle() };bitmap=null}}
+    // Битмап НЕ освобождаем вручную: recycle() во время отрисовки даёт
+    // «Canvas: trying to use a recycled bitmap» — падение рендер-потока.
+    // Память ограничиваем на входе (потолок 10 Мпкс, RGB_565), а сборщик
+    // забирает кадр, как только страница уходит из композиции.
     val b=bitmap
     if(b==null) Box(Modifier.fillMaxWidth().then(if(vertical)Modifier.height(320.dp)else Modifier.fillMaxHeight()),contentAlignment=Alignment.Center){if(error==null)CircularProgressIndicator(color=Orange)else TextButton(onClick={error=null;retry++}){Text("Не удалось открыть. Повторить")}}
     else BoxWithConstraints(Modifier.fillMaxWidth().then(if(vertical)Modifier.aspectRatio(b.width.toFloat()/b.height)else Modifier.fillMaxHeight()).clip(RoundedCornerShape(0.dp)),contentAlignment=Alignment.Center) {

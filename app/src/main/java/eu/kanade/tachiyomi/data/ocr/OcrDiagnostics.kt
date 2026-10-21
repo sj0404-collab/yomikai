@@ -52,6 +52,26 @@ object OcrDiagnostics {
         runCatching { File(context.filesDir, BREADCRUMB_FILE).delete() }
     }
 
+    private const val ONNX_STATUS_FILE = "onnx_status.txt"
+
+    /**
+     * Проверка ОДНОГО факта: поднимаются ли сессии ONNX с моделями из APK.
+     * Запускается в фоне при старте, поэтому состояние видно в настройках без
+     * нажатия кнопки — и его достаточно, чтобы понять «ONNX не работает».
+     */
+    suspend fun preflight(context: Context): String {
+        // Саму проверку делает модуль data (движок там internal): из app видно
+        // только готовый статус одной строкой.
+        val result = mihon.data.ocr.OcrSelfCheck.status(context)
+        runCatching { File(context.filesDir, ONNX_STATUS_FILE).writeText("${timestamp()} $result") }
+        return result
+    }
+
+    /** Последний результат preflight (или «ещё не проверялся»). */
+    fun onnxStatus(context: Context): String =
+        runCatching { File(context.filesDir, ONNX_STATUS_FILE).takeIf { it.isFile }?.readText() }.getOrNull()
+            ?: "ещё не проверялся — откройте приложение ещё раз"
+
     /** Полный отчёт: устройство, движки, последнее падение, след действий. */
     suspend fun report(context: Context): String {
         val runtime = Runtime.getRuntime()
