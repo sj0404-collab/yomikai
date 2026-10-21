@@ -14,7 +14,7 @@
     служебные слова, без которых не делятся слипшиеся прогоны («ЗАЭТИГОДЫЯ»).
 
 Результат — один бинарный ресурс `data/src/main/resources/ru_words.bin`:
-заголовок "RUW1", int32 LE — количество, далее int32 LE — отсортированные
+заголовок "RUW1", int32 big-endian — количество, далее так же — отсортированные
 хеши FNV-1a всех форм в нижнем регистре. Никаких Kotlin-файлов: 3 млн
 строковых литералов раздували DEX на ~30 МБ и собирались в HashSet из 3 млн
 строк при первом распознавании (OOM на телефоне).
@@ -140,8 +140,9 @@ def write_binary(repo, forms):
     path = os.path.join(out_dir, BINARY_NAME)
     with open(path, "wb") as handle:
         handle.write(b"RUW1")
-        handle.write(struct.pack("<i", len(hashes)))
-        handle.write(struct.pack(f"<{len(hashes)}i", *hashes))
+        # Big-endian: Kotlin читает файл обычным DataInputStream.
+        handle.write(struct.pack(">i", len(hashes)))
+        handle.write(struct.pack(f">{len(hashes)}i", *hashes))
     return len(hashes)
 
 

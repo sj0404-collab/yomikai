@@ -25,15 +25,16 @@ import java.util.Locale
  * возрастанию. Память — 12 МБ примитивов вместо гигабайта объектов, поиск —
  * бинарный, словарь не создаёт ни одной строки.
  *
- * Формат `ru_words.bin`: `"RUW1"`, int32 LE — количество, далее int32 LE —
- * хеши по возрастанию. Хеш — FNV-1a по UTF-16 code units формы в нижнем
+ * Формат `ru_words.bin`: `"RUW1"`, int32 big-endian — количество, далее
+ * int32 big-endian — хеши по возрастанию (big-endian, потому что читаем
+ * обычным `DataInputStream`: он не умеет иначе). Хеш — FNV-1a по UTF-16 code units формы в нижнем
  * регистре; 3 млн значений в 2^32 дают ~0.07 % ложных срабатываний, для
  * «разрешить поставить пробел» это безвредно.
  */
 object RuWordList {
 
     private const val RESOURCE = "ru_words.bin"
-    private const val MAGIC = 0x31575552 // "RUW1" в little-endian
+    private const val MAGIC = 0x52555731 // "RUW1", как его читает DataInputStream
 
     /** FNV-1a offset basis 0x811C9DC5. */
     private const val FNV_OFFSET = -0x7EE3623B
