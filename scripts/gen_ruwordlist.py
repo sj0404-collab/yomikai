@@ -150,12 +150,15 @@ def signed_int(value):
 
 
 def fnv1a(word, casefold=False):
-    """FNV-1a по UTF-16 code units — ровно как в RuWordList.hash()."""
+    """FNV-1a по code units — ровно как в RuWordList.hash().
+
+    Русские формы целиком в BMP, поэтому code point == UTF-16 code unit.
+    """
     if casefold:
         word = word.lower()
     h = 2166136261
-    for unit in word.encode("utf-16-le").decode("utf-16-le"):
-        h ^= ord(unit)
+    for ch in word:
+        h ^= ord(ch)
         h = (h * 0x01000193) & 0xFFFFFFFF
     return h
 
