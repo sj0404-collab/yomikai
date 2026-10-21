@@ -99,7 +99,16 @@ internal class KomaOnnxOcrEngine(
         return recognizeRegions(image).joinToString("\n") { it.text }
     }
 
-    override suspend fun recognizeLine(image: Bitmap): String = withContext(Dispatchers.Default) {
+    override suspend fun recognizeLine(image: Bitmap): String = try {
+        recognizeLineUnsafe(image)
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        logcat(LogPriority.WARN, e) { "KOMA OCR: строка не распознана" }
+        ""
+    }
+
+    private suspend fun recognizeLineUnsafe(image: Bitmap): String = withContext(Dispatchers.Default) {
         mutex.withLock {
             require(!image.isRecycled) { "Input bitmap is recycled" }
             ensureRec()
@@ -108,7 +117,16 @@ internal class KomaOnnxOcrEngine(
     }
 
     /** Рамки найденного текста в нормализованных координатах страницы. */
-    suspend fun detectRegions(image: Bitmap): List<OcrBoundingBox> = withContext(Dispatchers.Default) {
+    suspend fun detectRegions(image: Bitmap): List<OcrBoundingBox> = try {
+        detectRegionsUnsafe(image)
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        logcat(LogPriority.WARN, e) { "KOMA OCR: детектор не ответил" }
+        emptyList()
+    }
+
+    private suspend fun detectRegionsUnsafe(image: Bitmap): List<OcrBoundingBox> = withContext(Dispatchers.Default) {
         mutex.withLock {
             require(!image.isRecycled) { "Input bitmap is recycled" }
             ensureDet()
@@ -138,6 +156,20 @@ internal class KomaOnnxOcrEngine(
      * отбрасываются по тексту и близости верхней границы.
      */
     suspend fun recognizeRegions(image: Bitmap): List<KomaRegion> = withContext(Dispatchers.Default) {
+        try {
+            recognizeRegionsUnsafe(image)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            // Движок не должен ронять читалку: битая модель, нехватка памяти,
+            // отсутствующий словарь — всё это превращается в «текста нет», и
+            // авточтение честно остановится по счётчику пустых кадров.
+            logcat(LogPriority.WARN, e) { "KOMA OCR: страница не распознана" }
+            emptyList()
+        }
+    }
+
+    private suspend fun recognizeRegionsUnsafe(image: Bitmap): List<KomaRegion> = withContext(Dispatchers.Default) {
         mutex.withLock {
             require(!image.isRecycled) { "Input bitmap is recycled" }
             ensureDet()
