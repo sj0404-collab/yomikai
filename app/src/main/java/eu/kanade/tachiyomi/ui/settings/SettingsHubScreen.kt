@@ -919,7 +919,7 @@ private fun OcrPresetsTab() {
             .clickable(enabled = !ocrDiagBusy) {
                 ocrDiagBusy = true
                 ocrDiagScope.launch {
-                    val report = runCatching { mihon.data.ocr.OcrDiagnostics.report(ocrDiagContext) }
+                    val report = runCatching { eu.kanade.tachiyomi.data.ocr.OcrDiagnostics.report(ocrDiagContext) }
                         .getOrElse { "Не удалось собрать отчёт: ${it.message}" }
                     ocrDiagReport = report
                     ocrDiagBusy = false
