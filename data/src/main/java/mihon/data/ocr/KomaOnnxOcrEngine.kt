@@ -304,6 +304,12 @@ internal class KomaOnnxOcrEngine(
         rec = null
     }
 
+    companion object {
+        const val DET_PATH = "koma_ocr/det.onnx"
+        const val REC_PATH = "koma_ocr/rec.onnx"
+        const val DICT_PATH = "koma_ocr/dict.txt"
+    }
+
     /** Строка, найденная детектором: текст и рамка в долях картинки. */
     data class Region(
         val text: String,
