@@ -42,12 +42,11 @@ dependencies {
     implementation(libs.androidx.sqlite.bundled)
     implementation(libs.litert)
     // KOMA-путь кириллицы: ONNX Runtime + PP-OCRv4 det / PP-OCRv5 East Slavic rec.
-    implementation(libs.onnxruntime.android)
+    implementation(libs.onnxruntime.mobile)
     implementation(libs.mlkit.text.recognition)
-    // Настоящий Tesseract с русской моделью: APK без него ввёл полем
-    // «Tesseract», который молча уходил в PP-OCR.
-    implementation(libs.tesseract4android)
-
+    // Tesseract убран из сборки: libtesseract + libleptonica стоили ~6 МБ в APK,
+    // а языковые данные (~8 МБ) приходилось качать отдельным пакетом. Кириллицу
+    // читает KOMA/ONNX, латиницу и японский — ML Kit, оба вкомпилированы.
 
     implementation(libs.anki.android)
     implementation(libs.hoshidicts)

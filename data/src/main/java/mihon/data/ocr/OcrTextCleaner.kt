@@ -465,7 +465,7 @@ object OcrTextCleaner {
             OcrTextCleanerStats.userDictHits++
             return true
         }
-        return up in RuWordList.upper
+        return RuWordList.contains(up)
     }
 
     fun userDictionaryCoverage(text: String): Float {

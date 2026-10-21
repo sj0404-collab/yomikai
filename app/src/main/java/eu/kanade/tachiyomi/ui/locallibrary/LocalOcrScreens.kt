@@ -150,12 +150,23 @@ private fun OptionsBlock(
     }
 }
 
+/**
+ * Движки, которые реально можно выбрать. Tesseract убран из сборки: его
+ * нативные библиотеки стоили ~6 МБ, а буквы жили отдельным пакетом на 8 МБ,
+ * который приходилось качать. Кириллицу теперь читает KOMA/ONNX, модели
+ * которого вкомпилированы в APK. Старое сохранённое значение настройки
+ * мигрирует в [OcrModel.CYRILLIC] при старте.
+ */
+internal val SELECTABLE_OCR_MODELS: List<OcrModel> = OcrModel.entries.filter { it != OcrModel.TESSERACT }
+
 internal val ENGINE_TITLES = mapOf(
     OcrModel.CYRILLIC to "Кириллица (офлайн, точно)",
     OcrModel.MLKIT to "Google ML Kit (офлайн, встроена в APK)",
     OcrModel.FAST to "Быстрый (офлайн, для ARM)",
     OcrModel.LEGACY to "Старый (медленно)",
-    OcrModel.TESSERACT to "Tesseract (полный офлайн)",
+    // Движка Tesseract в сборке нет (нативные библиотеки убраны ради размера),
+    // в списках выбора он скрыт — см. SELECTABLE_OCR_MODELS.
+    OcrModel.TESSERACT to "KOMA / ONNX (замена Tesseract)",
     OcrModel.GLENS to "Google Lens (онлайн)",
     OcrModel.ZEN_FREE to "Space Bunny Free (OpenCode Zen, онлайн)",
     OcrModel.GOOGLE to "Gemini (онлайн, по ключу)",
@@ -169,7 +180,7 @@ private fun EngineOptions(
     onSelect: (OcrModel) -> Unit,
 ) {
     SectionTitle("Технология распознавания")
-    OcrModel.entries.forEach { model ->
+    SELECTABLE_OCR_MODELS.forEach { model ->
         Row(
             modifier = Modifier
                 .fillMaxWidth()

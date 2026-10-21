@@ -375,6 +375,9 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
                 // Только проверка: модели в APK. Никаких сетевых загрузок на
                 // старте, иначе отсутствие интернета = падение приложения.
                 mihon.data.ocr.OcrModelFiles.resolve(applicationContext, "koma_ocr/det.onnx")
+                // Словарь словоформ (12 МБ хешей) читаем заранее в этом же фоне:
+                // иначе первая же страница ждала бы разбора файла.
+                mihon.data.ocr.RuWordList.warmUp()
             }.onFailure {
                 logcat(LogPriority.WARN, it) { "OCR bundled models check failed" }
             }

@@ -881,31 +881,19 @@ private fun OcrPresetsTab() {
 
     HubOptions(
         title = "Движок распознавания",
-        options = OcrModel.entries.map { it to (ENGINE_TITLES[it] ?: it.name) },
+        options = eu.kanade.tachiyomi.ui.locallibrary.SELECTABLE_OCR_MODELS.map { it to (ENGINE_TITLES[it] ?: it.name) },
         selected = model,
         onSelect = { picked ->
-            prefs.ocrModel().set(picked)
-            // У Tesseract нативная библиотека в APK, а буквы живут отдельными
-            // файлами. Без них движок молча отдаёт пустоту, поэтому при выборе
-            // тянем языковые данные сразу, а не заставляем читателя гадать.
-            if (picked == OcrModel.TESSERACT) {
-                val context = ocrSettingsContext
-                val scope = ocrSettingsScope
-                val ttsLangs = prefs.tessLangs().get()
-                scope.launch {
-                    val dir = eu.kanade.tachiyomi.data.ocr.OcrModelDownloader.ensureTesseractData(
-                        context,
-                        ttsLangs.split('+', ',').map { it.trim() }.filter { it.isNotEmpty() },
-                    )
-                    if (dir == null) {
-                        android.widget.Toast.makeText(
-                            context,
-                            "Не удалось скачать языковые данные Tesseract",
-                            android.widget.Toast.LENGTH_LONG,
-                        ).show()
-                    }
-                }
+            // Tesseract-движка в сборке нет (−6 МБ нативных библиотек, ещё 8 МБ
+            // языковых данных качались отдельно). Старые значения настройки —
+            // прозрачные алиасы KOMA/ONNX, модели которого вкомпилированы в APK,
+            // поэтому никаких сетевых загрузок при выборе не осталось.
+            val target = if (picked == OcrModel.TESSERACT || picked == OcrModel.LEGACY || picked == OcrModel.FAST) {
+                OcrModel.CYRILLIC
+            } else {
+                picked
             }
+            prefs.ocrModel().set(target)
         },
 
     )
@@ -1289,7 +1277,7 @@ private fun BooksPageTab() {
     ) { prefs.bookPageOcr().set(it) }
     HubOptions(
         title = "Движок для книг",
-        options = OcrModel.entries.map { it to (ENGINE_TITLES[it] ?: it.name) },
+        options = eu.kanade.tachiyomi.ui.locallibrary.SELECTABLE_OCR_MODELS.map { it to (ENGINE_TITLES[it] ?: it.name) },
         selected = bookEngine,
         onSelect = { prefs.bookOcrEngine().set(it) },
     )
@@ -1484,7 +1472,7 @@ private fun OtherOverlayTab() {
     if (ownEngine) {
         HubOptions(
             title = "Движок оверлея",
-            options = OcrModel.entries.map { it to (ENGINE_TITLES[it] ?: it.name) },
+            options = eu.kanade.tachiyomi.ui.locallibrary.SELECTABLE_OCR_MODELS.map { it to (ENGINE_TITLES[it] ?: it.name) },
             selected = appEngine,
             onSelect = { prefs.appOcrEngine().set(it) },
         )
