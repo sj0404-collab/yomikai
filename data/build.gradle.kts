@@ -42,7 +42,12 @@ dependencies {
     implementation(libs.androidx.sqlite.bundled)
     implementation(libs.litert)
     // KOMA-путь кириллицы: ONNX Runtime + PP-OCRv4 det / PP-OCRv5 East Slavic rec.
-    implementation(libs.onnxruntime.mobile)
+    // ПОЛНАЯ сборка ONNX Runtime, а не onnxruntime-mobile.
+    // Mobile-сборка идёт с урезанным набором операторов (109 штук, без
+    // BatchNormalization/HardSwish/Constant): любая модель вне списка либо не
+    // открывается, либо роняет процесс нативно, без Java-трейса. На этом уже
+    // обожглись дважды, поэтому здесь 17 МБ вместо 3.6 — зато без сюрпризов.
+    implementation(libs.onnxruntime.android)
     implementation(libs.mlkit.text.recognition)
     // Tesseract убран из сборки: libtesseract + libleptonica стоили ~6 МБ в APK,
     // а языковые данные (~8 МБ) приходилось качать отдельным пакетом. Кириллицу

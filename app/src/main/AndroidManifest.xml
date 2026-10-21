@@ -240,6 +240,14 @@
             android:name=".data.notification.NotificationReceiver"
             android:exported="false" />
 
+        <!-- Проверка OCR в отдельном процессе: нативное падение ONNX не должно
+             закрывать приложение. Метки START/DONE в filesDir показывают, где
+             именно упало (см. OcrProbeService). -->
+        <service
+            android:name=".data.ocr.OcrProbeService"
+            android:exported="false"
+            android:process=":ocrprobe" />
+
         <service
             android:name=".extension.util.ExtensionInstallService"
             android:exported="false"
