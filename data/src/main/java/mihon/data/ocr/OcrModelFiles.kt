@@ -36,6 +36,10 @@ object OcrModelFiles {
         "koma_ocr/det.onnx" to "detection.onnx",
         "koma_ocr/rec.onnx" to "cyrillic.onnx",
         "koma_ocr/dict.txt" to "cyrillic.txt",
+        // Крошечная свёртка (1 КБ) для проверки: жив ли ONNX Runtime ВООБЩЕ,
+        // независимо от моделей KOMA. Отличает «падает рантайм/процессор» от
+        // «падают именно наши модели или конкретный размер входа».
+        "koma_ocr/selftest.onnx" to "selftest.onnx",
     )
 
     /** Maps asset-style paths to flat file names used in external folders and model packages. */

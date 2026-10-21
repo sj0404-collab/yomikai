@@ -71,19 +71,16 @@ object OcrDiagnostics {
      * DONE, — это нативное падение: приложение при этом остаётся живым, а в
      * отчёте так и сказано (иначе пользователь видел «простой вылет»).
      */
-    suspend fun runProbe(context: Context, timeoutMs: Long = 25_000): String {
+    suspend fun runProbe(context: Context, timeoutMs: Long = 40_000): String {
         val file = File(context.filesDir, OcrProbeService.PROBE_FILE)
         OcrProbeService.start(context)
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             kotlinx.coroutines.delay(400)
-            val text = runCatching { file.takeIf { it.isFile }?.readText() }.getOrNull().orEmpty()
+            val text = read(file)
             if (text.contains("\nDONE\n")) {
                 val report = text.substringAfter("\nDONE\n").trim()
-                // Шаги 3–6 — это уже вывод моделей. Ошибка на любом из них значит,
-                // что ONNX на этом устройстве не годится: кириллицу читаем
-                // Tesseract'ом, а не ловим падение на каждой странице.
-                val failed = listOf("3/6", "4/6", "5/6", "6/6").any { step ->
+                val failed = INFERENCE_STEPS.any { step ->
                     report.lineSequence().any { it.contains(step) && it.contains("ОШИБКА") }
                 }
                 mihon.data.ocr.OcrEngineHealth.setOnnx(
@@ -97,26 +94,60 @@ object OcrDiagnostics {
                 return "Не удалось запустить проверку в отдельном процессе:\n" + text.substringAfter('\n').trim()
             }
         }
-        val text = runCatching { file.takeIf { it.isFile }?.readText() }.getOrNull().orEmpty()
-        if (text.startsWith("START")) {
-            // Процесс проверки умер — ONNX на этом устройстве не работает.
-            mihon.data.ocr.OcrEngineHealth.setOnnx(
-                context,
-                mihon.data.ocr.OcrEngineHealth.State.DEAD,
-                "проверка упала нативно (без DONE)",
-            )
-        }
-        return if (text.startsWith("START")) {
-            "ONNX НЕ РАБОТАЕТ НА ЭТОМ УСТРОЙСТВЕ (процесс проверки умер без DONE).\n" +
-                "Кириллица автоматически переключена на Tesseract — он в APK и работает всегда.\n" +
-                "Это значит, что падает именно ONNX Runtime на этом устройстве, а не код приложения.\n" +
-                "Приложение при этом осталось живым — проверка шла в отдельном процессе.\n\n" +
-                "Последние шаги OCR:\n" + (breadcrumbs(context)?.takeLast(1200) ?: "нет записи")
-        } else {
-            "Проверка не завершилась за ${timeoutMs / 1000} с (процесс не ответил).\n" +
+
+        val text = read(file)
+        if (!text.startsWith("START")) {
+            return "Проверка не завершилась за ${timeoutMs / 1000} с (процесс не ответил).\n" +
                 "Последние шаги OCR:\n" + (breadcrumbs(context) ?: "нет записи")
         }
+
+        // Процесс проверки умер, не дописав DONE: нативное падение. Из
+        // дописанных шагов видно, на каком именно — и это разные диагнозы.
+        val steps = text.lineSequence().filter { it.startsWith("STEP ") }.map { it.removePrefix("STEP ") }.toList()
+        val lastStarted = steps.lastOrNull { it.endsWith(": начат") || it.endsWith(": начата") || it.endsWith(": начаты") }
+            ?.substringBefore(':') ?: "неизвестно"
+        val passed = steps.filter { it.endsWith(": OK") }
+        val diagnosis = when {
+            lastStarted.startsWith("0/7") ->
+                "Падает САМ ONNX Runtime на крошечной модели, которая не имеет отношения к KOMA.\n" +
+                    "Значит дело не в моделях и не в размере входа: этот ONNX Runtime на вашем\n" +
+                    "процессоре не работает вообще (обычно это неподдерживаемая инструкция CPU)."
+            lastStarted.startsWith("2/7") ->
+                "Падают сессии моделей KOMA (открытие графа)."
+            lastStarted.startsWith("3/7") ->
+                "Падает вывод детектора на синтетическом входе 64x64 — то есть размер входа\n" +
+                    "действительно имеет значение (ваша версия)."
+            lastStarted.startsWith("4/7") ->
+                "Открытие сессий и вход 64x64 прошли, падение — на РАБОЧЕМ размере детектора\n" +
+                    "с настоящими пикселями. Маленький вход тут не виноват."
+            lastStarted.startsWith("5/7") -> "Падает распознаватель на настоящих пикселях."
+            lastStarted.startsWith("6/7") -> "Падает полное распознавание страницы."
+            else -> "Место падения не определено."
+        }
+        mihon.data.ocr.OcrEngineHealth.setOnnx(
+            context,
+            mihon.data.ocr.OcrEngineHealth.State.DEAD,
+            "нативное падение на шаге $lastStarted",
+        )
+        return buildString {
+            appendLine("ONNX УПАЛ НАТИВНО на шаге $lastStarted (без DONE).")
+            appendLine()
+            appendLine(diagnosis)
+            appendLine()
+            appendLine("Прошли шаги: " + passed.joinToString(", ").ifBlank { "ни одного" })
+            appendLine("Приложение осталось живым — проверка шла в отдельном процессе.")
+            appendLine("Кириллица уже читается Tesseract (рус. модель в APK): падений на страницах не будет.")
+            appendLine()
+            appendLine("Журнал шагов:")
+            appendLine(steps.joinToString("\n"))
+        }
     }
+
+    /** Шаги, где считается настоящий вывод моделей: ошибка на любом = ONNX не годится. */
+    private val INFERENCE_STEPS = listOf("3/7", "4/7", "5/7", "6/7")
+
+    private fun read(file: File): String =
+        runCatching { file.takeIf { it.isFile }?.readText() }.getOrNull().orEmpty()
 
     /** Последний результат preflight (или «ещё не проверялся»). */
     fun onnxStatus(context: Context): String =
@@ -124,7 +155,7 @@ object OcrDiagnostics {
             ?: "ещё не проверялся — откройте приложение ещё раз"
 
     /** Полный отчёт: устройство, движки, последнее падение, след действий. */
-    suspend fun report(context: Context): String {
+    suspend fun report(context: Context, progress: (String) -> Unit = {}): String {
         val runtime = Runtime.getRuntime()
         val version = runCatching { "${info(context).versionName} (${versionCode(context)})" }
             .getOrDefault("?")
@@ -137,7 +168,7 @@ object OcrDiagnostics {
             )
             appendLine("ML Kit (латиница/японский): есть в APK")
             appendLine()
-            appendLine(safeRun { mihon.data.ocr.OcrSelfCheck.run(context) })
+            appendLine(safeRun { mihon.data.ocr.OcrSelfCheck.run(context, progress) })
             appendLine(safeRun { KomaOcrEngine(context).let { engine -> try { engine.selfTest() } finally { engine.close() } } })
             appendLine()
             val crash = lastCrash(context)

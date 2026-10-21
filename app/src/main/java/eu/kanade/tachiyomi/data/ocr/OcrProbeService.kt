@@ -34,9 +34,14 @@ class OcrProbeService : Service() {
             val file = File(filesDir, PROBE_FILE)
             // Метка «начали» пишется ДО любой работы с нативным кодом.
             file.writeText("START ${System.currentTimeMillis()}\n")
-            val report = runCatching { OcrDiagnostics.report(this@OcrProbeService) }
-                .getOrElse { "ОШИБКА проверки: ${it::class.simpleName}: ${it.message}" }
-            file.writeText("START ${System.currentTimeMillis()}\nDONE\n$report\n")
+            // Каждый шаг дописывается сразу: если нативный слой убьёт процесс,
+            // на диске останутся все пройденные шаги и последний начатый.
+            val report = runCatching {
+                OcrDiagnostics.report(this@OcrProbeService) { step ->
+                    runCatching { file.appendText("STEP $step\n") }
+                }
+            }.getOrElse { "ОШИБКА проверки: ${it::class.simpleName}: ${it.message}" }
+            file.writeText("START\nDONE\n$report\n")
             stopSelf()
         }
         return START_NOT_STICKY
