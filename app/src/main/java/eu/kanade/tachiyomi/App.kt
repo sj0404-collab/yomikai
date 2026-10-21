@@ -91,16 +91,6 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         super<Application>.onCreate()
         patchInjekt()
 
-        // Процесс проверки OCR (:ocrprobe) поднимается ради одной задачи:
-        // открыть модели и прочитать тестовую картинку. Остальная инициализация
-        // приложения там не нужна — и опасна: любая её ошибка выглядела бы как
-        // «проверка OCR упала».
-        if (currentProcessName().endsWith(":ocrprobe")) {
-            Injekt.importModule(PreferenceModule(this))
-            Injekt.importModule(AppModule(this))
-            Injekt.importModule(DomainModule())
-            return
-        }
         // Firebase/Telemetry инициализируется в фоне: на главном потоке при
         // доступном интернете он ходил в сеть и заметно тормозил холодный старт
         // (без интернетаинициализация мгновенно падала в fallback — поэтому
@@ -396,12 +386,6 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
     }
 
     /** Имя процесса без API-зависимостей (getProcessName есть только с 28). */
-    private fun currentProcessName(): String {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) return getProcessName()
-        return runCatching {
-            java.io.File("/proc/self/cmdline").readText().trimEnd('\u0000')
-        }.getOrDefault(packageName)
-    }
 
     private fun setupNotificationChannels() {
         try {

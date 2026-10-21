@@ -113,8 +113,6 @@ class OcrRepositoryImpl(
     /** KOMA-путь кириллицы (ONNX). Держим рядом с LiteRT-движком, а не вместо. */
     private var komaEngine: KomaOnnxOcrEngine? = null
 
-    /** Tesseract: страховочный движок кириллицы, когда ONNX не живёт на устройстве. */
-    private var tesseractEngine: TesseractOcrEngine? = null
     private var mlKitEngine: MlKitOcrEngine? = null
 
     private var legacyEngine: LegacyOcrEngine? = null
@@ -357,18 +355,12 @@ class OcrRepositoryImpl(
     private fun engineFor(type: EngineType): OcrEngine {
         return when (type) {
             EngineType.CYRILLIC -> {
-                // Кириллица: KOMA/ONNX, пока он жив на этом устройстве. Если
-                // проверка в отдельном процессе показала, что ONNX убивает
-                // процесс (нативное падение на выводе модели), работаем
-                // Tesseract'ом — он всегда работает и модель у него в APK.
-                if (OcrEngineHealth.useTesseractForCyrillic(context, userWantsTesseract())) {
-                    tesseractEngine ?: newTesseract().also { tesseractEngine = it }
-                } else {
-                    komaEngine ?: KomaOnnxOcrEngine(context).also { komaEngine = it }
-                }
+                // Кириллица — движок из KOMA, дословно (PP-OCRv4 det + CTC
+                // PP-OCRv5). Модели вкомпилированы в APK, сеть не нужна.
+                komaEngine ?: KomaOnnxOcrEngine(context).also { komaEngine = it }
             }
-            // Явный выбор Tesseract: русская модель лежит в APK (assets/tessdata).
-            EngineType.TESSERACT -> tesseractEngine ?: newTesseract().also { tesseractEngine = it }
+            // Старое значение настройки ведёт в тот же движок KOMA.
+            EngineType.TESSERACT -> komaEngine ?: KomaOnnxOcrEngine(context).also { komaEngine = it }
 
             EngineType.MLKIT -> {
                 mlKitEngine ?: MlKitOcrEngine().also { mlKitEngine = it }
@@ -408,17 +400,6 @@ class OcrRepositoryImpl(
             }
         }
     }
-
-    /** Пользователь явно выбрал Tesseract в настройках. */
-    private fun userWantsTesseract(): Boolean = when (ocrPreferences.ocrModel().get()) {
-        OcrModel.TESSERACT -> true
-        else -> false
-    }
-
-    private fun newTesseract(): TesseractOcrEngine = TesseractOcrEngine(
-        dataDir = TesseractData.ensure(context),
-        prefs = ocrPreferences,
-    )
 
     private fun detectionEngine(): DetOcrEngine {
         return detEngine ?: (
@@ -1348,8 +1329,6 @@ class OcrRepositoryImpl(
             detEngine?.close()
             detEngine = null
 
-            tesseractEngine?.close()
-            tesseractEngine = null
         }
     }
 }
