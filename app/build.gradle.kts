@@ -252,6 +252,11 @@ dependencies {
     // не осталось ни одного импорта, поэтому локальный jar больше не нужен и
     // отсутствие файла не должно ломать сборку.
     implementation(libs.commons.compress)
+    // KOMA-читалка: CBR-архивы и локальное OCR-распознавание внутри приложения
+    implementation(libs.junrar)
+    implementation(libs.onnxruntime.android)
+    implementation(libs.mlkit.text.recognition)
+    implementation(libs.mlkit.text.recognition.japanese)
     implementation(libs.xz)
     baselineProfile(projects.baselineProfile)
 
