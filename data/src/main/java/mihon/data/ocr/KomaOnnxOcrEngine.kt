@@ -81,6 +81,15 @@ internal class KomaOnnxOcrEngine(
         }
     }
 
+    /** Сессия детектора для самопроверки (шаги 3–4). */
+    internal fun detSession(): OrtSession = ensureDet()
+
+    /** Сессия распознавателя для самопроверки (шаг 5). */
+    internal fun recSession(): OrtSession = ensureRec()
+
+    /** Окружение ONNX для самопроверки: тензоры создаются на нём же. */
+    internal val environment: OrtEnvironment get() = env
+
     private fun ensureDet(): OrtSession = det ?: run {
         OcrBreadcrumbs.mark(context, "onnx: открываю детектор")
         session(DET_PATH).also {
