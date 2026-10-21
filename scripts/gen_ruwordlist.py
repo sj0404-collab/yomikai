@@ -14,8 +14,8 @@
     служебные слова, без которых не делятся слипшиеся прогоны («ЗАЭТИГОДЫЯ»).
 
 Результат — один бинарный ресурс `data/src/main/resources/ru_words.bin`:
-заголовок "RUW1", int32 big-endian — количество, далее так же — отсортированные
-хеши FNV-1a всех форм в нижнем регистре. Никаких Kotlin-файлов: 3 млн
+заголовок "RUW2", int32 big-endian — количество, далее дельты
+отсортированных хешей FNV-1a (нижний регистр) в unsigned LEB128. Никаких Kotlin-файлов: 3 млн
 строковых литералов раздували DEX на ~30 МБ и собирались в HashSet из 3 млн
 строк при первом распознавании (OOM на телефоне).
 
@@ -139,11 +139,27 @@ def write_binary(repo, forms):
     hashes = sorted({signed_int(fnv1a(form, casefold=True)) for form in forms})
     path = os.path.join(out_dir, BINARY_NAME)
     with open(path, "wb") as handle:
-        handle.write(b"RUW1")
+        handle.write(b"RUW2")
         # Big-endian: Kotlin читает файл обычным DataInputStream.
         handle.write(struct.pack(">i", len(hashes)))
-        handle.write(struct.pack(f">{len(hashes)}i", *hashes))
+        handle.write(encode_deltas(hashes))
     return len(hashes)
+
+
+def encode_deltas(hashes):
+    """Сортированные хеши -> unsigned LEB128 дельт по модулю 2^32."""
+    out = bytearray()
+    previous = 0
+    for value in hashes:
+        delta = (value & 0xFFFFFFFF) - previous & 0xFFFFFFFF
+        previous = value & 0xFFFFFFFF
+        while True:
+            chunk = delta & 0x7F
+            delta >>= 7
+            out.append(chunk | (0x80 if delta else 0))
+            if not delta:
+                break
+    return bytes(out)
 
 
 def signed_int(value):
