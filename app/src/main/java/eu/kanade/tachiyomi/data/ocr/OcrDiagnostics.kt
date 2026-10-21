@@ -79,15 +79,36 @@ object OcrDiagnostics {
             kotlinx.coroutines.delay(400)
             val text = runCatching { file.takeIf { it.isFile }?.readText() }.getOrNull().orEmpty()
             if (text.contains("\nDONE\n")) {
-                return text.substringAfter("\nDONE\n").trim()
+                val report = text.substringAfter("\nDONE\n").trim()
+                // Шаги 3–6 — это уже вывод моделей. Ошибка на любом из них значит,
+                // что ONNX на этом устройстве не годится: кириллицу читаем
+                // Tesseract'ом, а не ловим падение на каждой странице.
+                val failed = listOf("3/6", "4/6", "5/6", "6/6").any { step ->
+                    report.lineSequence().any { it.contains(step) && it.contains("ОШИБКА") }
+                }
+                mihon.data.ocr.OcrEngineHealth.setOnnx(
+                    context,
+                    if (failed) mihon.data.ocr.OcrEngineHealth.State.DEAD else mihon.data.ocr.OcrEngineHealth.State.ALIVE,
+                    report.lineSequence().firstOrNull { it.contains("ОШИБКА") },
+                )
+                return report
             }
             if (text.startsWith("FAILED")) {
                 return "Не удалось запустить проверку в отдельном процессе:\n" + text.substringAfter('\n').trim()
             }
         }
         val text = runCatching { file.takeIf { it.isFile }?.readText() }.getOrNull().orEmpty()
+        if (text.startsWith("START")) {
+            // Процесс проверки умер — ONNX на этом устройстве не работает.
+            mihon.data.ocr.OcrEngineHealth.setOnnx(
+                context,
+                mihon.data.ocr.OcrEngineHealth.State.DEAD,
+                "проверка упала нативно (без DONE)",
+            )
+        }
         return if (text.startsWith("START")) {
-            "ПРОЦЕСС ПРОВЕРКИ УПАЛ НАТИВНО (без DONE).\n" +
+            "ONNX НЕ РАБОТАЕТ НА ЭТОМ УСТРОЙСТВЕ (процесс проверки умер без DONE).\n" +
+                "Кириллица автоматически переключена на Tesseract — он в APK и работает всегда.\n" +
                 "Это значит, что падает именно ONNX Runtime на этом устройстве, а не код приложения.\n" +
                 "Приложение при этом осталось живым — проверка шла в отдельном процессе.\n\n" +
                 "Последние шаги OCR:\n" + (breadcrumbs(context)?.takeLast(1200) ?: "нет записи")

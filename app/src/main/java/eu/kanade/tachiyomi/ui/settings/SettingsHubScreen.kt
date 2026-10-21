@@ -895,15 +895,9 @@ private fun OcrPresetsTab() {
         options = eu.kanade.tachiyomi.ui.locallibrary.SELECTABLE_OCR_MODELS.map { it to (ENGINE_TITLES[it] ?: it.name) },
         selected = model,
         onSelect = { picked ->
-            // Tesseract-движка в сборке нет (−6 МБ нативных библиотек, ещё 8 МБ
-            // языковых данных качались отдельно). Старые значения настройки —
-            // прозрачные алиасы KOMA/ONNX, модели которого вкомпилированы в APK,
-            // поэтому никаких сетевых загрузок при выборе не осталось.
-            val target = if (picked == OcrModel.TESSERACT || picked == OcrModel.LEGACY || picked == OcrModel.FAST) {
-                OcrModel.CYRILLIC
-            } else {
-                picked
-            }
+            // LEGACY/FAST — старые японские модели, они сведены к кириллице.
+            // Tesseract теперь самостоятельный выбор (страховочный движок).
+            val target = if (picked == OcrModel.LEGACY || picked == OcrModel.FAST) OcrModel.CYRILLIC else picked
             prefs.ocrModel().set(target)
         },
 
