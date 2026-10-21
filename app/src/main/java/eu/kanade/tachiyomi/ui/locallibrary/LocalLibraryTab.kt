@@ -44,6 +44,7 @@ import eu.kanade.presentation.util.DefaultNavigatorScreenTransition
 import eu.kanade.presentation.util.LocalBackPress
 import eu.kanade.presentation.util.Tab
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
+import eu.kanade.tachiyomi.ui.koma.KomaSection
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.onStart
@@ -115,6 +116,9 @@ data object LocalLibraryTab : Tab {
         // «Книги» (электронные книги любых форматов) или «Настройки» (OCR,
         // голоса, словари). Выбор запоминается.
         var booksMode by remember { mutableStateOf(storagePreferences.booksMode.get()) }
+        // KOMA: комиксы и архивные сканы (CBZ/CBR/PDF) с локальным OCR —
+        // часть того же приложения, отдельной сборки больше нет.
+        var komaSection by remember { mutableStateOf(false) }
         var settingsSection by remember { mutableStateOf(storagePreferences.settingsSection.get()) }
         // Алфавитный указатель: ключ из LibraryIndex.LETTERS или null («все»).
         // Ключ превращается в служебный запрос «#а», который LocalSource
@@ -186,6 +190,7 @@ data object LocalLibraryTab : Tab {
                     onClick = {
                         booksMode = false
                         settingsSection = false
+                        komaSection = false
                         storagePreferences.booksMode.set(false)
                         storagePreferences.settingsSection.set(false)
                     },
@@ -197,6 +202,7 @@ data object LocalLibraryTab : Tab {
                     onClick = {
                         booksMode = true
                         settingsSection = false
+                        komaSection = false
                         storagePreferences.booksMode.set(true)
                         storagePreferences.settingsSection.set(false)
                     },
@@ -204,9 +210,22 @@ data object LocalLibraryTab : Tab {
                     modifier = Modifier.padding(end = 6.dp),
                 )
                 FilterChip(
+                    selected = komaSection,
+                    onClick = {
+                        komaSection = true
+                        booksMode = false
+                        settingsSection = false
+                        storagePreferences.booksMode.set(false)
+                        storagePreferences.settingsSection.set(false)
+                    },
+                    label = { Text("KOMA") },
+                    modifier = Modifier.padding(end = 6.dp),
+                )
+                FilterChip(
                     selected = settingsSection,
                     onClick = {
                         settingsSection = true
+                        komaSection = false
                         storagePreferences.settingsSection.set(true)
                     },
                     label = { Text("Настройки") },
@@ -235,6 +254,7 @@ data object LocalLibraryTab : Tab {
                         }
                     }
                 }
+                komaSection -> KomaSection(onReaderOpen = { booksReaderOpen = it })
                 else -> if (!booksMode) {
             Surface(
                 // Фон шапки обязан совпадать с темой: surfaceVariant давал

@@ -18,6 +18,13 @@
 *.zip binary
 *.7z binary
 *.ttf binary
+*.otf binary
+
+# Neural network models (KOMA OCR) — never normalize line endings
+*.onnx binary
+*.ort binary
+*.tflite binary
+*.bin binary
 *.eot binary
 *.woff binary
 *.pyc binary
