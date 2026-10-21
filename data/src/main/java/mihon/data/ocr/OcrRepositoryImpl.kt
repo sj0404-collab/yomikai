@@ -40,14 +40,6 @@ class OcrRepositoryImpl(
     private val ocrModelPref = preferenceStore.getEnum("pref_ocr_model", OcrModel.CYRILLIC)
     private val useFallbackModelsPref = preferenceStore.getBoolean("pref_use_fallback_models", true)
 
-    /**
-     * Кириллицу можно распознавать двумя путями: прежним (LiteRT, PP-OCRv3 +
-     * верификатор PP-OCRv5) и путём KOMA (ONNX Runtime, детектор PP-OCRv4 +
-     * независимый CTC PP-OCRv5). Второй короче и на устройстве уже показал
-     * себя лучше, но модели другие, поэтому путь включается настройкой, а не
-     * заменой кода: откат — один переключатель.
-     */
-    private val useKomaOnnxPref = preferenceStore.getBoolean("pref_ocr_use_koma_onnx", false)
 
     /**
      * Страница без текста — это картинка, а не сбой движка.
@@ -372,7 +364,9 @@ class OcrRepositoryImpl(
     private fun engineFor(type: EngineType): OcrEngine {
         return when (type) {
             EngineType.CYRILLIC -> {
-                if (useKomaOnnxPref.get()) {
+                // Настройка читается через OcrPreferences: тот же ключ, что
+                // у переключателя в «Настройки → Распознавание».
+                if (ocrPreferences.komaOnnxCyrillic().get()) {
                     komaEngine ?: KomaOnnxOcrEngine(context).also { komaEngine = it }
                 } else {
                     cyrillicEngine ?: CyrillicOcrEngine(
@@ -437,7 +431,7 @@ class OcrRepositoryImpl(
             // Детектор живёт в паке cyrillic_ocr вместе с распознавателями.
             // Пока модели не скачаны (или LiteRT недоступен) — заглушка, и
             // scanLocally честно деградирует на распознавание всей страницы.
-            if (useKomaOnnxPref.get() && komaModelsInstalled()) {
+            if (ocrPreferences.komaOnnxCyrillic().get() && komaModelsInstalled()) {
                 KomaDetOcrEngine { engineFor(EngineType.CYRILLIC) as KomaOnnxOcrEngine }
             } else if (localOcrAvailable() && cyrillicModelsInstalled()) {
                 CyrillicDetOcrEngine { engineFor(EngineType.CYRILLIC) as CyrillicOcrEngine }

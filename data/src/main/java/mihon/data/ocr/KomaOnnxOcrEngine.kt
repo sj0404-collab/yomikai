@@ -61,21 +61,29 @@ internal class KomaOnnxOcrEngine(
         }
     }
 
-    private fun session(path: String, flat: String): OrtSession {
+    private fun session(path: String): OrtSession {
+        // resolve() отдаёт абсолютный путь к файлу во внешней папке моделей:
+        // в APK их нет намеренно, поэтому «нет файла» — это InitializationError,
+        // а не падение на пустом пути.
         val file = OcrModelFiles.resolve(context, path)
-            ?: throw OcrException.InitializationError(IllegalStateException("Модель не установлена: $flat"))
-        val options = OrtSession.SessionOptions()
-        return runCatching {
-            // Два потока: детектор и распознаватель идут последовательно, а
-            // больше потоков на телефоне только греет процессор.
-            options.setIntraOpNumThreads(2)
-            env.createSession(file.absolutePath, options)
-        }.getOrElse { throw OcrException.InitializationError(it) }
+            ?: throw OcrException.InitializationError(
+                IllegalStateException("Модель KOMA не установлена: $path"),
+            )
+        return try {
+            OrtSession.SessionOptions().use { options ->
+                // Два потока: детектор и распознаватель идут последовательно, а
+                // больше потоков на телефоне только греет процессор.
+                options.setIntraOpNumThreads(2)
+                env.createSession(file, options)
+            }
+        } catch (e: Exception) {
+            throw OcrException.InitializationError(e)
+        }
     }
 
-    private fun ensureDet(): OrtSession = det ?: session(DET_PATH, DET_FLAT).also { det = it }
+    private fun ensureDet(): OrtSession = det ?: session(DET_PATH).also { det = it }
 
-    private fun ensureRec(): OrtSession = rec ?: session(REC_PATH, REC_FLAT).also { rec = it }
+    private fun ensureRec(): OrtSession = rec ?: session(REC_PATH).also { rec = it }
 
     suspend fun ensureInitialized() {
         withContext(Dispatchers.Default) {
@@ -195,6 +203,7 @@ internal class KomaOnnxOcrEngine(
     }
 
     /** PP-OCRv4 det: изображение → карта вероятностей → компоненты связности. */
+    @Suppress("UNCHECKED_CAST")
     private fun detectBoxes(bitmap: Bitmap): List<Rect> {
         val ratio = min(1f, DET_LIMIT / max(bitmap.width, bitmap.height).toFloat())
         val w = max(32, (bitmap.width * ratio / 32f).roundToInt() * 32)
@@ -213,7 +222,6 @@ internal class KomaOnnxOcrEngine(
         }
 
         val session = det ?: return emptyList()
-        @Suppress("UNCHECKED_CAST")
         val map = OnnxTensor.createTensor(env, FloatBuffer.wrap(data), longArrayOf(1, 3, h.toLong(), w.toLong())).use { tensor ->
             session.run(mapOf(session.inputNames.first() to tensor)).use { result ->
                 ((result[0].value as Array<Array<Array<FloatArray>>>)[0][0])
@@ -293,6 +301,7 @@ internal class KomaOnnxOcrEngine(
      * CTC-жадный декодер. Вход 3x48xW, нормализация (x/255 - 0.5)/0.5,
      * ширина добивается нулями до 320: модель фиксированной минимальной ширины.
      */
+    @Suppress("UNCHECKED_CAST")
     private fun decode(bitmap: Bitmap): Pair<String, Float> {
         if (bitmap.width < 2 || bitmap.height < 2) return "" to 0f
         val width = (REC_HEIGHT * bitmap.width / bitmap.height.toFloat()).roundToInt().coerceIn(8, MAX_REC_WIDTH)
@@ -314,7 +323,6 @@ internal class KomaOnnxOcrEngine(
 
         val session = rec ?: return "" to 0f
         val index = dictionary
-        @Suppress("UNCHECKED_CAST")
         return OnnxTensor.createTensor(
             env,
             FloatBuffer.wrap(data),

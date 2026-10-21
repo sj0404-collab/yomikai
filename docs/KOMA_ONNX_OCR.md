@@ -123,3 +123,12 @@ koma_dict.txt     # cyrillic.txt из KOMA, 1.6 КБ
   строку в TTS.
 - **UI-настройки**: чекбокс `pref_ocr_use_koma_onnx` пока живёт только в
   preference-сторе; экран настроек OCR — следующий шаг.
+
+## 6. Настройки и релиз
+
+- Переключатель: «Настройки → Распознавание → Кириллица → Движок KOMA
+  (ONNX): PP-OCRv4 + PP-OCRv5». Ключ `pref_ocr_use_koma_onnx`, читается через
+  `OcrPreferences.komaOnnxCyrillic()` — один источник и для движка, и для UI.
+- Сборка APK — штатный workflow `Release` по тегу `v*` (arm64-v8a, ключ из
+  secrets). Ветка `feat/koma-onnx-ocr` содержит только код и отчёт
+  `docs/ocr-releases/CURRENT.md`, который CI вкладывает в релиз.
