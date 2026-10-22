@@ -220,7 +220,7 @@ internal class KomaChapterLoader(private val context: Context) {
             id = id,
             title = title,
             author = manga.author.orEmpty(),
-            category = if (manga.genre?.contains("манхва", ignoreCase = true) == true) "Манхва" else "Манга",
+            category = if (manga.genre?.any { it.contains("манхва", ignoreCase = true) } == true) "Манхва" else "Манга",
             pages = pages,
             progress = KomaChapterProgress.load(context, id).coerceIn(0, pages.lastIndex),
             // Высокие страницы (вебтун) читаются вертикальной лентой, книжные — справа налево.
