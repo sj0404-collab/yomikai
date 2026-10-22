@@ -543,24 +543,6 @@ class ReaderActivity : BaseActivity() {
             NotificationReceiver.dismissNotification(this, manga.hashCode(), Notifications.ID_NEW_CHAPTERS)
 
             lifecycleScope.launchNonCancellable {
-                // Единственная читалка — KOMA. Главу показываем её экраном
-                // (распознавание, рамки, озвучка, авточтение), а ленту Mihon
-                // оставляем только как честный запасной путь: если страницы
-                // главы получить нельзя, KOMA предложит открыть её здесь.
-                // Флаг skipKoma ставит сама KOMA-читалка, чтобы не было петли.
-                val komaFirst = intent.extras?.getBoolean("skipKoma") != true &&
-                    runCatching {
-                        Injekt.get<mihon.domain.ocr.service.OcrPreferences>().komaReaderFirst().get()
-                    }.getOrDefault(true)
-                if (komaFirst) {
-                    runCatching {
-                        startActivity(
-                            eu.kanade.tachiyomi.ui.koma.KomaReaderActivity.newIntent(this@ReaderActivity, manga, chapter),
-                        )
-                        finish()
-                        return@launchNonCancellable
-                    }
-                }
                 val initResult = viewModel.init(manga, chapter)
                 if (!initResult.getOrDefault(false)) {
                     val exception = initResult.exceptionOrNull() ?: IllegalStateException("Unknown err")
@@ -1088,6 +1070,10 @@ class ReaderActivity : BaseActivity() {
                 // кнопка в плавающем меню, а внутри — звук, распознавание,
                 // книги и прочее по разделам.
                 var showSettingsHub by remember { mutableStateOf(false) }
+                // Настройки самой читалки теперь из KOMA: порядок чтения, язык
+                // распознавания, авточтение и автопрокрутка — вместо прежней
+                // россыпи экранов. Полный список остаётся доступен из листа.
+                var showKomaSettings by remember { mutableStateOf(false) }
                 // Порядок чтения реплик (флажок на кнопке в плавающем меню);
                 // объявлен выше, чтобы диалог настроек OCR мог его обновлять.
                 var readingOrderState by androidx.compose.runtime.remember {
@@ -1132,6 +1118,36 @@ class ReaderActivity : BaseActivity() {
                             startActivity(intent)
                         },
                     )
+                }
+                if (showKomaSettings) {
+                    eu.kanade.presentation.components.AdaptiveSheet(
+                        onDismissRequest = { showKomaSettings = false },
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        eu.kanade.tachiyomi.ui.koma.KomaReaderSettingsSheet(
+                            manga = state.manga,
+                            onDismissRequest = { showKomaSettings = false },
+                            onChangeReadingMode = { flag ->
+                                viewModel.setMangaReadingMode(
+                                    eu.kanade.tachiyomi.ui.reader.setting.ReadingMode.fromPreference(flag),
+                                )
+                            },
+                            onAutoscrollToggle = ::toggleAutoscroll,
+                            autoscrollActive = autoscrollJob != null,
+                            onOpenVoiceSettings = {
+                                showKomaSettings = false
+                                showTtsDialog = true
+                            },
+                            onOpenFullSettings = {
+                                showKomaSettings = false
+                                showSettingsHub = true
+                            },
+                            onReadPage = {
+                                showKomaSettings = false
+                                autoSpeakVisiblePage()
+                            },
+                        )
+                    }
                 }
                 if (showSettingsHub) {
                     // Полноэкранный лист: хаб не влезает в диалог, а лишний
@@ -1250,7 +1266,7 @@ class ReaderActivity : BaseActivity() {
                         menuToggleToast?.cancel()
                         menuToggleToast = toast(if (enabled) MR.strings.on else MR.strings.off)
                     },
-                    onClickSettings = viewModel::openSettingsDialog,
+                    onClickSettings = { showKomaSettings = true },
                     onClickOcrSettings = {
                         // Верхняя AI-кнопка: быстрая смена модели. Полная
                         // озвучка/голоса доступны из этого диалога одной кнопкой
