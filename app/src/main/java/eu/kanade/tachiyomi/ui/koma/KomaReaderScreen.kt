@@ -477,7 +477,7 @@ fun KomaReaderScreen(
                     Row(Modifier.fillMaxWidth().padding(vertical=4.dp),verticalAlignment=Alignment.Top) {
                         Text("${index+1}.",fontSize=12.sp,color=Orange,modifier=Modifier.padding(end=8.dp))
                         Text(line.text,fontSize=12.sp,modifier=Modifier.weight(1f))
-                        IconButton(onClick={ tts.speak(line.text); sheet=null },modifier=Modifier.size(32.dp)) {
+                        IconButton(onClick={ scope.launch { sheet=null; tts.speak(line.text) } },modifier=Modifier.size(32.dp)) {
                             Icon(Icons.Outlined.VolumeUp,null,Modifier.size(16.dp),tint=Orange)
                         }
                     }
