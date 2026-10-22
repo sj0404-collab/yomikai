@@ -440,18 +440,20 @@ private fun PageImage(path:String,engine:KomaOcrEngine,vertical:Boolean,boxes:Li
                 val spoken=if(currentLine.isNullOrBlank())null else KomaReadingOrder.key(currentLine)
                 boxes.forEach { r ->
                     val isCurrent=spoken!=null && KomaReadingOrder.key(r.text)==spoken
-                    drawRect(
-                        if(isCurrent)Orange.copy(alpha=0.35f) else Color.Transparent,
-                        Offset(r.left*size.width,r.top*size.height),
-                        Size((r.right-r.left)*size.width,(r.bottom-r.top)*size.height),
-                        cornerRadius=CornerRadius(8.dp.toPx(),8.dp.toPx()),
+                    // Скруглённый прямоугольник — как контур реплики в KOMA.
+                    val radius = CornerRadius(8.dp.toPx(), 8.dp.toPx())
+                    drawRoundRect(
+                        color = if(isCurrent)Orange.copy(alpha=0.35f) else Color.Transparent,
+                        topLeft = Offset(r.left*size.width,r.top*size.height),
+                        size = Size((r.right-r.left)*size.width,(r.bottom-r.top)*size.height),
+                        cornerRadius = radius,
                     )
-                    drawRect(
-                        if(isCurrent)Orange else Orange.copy(alpha=0.7f),
-                        Offset(r.left*size.width,r.top*size.height),
-                        Size((r.right-r.left)*size.width,(r.bottom-r.top)*size.height),
-                        style=Stroke(if(isCurrent)2.5.dp.toPx() else 1.5.dp.toPx()),
-                        cornerRadius=CornerRadius(8.dp.toPx(),8.dp.toPx()),
+                    drawRoundRect(
+                        color = if(isCurrent)Orange else Orange.copy(alpha=0.7f),
+                        topLeft = Offset(r.left*size.width,r.top*size.height),
+                        size = Size((r.right-r.left)*size.width,(r.bottom-r.top)*size.height),
+                        cornerRadius = radius,
+                        style = Stroke(if(isCurrent)2.5.dp.toPx() else 1.5.dp.toPx()),
                     )
                 }
             }
