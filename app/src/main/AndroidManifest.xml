@@ -247,6 +247,18 @@
             android:configChanges="uiMode|orientation|screenSize|screenLayout|keyboardHidden"
             android:theme="@style/Theme.Tachiyomi" />
 
+        <!-- Кнопки уведомления авточтения: пауза, пропуск реплики, стоп. -->
+        <receiver
+            android:name=".ui.koma.KomaAutoReadReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="eu.kanade.tachiyomi.KOMA_AUTOREAD_PAUSE" />
+                <action android:name="eu.kanade.tachiyomi.KOMA_AUTOREAD_RESUME" />
+                <action android:name="eu.kanade.tachiyomi.KOMA_AUTOREAD_SKIP" />
+                <action android:name="eu.kanade.tachiyomi.KOMA_AUTOREAD_STOP" />
+            </intent-filter>
+        </receiver>
+
         <service
             android:name=".extension.util.ExtensionInstallService"
             android:exported="false"
