@@ -46,6 +46,7 @@ class KomaTts(private val context: Context) {
         private set
 
     private val waiting = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
+    private val localIndex = ConcurrentHashMap<String, Int>()
     private val ready = CompletableDeferred<Boolean>()
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -125,6 +126,38 @@ class KomaTts(private val context: Context) {
     private fun applySavedVoice() {
         val name = prefs.getString(KEY_VOICE, null) ?: return
         runCatching { voices().firstOrNull { it.name == name }?.let { tts.voice = it } }
+    }
+
+    /**
+     * Озвучивает список реплик одной очередью: каждая следующая встаёт в
+     * QUEUE_ADD сразу за предыдущей, поэтому между репликами нет «пузыря»
+     * тишины, который появлялся, когда мы ждали каждую строку отдельно.
+     * [onLineStart] вызывается, когда синтезатор реально начал реплику —
+     * по нему подсвечивается текущая строка.
+     */
+    suspend fun speakAll(texts: List<String>, onLineStart: (Int) -> Unit): Unit = withContext(Dispatchers.IO) {
+        val lines = texts.map { it.trim() }.filter { it.isNotEmpty() }
+        if (lines.isEmpty() || !available) return@withContext
+        val batch = UUID.randomUUID().toString()
+        val ids = lines.indices.map { "$batch-$it" }
+        localIndex.clear()
+        lines.forEachIndexed { index, line ->
+            localIndex[ids[index]] = index
+            val queued = runCatching {
+                tts.speak(line, TextToSpeech.QUEUE_ADD, null, ids[index])
+            }.getOrDefault(TextToSpeech.ERROR)
+            if (queued != TextToSpeech.SUCCESS) localIndex.remove(ids[index])
+            // Начало реплики сообщаем сразу после постановки в очередь: движок
+            // играет их подряд, и отдельного колбэка на «встал в очередь» нет.
+            onLineStart(index)
+        }
+        val last = ids.lastOrNull() ?: return@withContext
+        val done = CompletableDeferred<Unit>()
+        waiting[last] = done
+        withTimeoutOrNull(max(10_000, lines.sumOf { it.length } * 120L)) { done.await() }
+        waiting.remove(last)
+        localIndex.clear()
+        Unit
     }
 
     /** Произносит строку и ждёт окончания. */
@@ -223,14 +256,22 @@ object KomaReadingOrder {
             val text = buildString {
                 ordered.forEachIndexed { index, part ->
                     if (index > 0) {
+                        val previous = ordered[index - 1].text
                         // Перенос слова («ВЫСО-» + «ЧЕСТВО») — без пробела.
-                        if (endsWithHyphen()) setLength(length - 1) else append(' ')
+                        when {
+                            endsWithHyphen() -> setLength(length - 1)
+                            // Обрывки детектора в одну-две буквы («в», «д», «а»)
+                            // — это остатки слова, а не отдельные слова.
+                            part.text.length <= 2 && previous.lastOrNull()?.isLetter() == true &&
+                                part.text.firstOrNull()?.isLetter() == true -> Unit
+                            else -> append(' ')
+                        }
                     }
                     append(part.text)
                 }
             }
             Line(
-                text = text.trim(),
+                text = cleanSpeech(text),
                 left = ordered.minOf { it.left },
                 top = ordered.minOf { it.top },
                 right = ordered.maxOf { it.right },
@@ -240,6 +281,25 @@ object KomaReadingOrder {
 
         // 3. Блоки — сверху вниз.
         return lines.sortedWith(compareBy({ (it.top * 200).toInt() }, { if (rtl) -it.left else it.left }))
+    }
+
+    /**
+     * Текст для синтезатора: дефисы-переносы внутри слова убираются полностью
+     * («вы - сочест - ва» → «высочества»), а одиночные буквы, разорванные
+     * пробелами («в д а - ль»), склеиваются обратно.
+     */
+    private fun cleanSpeech(raw: String): String {
+        var text = raw
+            .replace(Regex("(?<=\\p{L})\\s*-\\s*(?=\\p{L})"), "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        // Склеиваем цепочки одиночных букв: «в д а ль» → «вдаль».
+        repeat(3) {
+            text = text.replace(Regex("(?<!\\p{L})\\p{L}(\\s+\\p{L}){1,4}(?!\\p{L})")) { match ->
+                match.value.replace(" ", "")
+            }
+        }
+        return text.trim()
     }
 
     private fun StringBuilder.endsWithHyphen(): Boolean =
@@ -335,6 +395,7 @@ object KomaAutoRead {
         recognize: suspend (index: Int) -> PageOcr?,
         onPage: suspend (index: Int) -> Unit,
         onResult: (PageOcr?) -> Unit,
+        onLine: (KomaReadingOrder.Line) -> Unit = {},
     ) {
         stopped = false
         paused = false
@@ -367,23 +428,28 @@ object KomaAutoRead {
                 currentLine = "",
             )
 
-            for (line in lines) {
-                if (stopped) break
+            _state.value = _state.value.copy(spoken = lines.map { it.text }.takeLast(24))
+
+            // Озвучиваем страницу очередью, но с возможностью паузы и пропуска:
+            // очередь прерывается, а после «продолжить» начинаем с реплики,
+            // перед которой остановились.
+            var startAt = 0
+            while (startAt < lines.size && !stopped) {
                 while (paused && !stopped) delay(120)
                 if (stopped) break
-                if (skipRequested) {
-                    skipRequested = false
-                    tts.stop()
-                    break
+                skipRequested = false
+                var reached = startAt
+                tts.speakAll(lines.drop(startAt).map { it.text }) { offset ->
+                    val line = lines.getOrNull(startAt + offset) ?: return@speakAll
+                    reached = startAt + offset
+                    _state.value = _state.value.copy(currentLine = line.text)
+                    onLine(line)
                 }
-                val spoken = _state.value.spoken + line.text
-                _state.value = _state.value.copy(
-                    currentLine = line.text,
-                    spoken = spoken.takeLast(24),
-                    status = "",
-                )
-                KomaAutoReadNotifier.update(_state.value)
-                tts.speak(line.text)
+                if (paused || skipRequested) {
+                    startAt = (reached + 1).coerceAtMost(lines.size)
+                    continue
+                }
+                break
             }
             tts.stop()
             if (stopped) break
