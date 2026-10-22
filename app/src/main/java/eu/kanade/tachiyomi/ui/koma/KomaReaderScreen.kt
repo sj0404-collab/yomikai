@@ -74,12 +74,13 @@ fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine
     val tts = remember { KomaTts(context) }
     val autoState by KomaAutoRead.state.collectAsState()
     val autoReading = autoState.running
-    LaunchedEffect(autoReading) { if(autoReading) barsVisible=false }
     var speechRate by remember { mutableFloatStateOf(tts.rate()) }
     var voiceDialog by remember { mutableStateOf(false) }
     // Панели прячутся, когда идёт авточтение: экран остаётся только под текст.
     // Касание страницы возвращает их.
     var barsVisible by remember { mutableStateOf(true) }
+    // Панели прячутся, как только начинается авточтение.
+    LaunchedEffect(autoReading) { if(autoReading) barsVisible=false }
     var overflow by remember { mutableStateOf(false) }
     var autoScroll by remember { mutableStateOf(repo.prefs.getBoolean("autoScroll",true)) }
     // Высота каждой страницы в пикселях при вписывании по ширине (для
@@ -161,7 +162,7 @@ fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine
                     if(height>0) {
                         // Держим текущую реплику в верхней трети экрана.
                         val offset=((line.top*height) - 120).toInt().coerceAtLeast(0)
-                        runCatching { scroll.scrollToItem(page, offset) }
+                        scope.launch { runCatching { scroll.scrollToItem(page, offset) } }
                     }
                 }
             },
