@@ -74,8 +74,17 @@ fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine
     val tts = remember { KomaTts(context) }
     val autoState by KomaAutoRead.state.collectAsState()
     val autoReading = autoState.running
+    LaunchedEffect(autoReading) { if(autoReading) barsVisible=false }
     var speechRate by remember { mutableFloatStateOf(tts.rate()) }
     var voiceDialog by remember { mutableStateOf(false) }
+    // Панели прячутся, когда идёт авточтение: экран остаётся только под текст.
+    // Касание страницы возвращает их.
+    var barsVisible by remember { mutableStateOf(true) }
+    var overflow by remember { mutableStateOf(false) }
+    var autoScroll by remember { mutableStateOf(repo.prefs.getBoolean("autoScroll",true)) }
+    // Высота каждой страницы в пикселях при вписывании по ширине (для
+    // автопрокрутки к текущей реплике внутри длинной страницы-вебтуна).
+    val pageHeights = remember { mutableStateMapOf<String,Int>() }
     var voices by remember { mutableStateOf<List<android.speech.tts.Voice>>(emptyList()) }
     var selectedVoice by remember { mutableStateOf(tts.selectedVoiceName()) }
     // Контекст приложения нужен уведомлению, которое рисует контроллер.
@@ -144,6 +153,18 @@ fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine
             recognize = { index -> engine.cached(book.id,index,language) ?: runCatching { engine.recognize(book,index,language) }.getOrNull() },
             onPage = { index -> if(mode=="vertical")scroll.animateScrollToItem(index)else pager.animateScrollToPage(index) },
             onResult = { r -> if(r!=null)result=r },
+            onLine = { line ->
+                // Автопрокрутка: держим текущую реплику в верхней трети экрана.
+                if(mode=="vertical" && autoScroll) {
+                    val path=book.pages.getOrNull(page)
+                    val height=path?.let { pageHeights[it] } ?: 0
+                    if(height>0) {
+                        // Держим текущую реплику в верхней трети экрана.
+                        val offset=((line.top*height) - 120).toInt().coerceAtLeast(0)
+                        runCatching { scroll.scrollToItem(page, offset) }
+                    }
+                }
+            },
         )
         readTrigger=0
     }
@@ -157,14 +178,32 @@ fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine
         }};error="Распознанный текст сохранён"}catch(e:Exception){error=e.message}}
     }
     Scaffold(containerColor=Color(0xFF171A17),topBar={
-        Row(Modifier.statusBarsPadding().fillMaxWidth().padding(horizontal=10.dp,vertical=8.dp),verticalAlignment=Alignment.CenterVertically) {
-            IconButton(onClick=onClose){Icon(Icons.Default.ArrowBack,"Назад",tint=Color.White)}
-            Column(Modifier.weight(1f)){Text(book.title,fontSize=15.sp,fontWeight=FontWeight.Bold,color=Color.White,maxLines=1,overflow=TextOverflow.Ellipsis);Text("${book.category} · ${when(mode){"rtl"->"Справа налево";"vertical"->"Вертикально";else->"Слева направо"}}",fontSize=10.sp,color=Color(0xFFB2B8AD))}
-            IconButton(onClick={save(book.copy(favorite=!book.favorite))}){Icon(if(book.favorite)Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,"В избранное",tint=if(book.favorite)Orange else Color.White)}
-            IconButton(onClick={sheet="settings"}){Icon(Icons.Outlined.Tune,"Настройки чтения",tint=Color.White)}
+        // Верхняя панель: навигация и всё, что было в прежней читалке —
+        // распознавание, голос, полный экран и меню. Строки идут друг под
+        // другом, а при авточтении панель убирается целиком.
+        if(!barsVisible) Unit else Column(Modifier.background(Color(0xF2171A17))) {
+            Row(Modifier.statusBarsPadding().fillMaxWidth().padding(horizontal=6.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically) {
+                IconButton(onClick=onClose){Icon(Icons.Default.ArrowBack,"Назад",tint=Color.White)}
+                Column(Modifier.weight(1f).padding(start=4.dp)){Text(book.title,fontSize=15.sp,fontWeight=FontWeight.Bold,color=Color.White,maxLines=1,overflow=TextOverflow.Ellipsis);Text("${page+1} из ${book.pages.size} · ${book.category} · ${when(mode){"rtl"->"Справа налево";"vertical"->"Вертикально";else->"Слева направо"}}",fontSize=10.sp,color=Color(0xFFB2B8AD))}
+                IconButton(onClick={if(result==null && !scanning)scan();sheet="ocr"}){Icon(Icons.Outlined.DocumentScanner,"Распознать",tint=if(result!=null)Orange else Color.White)}
+                IconButton(onClick={sheet="settings"}){Icon(Icons.Outlined.RecordVoiceOver,"Голос и авточтение",tint=if(autoReading)Orange else Color.White)}
+                IconButton(onClick={barsVisible=false}){Icon(Icons.Outlined.Fullscreen,"Полный экран",tint=Color.White)}
+                Box {
+                    IconButton(onClick={overflow=true}){Icon(Icons.Default.MoreVert,"Ещё",tint=Color.White)}
+                    DropdownMenu(expanded=overflow,onDismissRequest={overflow=false}) {
+                        DropdownMenuItem(text={Text(if(book.favorite)"Убрать из избранного" else "В избранное")},onClick={save(book.copy(favorite=!book.favorite));overflow=false})
+                        DropdownMenuItem(text={Text("Как читать эту историю")},onClick={sheet="settings";overflow=false})
+                        DropdownMenuItem(text={Text("Все страницы")},onClick={sheet="pages";overflow=false})
+                        DropdownMenuItem(text={Text("Рамки текста")},onClick={showRegions=!showRegions;overflow=false})
+                        DropdownMenuItem(text={Text(if(autoScroll)"Автопрокрутка: вкл" else "Автопрокрутка: выкл")},onClick={autoScroll=!autoScroll;repo.prefs.edit().putBoolean("autoScroll",autoScroll).apply();overflow=false})
+                        DropdownMenuItem(text={Text("Экспорт распознанного")},onClick={overflow=false;export.launch("${book.title}_ocr.txt")})
+                        DropdownMenuItem(text={Text("Удалить из библиотеки")},onClick={overflow=false;deleteConfirm=true})
+                    }
+                }
+            }
         }
     },bottomBar={
-        Surface(color=Color(0xFF232822)) {
+        if(!barsVisible) Unit else Surface(color=Color(0xFF232822)) {
             Column(Modifier.navigationBarsPadding().padding(horizontal=18.dp,vertical=10.dp)) {
                 Row(verticalAlignment=Alignment.CenterVertically,modifier=Modifier.fillMaxWidth()) {
                     TextButton(onClick={if(result==null && !scanning)scan();sheet="ocr"},contentPadding=PaddingValues(horizontal=8.dp)) {
@@ -175,6 +214,7 @@ fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine
                     IconButton(onClick={ if(autoReading)KomaAutoRead.togglePause() else readTrigger++ }){
                         Icon(if(autoReading && !autoState.paused)Icons.Filled.PauseCircle else Icons.Outlined.PlayCircle,"Авточтение",tint=if(autoReading)Orange else Color(0xFF9EAB9A))
                     }
+                    IconToggleButton(checked=autoScroll,onCheckedChange={autoScroll=it;repo.prefs.edit().putBoolean("autoScroll",it).apply()}){Icon(Icons.Outlined.SwapVert,"Автопрокрутка",tint=if(autoScroll)Orange else Color(0xFF9EAB9A))}
                     IconToggleButton(checked=showRegions,onCheckedChange={showRegions=it}){Icon(Icons.Outlined.CropFree,"Рамки текста",tint=if(showRegions)Orange else Color(0xFF9EAB9A))}
                     IconButton(onClick={sheet="pages"}){Icon(Icons.Outlined.GridView,"Все страницы",tint=Color(0xFF9EAB9A))}
                 }
@@ -190,8 +230,9 @@ fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine
     }) { inset ->
         Box(Modifier.fillMaxSize().padding(inset)) {
             if(mode=="vertical")LazyColumn(state=scroll,modifier=Modifier.fillMaxSize()) {
-                itemsIndexed(book.pages,key={n,_->n}) { n,path -> PageImage(path,engine,true,if(n==page && (showRegions||autoReading))result else null,if(n==page)autoState.currentLine else null) }
-            } else HorizontalPager(state=pager,reverseLayout=mode=="rtl",modifier=Modifier.fillMaxSize(),beyondViewportPageCount=0) { n -> PageImage(book.pages[n],engine,false,if(n==page && (showRegions||autoReading))result else null,if(n==page)autoState.currentLine else null) }
+                itemsIndexed(book.pages,key={n,_->n}) { n,path -> PageImage(path,engine,true,if(n==page && (showRegions||autoReading))result else null,if(n==page)autoState.currentLine else null,{h->pageHeights[path]=h},{barsVisible=!barsVisible}) }
+            } else HorizontalPager(state=pager,reverseLayout=mode=="rtl",modifier=Modifier.fillMaxSize(),beyondViewportPageCount=0) { n -> PageImage(book.pages[n],engine,false,if(n==page && (showRegions||autoReading))result else null,if(n==page)autoState.currentLine else null,onTap={barsVisible=!barsVisible}) }
+
         }
     }
     // Плавающая кнопка авточтения: не мешает чтению, но всегда под рукой —
@@ -294,7 +335,7 @@ fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine
 }
 
 @Composable
-private fun PageImage(path:String,engine:KomaOcrEngine,vertical:Boolean,result:PageOcr?,currentLine:String?=null) {
+private fun PageImage(path:String,engine:KomaOcrEngine,vertical:Boolean,result:PageOcr?,currentLine:String?=null,onHeight:(Int)->Unit={},onTap:()->Unit={}) {
     var bitmap by remember(path){mutableStateOf<android.graphics.Bitmap?>(null)}
     var error by remember(path){mutableStateOf<String?>(null)}
     var retry by remember(path){mutableIntStateOf(0)}
@@ -311,8 +352,12 @@ private fun PageImage(path:String,engine:KomaOcrEngine,vertical:Boolean,result:P
         val ratio=b.width.toFloat()/b.height
         val width=if(vertical || maxWidth/maxHeight<ratio)maxWidth else maxHeight*ratio
         val height=width/ratio
+        // Высота страницы при вписывании по ширине — нужна автопрокрутке,
+        // чтобы прокрутить длинный вебтун до текущей реплики.
+        val density=androidx.compose.ui.platform.LocalDensity.current
+        LaunchedEffect(height,density){ runCatching { onHeight(with(density){ height.roundToPx() }) } }
         val transform=rememberTransformableState { zoom,pan,_-> scale=(scale*zoom).coerceIn(1f,5f);offset=if(scale>1f)offset+pan else Offset.Zero }
-        Box(Modifier.size(width,height).graphicsLayer(scaleX=scale,scaleY=scale,translationX=offset.x,translationY=offset.y).transformable(state=transform,canPan={scale>1f}).pointerInput(path){detectTapGestures(onDoubleTap={scale=if(scale>1f)1f else 2.5f;offset=Offset.Zero})}) {
+        Box(Modifier.size(width,height).graphicsLayer(scaleX=scale,scaleY=scale,translationX=offset.x,translationY=offset.y).transformable(state=transform,canPan={scale>1f}).pointerInput(path){detectTapGestures(onTap={onTap()},onDoubleTap={scale=if(scale>1f)1f else 2.5f;offset=Offset.Zero})}) {
             Image(b.asImageBitmap(),"Страница",Modifier.fillMaxSize(),contentScale=ContentScale.FillBounds)
             if(result!=null)Canvas(Modifier.fillMaxSize()) {
                 val spoken=if(currentLine.isNullOrBlank())null else KomaReadingOrder.key(currentLine)
