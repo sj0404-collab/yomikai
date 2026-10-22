@@ -260,24 +260,108 @@ object KomaReadingOrder {
         return ru > 0 && ru * 2 >= all
     }
 
-    /** Порядок чтения: блоки сверху вниз, внутри блока — по направлению чтения. */
+    /** Порядок чтения: панель за панелью, внутри панели — строки сверху вниз. */
     fun order(regions: List<OcrRegion>, rtl: Boolean, onlyCyrillic: Boolean): List<Line> {
         val source = regions
-            .map { it.copy(text = normalize(it.text)) }
-            .filter { it.text.length > 1 }
+            // Латинские двойники чиним ДО фильтра по языку: иначе фрагмент с
+            // одной-двумя латинскими буквами («He6лuцa») отбрасывался целиком,
+            // и слова пропадали из озвучки.
+            .map { it.copy(text = fixLookalikes(normalize(it.text))) }
+            // Фрагмент из одной буквы — это часть слова, а не мусор: раньше
+            // такие отбрасывались, и слова теряли буквы («Небылица» → «Небца»).
+            .filter { it.text.any { ch -> ch.isLetterOrDigit() } }
             .filter { !onlyCyrillic || isCyrillic(it.text) }
         if (source.isEmpty()) return emptyList()
 
+        // Панели разбираются ПО ОЧЕРЕДИ. Раньше всё сортировалось по высоте
+        // («лесенкой»): две панели, стоящие рядом, читались вперемешку —
+        // верхняя строка левой, верхняя строка правой, вторая строка левой…
+        // Теперь страница режется на панели разрезами по пустым полосам, и
+        // каждая панель вычитывается целиком, прежде чем начаться следующая.
+        return splitPanels(source, rtl, depth = 0)
+            .flatMap { panel -> bubblesOf(panel, rtl) }
+    }
+
+    /** Доля страницы, ниже которой разрез не считается разрезом. */
+    private const val Y_CUT = 0.022f
+    private const val X_CUT = 0.035f
+
+    /**
+     * Рекурсивные разрезы страницы (XY-cut).
+     *
+     * Сначала ищем горизонтальную пустую полосу — страница делится на верхнюю и
+     * нижнюю части, верхняя читается первой. Если такой полосы нет, ищем
+     * вертикальную: это панели, стоящие рядом, и для манги они читаются справа
+     * налево. Внутри найденной панели разрез повторяется, пока текст не станет
+     * одной связной группой.
+     */
+    private fun splitPanels(group: List<OcrRegion>, rtl: Boolean, depth: Int): List<List<OcrRegion>> {
+        if (group.size <= 1 || depth > 12) return listOf(group)
+
+        // 1. Горизонтальные разрезы: полоса, через которую не проходит ни один
+        //    регион. Порог растёт вместе с уже набранной группой, чтобы строки
+        //    внутри одного облачка не рвали панель на «этажи».
+        val byTop = group.sortedBy { it.top }
+        val rows = mutableListOf<MutableList<OcrRegion>>()
+        var row = mutableListOf(byTop.first())
+        var rowTop = byTop.first().top
+        var rowBottom = byTop.first().bottom
+        for (region in byTop.drop(1)) {
+            val gap = region.top - rowBottom
+            val threshold = max(Y_CUT, (rowBottom - rowTop) * 0.25f)
+            if (gap > threshold) {
+                rows += row
+                row = mutableListOf(region)
+                rowTop = region.top
+                rowBottom = region.bottom
+            } else {
+                row += region
+                rowBottom = max(rowBottom, region.bottom)
+            }
+        }
+        rows += row
+        if (rows.size > 1) {
+            return rows.flatMap { splitPanels(it, rtl, depth + 1) }
+        }
+
+        // 2. Вертикальные разрезы: панели, стоящие рядом.
+        val byLeft = group.sortedBy { it.left }
+        val columns = mutableListOf<MutableList<OcrRegion>>()
+        var column = mutableListOf(byLeft.first())
+        var columnRight = byLeft.first().right
+        for (region in byLeft.drop(1)) {
+            val gap = region.left - columnRight
+            if (gap > X_CUT) {
+                columns += column
+                column = mutableListOf(region)
+                columnRight = region.right
+            } else {
+                column += region
+                columnRight = max(columnRight, region.right)
+            }
+        }
+        columns += column
+        if (columns.size > 1) {
+            val ordered = if (rtl) columns.reversed() else columns
+            return ordered.flatMap { splitPanels(it, rtl, depth + 1) }
+        }
+
+        return listOf(group)
+    }
+
+    /** Реплики одной панели: фрагменты → строки → облачка, сверху вниз. */
+    private fun bubblesOf(group: List<OcrRegion>, rtl: Boolean): List<Line> {
+        if (group.isEmpty()) return emptyList()
+
         // 1. Фрагменты одной строки — в один блок: совпадает вертикальная полоса
         //    и между ними нет большого горизонтального разрыва.
-        val sorted = source.sortedWith(compareBy({ it.top }, { it.left }))
+        val sorted = group.sortedWith(compareBy({ it.top }, { it.left }))
         val blocks = mutableListOf<MutableList<OcrRegion>>()
         for (region in sorted) {
             // Кандидат — блок, который лежит на той же высоте и стоит ВПЛОТНУЮ по
             // горизонтали. Выбираем ближайший по зазору, а не последний
             // подходящий: раньше фрагмент мог приклеиться к чужой строке, и в
-            // одной «строке» оказывались две соседние реплики — на странице это
-            // выглядело как длинная тонкая полоса через весь кадр.
+            // одной «строке» оказывались две соседние реплики.
             var target: MutableList<OcrRegion>? = null
             var bestGap = Float.MAX_VALUE
             for (block in blocks) {
@@ -287,7 +371,6 @@ object KomaReadingOrder {
                 if (overlap <= lineHeight * 0.5f) continue
                 val blockLeft = block.minOf { it.left }
                 val blockRight = block.maxOf { it.right }
-                // Зазор считаем до ГРАНИЦЫ блока, а не до его последнего элемента.
                 val gap = when {
                     region.left > blockRight -> region.left - blockRight
                     region.right < blockLeft -> region.right - blockLeft
@@ -310,11 +393,10 @@ object KomaReadingOrder {
                 ordered.forEachIndexed { index, part ->
                     if (index > 0) {
                         val previous = ordered[index - 1].text
-                        // Перенос слова («ВЫСО-» + «ЧЕСТВО») — без пробела.
                         when {
+                            // Перенос слова («ВЫСО-» + «ЧЕСТВО») — без пробела.
                             endsWithHyphen() -> setLength(length - 1)
-                            // Обрывки детектора в одну-две буквы («в», «д», «а»)
-                            // — это остатки слова, а не отдельные слова.
+                            // Обрывки в одну-две буквы — остатки слова, а не слова.
                             part.text.length <= 2 && previous.lastOrNull()?.isLetter() == true &&
                                 part.text.firstOrNull()?.isLetter() == true -> Unit
                             else -> append(' ')
@@ -333,14 +415,9 @@ object KomaReadingOrder {
         }
 
         // 3. Строки одного облачка — в ОДНУ реплику.
-        //
-        // Движок отдаёт рамку на каждую строку, и без этой склейки каждая
-        // строка читалась отдельной репликой: голос произносил «Я ТОЖЕ ТАК»,
-        // замолкал, потом «СЧИТАЮ. ЖЕНЩИН…». На экране это выглядело как
-        // отдельная рамка на каждой строке — ровно то, что видно на скриншотах.
         val bubbles = mergeBubbles(lines)
 
-        // 4. Блоки — сверху вниз.
+        // 4. Внутри панели — сверху вниз.
         return bubbles.sortedWith(compareBy({ (it.top * 200).toInt() }, { if (rtl) -it.left else it.left }))
     }
 
@@ -580,7 +657,11 @@ object KomaAutoRead {
             onResult(result)
             val lines = KomaReadingOrder.order(
                 regions = result?.regions.orEmpty(),
-                rtl = book.mode == "rtl" && language == "Японский",
+                // Направление внутри строки — из режима чтения, а не из языка:
+                // русская манга читается справа налево так же, как японская.
+                // Раньше условие требовало «Японский», и в переводной манге
+                // реплики одного ряда читались слева направо — «вразброс».
+                rtl = book.mode == "rtl",
                 onlyCyrillic = language == "Кириллица" || language == "Авто",
             ).filter { spokenKeys.add(KomaReadingOrder.key(it.text) + "@" + index) }
 
