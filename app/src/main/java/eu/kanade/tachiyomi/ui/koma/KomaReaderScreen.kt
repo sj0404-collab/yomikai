@@ -23,6 +23,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -151,9 +152,28 @@ fun KomaReaderScreen(
     // ── Авточтение ────────────────────────────────────────────────────────────
     // Логика живёт в KomaAutoRead: порядок чтения по репликам, фильтр чужой
     // письменности, «уже прочитано», уведомление в шторке и плавающая кнопка.
+    // Реплики страницы: строки облачка уже склеены (см. KomaReadingOrder), и
+    // этот же список рисуется рамками — экран и озвучка видят одно и то же.
+    val bubbles = remember(result, language, mode) {
+        result?.let {
+            KomaReadingOrder.order(
+                regions = it.regions,
+                rtl = mode == "rtl",
+                onlyCyrillic = language == "Кириллица" || language == "Авто",
+            )
+        }
+    }
     var readTrigger by remember { mutableIntStateOf(0) }
-    // «Сканировать и читать» с экрана главы: сразу запускаем озвучку, как это
-    // делала прежняя читалка по extra autoread_start.
+    // Авточтение НЕ включается само при открытии страницы. Запуск — только
+    // кнопкой воспроизведения или явной командой «Сканировать и читать»
+    // (extra autoread_start). Настройка «автостарт чтения» из прежней читалки
+    // здесь намеренно не читается: страница должна открыться спокойно.
+    LaunchedEffect(Unit) {
+        // Сброс только «зависшего» состояния от прошлого экрана: если чтение
+        // реально идёт (есть живой синтезатор), его не трогаем — иначе после
+        // поворота экрана состояние показывало бы «не читается».
+        if (KomaAutoRead.state.value.running && !KomaAutoRead.isActive()) KomaAutoRead.reset()
+    }
     LaunchedEffect(autoStart) { if (autoStart) readTrigger++ }
     LaunchedEffect(readTrigger) {
         if(readTrigger==0)return@LaunchedEffect
@@ -165,26 +185,54 @@ fun KomaReaderScreen(
             from = if(mode=="vertical")scroll.firstVisibleItemIndex else pager.currentPage,
             tts = tts,
             recognize = { index -> engine.cached(book.id,index,language) ?: runCatching { engine.recognize(book,index,language) }.getOrNull() },
-            onPage = { index -> if(mode=="vertical")scroll.animateScrollToItem(index)else pager.animateScrollToPage(index) },
+            onPage = { index ->
+                // В ленте НЕ дёргаем scrollToItem на каждой странице: у элемента
+                // страницы это сбрасывает смещение на ноль, и экран прыгал в
+                // самый верх страницы, обрывая ручную прокрутку. Переходим,
+                // только если нужная страница ещё не на экране.
+                if (mode == "vertical") {
+                    if (scroll.firstVisibleItemIndex != index) {
+                        scrollJob?.cancel()
+                        scrollJob = scope.launch { runCatching { scroll.animateScrollToItem(index) } }
+                    }
+                } else {
+                    pager.animateScrollToPage(index)
+                }
+            },
             onResult = { r -> if(r!=null)result=r },
             onLine = { line ->
-                // Автопрокрутка: держим текущую реплику в верхней трети экрана.
+                // Автопрокрутка к текущей реплике — только если её не видно.
                 //
-                // Раньше на КАЖДУЮ реплику запускалась своя корутина
-                // scrollToItem — они догоняли друг друга, и лента дёргалась.
-                // Теперь предыдущий переход отменяется, а мелкие сдвиги (реплика
-                // уже в удобной полосе) не трогают ленту вовсе.
-                if(mode=="vertical" && autoScroll) {
-                    val path=book.pages.getOrNull(page)
-                    val height=path?.let { pageHeights[it] } ?: 0
-                    if(height>0) {
-                        val target=((line.top*height) - 120).toInt().coerceAtLeast(0)
-                        val current=scroll.firstVisibleItemScrollOffset
-                        val samePage=scroll.firstVisibleItemIndex==page
-                        if(!samePage || kotlin.math.abs(target-current) > 140) {
+                // Раньше на КАЖДУЮ строку ставилась позиция «реплика на 120 px
+                // от верха»: страница прыгала к верху, а ручная прокрутка тут же
+                // отменялась следующей репликой — экран выглядел заблокированным.
+                // Теперь лента не трогается, пока реплика в удобной полосе
+                // экрана, и не спорит с пальцем: пока идёт прокрутка жестом,
+                // автопрокрутка молчит.
+                if (mode == "vertical" && autoScroll && !scroll.isScrollInProgress) {
+                    val target = autoState.page
+                    val path = book.pages.getOrNull(target)
+                    val height = path?.let { pageHeights[it] } ?: 0
+                    if (height > 0) {
+                        val viewport = scroll.layoutInfo.viewportSize.height
+                        val itemOffset = if (scroll.firstVisibleItemIndex == target) {
+                            scroll.firstVisibleItemScrollOffset
+                        } else {
+                            0
+                        }
+                        val bubbleTop = (line.top * height).toInt()
+                        val bubbleBottom = (line.bottom * height).toInt()
+                        val visibleTop = itemOffset
+                        val visibleBottom = itemOffset + viewport
+                        // Удобная полоса: реплика целиком в средней части экрана.
+                        val comfortableTop = visibleTop + (viewport * 0.15f).toInt()
+                        val comfortableBottom = visibleBottom - (viewport * 0.35f).toInt()
+                        val visible = bubbleTop >= comfortableTop && bubbleBottom <= comfortableBottom
+                        if (!visible && viewport > 0) {
+                            val desired = (bubbleTop - viewport * 0.30f).toInt().coerceAtLeast(0)
                             scrollJob?.cancel()
-                            scrollJob=scope.launch {
-                                runCatching { scroll.animateScrollToItem(page, target) }
+                            scrollJob = scope.launch {
+                                runCatching { scroll.scrollToItem(target, desired) }
                             }
                         }
                     }
@@ -256,8 +304,8 @@ fun KomaReaderScreen(
     }) { inset ->
         Box(Modifier.fillMaxSize().padding(inset)) {
             if(mode=="vertical")LazyColumn(state=scroll,modifier=Modifier.fillMaxSize()) {
-                itemsIndexed(book.pages,key={n,_->n}) { n,path -> PageImage(path,engine,true,if(n==page && (showRegions||autoReading))result else null,if(n==page)autoState.currentLine else null,{h->pageHeights[path]=h},{barsVisible=!barsVisible}) }
-            } else HorizontalPager(state=pager,reverseLayout=mode=="rtl",modifier=Modifier.fillMaxSize(),beyondViewportPageCount=0) { n -> PageImage(book.pages[n],engine,false,if(n==page && (showRegions||autoReading))result else null,if(n==page)autoState.currentLine else null,onTap={barsVisible=!barsVisible}) }
+                itemsIndexed(book.pages,key={n,_->n}) { n,path -> PageImage(path,engine,true,if(n==page && (showRegions||autoReading))bubbles else null,if(n==page)autoState.currentLine else null,{h->pageHeights[path]=h},{barsVisible=!barsVisible}) }
+            } else HorizontalPager(state=pager,reverseLayout=mode=="rtl",modifier=Modifier.fillMaxSize(),beyondViewportPageCount=0) { n -> PageImage(book.pages[n],engine,false,if(n==page && (showRegions||autoReading))bubbles else null,if(n==page)autoState.currentLine else null,onTap={barsVisible=!barsVisible}) }
 
         }
     }
@@ -361,7 +409,7 @@ fun KomaReaderScreen(
 }
 
 @Composable
-private fun PageImage(path:String,engine:KomaOcrEngine,vertical:Boolean,result:PageOcr?,currentLine:String?=null,onHeight:(Int)->Unit={},onTap:()->Unit={}) {
+private fun PageImage(path:String,engine:KomaOcrEngine,vertical:Boolean,boxes:List<KomaReadingOrder.Line>?,currentLine:String?=null,onHeight:(Int)->Unit={},onTap:()->Unit={}) {
     var bitmap by remember(path){mutableStateOf<android.graphics.Bitmap?>(null)}
     var error by remember(path){mutableStateOf<String?>(null)}
     var retry by remember(path){mutableIntStateOf(0)}
@@ -385,20 +433,27 @@ private fun PageImage(path:String,engine:KomaOcrEngine,vertical:Boolean,result:P
         val transform=rememberTransformableState { zoom,pan,_-> scale=(scale*zoom).coerceIn(1f,5f);offset=if(scale>1f)offset+pan else Offset.Zero }
         Box(Modifier.size(width,height).graphicsLayer(scaleX=scale,scaleY=scale,translationX=offset.x,translationY=offset.y).transformable(state=transform,canPan={scale>1f}).pointerInput(path){detectTapGestures(onTap={onTap()},onDoubleTap={scale=if(scale>1f)1f else 2.5f;offset=Offset.Zero})}) {
             Image(b.asImageBitmap(),"Страница",Modifier.fillMaxSize(),contentScale=ContentScale.FillBounds)
-            if(result!=null)Canvas(Modifier.fillMaxSize()) {
+            if(boxes!=null)Canvas(Modifier.fillMaxSize()) {
+                // Одна рамка на РЕПЛИКУ: строки облачка уже склеены в
+                // KomaReadingOrder, поэтому «Я ТОЖЕ ТАК СЧИТАЮ…» — это один
+                // прямоугольник, а не пять полос с отдельным чтением каждой.
                 val spoken=if(currentLine.isNullOrBlank())null else KomaReadingOrder.key(currentLine)
-                result.regions.forEach { r ->
+                boxes.forEach { r ->
                     val isCurrent=spoken!=null && KomaReadingOrder.key(r.text)==spoken
-                    drawRect(
-                        if(isCurrent)Orange.copy(alpha=0.35f) else Color.Transparent,
-                        Offset(r.left*size.width,r.top*size.height),
-                        Size((r.right-r.left)*size.width,(r.bottom-r.top)*size.height),
+                    // Скруглённый прямоугольник — как контур реплики в KOMA.
+                    val radius = CornerRadius(8.dp.toPx(), 8.dp.toPx())
+                    drawRoundRect(
+                        color = if(isCurrent)Orange.copy(alpha=0.35f) else Color.Transparent,
+                        topLeft = Offset(r.left*size.width,r.top*size.height),
+                        size = Size((r.right-r.left)*size.width,(r.bottom-r.top)*size.height),
+                        cornerRadius = radius,
                     )
-                    drawRect(
-                        if(isCurrent)Orange else Orange.copy(alpha=0.7f),
-                        Offset(r.left*size.width,r.top*size.height),
-                        Size((r.right-r.left)*size.width,(r.bottom-r.top)*size.height),
-                        style=Stroke(if(isCurrent)2.5.dp.toPx() else 1.5.dp.toPx()),
+                    drawRoundRect(
+                        color = if(isCurrent)Orange else Orange.copy(alpha=0.7f),
+                        topLeft = Offset(r.left*size.width,r.top*size.height),
+                        size = Size((r.right-r.left)*size.width,(r.bottom-r.top)*size.height),
+                        cornerRadius = radius,
+                        style = Stroke(if(isCurrent)2.5.dp.toPx() else 1.5.dp.toPx()),
                     )
                 }
             }

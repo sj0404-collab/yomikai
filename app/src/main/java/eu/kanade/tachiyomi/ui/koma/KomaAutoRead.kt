@@ -164,7 +164,10 @@ class KomaTts(private val context: Context) {
         val done = CompletableDeferred<Unit>()
         waiting[last] = done
         try {
-            withTimeoutOrNull(max(10_000, lines.sumOf { it.length } * 120L)) { done.await() }
+            // Запас по времени щедрый: на медленной речи и длинных репликах
+            // прежний расчёт обрывал страницу на середине, и «слова
+            // пропускались» — очередь просто не успевала дочитаться.
+            withTimeoutOrNull(max(20_000, lines.sumOf { it.length } * 260L)) { done.await() }
         } finally {
             waiting.remove(last)
             localIndex.clear()
@@ -292,8 +295,78 @@ object KomaReadingOrder {
             )
         }
 
-        // 3. Блоки — сверху вниз.
-        return lines.sortedWith(compareBy({ (it.top * 200).toInt() }, { if (rtl) -it.left else it.left }))
+        // 3. Строки одного облачка — в ОДНУ реплику.
+        //
+        // Движок отдаёт рамку на каждую строку, и без этой склейки каждая
+        // строка читалась отдельной репликой: голос произносил «Я ТОЖЕ ТАК»,
+        // замолкал, потом «СЧИТАЮ. ЖЕНЩИН…». На экране это выглядело как
+        // отдельная рамка на каждой строке — ровно то, что видно на скриншотах.
+        val bubbles = mergeBubbles(lines)
+
+        // 4. Блоки — сверху вниз.
+        return bubbles.sortedWith(compareBy({ (it.top * 200).toInt() }, { if (rtl) -it.left else it.left }))
+    }
+
+    /**
+     * Склеивает строки, лежащие друг под другом внутри одного облачка.
+     *
+     * Условия — как у облачка на странице: строки перекрываются по горизонтали
+     * (выключка по центру даёт перекрытие больше половины короткой строки) и
+     * разделены зазором меньше высоты строки. Соседние облачка разделены
+     * заметно большим полем, поэтому не слипаются. Вертикальные колонки
+     * (японский текст) не склеиваются: они высокие и узкие.
+     */
+    private fun mergeBubbles(lines: List<Line>): List<Line> {
+        if (lines.size <= 1) return lines
+        val sorted = lines.sortedBy { it.top }
+        val result = ArrayList<Line>(sorted.size)
+        for (line in sorted) {
+            val last = result.lastOrNull()
+            if (last != null && sameBubble(last, line)) {
+                result[result.lastIndex] = Line(
+                    text = joinBubbleText(last.text, line.text),
+                    left = min(last.left, line.left),
+                    top = min(last.top, line.top),
+                    right = max(last.right, line.right),
+                    bottom = max(last.bottom, line.bottom),
+                )
+            } else {
+                result += line
+            }
+        }
+        return result
+    }
+
+    private fun sameBubble(a: Line, b: Line): Boolean {
+        val aWidth = a.right - a.left
+        val bWidth = b.right - b.left
+        val aHeight = a.bottom - a.top
+        val bHeight = b.bottom - b.top
+        if (aWidth <= 0f || bWidth <= 0f || aHeight <= 0f || bHeight <= 0f) return false
+        val overlap = min(a.right, b.right) - max(a.left, b.left)
+        if (overlap <= 0f) return false
+        if (overlap / min(aWidth, bWidth) < 0.45f) return false
+        val gap = b.top - a.bottom
+        if (gap < -aHeight * 0.4f || gap > max(aHeight, bHeight) * 0.8f) return false
+        // Высокие узкие блоки — вертикальные колонки, а не строки облачка.
+        if (aHeight > aWidth * 3f || bHeight > bWidth * 3f) return false
+        return true
+    }
+
+    /** Перенос слова в конце строки склеивается вплотную, иначе — пробел. */
+    private fun joinBubbleText(a: String, b: String): String {
+        val left = a.trim()
+        val right = b.trim()
+        if (left.isEmpty()) return right
+        if (right.isEmpty()) return left
+        val last = left.last()
+        return if (last == '-' || last == '\u2010' || last == '\u2011' ||
+            last == '\u2013' || last == '\u2014' || last == '\u2015'
+        ) {
+            left.dropLast(1) + right
+        } else {
+            "$left $right"
+        }
     }
 
     /**
@@ -391,6 +464,9 @@ object KomaAutoRead {
         // Обрываем текущую реплику сразу, а не после конца страницы.
         runCatching { activeTts?.stop() }
     }
+
+    /** Идёт ли реальное чтение прямо сейчас (есть живой синтезатор). */
+    fun isActive(): Boolean = activeTts != null
 
     fun reset() {
         paused = false
