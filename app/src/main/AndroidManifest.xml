@@ -240,6 +240,13 @@
             android:name=".data.notification.NotificationReceiver"
             android:exported="false" />
 
+        <!-- Единственная читалка: экран KOMA для глав из библиотеки. -->
+        <activity
+            android:name=".ui.koma.KomaReaderActivity"
+            android:exported="false"
+            android:configChanges="uiMode|orientation|screenSize|screenLayout|keyboardHidden"
+            android:theme="@style/Theme.Tachiyomi" />
+
         <service
             android:name=".extension.util.ExtensionInstallService"
             android:exported="false"

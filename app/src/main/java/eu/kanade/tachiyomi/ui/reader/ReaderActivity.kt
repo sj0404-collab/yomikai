@@ -543,6 +543,24 @@ class ReaderActivity : BaseActivity() {
             NotificationReceiver.dismissNotification(this, manga.hashCode(), Notifications.ID_NEW_CHAPTERS)
 
             lifecycleScope.launchNonCancellable {
+                // Единственная читалка — KOMA. Главу показываем её экраном
+                // (распознавание, рамки, озвучка, авточтение), а ленту Mihon
+                // оставляем только как честный запасной путь: если страницы
+                // главы получить нельзя, KOMA предложит открыть её здесь.
+                // Флаг skipKoma ставит сама KOMA-читалка, чтобы не было петли.
+                val komaFirst = intent.extras?.getBoolean("skipKoma") != true &&
+                    runCatching {
+                        Injekt.get<mihon.domain.ocr.service.OcrPreferences>().komaReaderFirst().get()
+                    }.getOrDefault(true)
+                if (komaFirst) {
+                    runCatching {
+                        startActivity(
+                            eu.kanade.tachiyomi.ui.koma.KomaReaderActivity.newIntent(this@ReaderActivity, manga, chapter),
+                        )
+                        finish()
+                        return@launchNonCancellable
+                    }
+                }
                 val initResult = viewModel.init(manga, chapter)
                 if (!initResult.getOrDefault(false)) {
                     val exception = initResult.exceptionOrNull() ?: IllegalStateException("Unknown err")

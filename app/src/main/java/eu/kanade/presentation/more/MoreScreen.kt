@@ -40,7 +40,7 @@ fun MoreScreen(
     incognitoMode: Boolean,
     onIncognitoModeChange: (Boolean) -> Unit,
     onClickDownloadQueue: () -> Unit,
-    onClickOcrQueue: () -> Unit,
+    @Suppress("UNUSED_PARAMETER") onClickOcrQueue: () -> Unit,
     onClickOcrOverlay: () -> Unit,
     onClickCategories: () -> Unit,
     onClickStats: () -> Unit,
@@ -108,35 +108,9 @@ fun MoreScreen(
                     onPreferenceClick = onClickDownloadQueue,
                 )
             }
-            item {
-                val ocrQueueState = ocrQueueStateProvider()
-                TextPreferenceWidget(
-                    title = stringResource(MR.strings.label_text_recognition),
-                    subtitle = when (ocrQueueState) {
-                        OcrQueueState.Stopped -> null
-                        is OcrQueueState.Paused -> {
-                            val pending = ocrQueueState.pending
-                            if (pending == 0) {
-                                stringResource(MR.strings.paused)
-                            } else {
-                                "${stringResource(MR.strings.paused)} • ${
-                                    pluralStringResource(
-                                        MR.plurals.download_queue_summary,
-                                        count = pending,
-                                        pending,
-                                    )
-                                }"
-                            }
-                        }
-                        is OcrQueueState.Running -> {
-                            val pending = ocrQueueState.pending
-                            pluralStringResource(MR.plurals.download_queue_summary, count = pending, pending)
-                        }
-                    },
-                    icon = Icons.Outlined.DocumentScanner,
-                    onPreferenceClick = onClickOcrQueue,
-                )
-            }
+            // Экран «Text Recognition» с десятком настроек движков убран из меню:
+            // кириллица идёт одним движком KOMA, его модели в APK, а язык и
+            // авточтение настраиваются прямо в читалке.
             // Оверлей поверх экрана — отдельная сущность и отдельный пункт:
             // он ничего не знает про очередь распознавания страниц.
             item {

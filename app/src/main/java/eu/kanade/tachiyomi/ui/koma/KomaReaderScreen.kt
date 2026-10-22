@@ -40,6 +40,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -67,7 +68,13 @@ fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine
     val page=if(mode=="vertical")scroll.firstVisibleItemIndex else pager.currentPage
     val currentPage by rememberUpdatedState(page)
     val autoRequested=remember{mutableSetOf<String>()}
-    var language by remember { mutableStateOf(repo.prefs.getString("ocrLanguage","Авто") ?: "Авто") }
+    // Кириллица — по умолчанию: библиотека русская, и раньше каждый раз
+    // приходилось переключать язык руками (а «Авто» уводил манхву в японский).
+    var language by remember { mutableStateOf(repo.prefs.getString("ocrLanguage","Кириллица") ?: "Кириллица") }
+    val tts = remember { KomaTts(context) }
+    var autoReading by remember { mutableStateOf(false) }
+    var speechRate by remember { mutableFloatStateOf(repo.prefs.getFloat("speechRate",1f)) }
+    var speakingPage by remember { mutableIntStateOf(-1) }
     var result by remember { mutableStateOf<PageOcr?>(null) }
     var scanJob by remember { mutableStateOf<Job?>(null) }
     var scanning by remember { mutableStateOf(false) }
@@ -109,14 +116,46 @@ fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine
         save(book.copy(progress=page,mode=mode))
         result=engine.cached(book.id,page,language)
         val key="$page:$language"
-        if(repo.prefs.getBoolean("autoOcr",false) && result==null && !scanning && key !in autoRequested) { autoRequested.add(key);scan() }
+        if(repo.prefs.getBoolean("autoOcr",true) && result==null && !scanning && key !in autoRequested) { autoRequested.add(key);scan() }
     }
     DisposableEffect(Unit){
         val window=(context as? android.app.Activity)?.window
         if(repo.prefs.getBoolean("keepAwake",true))window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        onDispose{scanJob?.cancel();window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)}
+        onDispose{scanJob?.cancel();autoReading=false;tts.shutdown();window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)}
     }
-    BackHandler { if(sheet!=null)sheet=null else onClose() }
+    // ── Авточтение ────────────────────────────────────────────────────────────
+    // Перенесено из прежней читалки, но устроено проще: читаем страницу
+    // (из кэша, если уже распознана), озвучиваем реплики по порядку и
+    // переходим к следующей. Остановить можно кнопкой, закрытием экрана или
+    // концом книги.
+    LaunchedEffect(autoReading, speechRate) {
+        if(!autoReading)return@LaunchedEffect
+        tts.ensureReady()
+        tts.setRate(speechRate)
+        if(!tts.available) {
+            error=tts.languageNote ?: "Синтезатор речи недоступен"
+            autoReading=false
+            return@LaunchedEffect
+        }
+        var n=if(mode=="vertical")scroll.firstVisibleItemIndex else pager.currentPage
+        while(autoReading && n<=book.pages.lastIndex) {
+            if(mode=="vertical")scroll.animateScrollToItem(n)else pager.animateScrollToPage(n)
+            val r=engine.cached(book.id,n,language) ?: runCatching { engine.recognize(book,n,language) }.getOrNull()
+            if(n==currentPage)result=r
+            speakingPage=n
+            val lines=ocrLinesForSpeech(r?.regions?.map{it.text}.orEmpty())
+            for(line in lines) {
+                if(!autoReading)break
+                tts.speak(line)
+            }
+            if(!autoReading)break
+            n++
+            if(n<=book.pages.lastIndex)delay(250)
+        }
+        speakingPage=-1
+        if(n>book.pages.lastIndex){autoReading=false;error="Книга прочитана до конца"}
+    }
+    BackHandler { if(sheet!=null)sheet=null else if(autoReading)autoReading=false else onClose() }
     val export=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")){uri ->
         if(uri!=null)scope.launch {try {withContext(Dispatchers.IO){context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { out ->
             out.appendLine(book.title);out.appendLine("Локальное распознавание KOMA. Результат требует проверки.")
@@ -139,6 +178,7 @@ fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine
                         Text(if(scanning)"  Распознаём…" else if(result!=null)"  Текст страницы" else "  Распознать",fontSize=12.sp,color=Color.White)
                     }
                     Spacer(Modifier.weight(1f))
+                    IconToggleButton(checked=autoReading,onCheckedChange={autoReading=it}){Icon(if(autoReading)Icons.Filled.PauseCircle else Icons.Outlined.PlayCircle,"Авточтение",tint=if(autoReading)Orange else Color(0xFF9EAB9A))}
                     IconToggleButton(checked=showRegions,onCheckedChange={showRegions=it}){Icon(Icons.Outlined.CropFree,"Рамки текста",tint=if(showRegions)Orange else Color(0xFF9EAB9A))}
                     IconButton(onClick={sheet="pages"}){Icon(Icons.Outlined.GridView,"Все страницы",tint=Color(0xFF9EAB9A))}
                 }
@@ -169,7 +209,26 @@ fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine
                 SectionLabel("КАТЕГОРИЯ")
                 Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)){categories.drop(1).forEach { cat->FilterChip(selected=book.category==cat,onClick={save(book.copy(category=cat))},label={Text(cat,fontSize=11.sp)})}}
                 SectionLabel("ЯЗЫК OCR")
-                LanguageChooser(language){language=it}
+                LanguageChooser(language){language=it;repo.prefs.edit().putString("ocrLanguage",it).apply()}
+                SectionLabel("АВТОЧТЕНИЕ")
+                Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                    Column(Modifier.weight(1f)){Text("Читать страницы вслух",fontSize=13.sp);Text("Распознаёт страницу и листает дальше сам",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+                    Switch(checked=autoReading,onCheckedChange={autoReading=it})
+                }
+                Row(Modifier.fillMaxWidth().padding(top=6.dp),verticalAlignment=Alignment.CenterVertically){
+                    Text("Скорость речи",fontSize=13.sp,modifier=Modifier.weight(1f))
+                    listOf(0.8f to "медленно",1f to "обычно",1.3f to "быстро").forEach { (value,label) ->
+                        FilterChip(selected=speechRate==value,onClick={speechRate=value;repo.prefs.edit().putFloat("speechRate",value).apply();tts.setRate(value)},label={Text(label,fontSize=11.sp)},modifier=Modifier.padding(start=4.dp))
+                    }
+                }
+                TextButton(onClick={scope.launch{
+                    val lines=ocrLinesForSpeech(result?.regions?.map{it.text}.orEmpty())
+                    if(lines.isEmpty()){scan();return@launch}
+                    tts.ensureReady();tts.setRate(speechRate)
+                    if(!tts.available){error=tts.languageNote ?: "Синтезатор речи недоступен";return@launch}
+                    lines.forEach { tts.speak(it) }
+                }}){Icon(Icons.Outlined.VolumeUp,null,Modifier.size(18.dp));Text("  Прочитать эту страницу",fontSize=12.sp)}
+                repo.prefs.edit().putBoolean("autoOcr",true).apply()
                 Text("Масштаб: щипок или двойное касание. Свайп — следующая страница. Исходное изображение не меняется.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(vertical=16.dp))
                 Text("${book.pages.size} страниц · ${book.author}",fontSize=12.sp)
                 TextButton(onClick={if(book.source.startsWith("https://"))runCatching{context.startActivity(Intent(Intent.ACTION_VIEW,android.net.Uri.parse(book.source)))}} ,enabled=book.source.startsWith("https://")){Icon(Icons.Outlined.OpenInNew,null,Modifier.size(16.dp));Text("  Источник и права")}
