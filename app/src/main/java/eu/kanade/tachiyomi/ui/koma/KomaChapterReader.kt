@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.os.Bundle
+import eu.kanade.domain.manga.model.readingMode
 import androidx.activity.compose.setContent
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.background
@@ -90,6 +91,19 @@ class KomaReaderActivity : AppCompatActivity() {
                         onClose = { finish() },
                         onUpdate = { updated -> KomaChapterProgress.save(context, updated) },
                         onDelete = { finish() },
+                        // «Сканировать и читать» с экрана главы: та же кнопка
+                        // раньше открывала основную читалку с автостартом, а
+                        // теперь главу показывает KOMA — автостарт передаём ей.
+                        autoStart = intent.getBooleanExtra("autoread_start", false),
+                        // Резервная (прежняя) читалка — из меню KOMA, если
+                        // понадобится какой-то её режим.
+                        onOpenLegacy = {
+                            startActivity(
+                                ReaderActivity.newIntent(context, mangaId, chapterId)
+                                    .putExtra("skipKoma", true),
+                            )
+                            finish()
+                        },
                     )
                 }
                 is State.Empty -> Message(
@@ -223,8 +237,14 @@ internal class KomaChapterLoader(private val context: Context) {
             category = if (manga.genre?.any { it.contains("манхва", ignoreCase = true) } == true) "Манхва" else "Манга",
             pages = pages,
             progress = KomaChapterProgress.load(context, id).coerceIn(0, pages.lastIndex),
-            // Высокие страницы (вебтун) читаются вертикальной лентой, книжные — справа налево.
-            mode = "rtl",
+            // Режим берём у самой книги: вебтун и «вертикально» читаются
+            // лентой, RTL — справа налево, LTR — слева направо. Раньше здесь
+            // жёстко стоял "rtl", и любая манхва открывалась страницами.
+            mode = when (manga.readingMode.toInt()) {
+                3, 4, 5 -> "vertical"
+                1 -> "ltr"
+                else -> "rtl"
+            },
         )
     }
 }
