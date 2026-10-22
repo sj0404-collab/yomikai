@@ -298,55 +298,52 @@ object KomaReadingOrder {
     private fun splitPanels(group: List<OcrRegion>, rtl: Boolean, depth: Int): List<List<OcrRegion>> {
         if (group.size <= 1 || depth > 12) return listOf(group)
 
-        // 1. Горизонтальные разрезы: полоса, через которую не проходит ни один
-        //    регион. Порог растёт вместе с уже набранной группой, чтобы строки
-        //    внутри одного облачка не рвали панель на «этажи».
-        val byTop = group.sortedBy { it.top }
-        val rows = mutableListOf<MutableList<OcrRegion>>()
-        var row = mutableListOf(byTop.first())
-        var rowTop = byTop.first().top
-        var rowBottom = byTop.first().bottom
-        for (region in byTop.drop(1)) {
-            val gap = region.top - rowBottom
-            val threshold = max(Y_CUT, (rowBottom - rowTop) * 0.25f)
-            if (gap > threshold) {
-                rows += row
-                row = mutableListOf(region)
-                rowTop = region.top
-                rowBottom = region.bottom
-            } else {
-                row += region
-                rowBottom = max(rowBottom, region.bottom)
-            }
-        }
-        rows += row
-        if (rows.size > 1) {
-            return rows.flatMap { splitPanels(it, rtl, depth + 1) }
-        }
+        // Порог разреза — от реальной высоты строки на ЭТОЙ странице, а не от
+        // накопленной высоты группы: раньше порог рос вместе с группой, разрез
+        // переставал срабатывать, и панели снова читались «лесенкой».
+        val lineHeight = group.map { it.bottom - it.top }.sorted().let { it[it.size / 2] }
+            .coerceAtLeast(0.008f)
+        val yCut = max(Y_CUT, lineHeight * 0.9f)
+        val xCut = max(X_CUT, lineHeight * 0.9f)
 
-        // 2. Вертикальные разрезы: панели, стоящие рядом.
-        val byLeft = group.sortedBy { it.left }
-        val columns = mutableListOf<MutableList<OcrRegion>>()
-        var column = mutableListOf(byLeft.first())
-        var columnRight = byLeft.first().right
-        for (region in byLeft.drop(1)) {
-            val gap = region.left - columnRight
-            if (gap > X_CUT) {
-                columns += column
-                column = mutableListOf(region)
-                columnRight = region.right
-            } else {
-                column += region
-                columnRight = max(columnRight, region.right)
-            }
-        }
-        columns += column
+        // 1. Горизонтальный разрез: ищем полосу пустоты между интервалами строк.
+        val rows = mergeByAxis(group, byY = true, yCut)
+        if (rows.size > 1) return rows.flatMap { splitPanels(it, rtl, depth + 1) }
+
+        // 2. Вертикальный разрез: панели, стоящие рядом (для манги — справа налево).
+        val columns = mergeByAxis(group, byY = false, xCut)
         if (columns.size > 1) {
             val ordered = if (rtl) columns.reversed() else columns
             return ordered.flatMap { splitPanels(it, rtl, depth + 1) }
         }
 
         return listOf(group)
+    }
+
+    /**
+     * Делит группу на части по пустым полосам вдоль оси.
+     *
+     * Интервалы регионов сливаются ([start, end]), и там, где между ними
+     * остаётся зазор больше [cut], группа режется. Это устойчивее прежнего
+     * «накопления строки»: регионы на одной высоте всегда попадают в одну часть.
+     */
+    private fun mergeByAxis(group: List<OcrRegion>, byY: Boolean, cut: Float): List<List<OcrRegion>> {
+        data class Band(val start: Float, val end: Float, val items: MutableList<OcrRegion>)
+
+        val sorted = group.sortedBy { if (byY) it.top else it.left }
+        val bands = mutableListOf<Band>()
+        for (region in sorted) {
+            val start = if (byY) region.top else region.left
+            val end = if (byY) region.bottom else region.right
+            val last = bands.lastOrNull()
+            if (last != null && start - last.end <= cut) {
+                bands[bands.lastIndex] = Band(last.start, max(last.end, end), last.items.apply { add(region) })
+            } else {
+                bands += Band(start, end, mutableListOf(region))
+            }
+        }
+        if (bands.size <= 1) return listOf(group)
+        return bands.map { it.items.toList() }
     }
 
     /** Реплики одной панели: фрагменты → строки → облачка, сверху вниз. */
@@ -367,8 +364,11 @@ object KomaReadingOrder {
             for (block in blocks) {
                 val head = block.last()
                 val lineHeight = max(head.bottom - head.top, 0.01f)
+                // 0.35 вместо 0.5: у рукописных реплик и строк вразнобой
+                // перекрытие по высоте меньше, и фрагмент уходил в отдельную
+                // «строку» — рамка на странице не покрывала всю реплику.
                 val overlap = min(head.bottom, region.bottom) - max(head.top, region.top)
-                if (overlap <= lineHeight * 0.5f) continue
+                if (overlap <= lineHeight * 0.35f) continue
                 val blockLeft = block.minOf { it.left }
                 val blockRight = block.maxOf { it.right }
                 val gap = when {
@@ -376,8 +376,8 @@ object KomaReadingOrder {
                     region.right < blockLeft -> region.right - blockLeft
                     else -> 0f
                 }
-                if (gap > lineHeight * 1.2f) continue
-                if (gap < -lineHeight * 0.6f) continue
+                if (gap > lineHeight * 1.6f) continue
+                if (gap < -lineHeight * 0.9f) continue
                 if (gap < bestGap) {
                     bestGap = gap
                     target = block
@@ -459,14 +459,14 @@ object KomaReadingOrder {
         if (aWidth <= 0f || bWidth <= 0f || aHeight <= 0f || bHeight <= 0f) return false
         val overlap = min(a.right, b.right) - max(a.left, b.left)
         if (overlap <= 0f) return false
-        if (overlap / min(aWidth, bWidth) < 0.45f) return false
+        if (overlap / min(aWidth, bWidth) < 0.30f) return false
         // Строки одного облачка стоят друг под другом, а не со сдвигом вбок:
         // если центры разъехались больше половины ширины — это соседние
         // облачка, и склеивать их нельзя (иначе одна рамка на две реплики).
         val centerShift = abs((a.left + a.right) / 2f - (b.left + b.right) / 2f)
-        if (centerShift > max(aWidth, bWidth) * 0.5f) return false
+        if (centerShift > max(aWidth, bWidth) * 0.8f) return false
         val gap = b.top - a.bottom
-        if (gap < -aHeight * 0.4f || gap > max(aHeight, bHeight) * 0.8f) return false
+        if (gap < -aHeight * 0.6f || gap > max(aHeight, bHeight) * 1.2f) return false
         // Высокие узкие блоки — вертикальные колонки, а не строки облачка.
         if (aHeight > aWidth * 3f || bHeight > bWidth * 3f) return false
         return true

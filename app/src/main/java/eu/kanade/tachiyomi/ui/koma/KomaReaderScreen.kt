@@ -46,6 +46,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
+import mihon.domain.ocr.model.OcrRegion
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -103,6 +104,10 @@ fun KomaReaderScreen(
     var result by remember { mutableStateOf<PageOcr?>(null) }
     var scanJob by remember { mutableStateOf<Job?>(null) }
     var scrollJob by remember { mutableStateOf<Job?>(null) }
+    // Прогрев следующей страницы: пока голос читает текущую, распознавание уже
+    // идёт. Именно это даёт «страница готова к моменту, когда дочитали», вместо
+    // паузы в несколько секунд на каждой странице.
+    var prefetchJob by remember { mutableStateOf<Job?>(null) }
     var scanning by remember { mutableStateOf(false) }
     var batchProgress by remember { mutableIntStateOf(0) }
     var batchTotal by remember { mutableIntStateOf(0) }
@@ -184,7 +189,20 @@ fun KomaReaderScreen(
             language = language,
             from = if(mode=="vertical")scroll.firstVisibleItemIndex else pager.currentPage,
             tts = tts,
-            recognize = { index -> engine.cached(book.id,index,language) ?: runCatching { engine.recognize(book,index,language) }.getOrNull() },
+            recognize = { index ->
+                val ready = engine.cached(book.id,index,language)
+                if (ready != null) ready else {
+                    val result = runCatching { engine.recognize(book,index,language) }.getOrNull()
+                    // Пока эта страница озвучивается — распознаём следующую.
+                    val next = index + 1
+                    if (next < book.pages.size && prefetchJob?.isActive != true) {
+                        prefetchJob = scope.launch {
+                            runCatching { engine.recognize(book,next,language) }
+                        }
+                    }
+                    result
+                }
+            },
             onPage = { index ->
                 // В ленте НЕ дёргаем scrollToItem на каждой странице: у элемента
                 // страницы это сбрасывает смещение на ноль, и экран прыгал в
@@ -199,7 +217,40 @@ fun KomaReaderScreen(
                     pager.animateScrollToPage(index)
                 }
             },
-            onResult = { r -> if(r!=null)result=r },
+            onResult = { r ->
+                if(r!=null) {
+                    result=r
+                    // Снимок прочитанной страницы — в общую вкладку «Скриншоты»,
+                    // как это делала прежняя читалка.
+                    val lines=KomaReadingOrder.order(
+                        regions=r.regions,
+                        rtl=mode=="rtl",
+                        onlyCyrillic=language=="Кириллица"||language=="Авто",
+                    )
+                    val shotPage=KomaAutoRead.state.value.page
+                    runCatching {
+                        scope.launch {
+                            KomaScreenshots.save(
+                                context=context.applicationContext,
+                                bookId=book.id,
+                                pageIndex=shotPage,
+                                pagePath=book.pages.getOrNull(shotPage).orEmpty(),
+                                regions=lines.mapIndexed { i,line ->
+                                    OcrRegion(
+                                        order=i,
+                                        text=line.text,
+                                        boundingBox=mihon.domain.ocr.model.OcrBoundingBox(
+                                            line.left,line.top,line.right,line.bottom,
+                                        ),
+                                        textOrientation=mihon.domain.ocr.model.OcrTextOrientation.Horizontal,
+                                    )
+                                },
+                                engineName=r.engine,
+                            )
+                        }
+                    }
+                }
+            },
             onSilentPage = { index ->
                 // Кадр без реплик (арт, звуковой эффект) проезжаем плавно, а не
                 // перескакиваем: место в главе не теряется, и глаза успевают
@@ -282,6 +333,7 @@ fun KomaReaderScreen(
                     DropdownMenu(expanded=overflow,onDismissRequest={overflow=false}) {
                         DropdownMenuItem(text={Text(if(book.favorite)"Убрать из избранного" else "В избранное")},onClick={save(book.copy(favorite=!book.favorite));overflow=false})
                         DropdownMenuItem(text={Text("Как читать эту историю")},onClick={sheet="settings";overflow=false})
+                        DropdownMenuItem(text={Text("Как читается")},onClick={sheet="speech";overflow=false})
                         DropdownMenuItem(text={Text("Все страницы")},onClick={sheet="pages";overflow=false})
                         DropdownMenuItem(text={Text("Рамки текста")},onClick={showRegions=!showRegions;overflow=false})
                         DropdownMenuItem(text={Text(if(autoScroll)"Автопрокрутка: вкл" else "Автопрокрутка: выкл")},onClick={autoScroll=!autoScroll;repo.prefs.edit().putBoolean("autoScroll",autoScroll).apply();overflow=false})
@@ -328,7 +380,9 @@ fun KomaReaderScreen(
     // Плавающая кнопка авточтения: не мешает чтению, но всегда под рукой —
     // пауза/продолжить, пропуск реплики и стоп. В прежней читалке за это
     // отвечала отдельная плавающая панель; здесь достаточно одной кнопки.
-    if(autoReading) {
+    // Плавающая панель живёт вместе с панелями: касание страницы убирает её,
+    // чтобы экран оставался только под рисунок. Раньше она висела всегда.
+    if(autoReading && barsVisible) {
         Box(Modifier.fillMaxSize().padding(bottom=140.dp,end=16.dp),contentAlignment=Alignment.BottomEnd) {
             Surface(shape=RoundedCornerShape(28.dp),color=Color(0xE6232822),shadowElevation=8.dp) {
                 Row(Modifier.padding(horizontal=10.dp,vertical=6.dp),verticalAlignment=Alignment.CenterVertically) {
@@ -410,6 +464,26 @@ fun KomaReaderScreen(
                 }
                 TextButton(onClick={export.launch("${book.title}_ocr.txt")},enabled=engine.cacheCount()>0){Icon(Icons.Outlined.FileDownload,null,Modifier.size(18.dp));Text("  Экспорт распознанных страниц",fontSize=12.sp)}
                 Text("AI может ошибаться, особенно в рукописях и звуковых эффектах. Проверьте результат по оригиналу.",fontSize=11.sp,lineHeight=16.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            "speech" -> Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal=24.dp).padding(bottom=28.dp)) {
+                Text("Как читается",fontSize=23.sp,fontWeight=FontWeight.Bold)
+                Text("Страница ${page+1} · ${language}",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=4.dp,bottom=12.dp))
+                val list=bubbles.orEmpty()
+                if(list.isEmpty()) {
+                    Text("Реплик нет: страница ещё не распознана или на ней только рисунок и звуковые эффекты.",fontSize=13.sp)
+                    TextButton(onClick={sheet=null;if(result==null)scan()}){Text("Распознать страницу",fontSize=12.sp)}
+                }
+                list.forEachIndexed { index,line ->
+                    Row(Modifier.fillMaxWidth().padding(vertical=4.dp),verticalAlignment=Alignment.Top) {
+                        Text("${index+1}.",fontSize=12.sp,color=Orange,modifier=Modifier.padding(end=8.dp))
+                        Text(line.text,fontSize=12.sp,modifier=Modifier.weight(1f))
+                        IconButton(onClick={ scope.launch { sheet=null; tts.speak(line.text) } },modifier=Modifier.size(32.dp)) {
+                            Icon(Icons.Outlined.VolumeUp,null,Modifier.size(16.dp),tint=Orange)
+                        }
+                    }
+                }
+                if(list.isNotEmpty()) Spacer(Modifier.height(8.dp))
+                Text("Порядок — панель за панелью, внутри панели сверху вниз. Эти же фразы уходят в синтезатор.",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
             "pages" -> {
                 Text("Страницы",Modifier.padding(horizontal=24.dp),fontSize=24.sp,fontWeight=FontWeight.Bold)

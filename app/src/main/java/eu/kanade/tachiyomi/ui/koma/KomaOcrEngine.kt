@@ -56,7 +56,24 @@ class KomaOcrEngine(private val context: Context) {
     fun store(id:String,page:Int,language:String,result:PageOcr){cacheFile(id,page,language).writeText(result.json().toString())}
     fun cacheCount():Int=root.listFiles()?.size ?: 0
     fun clear(){root.listFiles()?.forEach{it.delete()}}
+    /**
+     * Кэш декодированных страниц.
+     *
+     * Битмап нужен дважды: экрану для отрисовки и движку для распознавания.
+     * Раньше страница декодировалась каждый раз заново — при чтении это
+     * заметная пауза на каждой странице. Кэш маленький: три страницы, чтобы
+     * не съесть память на длинной ленте.
+     */
+    private val pageCache = object : android.util.LruCache<String, Bitmap>(3) {
+        override fun sizeOf(key: String, value: Bitmap): Int = 1
+    }
+
     fun bitmap(path:String):Bitmap {
+        pageCache.get(path)?.takeIf { !it.isRecycled }?.let { return it }
+        return decode(path).also { runCatching { pageCache.put(path, it) } }
+    }
+
+    private fun decode(path:String):Bitmap {
         fun stream()=if(path.startsWith("file:///android_asset/")) context.assets.open(path.removePrefix("file:///android_asset/")) else File(path.removePrefix("file://")).inputStream()
         val bounds=BitmapFactory.Options().apply { inJustDecodeBounds=true }
         stream().use{BitmapFactory.decodeStream(it,null,bounds)}
@@ -115,7 +132,13 @@ class KomaOcrEngine(private val context: Context) {
                 // остаётся сообщением на экране, а приложение продолжает жить.
                 lastError=describe(t)
                 PageOcr(emptyList(),ENGINE_NAME,System.currentTimeMillis()-start)
-            } finally { if(!image.isRecycled) image.recycle() }
+            } finally {
+                // Кэшированный битмап не освобождаем: он принадлежит экрану,
+                // и recycle() дал бы «trying to use a recycled bitmap» при
+                // отрисовке. Свою копию (если кэш промахнулся) освобождаем.
+                val cachedCopy = runCatching { pageCache.get(path) }.getOrNull()
+                if (image !== cachedCopy && !image.isRecycled) image.recycle()
+            }
         }
     }
     private suspend fun ml(bitmap:Bitmap,script:String):List<OcrRegion> {
