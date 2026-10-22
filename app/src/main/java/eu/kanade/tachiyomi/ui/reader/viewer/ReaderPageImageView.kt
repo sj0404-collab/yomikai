@@ -42,6 +42,7 @@ import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView.SCALE_TYPE_
 import com.github.chrisbanes.photoview.PhotoView
 import com.google.android.material.color.MaterialColors
 import eu.kanade.domain.base.BasePreferences
+import eu.kanade.presentation.reader.components.OcrCurrentBubble
 import eu.kanade.presentation.reader.components.OcrPageMarksSettings
 import eu.kanade.tachiyomi.data.coil.cropBorders
 import eu.kanade.tachiyomi.data.coil.customDecoder
@@ -106,16 +107,20 @@ open class ReaderPageImageView @JvmOverloads constructor(
     private var pendingOnPageReadyDirection: Boolean? = null
     private var loadedPageInput: OcrPageInput? = null
 
-    private val ocrMarksBoxPaints = OcrPageMarksSettings.palette.map { color ->
+    private val ocrMarksStrokePaint =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            this.color = color
+            color = OCR_MARK_COLOR
             style = Paint.Style.STROKE
             strokeWidth = resources.displayMetrics.density * 1.5f
         }
-    }
+    private val ocrMarksFillPaint =
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = OCR_MARK_COLOR
+            style = Paint.Style.FILL
+        }
     private val ocrMarksNumberPaint =
         TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE
+            color = Color.BLACK
             textAlign = Paint.Align.LEFT
         }
     private val ocrMarksNumberBackgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -160,9 +165,18 @@ open class ReaderPageImageView @JvmOverloads constructor(
      */
     var pageBackground: Drawable? = null
 
+    /** Смена озвучиваемой реплики — перерисовываем кадр (подсветка идёт в onDraw). */
+    private val currentBubbleListener: () -> Unit = { postInvalidateOnAnimation() }
+
     init {
         addView(panelDebugOverlay, MATCH_PARENT, MATCH_PARENT)
         panelDebugOverlay.isVisible = false
+        OcrCurrentBubble.addListener(currentBubbleListener)
+    }
+
+    override fun onDetachedFromWindow() {
+        OcrCurrentBubble.removeListener(currentBubbleListener)
+        super.onDetachedFromWindow()
     }
 
     @CallSuper
@@ -807,68 +821,140 @@ open class ReaderPageImageView @JvmOverloads constructor(
         if (!pageView.isReady) return
         val marks = currentOcrPageMarks() ?: return
 
+        // Рисуем ТОЛЬКО последний кадр страницы. Раньше брались последние шесть
+        // записей буфера, и рамки от прошлых прокруток/зумов ложились поверх
+        // нынешней картинки — «рамки листаются вразнобой», хотя каждая по себе
+        // была на своём месте.
+        val entry = marks.lastOrNull() ?: return
+
         val density = resources.displayMetrics.density
         val viewWidth = width.toFloat()
         val viewHeight = height.toFloat()
-        val numberTextPaint = ocrMarksNumberPaint
-        numberTextPaint.textSize = density * 10f
 
-        // Записей на странице может быть много (вебтун: снимок на каждый экран
-        // прокрутки), поэтому рисуем последние: они относятся к тому, что
-        // читатель видит сейчас, а совсем старые только наслаивались бы.
-        val visibleMarks = marks.takeLast(MAX_OCR_MARKS_ENTRIES)
-        for (entryIndex in visibleMarks.indices) {
-            val entry = visibleMarks[entryIndex]
-            // Свежая запись — ярче: она про порядок чтения именно этого кадра.
-            val baseColor = OcrPageMarksSettings.palette[
-                entryIndex % OcrPageMarksSettings.palette.size
-            ]
-            val entryAlpha = 0.4f + 0.6f * (entryIndex + 1f) / visibleMarks.size
-            val markColor = baseColor.withAlpha(Color.alpha(baseColor) * entryAlpha)
-            val boxPaint = ocrMarksBoxPaints[entryIndex % ocrMarksBoxPaints.size]
-            boxPaint.color = markColor
-            // Нумерация ПО ПАНЕЛЯМ: внутри каждой панели манги счёт начинается
-            // заново с 1, как в комиксе (1, 2, 3 в первой панели, снова 1, 2, 3
-            // во второй). Регионы, у которых панель не определили (panelIndex =
-            // -1: текст в поле или в стыке), идут сплошной нумерацией — им
-            // «своя панель» не принадлежит.
-            var lastPanelIndex = Int.MIN_VALUE
-            var numberInPanel = 0
-            for (regionIndex in entry.regions.indices) {
-                val region = entry.regions[regionIndex]
-                // v1.9.138: чистка пометок-шума с экрана. Регионы с пустым
-                // текстом и вырожденные полоски (нулевая высота на стыке
-                // кадров / микропятна) дают на странице «линии + кружки-номера
-                // без смысла» — рисовать их не надо.
-                if (region.text.isBlank()) continue
-                val hFrac = region.bottom - region.top
-                val wFrac = region.right - region.left
-                if (hFrac < 0.012f || wFrac < 0.02f) continue
+        val regions = entry.regions.filter { region ->
+            if (region.text.isBlank()) return@filter false
+            val w = region.right - region.left
+            val h = region.bottom - region.top
+            // Обрывки нулевой высоты на стыке кадров и микропятна — не рамки.
+            h >= 0.012f && w >= 0.02f
+        }
+        if (regions.isEmpty()) return
 
-                val fileBox = entry.regionFileBoundingBox(region) ?: continue
-                val fileRect = RectF(
-                    fileBox.left * entry.sourceWidth,
-                    fileBox.top * entry.sourceHeight,
-                    fileBox.right * entry.sourceWidth,
-                    fileBox.bottom * entry.sourceHeight,
-                )
-                val viewRect = pageView.fileToViewRect(fileRect, fileCropRect) ?: continue
-                if (viewRect.width() <= 0f || viewRect.height() <= 0f) continue
-                // Экономия отрисовки длинной ленты вебтуна и обрезка всего,
-                // что уже уехало за край экрана.
-                if (!viewRect.intersect(0f, 0f, viewWidth, viewHeight)) continue
+        val bubbles = groupRegionsIntoBubbles(regions)
+        if (bubbles.isEmpty()) return
 
-                // Новая панель (или первый безымянный регион) — счёт с 1.
-                if (region.panelIndex != lastPanelIndex) {
-                    lastPanelIndex = region.panelIndex
-                    numberInPanel = 0
-                }
-                numberInPanel++
+        val strokeWidth = density * 1.5f
+        val currentStrokeWidth = density * 2.5f
+        // Цвет KOMA-читалки: тот же оранжевый контур вокруг реплики.
+        val accent = OCR_MARK_COLOR
+        val strokePaint = ocrMarksStrokePaint
+        val fillPaint = ocrMarksFillPaint
+        strokePaint.color = accent
+        strokePaint.strokeWidth = strokeWidth
+        fillPaint.color = accent
 
-                canvas.drawRect(viewRect, boxPaint)
-                drawOcrMarkNumber(canvas, viewRect, numberInPanel, markColor)
-
+        bubbles.forEachIndexed { index, bubble ->
+            val fileRect = RectF(
+                bubble.left * entry.sourceWidth,
+                bubble.top * entry.sourceHeight,
+                bubble.right * entry.sourceWidth,
+                bubble.bottom * entry.sourceHeight,
+            )
+            val viewRect = pageView.fileToViewRect(fileRect, fileCropRect) ?: return@forEachIndexed
+            if (viewRect.width() <= 0f || viewRect.height() <= 0f) return@forEachIndexed
+            // Рамка во весь лист — след «распознать страницу целиком»: у такой
+            // записи геометрии по репликам нет, и контур поверх всего арта
+            // только мешает.
+            if (viewRect.width() >= viewWidth * 0.9f && viewRect.height() >= viewHeight * 0.9f) {
+                return@forEachIndexed
             }
+            if (!RectF(viewRect).intersect(0f, 0f, viewWidth, viewHeight)) return@forEachIndexed
+
+            val isCurrent = OcrCurrentBubble.matches(bubble.text)
+            val radius = density * 8f
+            if (isCurrent) {
+                fillPaint.alpha = 90
+                canvas.drawRoundRect(viewRect, radius, radius, fillPaint)
+                strokePaint.strokeWidth = currentStrokeWidth
+                strokePaint.alpha = 255
+            } else {
+                strokePaint.strokeWidth = strokeWidth
+                strokePaint.alpha = 190
+            }
+            canvas.drawRoundRect(viewRect, radius, radius, strokePaint)
+
+            // Один номер на РЕПЛИКУ: номер ставится у её рамки, а не у каждой
+            // строки, из которых она склеена.
+            drawOcrMarkNumber(canvas, viewRect, index + 1, accent)
+        }
+    }
+
+    /**
+     * Склеивает строки одного облачка в одну реплику.
+     *
+     * Движок отдаёт рамку на каждую строку текста, поэтому «Уже пора на-чать
+     * встречу…» приходило четырьмя регионами: на странице это выглядело как
+     * четыре полоски с четырьмя номерами, а в озвучке — как чтение по строке с
+     * паузой после каждой. Склеиваем строки, которые стоят друг под другом в
+     * одном столбце и разделены малым зазором: получается одна рамка и одна
+     * реплика, как в KOMA.
+     */
+    private fun groupRegionsIntoBubbles(
+        regions: List<mihon.data.ocr.SerializableOcrRegion>,
+    ): List<OcrMarkBubble> {
+        val sorted = regions.sortedBy { it.top }
+        val result = ArrayList<OcrMarkBubble>(sorted.size)
+        for (region in sorted) {
+            val last = result.lastOrNull()
+            if (last != null && sameBubble(last, region)) {
+                last.left = kotlin.math.min(last.left, region.left)
+                last.top = kotlin.math.min(last.top, region.top)
+                last.right = kotlin.math.max(last.right, region.right)
+                last.bottom = kotlin.math.max(last.bottom, region.bottom)
+                last.text = joinBubbleText(last.text, region.text)
+            } else {
+                result += OcrMarkBubble(
+                    left = region.left,
+                    top = region.top,
+                    right = region.right,
+                    bottom = region.bottom,
+                    text = region.text,
+                )
+            }
+        }
+        return result
+    }
+
+    private fun sameBubble(a: OcrMarkBubble, b: mihon.data.ocr.SerializableOcrRegion): Boolean {
+        val aWidth = a.right - a.left
+        val bWidth = b.right - b.left
+        if (aWidth <= 0f || bWidth <= 0f) return false
+        val overlap = kotlin.math.min(a.right, b.right) - kotlin.math.max(a.left, b.left)
+        if (overlap <= 0f) return false
+        if (overlap / kotlin.math.min(aWidth, bWidth) < 0.4f) return false
+        val aHeight = a.bottom - a.top
+        val bHeight = b.bottom - b.top
+        if (aHeight <= 0f || bHeight <= 0f) return false
+        val gap = b.top - a.bottom
+        if (gap < 0f || gap > kotlin.math.max(aHeight, bHeight) * 0.6f) return false
+        // Вертикальные колонки (японский текст) — высокие и узкие, их не клеим.
+        if (aHeight > aWidth * 4f || bHeight > bWidth * 4f) return false
+        return true
+    }
+
+    /** Перенос слова в конце строки склеивается вплотную, иначе — пробел. */
+    private fun joinBubbleText(a: String, b: String): String {
+        val aT = a.trim()
+        val bT = b.trim()
+        if (aT.isEmpty()) return bT
+        if (bT.isEmpty()) return aT
+        val last = aT.last()
+        return if (last == '-' || last == '\u2010' || last == '\u2011' ||
+            last == '\u2013' || last == '\u2014' || last == '\u2015'
+        ) {
+            aT.dropLast(1) + bT
+        } else {
+            "$aT $bT"
         }
     }
 
@@ -1176,7 +1262,21 @@ private const val LOADED_READER_PAGE_INDEX = -1
  * на длинной полосе оказываются десятки рамок с номерами — читать под ними
  * текст невозможно.
  */
-private const val MAX_OCR_MARKS_ENTRIES = 6
+/**
+ * Цвет рамки реплики — тот же оранжевый, что в KOMA-читалке. У основной
+ * читалки была своя палитра (бирюза/оранжевый/фиолетовый по кругу) и заливка
+ * каждой строки: страница превращалась в разноцветные полосы.
+ */
+private val OCR_MARK_COLOR = android.graphics.Color.rgb(255, 152, 0)
+
+/** Прямоугольник склеенной реплики в нормализованных координатах файла. */
+private class OcrMarkBubble(
+    var left: Float,
+    var top: Float,
+    var right: Float,
+    var bottom: Float,
+    var text: String,
+)
 
 /** Кэш пометок страницы: инвалидируется сменой страницы или версии буфера. */
 private data class OcrPageMarksCache(

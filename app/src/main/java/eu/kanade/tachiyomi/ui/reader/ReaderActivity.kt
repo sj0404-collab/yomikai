@@ -367,8 +367,15 @@ class ReaderActivity : BaseActivity() {
                             // Во время авточтения страницу НЕ перелистываем:
                             // иначе голос ещё читает кадр, а пейджер уже уехал
                             // на следующую, и реплики терялись.
-                            if (frameBusy) {
-                                kotlinx.coroutines.delay(100)
+                            //
+                            // И БЕЗ озвучки не листаем вовсе. Раньше автопрокрутка
+                            // работала сама по себе и молча переворачивала страницу
+                            // каждые несколько секунд, даже когда чтение не
+                            // запущено: читатель открывал страницу, а её уносило.
+                            // Смысл автопрокрутки в пагере — идти за голосом.
+                            val readingNow = autoReadActive || autoReadEngine.isReading.value
+                            if (frameBusy || !readingNow) {
+                                kotlinx.coroutines.delay(200)
                             } else {
                                 kotlinx.coroutines.delay((12_000L - speed.toLong() * 1_000L).coerceAtLeast(2_000L))
                                 viewer.moveToNext()
@@ -1276,22 +1283,18 @@ class ReaderActivity : BaseActivity() {
                     onClickOcr = ::enterOcrMode,
                 )
 
-                // Линейка авточтения: подсветка текущей читаемой реплики
+                // Текущая озвучиваемая реплика: подсветку рисует сама страница
+                // (ReaderPageImageView.drawOcrPageMarks) тем же холстом, что и
+                // картинку. Отдельного Compose-слоя с пятнами и бейджами больше
+                // нет — он жил в координатах окна и уезжал от текста при зуме.
                 run {
                     val autoRegion by autoReadEngine.currentRegion.collectAsState()
-                    autoRegion?.let { region ->
-                        // Пересчитываем на каждую реплику: пользователь листает
-                        // и зумит, поэтому прямоугольник страницы меняется.
-                        // Без него подсветка считала, что страница занимает
-                        // весь экран, и рамки уезжали от текста.
-                        val pageRect = remember(region) {
-                            runCatching { viewModel.state.value.viewer?.displayedPageRect() }.getOrNull()
-                        }
-                        eu.kanade.presentation.reader.components.AutoReadHighlight(
-                            region = region,
-                            engine = autoReadEngine,
-                            imageRect = pageRect,
-                        )
+                    val spokenText = autoRegion?.text
+                    androidx.compose.runtime.LaunchedEffect(spokenText) {
+                        eu.kanade.presentation.reader.components.OcrCurrentBubble.set(spokenText)
+                    }
+                    androidx.compose.runtime.DisposableEffect(Unit) {
+                        onDispose { eu.kanade.presentation.reader.components.OcrCurrentBubble.clear() }
                     }
                 }
 
