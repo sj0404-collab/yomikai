@@ -102,3 +102,21 @@
 # причина подтверждена логом logs/tts.log с устройства (v1.9.16/17).
 -keep class com.k2fsa.sherpa.onnx.** { *; }
 -dontwarn com.k2fsa.sherpa.onnx.**
+
+# ONNX Runtime: JNI-слой ищет классы и конструкторы ПО ИМЕНИ.
+# Нативный код (convertToTensorInfo) делает NewObject для ai.onnxruntime.*,
+# получая jmethodID через GetMethodID. Если R8 переименует или вырежет эти
+# классы, GetMethodID вернёт null и ART убьёт процесс:
+#   JNI DETECTED ERROR IN APPLICATION: mid == null
+#   in call to NewObject
+#   from ai.onnxruntime.OrtSession.run(...)
+# Это SIGABRT в нативном коде: ни try/catch, ни обработчик исключений его не
+# ловят — приложение просто исчезает. Отсюда и картина: сессии открывались, а
+# падало на ПЕРВОМ ВЫВОДЕ моделей; KOMA (debug-сборка без минификации) на том
+# же устройстве работала исправно.
+-keep class ai.onnxruntime.** { *; }
+-keepclassmembers class ai.onnxruntime.** {
+    <init>(...);
+    *;
+}
+-dontwarn ai.onnxruntime.**
