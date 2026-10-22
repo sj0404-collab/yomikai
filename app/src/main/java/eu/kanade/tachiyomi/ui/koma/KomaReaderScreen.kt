@@ -384,6 +384,23 @@ fun KomaReaderScreen(
                 val font=remember(fontPath){if(fontPath!=null)runCatching{FontFamily(androidx.compose.ui.text.font.Typeface(android.graphics.Typeface.createFromFile(fontPath)))}.getOrNull()else null}
                 if(result!=null) {
                     Text("${result!!.regions.size} областей · ${"%.1f".format(result!!.millis/1000f)} сек.",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(vertical=8.dp))
+                    // Что именно уйдёт в озвучку и в каком порядке. Раньше это
+                    // можно было только услышать: не хватало слова — и непонятно,
+                    // не распозналось оно или потерялось при склейке. Теперь
+                    // список реплик виден глазами и читается в том же порядке.
+                    val spokenLines = bubbles.orEmpty()
+                    if(spokenLines.isNotEmpty()) {
+                        Text("Как читается (${spokenLines.size})",fontSize=11.sp,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=4.dp))
+                        Column(Modifier.fillMaxWidth().heightIn(max=180.dp).verticalScroll(rememberScrollState()).padding(top=4.dp)) {
+                            spokenLines.forEachIndexed { index, line ->
+                                Row(Modifier.fillMaxWidth().padding(vertical=2.dp)) {
+                                    Text("${index+1}.",fontSize=11.sp,color=Orange,modifier=Modifier.padding(end=6.dp))
+                                    Text(line.text,fontSize=11.sp)
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
                     OutlinedTextField(value=edit,onValueChange={edit=it},modifier=Modifier.fillMaxWidth().heightIn(min=140.dp,max=280.dp),textStyle=LocalTextStyle.current.copy(fontFamily=font ?: when(book.category){"Манга"->FontFamily.Serif;"Маньхуа"->FontFamily.Cursive;"Комиксы"->FontFamily.Monospace;else->FontFamily.SansSerif},fontSize=15.sp),placeholder={Text("Текст не найден. Попробуйте другой язык или более чёткую страницу.")},shape=RoundedCornerShape(14.dp))
                     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){TextButton(onClick={result=result!!.copy(edited=edit);engine.store(book.id,page,language,result!!);error="Исправления сохранены"}){Text("Сохранить правки",fontSize=11.sp)};TextButton(onClick={clipboard.setText(AnnotatedString(edit))}){Icon(Icons.Outlined.ContentCopy,null,Modifier.size(15.dp));Text(" Копировать",fontSize=11.sp)}}
                 }else if(!scanning){Text("Нажмите «Распознать». Здесь появится текст именно этой страницы, а не пример результата.",fontSize=13.sp,modifier=Modifier.padding(vertical=24.dp))}
