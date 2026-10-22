@@ -72,9 +72,14 @@ fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine
     // приходилось переключать язык руками (а «Авто» уводил манхву в японский).
     var language by remember { mutableStateOf(repo.prefs.getString("ocrLanguage","Кириллица") ?: "Кириллица") }
     val tts = remember { KomaTts(context) }
-    var autoReading by remember { mutableStateOf(false) }
-    var speechRate by remember { mutableFloatStateOf(repo.prefs.getFloat("speechRate",1f)) }
-    var speakingPage by remember { mutableIntStateOf(-1) }
+    val autoState by KomaAutoRead.state.collectAsState()
+    val autoReading = autoState.running
+    var speechRate by remember { mutableFloatStateOf(tts.rate()) }
+    var voiceDialog by remember { mutableStateOf(false) }
+    var voices by remember { mutableStateOf<List<android.speech.tts.Voice>>(emptyList()) }
+    var selectedVoice by remember { mutableStateOf(tts.selectedVoiceName()) }
+    // Контекст приложения нужен уведомлению, которое рисует контроллер.
+    LaunchedEffect(Unit) { AppContextHolder.context = context.applicationContext }
     var result by remember { mutableStateOf<PageOcr?>(null) }
     var scanJob by remember { mutableStateOf<Job?>(null) }
     var scanning by remember { mutableStateOf(false) }
@@ -121,41 +126,30 @@ fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine
     DisposableEffect(Unit){
         val window=(context as? android.app.Activity)?.window
         if(repo.prefs.getBoolean("keepAwake",true))window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        onDispose{scanJob?.cancel();autoReading=false;tts.shutdown();window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)}
+        onDispose{scanJob?.cancel();KomaAutoRead.stop();tts.shutdown();window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)}
     }
     // ── Авточтение ────────────────────────────────────────────────────────────
-    // Перенесено из прежней читалки, но устроено проще: читаем страницу
-    // (из кэша, если уже распознана), озвучиваем реплики по порядку и
-    // переходим к следующей. Остановить можно кнопкой, закрытием экрана или
-    // концом книги.
-    LaunchedEffect(autoReading, speechRate) {
-        if(!autoReading)return@LaunchedEffect
-        tts.ensureReady()
-        tts.setRate(speechRate)
-        if(!tts.available) {
-            error=tts.languageNote ?: "Синтезатор речи недоступен"
-            autoReading=false
-            return@LaunchedEffect
-        }
-        var n=if(mode=="vertical")scroll.firstVisibleItemIndex else pager.currentPage
-        while(autoReading && n<=book.pages.lastIndex) {
-            if(mode=="vertical")scroll.animateScrollToItem(n)else pager.animateScrollToPage(n)
-            val r=engine.cached(book.id,n,language) ?: runCatching { engine.recognize(book,n,language) }.getOrNull()
-            if(n==currentPage)result=r
-            speakingPage=n
-            val lines=ocrLinesForSpeech(r?.regions?.map{it.text}.orEmpty())
-            for(line in lines) {
-                if(!autoReading)break
-                tts.speak(line)
-            }
-            if(!autoReading)break
-            n++
-            if(n<=book.pages.lastIndex)delay(250)
-        }
-        speakingPage=-1
-        if(n>book.pages.lastIndex){autoReading=false;error="Книга прочитана до конца"}
+    // Логика живёт в KomaAutoRead: порядок чтения по репликам, фильтр чужой
+    // письменности, «уже прочитано», уведомление в шторке и плавающая кнопка.
+    var readTrigger by remember { mutableIntStateOf(0) }
+    LaunchedEffect(readTrigger) {
+        if(readTrigger==0)return@LaunchedEffect
+        KomaAutoRead.run(
+            context = context,
+            book = book,
+            pages = book.pages,
+            language = language,
+            from = if(mode=="vertical")scroll.firstVisibleItemIndex else pager.currentPage,
+            tts = tts,
+            recognize = { index -> engine.cached(book.id,index,language) ?: runCatching { engine.recognize(book,index,language) }.getOrNull() },
+            onPage = { index -> if(mode=="vertical")scroll.animateScrollToItem(index)else pager.animateScrollToPage(index) },
+            onResult = { r -> if(r!=null)result=r },
+        )
+        readTrigger=0
     }
-    BackHandler { if(sheet!=null)sheet=null else if(autoReading)autoReading=false else onClose() }
+    // Уведомление живёт, пока идёт чтение; при уходе с экрана гасим его.
+    DisposableEffect(Unit){ onDispose { KomaAutoRead.stop() } }
+    BackHandler { if(voiceDialog)voiceDialog=false else if(sheet!=null)sheet=null else if(autoReading)KomaAutoRead.stop() else onClose() }
     val export=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")){uri ->
         if(uri!=null)scope.launch {try {withContext(Dispatchers.IO){context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { out ->
             out.appendLine(book.title);out.appendLine("Локальное распознавание KOMA. Результат требует проверки.")
@@ -178,7 +172,9 @@ fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine
                         Text(if(scanning)"  Распознаём…" else if(result!=null)"  Текст страницы" else "  Распознать",fontSize=12.sp,color=Color.White)
                     }
                     Spacer(Modifier.weight(1f))
-                    IconToggleButton(checked=autoReading,onCheckedChange={autoReading=it}){Icon(if(autoReading)Icons.Filled.PauseCircle else Icons.Outlined.PlayCircle,"Авточтение",tint=if(autoReading)Orange else Color(0xFF9EAB9A))}
+                    IconButton(onClick={ if(autoReading)KomaAutoRead.togglePause() else readTrigger++ }){
+                        Icon(if(autoReading && !autoState.paused)Icons.Filled.PauseCircle else Icons.Outlined.PlayCircle,"Авточтение",tint=if(autoReading)Orange else Color(0xFF9EAB9A))
+                    }
                     IconToggleButton(checked=showRegions,onCheckedChange={showRegions=it}){Icon(Icons.Outlined.CropFree,"Рамки текста",tint=if(showRegions)Orange else Color(0xFF9EAB9A))}
                     IconButton(onClick={sheet="pages"}){Icon(Icons.Outlined.GridView,"Все страницы",tint=Color(0xFF9EAB9A))}
                 }
@@ -194,8 +190,23 @@ fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine
     }) { inset ->
         Box(Modifier.fillMaxSize().padding(inset)) {
             if(mode=="vertical")LazyColumn(state=scroll,modifier=Modifier.fillMaxSize()) {
-                itemsIndexed(book.pages,key={n,_->n}) { n,path -> PageImage(path,engine,true,if(n==page && showRegions)result else null) }
-            } else HorizontalPager(state=pager,reverseLayout=mode=="rtl",modifier=Modifier.fillMaxSize(),beyondViewportPageCount=0) { n -> PageImage(book.pages[n],engine,false,if(n==page && showRegions)result else null) }
+                itemsIndexed(book.pages,key={n,_->n}) { n,path -> PageImage(path,engine,true,if(n==page && (showRegions||autoReading))result else null,if(n==page)autoState.currentLine else null) }
+            } else HorizontalPager(state=pager,reverseLayout=mode=="rtl",modifier=Modifier.fillMaxSize(),beyondViewportPageCount=0) { n -> PageImage(book.pages[n],engine,false,if(n==page && (showRegions||autoReading))result else null,if(n==page)autoState.currentLine else null) }
+        }
+    }
+    // Плавающая кнопка авточтения: не мешает чтению, но всегда под рукой —
+    // пауза/продолжить, пропуск реплики и стоп. В прежней читалке за это
+    // отвечала отдельная плавающая панель; здесь достаточно одной кнопки.
+    if(autoReading) {
+        Box(Modifier.fillMaxSize().padding(bottom=140.dp,end=16.dp),contentAlignment=Alignment.BottomEnd) {
+            Surface(shape=RoundedCornerShape(28.dp),color=Color(0xE6232822),shadowElevation=8.dp) {
+                Row(Modifier.padding(horizontal=10.dp,vertical=6.dp),verticalAlignment=Alignment.CenterVertically) {
+                    IconButton(onClick={KomaAutoRead.togglePause()}){Icon(if(autoState.paused)Icons.Filled.PlayArrow else Icons.Filled.Pause,"Пауза",tint=Orange)}
+                    IconButton(onClick={KomaAutoRead.skip()}){Icon(Icons.Filled.SkipNext,"Пропустить реплику",tint=Color.White)}
+                    IconButton(onClick={KomaAutoRead.stop()}){Icon(Icons.Filled.Stop,"Остановить",tint=Color(0xFFE57373))}
+                    if(autoState.paused)Text("пауза",fontSize=10.sp,color=Color(0xFFB2B8AD),modifier=Modifier.padding(end=8.dp))
+                }
+            }
         }
     }
     if(sheet!=null) ModalBottomSheet(onDismissRequest={sheet=null},containerColor=MaterialTheme.colorScheme.background,sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true)) {
@@ -212,22 +223,20 @@ fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine
                 LanguageChooser(language){language=it;repo.prefs.edit().putString("ocrLanguage",it).apply()}
                 SectionLabel("АВТОЧТЕНИЕ")
                 Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
-                    Column(Modifier.weight(1f)){Text("Читать страницы вслух",fontSize=13.sp);Text("Распознаёт страницу и листает дальше сам",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
-                    Switch(checked=autoReading,onCheckedChange={autoReading=it})
+                    Column(Modifier.weight(1f)){Text("Читать страницы вслух",fontSize=13.sp);Text("Реплики в порядке чтения, дальше листает сам",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+                    Switch(checked=autoReading,onCheckedChange={ if(it)readTrigger++ else KomaAutoRead.stop() })
+                }
+                Row(Modifier.fillMaxWidth().padding(top=10.dp),verticalAlignment=Alignment.CenterVertically){
+                    Text("Голос",fontSize=13.sp,modifier=Modifier.weight(1f))
+                    TextButton(onClick={ scope.launch{ voices=tts.voices(); voiceDialog=true } }){ Text(selectedVoice ?: "системный",fontSize=12.sp) }
                 }
                 Row(Modifier.fillMaxWidth().padding(top=6.dp),verticalAlignment=Alignment.CenterVertically){
                     Text("Скорость речи",fontSize=13.sp,modifier=Modifier.weight(1f))
                     listOf(0.8f to "медленно",1f to "обычно",1.3f to "быстро").forEach { (value,label) ->
-                        FilterChip(selected=speechRate==value,onClick={speechRate=value;repo.prefs.edit().putFloat("speechRate",value).apply();tts.setRate(value)},label={Text(label,fontSize=11.sp)},modifier=Modifier.padding(start=4.dp))
+                        FilterChip(selected=speechRate==value,onClick={speechRate=value;tts.setRate(value)},label={Text(label,fontSize=11.sp)},modifier=Modifier.padding(start=4.dp))
                     }
                 }
-                TextButton(onClick={scope.launch{
-                    val lines=ocrLinesForSpeech(result?.regions?.map{it.text}.orEmpty())
-                    if(lines.isEmpty()){scan();return@launch}
-                    tts.ensureReady();tts.setRate(speechRate)
-                    if(!tts.available){error=tts.languageNote ?: "Синтезатор речи недоступен";return@launch}
-                    lines.forEach { tts.speak(it) }
-                }}){Icon(Icons.Outlined.VolumeUp,null,Modifier.size(18.dp));Text("  Прочитать эту страницу",fontSize=12.sp)}
+                TextButton(onClick={ if(result==null)scan() else readTrigger++ }){Icon(Icons.Outlined.VolumeUp,null,Modifier.size(18.dp));Text("  Прочитать эту страницу",fontSize=12.sp)}
                 repo.prefs.edit().putBoolean("autoOcr",true).apply()
                 Text("Масштаб: щипок или двойное касание. Свайп — следующая страница. Исходное изображение не меняется.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(vertical=16.dp))
                 Text("${book.pages.size} страниц · ${book.author}",fontSize=12.sp)
@@ -262,12 +271,30 @@ fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine
             }
         }
     }
+    if(voiceDialog) AlertDialog(
+        onDismissRequest={voiceDialog=false},
+        title={Text("Голос для озвучки")},
+        text={
+            Column(Modifier.heightIn(max=420.dp).verticalScroll(rememberScrollState())) {
+                if(voices.isEmpty()) Text("Система не отдала список голосов. Установите русский голос в настройках синтеза речи Android.",fontSize=12.sp)
+                voices.forEach { v ->
+                    Row(Modifier.fillMaxWidth().clickable {
+                        tts.selectVoice(v.name); selectedVoice=v.name; voiceDialog=false
+                    }.padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically) {
+                        RadioButton(selected=selectedVoice==v.name,onClick=null)
+                        Text(tts.label(v),fontSize=12.sp,modifier=Modifier.padding(start=10.dp))
+                    }
+                }
+            }
+        },
+        confirmButton={TextButton(onClick={voiceDialog=false}){Text("Закрыть")}},
+    )
     if(error!=null)AlertDialog(onDismissRequest={error=null},title={Text("KOMA")},text={Text(error!!)},confirmButton={TextButton(onClick={error=null}){Text("Понятно")}})
     if(deleteConfirm)AlertDialog(onDismissRequest={deleteConfirm=false},title={Text("Удалить книгу?")},text={Text("Копия в библиотеке будет удалена. Ваш исходный архив останется на месте.")},confirmButton={TextButton(onClick={onDelete(book);onClose()}){Text("Удалить")}},dismissButton={TextButton(onClick={deleteConfirm=false}){Text("Отмена")}})
 }
 
 @Composable
-private fun PageImage(path:String,engine:KomaOcrEngine,vertical:Boolean,result:PageOcr?) {
+private fun PageImage(path:String,engine:KomaOcrEngine,vertical:Boolean,result:PageOcr?,currentLine:String?=null) {
     var bitmap by remember(path){mutableStateOf<android.graphics.Bitmap?>(null)}
     var error by remember(path){mutableStateOf<String?>(null)}
     var retry by remember(path){mutableIntStateOf(0)}
@@ -287,7 +314,23 @@ private fun PageImage(path:String,engine:KomaOcrEngine,vertical:Boolean,result:P
         val transform=rememberTransformableState { zoom,pan,_-> scale=(scale*zoom).coerceIn(1f,5f);offset=if(scale>1f)offset+pan else Offset.Zero }
         Box(Modifier.size(width,height).graphicsLayer(scaleX=scale,scaleY=scale,translationX=offset.x,translationY=offset.y).transformable(state=transform,canPan={scale>1f}).pointerInput(path){detectTapGestures(onDoubleTap={scale=if(scale>1f)1f else 2.5f;offset=Offset.Zero})}) {
             Image(b.asImageBitmap(),"Страница",Modifier.fillMaxSize(),contentScale=ContentScale.FillBounds)
-            if(result!=null)Canvas(Modifier.fillMaxSize()) { result.regions.forEach { r -> drawRect(Orange,Offset(r.left*size.width,r.top*size.height),Size((r.right-r.left)*size.width,(r.bottom-r.top)*size.height),style=Stroke(1.5.dp.toPx())) } }
+            if(result!=null)Canvas(Modifier.fillMaxSize()) {
+                val spoken=if(currentLine.isNullOrBlank())null else KomaReadingOrder.key(currentLine)
+                result.regions.forEach { r ->
+                    val isCurrent=spoken!=null && KomaReadingOrder.key(r.text)==spoken
+                    drawRect(
+                        if(isCurrent)Orange.copy(alpha=0.35f) else Color.Transparent,
+                        Offset(r.left*size.width,r.top*size.height),
+                        Size((r.right-r.left)*size.width,(r.bottom-r.top)*size.height),
+                    )
+                    drawRect(
+                        if(isCurrent)Orange else Orange.copy(alpha=0.7f),
+                        Offset(r.left*size.width,r.top*size.height),
+                        Size((r.right-r.left)*size.width,(r.bottom-r.top)*size.height),
+                        style=Stroke(if(isCurrent)2.5.dp.toPx() else 1.5.dp.toPx()),
+                    )
+                }
+            }
         }
     }
 }
