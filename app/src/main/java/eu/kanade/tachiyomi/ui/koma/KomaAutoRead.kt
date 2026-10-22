@@ -47,6 +47,10 @@ class KomaTts(private val context: Context) {
 
     private val waiting = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
     private val localIndex = ConcurrentHashMap<String, Int>()
+    /** Колбэк «реплика реально началась» — приходит из потока синтезатора. */
+    @Volatile
+    private var lineStarted: ((Int) -> Unit)? = null
+
     private val ready = CompletableDeferred<Boolean>()
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -69,7 +73,14 @@ class KomaTts(private val context: Context) {
     }.apply {
         setOnUtteranceProgressListener(
             object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String?) = Unit
+                // Реплика ФАКТИЧЕСКИ началась. Раньше onStart ничего не делал, а
+                // «текущая строка» объявлялась в момент постановки всех реплик в
+                // очередь — подсветка перескакивала через весь кадр, автопрокрутка
+                // дёргалась, и страница листалась раньше, чем голос дочитал.
+                override fun onStart(utteranceId: String?) {
+                    val index = utteranceId?.let { localIndex[it] } ?: return
+                    lineStarted?.invoke(index)
+                }
                 override fun onDone(utteranceId: String?) {
                     utteranceId?.let { waiting.remove(it)?.complete(Unit) }
                 }
@@ -141,22 +152,24 @@ class KomaTts(private val context: Context) {
         val batch = UUID.randomUUID().toString()
         val ids = lines.indices.map { "$batch-$it" }
         localIndex.clear()
+        lineStarted = onLineStart
         lines.forEachIndexed { index, line ->
             localIndex[ids[index]] = index
             val queued = runCatching {
                 tts.speak(line, TextToSpeech.QUEUE_ADD, null, ids[index])
             }.getOrDefault(TextToSpeech.ERROR)
             if (queued != TextToSpeech.SUCCESS) localIndex.remove(ids[index])
-            // Начало реплики сообщаем сразу после постановки в очередь: движок
-            // играет их подряд, и отдельного колбэка на «встал в очередь» нет.
-            onLineStart(index)
         }
         val last = ids.lastOrNull() ?: return@withContext
         val done = CompletableDeferred<Unit>()
         waiting[last] = done
-        withTimeoutOrNull(max(10_000, lines.sumOf { it.length } * 120L)) { done.await() }
-        waiting.remove(last)
-        localIndex.clear()
+        try {
+            withTimeoutOrNull(max(10_000, lines.sumOf { it.length } * 120L)) { done.await() }
+        } finally {
+            waiting.remove(last)
+            localIndex.clear()
+            lineStarted = null
+        }
         Unit
     }
 
@@ -325,6 +338,10 @@ object KomaReadingOrder {
  */
 object KomaAutoRead {
 
+    /** Синтезатор текущего чтения: пауза и «пропустить» обрывают его очередь. */
+    @Volatile
+    private var activeTts: KomaTts? = null
+
     data class State(
         val running: Boolean = false,
         val paused: Boolean = false,
@@ -347,6 +364,9 @@ object KomaAutoRead {
 
     fun pause() {
         paused = true
+        // Очередь реплик уже стоит в синтезаторе: без stop() голос дочитывал
+        // страницу до конца, и «пауза» выглядела как «ничего не произошло».
+        runCatching { activeTts?.stop() }
         _state.value = _state.value.copy(paused = true, status = "Пауза")
         KomaAutoReadNotifier.update(_state.value)
     }
@@ -368,6 +388,8 @@ object KomaAutoRead {
 
     fun skip() {
         skipRequested = true
+        // Обрываем текущую реплику сразу, а не после конца страницы.
+        runCatching { activeTts?.stop() }
     }
 
     fun reset() {
@@ -401,6 +423,7 @@ object KomaAutoRead {
         paused = false
         skipRequested = false
         spokenKeys.clear()
+        activeTts = tts
         if (!tts.ensureReady() || !tts.available) {
             _state.value = State(status = tts.note ?: "Синтезатор речи недоступен")
             KomaAutoReadNotifier.cancel()
@@ -457,6 +480,7 @@ object KomaAutoRead {
             if (index <= pages.lastIndex) delay(150)
         }
 
+        activeTts = null
         val finished = !stopped && index > pages.lastIndex
         _state.value = _state.value.copy(
             running = false,

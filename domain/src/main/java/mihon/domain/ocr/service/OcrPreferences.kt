@@ -260,11 +260,13 @@ class OcrPreferences(
     fun autoReadAutoStart() = preferenceStore.getBoolean("pref_autoread_auto_start", false)
 
     /**
-     * Глава открывается основной читалкой (как раньше), но её распознавание —
-     * движок KOMA, а настройки самой читалки — в стиле KOMA. Экран KOMA
-     * остаётся для своей библиотеки импортированных книг.
+     * Глава открывается читалкой KOMA — единственной основной. Её движок
+     * распознаёт страницу целиком по репликам (быстро, без построчного «эха»
+     * в озвучке), рамки и авточтение живут в ней же. Основная читалка Mihon
+     * осталась резервным путём: открывается из меню KOMA или когда страницы
+     * главы не удалось подготовить.
      */
-    fun komaReaderFirst() = preferenceStore.getBoolean("pref_koma_reader_first", false)
+    fun komaReaderFirst() = preferenceStore.getBoolean("pref_koma_reader_first", true)
 
     /**
      * Запомненная нормализованная область сканирования (0..1 box) для

@@ -48,7 +48,16 @@ import kotlinx.coroutines.CancellationException
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine,onClose: ()->Unit,onUpdate: (Book)->Unit,onDelete: (Book)->Unit) {
+fun KomaReaderScreen(
+    initial: Book,
+    repo: LibraryRepository,
+    engine: KomaOcrEngine,
+    onClose: () -> Unit,
+    onUpdate: (Book) -> Unit,
+    onDelete: (Book) -> Unit,
+    autoStart: Boolean = false,
+    onOpenLegacy: (() -> Unit)? = null,
+) {
     val context=LocalContext.current;val scope=rememberCoroutineScope()
     // Книга без страниц (пустой архив, удалённые файлы) раньше роняла экран на
     // coerceIn(0, -1) ещё до первой отрисовки — пользователь видел «вылет»
@@ -92,6 +101,7 @@ fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine
     LaunchedEffect(Unit) { AppContextHolder.context = context.applicationContext }
     var result by remember { mutableStateOf<PageOcr?>(null) }
     var scanJob by remember { mutableStateOf<Job?>(null) }
+    var scrollJob by remember { mutableStateOf<Job?>(null) }
     var scanning by remember { mutableStateOf(false) }
     var batchProgress by remember { mutableIntStateOf(0) }
     var batchTotal by remember { mutableIntStateOf(0) }
@@ -142,6 +152,9 @@ fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine
     // Логика живёт в KomaAutoRead: порядок чтения по репликам, фильтр чужой
     // письменности, «уже прочитано», уведомление в шторке и плавающая кнопка.
     var readTrigger by remember { mutableIntStateOf(0) }
+    // «Сканировать и читать» с экрана главы: сразу запускаем озвучку, как это
+    // делала прежняя читалка по extra autoread_start.
+    LaunchedEffect(autoStart) { if (autoStart) readTrigger++ }
     LaunchedEffect(readTrigger) {
         if(readTrigger==0)return@LaunchedEffect
         KomaAutoRead.run(
@@ -156,13 +169,24 @@ fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine
             onResult = { r -> if(r!=null)result=r },
             onLine = { line ->
                 // Автопрокрутка: держим текущую реплику в верхней трети экрана.
+                //
+                // Раньше на КАЖДУЮ реплику запускалась своя корутина
+                // scrollToItem — они догоняли друг друга, и лента дёргалась.
+                // Теперь предыдущий переход отменяется, а мелкие сдвиги (реплика
+                // уже в удобной полосе) не трогают ленту вовсе.
                 if(mode=="vertical" && autoScroll) {
                     val path=book.pages.getOrNull(page)
                     val height=path?.let { pageHeights[it] } ?: 0
                     if(height>0) {
-                        // Держим текущую реплику в верхней трети экрана.
-                        val offset=((line.top*height) - 120).toInt().coerceAtLeast(0)
-                        scope.launch { runCatching { scroll.scrollToItem(page, offset) } }
+                        val target=((line.top*height) - 120).toInt().coerceAtLeast(0)
+                        val current=scroll.firstVisibleItemScrollOffset
+                        val samePage=scroll.firstVisibleItemIndex==page
+                        if(!samePage || kotlin.math.abs(target-current) > 140) {
+                            scrollJob?.cancel()
+                            scrollJob=scope.launch {
+                                runCatching { scroll.animateScrollToItem(page, target) }
+                            }
+                        }
                     }
                 }
             },
@@ -198,6 +222,7 @@ fun KomaReaderScreen(initial: Book,repo: LibraryRepository,engine: KomaOcrEngine
                         DropdownMenuItem(text={Text("Рамки текста")},onClick={showRegions=!showRegions;overflow=false})
                         DropdownMenuItem(text={Text(if(autoScroll)"Автопрокрутка: вкл" else "Автопрокрутка: выкл")},onClick={autoScroll=!autoScroll;repo.prefs.edit().putBoolean("autoScroll",autoScroll).apply();overflow=false})
                         DropdownMenuItem(text={Text("Экспорт распознанного")},onClick={overflow=false;export.launch("${book.title}_ocr.txt")})
+                        if(onOpenLegacy!=null) DropdownMenuItem(text={Text("Прежняя читалка (резерв)")},onClick={overflow=false;onOpenLegacy()})
                         DropdownMenuItem(text={Text("Удалить из библиотеки")},onClick={overflow=false;deleteConfirm=true})
                     }
                 }
