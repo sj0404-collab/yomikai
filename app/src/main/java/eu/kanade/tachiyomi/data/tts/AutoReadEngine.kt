@@ -756,7 +756,21 @@ class AutoReadEngine(
             // Знания, записанные до появления rules, хранят порядок в старом
             // поле — иначе после обновления они молча перестали бы действовать.
             ?: legacyBookReadingOrder()
+            // Формат, в котором страница открыта СЕЙЧАС (RTL/LTR/лента), важнее
+            // общего пресета сканирования: распознавание должно идти тем же
+            // порядком, каким читатель видит страницу.
+            ?: readerFormatOrder()
             ?: OcrRegionRules.readingOrderFor(prefs)
+
+    /** Порядок чтения из самого вьювера: RTL, LTR или вертикальная лента. */
+    private fun readerFormatOrder(): String? {
+        val ctx = mihon.data.ocr.ReaderContextBus.current.value ?: return null
+        return when {
+            ctx.webtoon || ctx.vertical -> "vertical"
+            ctx.rtl -> "rtl"
+            else -> "ltr"
+        }
+    }
 
     /** Старое одиночное поле `readingOrder` из файла знаний книги. */
     private fun legacyBookReadingOrder(): String? {
@@ -1137,7 +1151,12 @@ class AutoReadEngine(
                 // «текста», и перенос слова читался как два разных слова.
                 // Строки одного облачка (сильное перекрытие по X, малый зазор)
                 // склеиваются в одну реплику. Полностраничные фолбэки не трогаем.
-                if (!wholePage) lines = mergeBubbleLines(lines)
+                // Склейка нужна и полностраничному фолбэку: там текст страницы
+                // делится на строки, и каждая строка читалась отдельной
+                // «репликой» — отсюда эхо через паузу после каждой строки.
+                lines = mergeBubbleLines(lines)
+                // Одна и та же реплика, пришедшая двумя рамками, читалась дважды.
+                lines = lines.distinctBy { it.text.lowercase().replace(Regex("[^\\p{L}\\p{N}]"), "") }
 
                 // 1) фильтр мусора OCR (обрывки «eS la 4», «| | > |», «о»)
                 //    + фильтр по языку; 2) отсев уже прочитанного.
@@ -1407,7 +1426,12 @@ class AutoReadEngine(
                 // озвучкой независимо от общего переключателя «Сканировать и
                 // озвучить страницу»: у онлайн-движков так один сетевой кадр
                 // превращается в одну реплику без меж-баллонных пауз.
-                val wholePageMode = (autoReadMode == "page" || prefs.autoScanAndSpeak().get()) && speakable.size > 1
+                // «Распознать страницу целиком и прочитать одним куском» осталось
+                // только там, где для этого есть кнопка — «Сканировать и читать»
+                // на экране главы. В самой читалке кадр читается по репликам:
+                // иначе весь лист шёл одной озвучкой без привязки к формату
+                // чтения (RTL/LTR/лента).
+                val wholePageMode = autoReadMode == "page" && speakable.size > 1
                 if (wholePageMode) {
                     // GLens-фикс: у каждой реплики кадра перед склейкой срезаем
                     // уже озвученную словарную приставку (stripSpokenPrefix) —
@@ -2219,7 +2243,9 @@ class AutoReadEngine(
     ): SpeakOutcome {
         // Реплика может прийти с меткой `{имя:…}` (её снимает сам движок), а в
         // журнал и таймаут разумно класть то, что реально произносится.
-        val spoken = SpeechMarkup.strip(text).ifBlank { text }
+        // Переносы и разряженные буквы убираем ДО синтеза: иначе голос читает
+        // «вы - сочест - ва» с паузой на каждом дефисе.
+        val spoken = SpeechCleaning.clean(SpeechMarkup.strip(text).ifBlank { text })
         lastSpokenLine = spoken
         // Сюжет по мере чтения: суб-агент копит услышанное и пишет пересказ
         // пока читатель слушает. Отдельный агент, а не поле в движке: у него
@@ -2238,7 +2264,9 @@ class AutoReadEngine(
         val done = MutableStateFlow(false)
         val t0 = System.currentTimeMillis()
         TtsSpeaker.speakAs(
-            context, text, gender, speakerSlot, langHint = langHint,
+            // Читаем ИМЕННО очищенный текст: с исходным голос произносил
+            // переносы по слогам («вы - сочест - ва»).
+            context, spoken, gender, speakerSlot, langHint = langHint,
             emotionProsody = prosody,
             onState = { speaking ->
                 if (speaking && !started.value) {
@@ -2766,14 +2794,18 @@ class AutoReadEngine(
         // Перекрытие по горизонтали ≥ 50% ширины меньшей строки — один «столбец».
         val overlap = kotlin.math.min(ab.right, bb.right) - kotlin.math.max(ab.left, bb.left)
         if (overlap <= 0f) return false
-        if (overlap / kotlin.math.min(aW, bW) < 0.5f) return false
+        // 0.5 было слишком строго: у строк внутри одного облачка левый край
+        // гуляет (выключка по центру), и реплика распадалась на строки.
+        if (overlap / kotlin.math.min(aW, bW) < 0.45f) return false
         // Зазор между строками одного облачка много меньше зазора между
         // облачками (у диалогов и рамок есть пустое поле между ними).
         val aH = ab.bottom - ab.top
         val bH = bb.bottom - bb.top
         if (aH <= 0f || bH <= 0f) return false
         val gap = bb.top - ab.bottom
-        if (gap < 0f || gap > kotlin.math.max(aH, bH) * 0.55f) return false
+        // 0.55 → 0.7: строки облачка с крупным межстрочным интервалом раньше
+        // не склеивались, но выше 0.7 начинают слипаться соседние облачка.
+        if (gap < 0f || gap > kotlin.math.max(aH, bH) * 0.7f) return false
         // Вертикальные японские колонки (узкие и очень высокие) не склеиваем.
         // Порог 4x вместо 2x: у manga-диалогов облачка бывают вытянутыми по высоте.
         if (aH > aW * 4f || bH > bW * 4f) return false
