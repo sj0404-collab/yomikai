@@ -200,6 +200,22 @@ fun KomaReaderScreen(
                 }
             },
             onResult = { r -> if(r!=null)result=r },
+            onSilentPage = { index ->
+                // Кадр без реплик (арт, звуковой эффект) проезжаем плавно, а не
+                // перескакиваем: место в главе не теряется, и глаза успевают
+                // посмотреть рисунок.
+                if (mode == "vertical") {
+                    val next = (index + 1).coerceAtMost(book.pages.lastIndex)
+                    scrollJob?.cancel()
+                    scrollJob = scope.launch {
+                        runCatching { scroll.animateScrollToItem(next) }
+                    }
+                    delay(900)
+                } else {
+                    pager.animateScrollToPage((index + 1).coerceAtMost(book.pages.lastIndex))
+                    delay(900)
+                }
+            },
             onLine = { line ->
                 // Автопрокрутка к текущей реплике — только если её не видно.
                 //

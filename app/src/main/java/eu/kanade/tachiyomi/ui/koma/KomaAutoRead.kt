@@ -62,6 +62,16 @@ class KomaTts(private val context: Context) {
                     note = "Русский голос не установлен в системе"
                 } else {
                     available = true
+                    // Речь помечаем как медиа-поток: иначе часть прошивок
+                    // считает её уведомлением и приглушает в конце фразы.
+                    runCatching {
+                        tts.setAudioAttributes(
+                            android.media.AudioAttributes.Builder()
+                                .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                                .build(),
+                        )
+                    }
                     applySavedVoice()
                     tts.setSpeechRate(prefs.getFloat(KEY_RATE, 1f))
                 }
@@ -173,8 +183,14 @@ class KomaTts(private val context: Context) {
             localIndex.clear()
             lineStarted = null
         }
+        // Хвост последней реплики. onDone у RHVoice и части движков приходит
+        // раньше, чем звук реально доигран, а следующий вызов stop() обрывал
+        // остаток — отсюда «в конце предложения голос затихает, слышны только
+        // окончания». Небольшая пауза даёт договорить.
+        delay(TAIL_GRACE_MS)
         Unit
     }
+
 
     /** Произносит строку и ждёт окончания. */
     suspend fun speak(text: String, timeoutMs: Long = 30_000): Unit = withContext(Dispatchers.IO) {
@@ -208,6 +224,8 @@ class KomaTts(private val context: Context) {
     }
 
     private companion object {
+        /** Сколько дать движку доиграть хвост последней реплики. */
+        const val TAIL_GRACE_MS = 260L
         const val PREFS = "koma_tts"
         const val KEY_VOICE = "voice"
         const val KEY_RATE = "rate"
@@ -255,13 +273,32 @@ object KomaReadingOrder {
         val sorted = source.sortedWith(compareBy({ it.top }, { it.left }))
         val blocks = mutableListOf<MutableList<OcrRegion>>()
         for (region in sorted) {
-            val target = blocks.lastOrNull { block ->
+            // Кандидат — блок, который лежит на той же высоте и стоит ВПЛОТНУЮ по
+            // горизонтали. Выбираем ближайший по зазору, а не последний
+            // подходящий: раньше фрагмент мог приклеиться к чужой строке, и в
+            // одной «строке» оказывались две соседние реплики — на странице это
+            // выглядело как длинная тонкая полоса через весь кадр.
+            var target: MutableList<OcrRegion>? = null
+            var bestGap = Float.MAX_VALUE
+            for (block in blocks) {
                 val head = block.last()
                 val lineHeight = max(head.bottom - head.top, 0.01f)
                 val overlap = min(head.bottom, region.bottom) - max(head.top, region.top)
-                val sameBand = overlap > lineHeight * 0.5f
-                val gap = region.left - head.right
-                sameBand && gap <= lineHeight * 1.2f && gap > -1f
+                if (overlap <= lineHeight * 0.5f) continue
+                val blockLeft = block.minOf { it.left }
+                val blockRight = block.maxOf { it.right }
+                // Зазор считаем до ГРАНИЦЫ блока, а не до его последнего элемента.
+                val gap = when {
+                    region.left > blockRight -> region.left - blockRight
+                    region.right < blockLeft -> region.right - blockLeft
+                    else -> 0f
+                }
+                if (gap > lineHeight * 1.2f) continue
+                if (gap < -lineHeight * 0.6f) continue
+                if (gap < bestGap) {
+                    bestGap = gap
+                    target = block
+                }
             }
             if (target != null) target += region else blocks += mutableListOf(region)
         }
@@ -346,6 +383,11 @@ object KomaReadingOrder {
         val overlap = min(a.right, b.right) - max(a.left, b.left)
         if (overlap <= 0f) return false
         if (overlap / min(aWidth, bWidth) < 0.45f) return false
+        // Строки одного облачка стоят друг под другом, а не со сдвигом вбок:
+        // если центры разъехались больше половины ширины — это соседние
+        // облачка, и склеивать их нельзя (иначе одна рамка на две реплики).
+        val centerShift = abs((a.left + a.right) / 2f - (b.left + b.right) / 2f)
+        if (centerShift > max(aWidth, bWidth) * 0.5f) return false
         val gap = b.top - a.bottom
         if (gap < -aHeight * 0.4f || gap > max(aHeight, bHeight) * 0.8f) return false
         // Высокие узкие блоки — вертикальные колонки, а не строки облачка.
@@ -374,11 +416,33 @@ object KomaReadingOrder {
      * («вы - сочест - ва» → «высочества»), а одиночные буквы, разорванные
      * пробелами («в д а - ль»), склеиваются обратно.
      */
+    /**
+     * Латинские буквы-двойники внутри русских слов.
+     *
+     * OCR часто отдаёт «бeз», «c тобой», «oн» — кириллица с латинской буквой
+     * внутри. Синтезатор на таком слове сбивается и произносит его частями
+     * («без» → «бе три»). Заменяем двойники, только если в слове уже есть
+     * кириллица: настоящие латинские слова не трогаем.
+     */
+    private val lookalikes = mapOf(
+        'a' to 'а', 'e' to 'е', 'o' to 'о', 'c' to 'с', 'p' to 'р', 'x' to 'х',
+        'y' to 'у', 'k' to 'к', 'm' to 'м', 't' to 'т', 'b' to 'в', 'h' to 'н',
+        'A' to 'А', 'E' to 'Е', 'O' to 'О', 'C' to 'С', 'P' to 'Р', 'X' to 'Х',
+        'Y' to 'У', 'K' to 'К', 'M' to 'М', 'T' to 'Т', 'B' to 'В', 'H' to 'Н',
+    )
+
+    private fun fixLookalikes(raw: String): String = raw.split(' ').joinToString(" ") { word ->
+        val hasCyrillic = word.any { it in 'а'..'я' || it in 'А'..'Я' || it == 'ё' || it == 'Ё' }
+        if (!hasCyrillic) return@joinToString word
+        word.map { lookalikes[it] ?: it }.joinToString("")
+    }
+
     private fun cleanSpeech(raw: String): String {
         var text = raw
             .replace(Regex("(?<=\\p{L})\\s*-\\s*(?=\\p{L})"), "")
             .replace(Regex("\\s+"), " ")
             .trim()
+        text = fixLookalikes(text)
         // Склеиваем цепочки одиночных букв: «в д а ль» → «вдаль».
         repeat(3) {
             text = text.replace(Regex("(?<!\\p{L})\\p{L}(\\s+\\p{L}){1,4}(?!\\p{L})")) { match ->
@@ -494,6 +558,8 @@ object KomaAutoRead {
         onPage: suspend (index: Int) -> Unit,
         onResult: (PageOcr?) -> Unit,
         onLine: (KomaReadingOrder.Line) -> Unit = {},
+        /** Страница без реплик (арт, звуковые эффекты): не «перескочить», а проехать. */
+        onSilentPage: suspend (index: Int) -> Unit = {},
     ) {
         stopped = false
         paused = false
@@ -518,11 +584,30 @@ object KomaAutoRead {
                 onlyCyrillic = language == "Кириллица" || language == "Авто",
             ).filter { spokenKeys.add(KomaReadingOrder.key(it.text) + "@" + index) }
 
+            // Страница без реплик: это не «пусто», а кадр с рисунком или
+            // звуковым эффектом («ЦАП!», «ПРРР»). Раньше такая страница просто
+            // пропускалась рывком — читатель терял место в главе. Теперь
+            // проезжаем её плавно, как обычный кадр без озвучки.
+            if (lines.isEmpty()) {
+                _state.value = _state.value.copy(
+                    running = true,
+                    page = index,
+                    pageCount = pages.size,
+                    status = "Страница ${index + 1}: без реплик",
+                    currentLine = "",
+                )
+                onSilentPage(index)
+                if (stopped) break
+                index++
+                if (index <= pages.lastIndex) delay(120)
+                continue
+            }
+
             _state.value = _state.value.copy(
                 running = true,
                 page = index,
                 pageCount = pages.size,
-                status = if (lines.isEmpty()) "На этой странице текста нет" else "",
+                status = "",
                 spoken = emptyList(),
                 currentLine = "",
             )
