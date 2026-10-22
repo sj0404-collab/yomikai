@@ -260,6 +260,13 @@ class OcrPreferences(
     fun autoReadAutoStart() = preferenceStore.getBoolean("pref_autoread_auto_start", false)
 
     /**
+     * Единственная читалка: главу открывает экран KOMA (распознавание, рамки,
+     * озвучка, авточтение), а лента Mihon остаётся запасным путём — она
+     * включается, только если страницы главы получить не удалось.
+     */
+    fun komaReaderFirst() = preferenceStore.getBoolean("pref_koma_reader_first", true)
+
+    /**
      * Запомненная нормализованная область сканирования (0..1 box) для
      * автопрокрутки: задаётся длительным касанием (autoclick с удержанием)
      * и переиспользуется, чтобы не выбирать область заново на каждом кадре.

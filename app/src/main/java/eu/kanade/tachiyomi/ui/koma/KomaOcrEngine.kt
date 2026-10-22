@@ -27,7 +27,8 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.*
 
-val ocrLanguages = listOf("Авто", "Японский", "Латиница", "Кириллица")
+// Кириллица первой: библиотека русская, и это выбор по умолчанию.
+val ocrLanguages = listOf("Кириллица", "Авто", "Японский", "Латиница")
 data class OcrRegion(val text: String, val left: Float, val top: Float, val right: Float, val bottom: Float, val confidence: Float? = null, val kind: String = "Текст") {
     fun json()=JSONObject().put("text",text).put("l",left).put("t",top).put("r",right).put("b",bottom).put("confidence",confidence).put("kind",kind)
 }
