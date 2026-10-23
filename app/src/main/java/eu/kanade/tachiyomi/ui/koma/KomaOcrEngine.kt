@@ -34,18 +34,32 @@ val ocrLanguages = listOf("Кириллица", "Авто", "Японский", 
 data class OcrRegion(val text: String, val left: Float, val top: Float, val right: Float, val bottom: Float, val confidence: Float? = null, val kind: String = "Текст") {
     fun json()=JSONObject().put("text",text).put("l",left).put("t",top).put("r",right).put("b",bottom).put("confidence",confidence).put("kind",kind)
 }
-data class PageOcr(val regions: List<OcrRegion>, val engine: String, val millis: Long, val edited: String?=null) {
+data class PageOcr(
+    val regions: List<OcrRegion>,
+    val engine: String,
+    val millis: Long,
+    val edited: String?=null,
+    /** Панели страницы в порядке чтения (см. [KomaPanels]). Пусто — рамок нет. */
+    val panels: List<KomaPanels.Box> = emptyList(),
+) {
     val text: String get() = edited ?: regions.joinToString("\n") { it.text }
     fun json()=JSONObject().put("regions",JSONArray().apply { regions.forEach { put(it.json()) } }).put("engine",engine).put("ms",millis).put("edited",edited)
+        .put("panels",JSONArray().apply { panels.forEach { put(JSONArray().put(it.left).put(it.top).put(it.right).put(it.bottom)) } })
     companion object {
-        fun from(j:JSONObject):PageOcr = PageOcr(j.getJSONArray("regions").let { a -> List(a.length()){ val r=a.getJSONObject(it);OcrRegion(r.getString("text"),r.getDouble("l").toFloat(),r.getDouble("t").toFloat(),r.getDouble("r").toFloat(),r.getDouble("b").toFloat(),if(r.isNull("confidence"))null else r.getDouble("confidence").toFloat(),r.optString("kind","Текст")) } },j.getString("engine"),j.getLong("ms"),if(j.isNull("edited"))null else j.getString("edited"))
+        fun from(j:JSONObject):PageOcr = PageOcr(
+            j.getJSONArray("regions").let { a -> List(a.length()){ val r=a.getJSONObject(it);OcrRegion(r.getString("text"),r.getDouble("l").toFloat(),r.getDouble("t").toFloat(),r.getDouble("r").toFloat(),r.getDouble("b").toFloat(),if(r.isNull("confidence"))null else r.getDouble("confidence").toFloat(),r.optString("kind","Текст")) } },
+            j.getString("engine"),
+            j.getLong("ms"),
+            if(j.isNull("edited"))null else j.getString("edited"),
+            j.optJSONArray("panels")?.let { a -> List(a.length()){ val p=a.getJSONArray(it); KomaPanels.Box(p.getDouble(0).toFloat(),p.getDouble(1).toFloat(),p.getDouble(2).toFloat(),p.getDouble(3).toFloat()) } } ?: emptyList(),
+        )
     }
 }
 
 /** Как движок называется в интерфейсе: ровно как в исходниках KOMA. */
 const val ENGINE_NAME="PaddleOCR · кириллица"
 /** Версия разбора страницы: меняется вместе с логикой порядка чтения. */
-const val READ_ORDER_VERSION="9"
+const val READ_ORDER_VERSION="10"
 
 class KomaOcrEngine(private val context: Context) {
     private companion object {
@@ -196,7 +210,10 @@ class KomaOcrEngine(private val context: Context) {
                     }
                 }
                 val sorted=if(book.mode=="rtl" && script=="Японский") regions.sortedWith(compareByDescending<OcrRegion> { (it.left*40).toInt() }.thenBy { it.top }) else regions.sortedWith(compareBy<OcrRegion> { (it.top*80).toInt() }.thenBy { if(book.mode=="rtl")-it.left else it.left })
-                PageOcr(sorted,if(script=="Кириллица")ENGINE_NAME else "ML Kit · $script",System.currentTimeMillis()-start).also { store(book.id,page,language,it) }
+                // Панели ищутся по тому же изображению, что ушло в распознавание:
+                // порядок чтения потом идёт по кадрам (KomaReadingOrder).
+                val panels=if(script=="Кириллица") panelsOf(image) else emptyList()
+                PageOcr(sorted,if(script=="Кириллица")ENGINE_NAME else "ML Kit · $script",System.currentTimeMillis()-start,panels=panels).also { store(book.id,page,language,it) }
             } catch(t:Throwable) {
                 if(t is kotlinx.coroutines.CancellationException) throw t
                 // Битая страница, нехватка памяти, сбой нативного ONNX — всё
@@ -213,6 +230,30 @@ class KomaOcrEngine(private val context: Context) {
             }
         }
     }
+    /**
+     * Панели страницы — по уменьшенной копии изображения.
+     *
+     * Уменьшение обязательно: детектор перебирает пиксели, и на полном кадре
+     * 3 Мпкс это секунды. 400 px по длинной стороне хватает, чтобы обводки
+     * кадров остались линиями, а работа занимала десятки миллисекунд.
+     */
+    private fun panelsOf(image: Bitmap): List<KomaPanels.Box> = runCatching {
+        val scale = KomaPanels.TARGET.toFloat() / max(image.width, image.height)
+        val small = if (scale >= 1f) image else Bitmap.createScaledBitmap(
+            image,
+            max(8, (image.width * scale).toInt()),
+            max(8, (image.height * scale).toInt()),
+            true,
+        )
+        try {
+            val pixels = IntArray(small.width * small.height)
+            small.getPixels(pixels, 0, small.width, 0, 0, small.width, small.height)
+            KomaPanels.detect(small.width, small.height, pixels)
+        } finally {
+            if (small !== image && !small.isRecycled) small.recycle()
+        }
+    }.getOrDefault(emptyList())
+
     /**
      * Добавляет найденный блок, схлопывая перекрытия от соседних тайлов.
      *
