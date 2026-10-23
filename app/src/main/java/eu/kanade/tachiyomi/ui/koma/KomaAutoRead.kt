@@ -609,65 +609,10 @@ object KomaReadingOrder {
      * («вы - сочест - ва» → «высочества»), а одиночные буквы, разорванные
      * пробелами («в д а - ль»), склеиваются обратно.
      */
-    /**
-     * Латинские буквы-двойники внутри русских слов.
-     *
-     * OCR часто отдаёт «бeз», «c тобой», «oн» — кириллица с латинской буквой
-     * внутри. Синтезатор на таком слове сбивается и произносит его частями
-     * («без» → «бе три»). Заменяем двойники, только если в слове уже есть
-     * кириллица: настоящие латинские слова не трогаем.
-     */
-    private val lookalikes = mapOf(
-        'a' to 'а', 'e' to 'е', 'o' to 'о', 'c' to 'с', 'p' to 'р', 'x' to 'х',
-        'y' to 'у', 'k' to 'к', 'm' to 'м', 't' to 'т', 'b' to 'в', 'h' to 'н',
-        'u' to 'и', 'n' to 'п',
-        'A' to 'А', 'E' to 'Е', 'O' to 'О', 'C' to 'С', 'P' to 'Р', 'X' to 'Х',
-        'Y' to 'У', 'K' to 'К', 'M' to 'М', 'T' to 'Т', 'B' to 'В', 'H' to 'Н',
-        'U' to 'И',
-        // Греческие заглавные: модель пишет ими русские буквы («HETΛOXO ПPO-»).
-        'Λ' to 'Л', 'Δ' to 'Д', 'Α' to 'А', 'Β' to 'В', 'Ε' to 'Е', 'Ζ' to 'З',
-        'Η' to 'Н', 'Ι' to 'И', 'Κ' to 'К', 'Μ' to 'М', 'Ν' to 'Н', 'Ο' to 'О',
-        'Ρ' to 'Р', 'Τ' to 'Т', 'Υ' to 'У', 'Χ' to 'Х',
-        // Цифры-двойники: «3ВУ4ИТ» вместо «ЗВУЧИТ».
-        '3' to 'з', '4' to 'ч', '0' to 'о', '6' to 'б', '8' to 'в',
-    )
+    /** Латинские, греческие и цифровые двойники — см. [KomaText.fixLookalikes]. */
+    private fun fixLookalikes(raw: String): String = KomaText.fixLookalikes(raw)
 
-    private val greekLookalikes = setOf('Λ', 'Δ', 'Α', 'Β', 'Ε', 'Ζ', 'Η', 'Ι', 'Κ', 'Μ', 'Ν', 'Ο', 'Ρ', 'Τ', 'Υ', 'Χ')
-
-    private fun fixLookalikes(raw: String): String {
-        fun isRussian(ch: Char) = ch in 'а'..'я' || ch in 'А'..'Я' || ch == 'ё' || ch == 'Ё'
-        // Решение по СТРОКЕ, а не по слову: если в строке есть русские буквы или
-        // греческие двойники, то и слова из одних латинских/греческих символов
-        // переводятся в кириллицу. Раньше «HETΛOXO», «ПРО-» и «BECEΛO»
-        // оставались латиницей, и такая строка отбрасывалась фильтром языка —
-        // слова пропадали из реплики целиком.
-        val lineIsRussian = raw.any { isRussian(it) || it in greekLookalikes }
-        return raw.split(' ').joinToString(" ") { word ->
-            val letters = word.filter { it.isLetterOrDigit() }
-            val convertible = letters.isNotEmpty() && letters.all { it in lookalikes }
-            val wordHasRussian = word.any { isRussian(it) }
-            if (lineIsRussian && (wordHasRussian || convertible)) {
-                word.map { lookalikes[it] ?: it }.joinToString("")
-            } else {
-                word
-            }
-        }
-    }
-
-    private fun cleanSpeech(raw: String): String {
-        var text = raw
-            .replace(Regex("(?<=\\p{L})\\s*-\\s*(?=\\p{L})"), "")
-            .replace(Regex("\\s+"), " ")
-            .trim()
-        text = fixLookalikes(text)
-        // Склеиваем цепочки одиночных букв: «в д а ль» → «вдаль».
-        repeat(3) {
-            text = text.replace(Regex("(?<!\\p{L})\\p{L}(\\s+\\p{L}){1,4}(?!\\p{L})")) { match ->
-                match.value.replace(" ", "")
-            }
-        }
-        return text.trim()
-    }
+    private fun cleanSpeech(raw: String): String = KomaText.cleanSpeech(raw)
 
     private fun StringBuilder.endsWithHyphen(): Boolean =
         length > 0 && (this[length - 1] == '-' || this[length - 1] == '\u00AD')

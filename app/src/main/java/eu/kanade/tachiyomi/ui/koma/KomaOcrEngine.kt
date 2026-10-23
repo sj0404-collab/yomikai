@@ -43,9 +43,14 @@ data class PageOcr(val regions: List<OcrRegion>, val engine: String, val millis:
 /** Как движок называется в интерфейсе: ровно как в исходниках KOMA. */
 const val ENGINE_NAME="PaddleOCR · кириллица"
 /** Версия разбора страницы: меняется вместе с логикой порядка чтения. */
-const val READ_ORDER_VERSION="7"
+const val READ_ORDER_VERSION="8"
 
 class KomaOcrEngine(private val context: Context) {
+    private companion object {
+        /** Сетка покрытия страницы для добора потерянных вторым проходом кусков. */
+        const val GRID = 200
+    }
+
     private val mutex=Mutex()
     private val root=File(context.filesDir,"ocr").apply { mkdirs() }
     private val mlModels=mutableMapOf<String,TextRecognizer>()
@@ -145,7 +150,17 @@ class KomaOcrEngine(private val context: Context) {
                     // отвечает на вопрос «где текст», а на куски для
                     // распознавания страницу режем мы сами (см. paddlePage).
                     ensureActive()
-                    paddlePage(image).forEach { addRegion(regions,it) }
+                    val main=paddlePage(image)
+                    ensureActive()
+                    // Страховочный проход по странице В ИСХОДНОМ размере с
+                    // детектором 960. Лаборатория: нет одних условий на всё —
+                    // на плотном тексте выигрывает ×2/1600, а мелкий белый
+                    // текст («ЧТО?..» на странице 15) при этом читается как
+                    // «4TO.» и выбрасывается фильтром языка. Второй проход
+                    // возвращает только те куски, чьё место первый не прочитал.
+                    val rescue=if(main.size<600) paddlePage(decoded,960f) else emptyList()
+                    val merged=main+rescued(main,rescue)
+                    merged.forEach { addRegion(regions,it) }
                 } else {
                     val tileHeight=if(image.height>2800)1800 else image.height
                     var y=0
@@ -273,11 +288,11 @@ class KomaOcrEngine(private val context: Context) {
      *  4. у рамки результата координаты САМОЙ строки, без полей, — иначе при
      *     склейке в облачко строки наезжали друг на друга.
      */
-    private fun paddlePage(image:Bitmap):List<OcrRegion> {
+    private fun paddlePage(image:Bitmap, side:Float = 1600f):List<OcrRegion> {
         if(det==null)det=session("detection.onnx")
         if(rec==null)rec=session("cyrillic.onnx")
         val out=mutableListOf<OcrRegion>()
-        for(box in detectPage(image).take(400)) {
+        for(box in detectPage(image,side).take(400)) {
             for(line in textLines(image,box)) {
                 var crop=Bitmap.createBitmap(image,line.left,line.top,line.width(),line.height())
                 if(crop.height>crop.width*1.8f) {
@@ -302,15 +317,62 @@ class KomaOcrEngine(private val context: Context) {
         return out
     }
 
+    /**
+     * Добор потерянного вторым (страховочным) проходом.
+     *
+     * Берём только те куски, чьё место НЕ покрыто годным текстом основного
+     * прохода, — иначе текст размножается («ПОЧЕМУ ПОЧЕМУ», «С НАМИ С НАМИ»).
+     * «Годный» — это то, что переживёт починку двойников и фильтр языка, иначе
+     * выброшенная первым проходом абракадабра («4TO.») закрывала бы своё место.
+     */
+    private fun rescued(main:List<OcrRegion>, extra:List<OcrRegion>):List<OcrRegion> {
+        if(extra.isEmpty()) return emptyList()
+        fun usable(r:OcrRegion):Boolean {
+            val text=KomaText.cleanSpeech(r.text)
+            if(text.count { it.isLetterOrDigit() }<2) return false
+            return KomaText.isRussianLine(text)
+        }
+        val grid=BooleanArray(GRID*GRID)
+        fun mark(r:OcrRegion, value:Boolean) {
+            val x1=(r.left*GRID).toInt().coerceIn(0,GRID-1)
+            val x2=(r.right*GRID).toInt().coerceIn(x1+1,GRID)
+            val y1=(r.top*GRID).toInt().coerceIn(0,GRID-1)
+            val y2=(r.bottom*GRID).toInt().coerceIn(y1+1,GRID)
+            for(y in y1 until y2) for(x in x1 until x2) grid[y*GRID+x]=value
+        }
+        for(r in main) if(usable(r)) mark(r,true)
+        val out=mutableListOf<OcrRegion>()
+        for(r in extra) {
+            val text=KomaText.cleanSpeech(r.text)
+            val letters=text.count { it.isLetterOrDigit() }
+            // «ЧТО?» (3 буквы с вопросом) добираем, «енс» и «,е.е» — обрывки.
+            if(letters<3) continue
+            val tail=text.trim().lastOrNull()
+            if(letters==3 && (tail==null || tail !in "?!.")) continue
+            val lettersAll=text.filter { it.isLetterOrDigit() }
+            val russian=lettersAll.count { KomaText.isRussianLetter(it) }
+            if(russian*10<lettersAll.length*6) continue
+            val x1=(r.left*GRID).toInt().coerceIn(0,GRID-1)
+            val x2=(r.right*GRID).toInt().coerceIn(x1+1,GRID)
+            val y1=(r.top*GRID).toInt().coerceIn(0,GRID-1)
+            val y2=(r.bottom*GRID).toInt().coerceIn(y1+1,GRID)
+            var hit=0;var total=0
+            for(y in y1 until y2) for(x in x1 until x2) { total++; if(grid[y*GRID+x]) hit++ }
+            if(total>0 && hit.toFloat()/total>=0.6f) continue
+            out.add(r.copy(text=text))
+        }
+        return out
+    }
+
     /** Боксы детектора по всей странице, в пикселях страницы. */
-    private fun detectPage(image:Bitmap):List<Rect> {
+    private fun detectPage(image:Bitmap, side:Float = 1600f):List<Rect> {
         val tileHeight=if(image.height>2800)1800 else image.height
         val found=mutableListOf<Rect>()
         var y=0
         while(y<image.height) {
             val h=min(tileHeight,image.height-y)
             val tile=Bitmap.createBitmap(image,0,y,image.width,h)
-            detectTile(tile).forEach { found.add(Rect(it.left,it.top+y,it.right,it.bottom+y)) }
+            detectTile(tile,side).forEach { found.add(Rect(it.left,it.top+y,it.right,it.bottom+y)) }
             if(tile!==image && !tile.isRecycled)tile.recycle()
             if(y+h>=image.height)break
             y+=tileHeight-160
@@ -320,11 +382,11 @@ class KomaOcrEngine(private val context: Context) {
 
     /** Детектор на одном тайле: боксы в пикселях тайла. */
     @Suppress("UNCHECKED_CAST")
-    private fun detectTile(bitmap:Bitmap):List<Rect> {
-        // Длинная сторона входа детектора 1600, а не 960: на 960 мелкие
-        // реплики терялись целиком (в лаборатории это видно на странице 2 —
-        // пропадала целая реплика «ВАУ! ЭТО ЗВУЧИТ ОЧЕНЬ ВЕСЬ ВЕСЕЛО!»).
-        val ratio=min(1f,1600f/max(bitmap.width,bitmap.height))
+    private fun detectTile(bitmap:Bitmap, side:Float = 1600f):List<Rect> {
+        // Длинная сторона входа детектора: 1600 для основного прохода (на 960
+        // мельче реплики терялись целиком — в лаборатории это видно на
+        // странице 2, пропадала целая реплика) и 960 для страховочного.
+        val ratio=min(1f,side/max(bitmap.width,bitmap.height))
         val w=max(32,(bitmap.width*ratio/32).roundToInt()*32)
         val h=max(32,(bitmap.height*ratio/32).roundToInt()*32)
         val scaled=Bitmap.createScaledBitmap(bitmap,w,h,true)
