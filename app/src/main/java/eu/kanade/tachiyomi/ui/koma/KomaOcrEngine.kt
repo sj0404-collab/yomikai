@@ -43,7 +43,7 @@ data class PageOcr(val regions: List<OcrRegion>, val engine: String, val millis:
 /** Как движок называется в интерфейсе: ровно как в исходниках KOMA. */
 const val ENGINE_NAME="PaddleOCR · кириллица"
 /** Версия разбора страницы: меняется вместе с логикой порядка чтения. */
-const val READ_ORDER_VERSION="8"
+const val READ_ORDER_VERSION="9"
 
 class KomaOcrEngine(private val context: Context) {
     private val mutex=Mutex()
@@ -249,41 +249,59 @@ class KomaOcrEngine(private val context: Context) {
     private fun paddlePage(image:Bitmap):List<OcrRegion> {
         if(det==null)det=session("detection.onnx")
         if(rec==null)rec=session("cyrillic.onnx")
+        val boxes=detectPage(image).take(400)
         val out=mutableListOf<OcrRegion>()
-        for(box in detectPage(image).take(400)) {
+        for(box in boxes) {
             for(line in textLines(image,box)) {
-                // КУСОК ШИРЕ СТРОКИ, КООРДИНАТЫ — ПО СТРОКЕ. Обрезка вплотную
-                // по буквам режет края глифов и задевает выносные элементы, и
-                // модель читает «ЕЙ» как «5», а «ВЫ» как «Бы». Поэтому в
-                // распознавание идёт кусок с полями, а в результат — рамка
-                // самой строки (по ней потом собирается облачко).
-                val padY=max(2,(line.height()*0.18f).toInt())
-                val padX=max(2,(line.height()*0.10f).toInt())
-                val cropLeft=(line.left-padX).coerceAtLeast(0)
-                val cropTop=(line.top-padY).coerceAtLeast(0)
-                val cropRight=(line.right+padX).coerceAtMost(image.width)
-                val cropBottom=(line.bottom+padY).coerceAtMost(image.height)
-                var crop=Bitmap.createBitmap(image,cropLeft,cropTop,cropRight-cropLeft,cropBottom-cropTop)
-                if(crop.height>crop.width*1.8f) {
-                    val rotated=Bitmap.createBitmap(crop,0,0,crop.width,crop.height,Matrix().apply { postRotate(90f) },true)
-                    if(!crop.isRecycled)crop.recycle()
-                    crop=rotated
-                }
-                val recognition=decode(crop)
-                if(!crop.isRecycled)crop.recycle()
-                if(recognition.first.isNotBlank() && recognition.second>.25f) {
-                    out.add(OcrRegion(
-                        recognition.first,
-                        line.left.toFloat()/image.width,
-                        line.top.toFloat()/image.height,
-                        line.right.toFloat()/image.width,
-                        line.bottom.toFloat()/image.height,
-                        recognition.second,
-                    ))
-                }
+                recognizeRect(image,line,0.25f)?.let { out.add(it) }
+            }
+        }
+        // Страховка. Разрез по строкам — эвристика; на тёмных страницах с
+        // крупным рисунком она может не найти ни одной строки, и раньше вся
+        // страница объявлялась пустой («Текст не найден», 0 областей), хотя
+        // реплики на ней есть. Если после разреза не осталось ни одного
+        // результата — распознаём боксы целиком, как до разреза.
+        if(out.isEmpty()) {
+            for(box in boxes.take(80)) {
+                recognizeRect(image,box,0.15f)?.let { out.add(it) }
             }
         }
         return out
+    }
+
+    /**
+     * Распознаёт прямоугольник страницы.
+     *
+     * Куски для распознавания берутся ШИРЕ рамки: обрезка вплотную по буквам
+     * режет края глифов, и модель читает «ЕЙ» как «5», а «ВЫ» как «Бы».
+     * Координаты результата при этом остаются по самой рамке — по ним потом
+     * собирается облачко, и лишние поля сдвинули бы строки друг на друга.
+     */
+    private fun recognizeRect(image:Bitmap,line:Rect,minScore:Float):OcrRegion? {
+        val padY=max(2,(line.height()*0.18f).toInt())
+        val padX=max(2,(line.height()*0.10f).toInt())
+        val cropLeft=(line.left-padX).coerceAtLeast(0)
+        val cropTop=(line.top-padY).coerceAtLeast(0)
+        val cropRight=(line.right+padX).coerceAtMost(image.width)
+        val cropBottom=(line.bottom+padY).coerceAtMost(image.height)
+        if(cropRight-cropLeft<2 || cropBottom-cropTop<2) return null
+        var crop=Bitmap.createBitmap(image,cropLeft,cropTop,cropRight-cropLeft,cropBottom-cropTop)
+        if(crop.height>crop.width*1.8f) {
+            val rotated=Bitmap.createBitmap(crop,0,0,crop.width,crop.height,Matrix().apply { postRotate(90f) },true)
+            if(!crop.isRecycled)crop.recycle()
+            crop=rotated
+        }
+        val recognition=decode(crop)
+        if(!crop.isRecycled)crop.recycle()
+        if(recognition.first.isBlank() || recognition.second<minScore) return null
+        return OcrRegion(
+            recognition.first,
+            line.left.toFloat()/image.width,
+            line.top.toFloat()/image.height,
+            line.right.toFloat()/image.width,
+            line.bottom.toFloat()/image.height,
+            recognition.second,
+        )
     }
 
     /** Боксы детектора по всей странице, в пикселях страницы. */
@@ -358,8 +376,12 @@ class KomaOcrEngine(private val context: Context) {
             luma[i]=(299*((p shr 16) and 255)+587*((p shr 8) and 255)+114*(p and 255))/1000
         }
         // Тёмный текст на светлом — обычный случай; светлый на тёмном (кадр
-        // ночной сцены, инвертированная вставка) раньше вообще не находился.
-        val light = luma.average() < 110
+        // ночной сцены, инвертированная вставка) тоже бывает. Полярность
+        // определяется по МЕДИАНЕ яркости: среднее сбивается на тёмной
+        // странице в светлом облачке, и текст считался фоном — страница
+        // объявлялась пустой.
+        val sorted=luma.clone();sorted.sort()
+        val light = sorted[sorted.size/2] < 100
         fun ink(index:Int)=if(light) luma[index]>105 else luma[index]<150
         val runs=mutableListOf<IntArray>()
         var y=0
@@ -370,9 +392,9 @@ class KomaOcrEngine(private val context: Context) {
             if(end>y) runs.add(intArrayOf(y,end))
             y=end.coerceAtLeast(y+1)
         }
-        // Ни одной тёмной строки — значит, мы стоим на участке без текста.
-        // Возвращать весь бокс нельзя: на нём распознавание выдаёт мусор.
-        if(runs.isEmpty()) return emptyList()
+        // Разрез ничего не дал (тёмный рисунок, шум) — отдаём бокс целиком:
+        // лучше распознать его как одну строку, чем потерять реплику.
+        if(runs.isEmpty()) return listOf(Rect(left,top,right,bottom))
         val heights=runs.map{it[1]-it[0]}.sorted()
         val median=heights[heights.size/2].coerceAtLeast(1)
         // Склеиваем полосы, разделённые крошечным зазором: точка над «й» или
@@ -399,7 +421,7 @@ class KomaOcrEngine(private val context: Context) {
             val py1=(top+run[1]/scale).toInt().coerceIn(py0+1,bottom)
             lines.add(Rect(px0,py0,px1,py1))
         }
-        return lines
+        return lines.ifEmpty { listOf(Rect(left,top,right,bottom)) }
     }
 
     private fun rowHasInk(luma:IntArray,width:Int,y:Int,light:Boolean):Boolean {
@@ -425,7 +447,12 @@ class KomaOcrEngine(private val context: Context) {
             while(start<end){val n=queue[start++];val xx=n%w;val yy=n/w;score+=map[yy][xx];minX=min(minX,xx);maxX=max(maxX,xx);minY=min(minY,yy);maxY=max(maxY,yy)
                 for(i in 0..3){val nx=xx+dx[i];val ny=yy+dy[i];if(nx in 0 until w && ny in 0 until h){val ni=ny*w+nx;if(!visited[ni] && map[ny][nx]>.3f){visited[ni]=true;queue[end++]=ni}}}
             }
-            if(end<6 || score/end<.5f || maxX-minX<2 || maxY-minY<2)continue
+            // Порог средней уверенности 0.35, а не 0.5: на тёмных страницах с
+            // крупным рисунком белые облачка дают 0.4–0.5, и при строгом пороге
+            // детектор не отдавал НИ ОДНОГО бокса — страница объявлялась пустой
+            // («0 областей»), хотя реплики на ней есть. Мусорные боксы отсеются
+            // на распознавании.
+            if(end<6 || score/end<.35f || maxX-minX<2 || maxY-minY<2)continue
             val expand=max(2,((maxX-minX)*(maxY-minY)*1.5f/(2*(maxX-minX+maxY-minY))).roundToInt())
             boxes.add(Rect(max(0,minX-expand),max(0,minY-expand),min(w,maxX+expand+1),min(h,maxY+expand+1)))
         }
