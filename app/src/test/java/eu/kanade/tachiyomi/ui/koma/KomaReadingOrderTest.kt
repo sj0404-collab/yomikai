@@ -15,8 +15,8 @@ class KomaReadingOrderTest {
     private fun page(vararg blocks: PageBlock): List<OcrRegion> =
         blocks.flatMap { it.regions() }
 
-    private class PageBlock(val lines: List<Triple<String, Float, Float>>, val left: Float, val right: Float, val top: Float, val lineHeight: Float) {
-        fun regions(): List<OcrRegion> = lines.mapIndexed { index, (text, _, _) ->
+    private class PageBlock(val lines: List<String>, val left: Float, val right: Float, val top: Float, val lineHeight: Float) {
+        fun regions(): List<OcrRegion> = lines.mapIndexed { index, text ->
             val y = top + index * lineHeight
             OcrRegion(text, left, y, right, y + lineHeight * 0.86f)
         }
@@ -30,30 +30,30 @@ class KomaReadingOrderTest {
         val regions = page(
             // правая панель
             PageBlock(
-                listOf("ДУМАЮ, В НАШЕМ" to 0f, "СЛУЧАЕ ПОМОЖЕТ" to 0f, "ТОЛЬКО ЭКЗОРЦИЗМ" to 0f),
+                listOf("ДУМАЮ, В НАШЕМ", "СЛУЧАЕ ПОМОЖЕТ", "ТОЛЬКО ЭКЗОРЦИЗМ"),
                 left = 0.75f, right = 0.98f, top = 0.06f, lineHeight = 0.04f,
             ),
             // средняя панель
             PageBlock(
-                listOf("У ЭТОГО МЕСТА" to 0f, "ПРИЯТНАЯ АТМОС-" to 0f, "ФЕРА" to 0f),
+                listOf("У ЭТОГО МЕСТА", "ПРИЯТНАЯ АТМОС-", "ФЕРА"),
                 left = 0.40f, right = 0.62f, top = 0.08f, lineHeight = 0.04f,
             ),
             // левая панель
             PageBlock(
-                listOf("Я СЛОВНО" to 0f, "ОКАЗАЛАСЬ" to 0f, "В ФИЛЬМЕ" to 0f, "УЖАСОВ" to 0f),
+                listOf("Я СЛОВНО", "ОКАЗАЛАСЬ", "В ФИЛЬМЕ", "УЖАСОВ"),
                 left = 0.08f, right = 0.28f, top = 0.09f, lineHeight = 0.04f,
             ),
             // нижняя полоса: две реплики рядом
             PageBlock(
-                listOf("ХОТЕЛА" to 0f, "ВЫ ЭТО" to 0f, "ПОСМО-" to 0f, "ТРЕТЬ" to 0f, "МОЙ" to 0f, "СОСЕД" to 0f, "ТРОЛЛЬ" to 0f),
+                listOf("ХОТЕЛА", "ВЫ ЭТО", "ПОСМО-", "ТРЕТЬ", "МОЙ", "СОСЕД", "ТРОЛЛЬ"),
                 left = 0.78f, right = 0.97f, top = 0.55f, lineHeight = 0.04f,
             ),
             PageBlock(
-                listOf("ПЕПЕЛЬНЫЕ" to 0f, "ГРЕМЛИНЫ," to 0f, "ВЫХОДИТЕ!" to 0f),
+                listOf("ПЕПЕЛЬНЫЕ", "ГРЕМЛИНЫ,", "ВЫХОДИТЕ!"),
                 left = 0.60f, right = 0.78f, top = 0.86f, lineHeight = 0.04f,
             ),
             PageBlock(
-                listOf("ДАВАЙТЕ," to 0f, "СКОРЕЕ" to 0f, "ВЫХОДИТЕ!" to 0f),
+                listOf("ДАВАЙТЕ,", "СКОРЕЕ", "ВЫХОДИТЕ!"),
                 left = 0.40f, right = 0.58f, top = 0.87f, lineHeight = 0.04f,
             ),
         )
