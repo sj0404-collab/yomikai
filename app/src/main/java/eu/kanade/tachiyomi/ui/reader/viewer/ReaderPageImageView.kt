@@ -284,6 +284,43 @@ open class ReaderPageImageView @JvmOverloads constructor(
     }
 
     /**
+     * Догоняет читаемую реплику: если озвучиваемая рамка ушла за пределы
+     * экрана, страница сдвигается так, чтобы её стало видно.
+     *
+     * Зачем: в читалке озвучка идёт по репликам вниз по странице, а экран
+     * оставался неподвижным. Пользователь видел начало страницы и не видел,
+     * что читается — «уже не видно, что он читает». Масштаб НЕ меняется:
+     * читателя нельзя дёргать зумом на каждой реплике, только прокруткой.
+     *
+     * @return true, если страница действительно сдвинулась.
+     */
+    fun followBoundingBox(boundingBox: OcrBoundingBox, animated: Boolean = true): Boolean {
+        val view = pageView as? SubsamplingScaleImageView ?: return false
+        if (!view.isReady || width <= 0 || height <= 0) return false
+        val localRect = boundingBoxToLocalRect(boundingBox) ?: return false
+        // Небольшие отступы по краям: реплика считается видимой, если она
+        // в середине экрана, а не «одной строкой у самого края».
+        val visible = RectF(
+            width * 0.04f,
+            height * 0.08f,
+            width * 0.96f,
+            height * 0.92f,
+        )
+        if (visible.contains(localRect)) return false
+        val target = localPointToSourcePoint(localRect.centerX(), localRect.centerY()) ?: return false
+        val scale = view.scale
+        if (!scale.isFinite() || scale <= 0f) return false
+        val clamped = clampCenter(target, scale, view.width, view.height, view.sWidth, view.sHeight)
+        if (!animated) {
+            view.setScaleAndCenter(scale, clamped)
+            return true
+        }
+        val animation = view.animateScaleAndCenter(scale, clamped) ?: return false
+        animation.withDuration(320).withEasing(EASE_IN_OUT_QUAD).withInterruptible(true).start()
+        return true
+    }
+
+    /**
      * Replicates SubsamplingScaleImageView's PAN_LIMIT_INSIDE clamping to predict
      * where the view will actually end up for a given center and scale.
      */

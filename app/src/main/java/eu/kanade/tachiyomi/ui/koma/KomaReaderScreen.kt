@@ -165,6 +165,7 @@ fun KomaReaderScreen(
                 regions = it.regions,
                 rtl = mode == "rtl",
                 onlyCyrillic = language == "Кириллица" || language == "Авто",
+                panels = it.panels,
             )
         }
     }
@@ -226,6 +227,7 @@ fun KomaReaderScreen(
                         regions=r.regions,
                         rtl=mode=="rtl",
                         onlyCyrillic=language=="Кириллица"||language=="Авто",
+                        panels=r.panels,
                     )
                     val shotPage=KomaAutoRead.state.value.page
                     runCatching {

@@ -23,6 +23,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.nio.FloatBuffer
+import java.util.zip.GZIPInputStream
+import kotlin.concurrent.thread
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.*
@@ -32,23 +34,53 @@ val ocrLanguages = listOf("Кириллица", "Авто", "Японский", 
 data class OcrRegion(val text: String, val left: Float, val top: Float, val right: Float, val bottom: Float, val confidence: Float? = null, val kind: String = "Текст") {
     fun json()=JSONObject().put("text",text).put("l",left).put("t",top).put("r",right).put("b",bottom).put("confidence",confidence).put("kind",kind)
 }
-data class PageOcr(val regions: List<OcrRegion>, val engine: String, val millis: Long, val edited: String?=null) {
+data class PageOcr(
+    val regions: List<OcrRegion>,
+    val engine: String,
+    val millis: Long,
+    val edited: String?=null,
+    /** Панели страницы в порядке чтения (см. [KomaPanels]). Пусто — рамок нет. */
+    val panels: List<KomaPanels.Box> = emptyList(),
+) {
     val text: String get() = edited ?: regions.joinToString("\n") { it.text }
     fun json()=JSONObject().put("regions",JSONArray().apply { regions.forEach { put(it.json()) } }).put("engine",engine).put("ms",millis).put("edited",edited)
+        .put("panels",JSONArray().apply { panels.forEach { put(JSONArray().put(it.left).put(it.top).put(it.right).put(it.bottom)) } })
     companion object {
-        fun from(j:JSONObject):PageOcr = PageOcr(j.getJSONArray("regions").let { a -> List(a.length()){ val r=a.getJSONObject(it);OcrRegion(r.getString("text"),r.getDouble("l").toFloat(),r.getDouble("t").toFloat(),r.getDouble("r").toFloat(),r.getDouble("b").toFloat(),if(r.isNull("confidence"))null else r.getDouble("confidence").toFloat(),r.optString("kind","Текст")) } },j.getString("engine"),j.getLong("ms"),if(j.isNull("edited"))null else j.getString("edited"))
+        fun from(j:JSONObject):PageOcr = PageOcr(
+            j.getJSONArray("regions").let { a -> List(a.length()){ val r=a.getJSONObject(it);OcrRegion(r.getString("text"),r.getDouble("l").toFloat(),r.getDouble("t").toFloat(),r.getDouble("r").toFloat(),r.getDouble("b").toFloat(),if(r.isNull("confidence"))null else r.getDouble("confidence").toFloat(),r.optString("kind","Текст")) } },
+            j.getString("engine"),
+            j.getLong("ms"),
+            if(j.isNull("edited"))null else j.getString("edited"),
+            j.optJSONArray("panels")?.let { a -> List(a.length()){ val p=a.getJSONArray(it); KomaPanels.Box(p.getDouble(0).toFloat(),p.getDouble(1).toFloat(),p.getDouble(2).toFloat(),p.getDouble(3).toFloat()) } } ?: emptyList(),
+        )
     }
 }
 
 /** Как движок называется в интерфейсе: ровно как в исходниках KOMA. */
 const val ENGINE_NAME="PaddleOCR · кириллица"
 /** Версия разбора страницы: меняется вместе с логикой порядка чтения. */
-const val READ_ORDER_VERSION="8"
+const val READ_ORDER_VERSION="10"
 
 class KomaOcrEngine(private val context: Context) {
     private companion object {
         /** Сетка покрытия страницы для добора потерянных вторым проходом кусков. */
         const val GRID = 200
+    }
+
+    /**
+     * Словарь языковой починки читается в ФОНЕ: 250 000 слов, на телефоне это
+     * заметная работа, и первая страница не должна её ждать. Пока словарь не
+     * готов, [KomaWords] ничего не правит — текст показывается как распознан.
+     */
+    init { thread(name="koma-words", isDaemon=true) { warmWords() } }
+
+    private fun warmWords() {
+        if (KomaWords.isReady()) return
+        runCatching {
+            context.assets.open("koma/dict/ru_250k.txt.gz").use { raw ->
+                GZIPInputStream(raw).bufferedReader().use { reader -> KomaWords.load(reader.lineSequence()) }
+            }
+        }
     }
 
     private val mutex=Mutex()
@@ -178,7 +210,10 @@ class KomaOcrEngine(private val context: Context) {
                     }
                 }
                 val sorted=if(book.mode=="rtl" && script=="Японский") regions.sortedWith(compareByDescending<OcrRegion> { (it.left*40).toInt() }.thenBy { it.top }) else regions.sortedWith(compareBy<OcrRegion> { (it.top*80).toInt() }.thenBy { if(book.mode=="rtl")-it.left else it.left })
-                PageOcr(sorted,if(script=="Кириллица")ENGINE_NAME else "ML Kit · $script",System.currentTimeMillis()-start).also { store(book.id,page,language,it) }
+                // Панели ищутся по тому же изображению, что ушло в распознавание:
+                // порядок чтения потом идёт по кадрам (KomaReadingOrder).
+                val panels=if(script=="Кириллица") panelsOf(image) else emptyList()
+                PageOcr(sorted,if(script=="Кириллица")ENGINE_NAME else "ML Kit · $script",System.currentTimeMillis()-start,panels=panels).also { store(book.id,page,language,it) }
             } catch(t:Throwable) {
                 if(t is kotlinx.coroutines.CancellationException) throw t
                 // Битая страница, нехватка памяти, сбой нативного ONNX — всё
@@ -195,6 +230,65 @@ class KomaOcrEngine(private val context: Context) {
             }
         }
     }
+    /**
+     * Распознавание произвольного кадра: вкладка «Браузер», снимок экрана,
+     * выделенная область. Путь тот же, что у страницы книги — два прохода,
+     * рамки по строкам, панели и порядок чтения, — только без книги и кэша.
+     *
+     * Нужен, чтобы в браузере были ТЕ ЖЕ рамки и тот же порядок чтения, что в
+     * читалке: до этого там работал старый движок кириллицы (до KOMA), и рамки
+     * на экране были чужие.
+     */
+    suspend fun recognizeImage(source: Bitmap): PageOcr = withContext(Dispatchers.Default) {
+        mutex.withLock {
+            lastError = null
+            val start = System.currentTimeMillis()
+            val image = upscaleForOcr(source)
+            try {
+                ensureActive()
+                val main = paddlePage(image)
+                ensureActive()
+                val rescue = if (main.size < 600) paddlePage(source, 960f) else emptyList()
+                val regions = mutableListOf<OcrRegion>()
+                (main + rescued(main, rescue)).forEach { addRegion(regions, it) }
+                val sorted = regions.sortedWith(
+                    compareBy<OcrRegion> { (it.top * 80).toInt() }.thenByDescending { it.left },
+                )
+                PageOcr(sorted, ENGINE_NAME, System.currentTimeMillis() - start, panels = panelsOf(image))
+            } catch (t: Throwable) {
+                if (t is kotlinx.coroutines.CancellationException) throw t
+                lastError = describe(t)
+                PageOcr(emptyList(), ENGINE_NAME, System.currentTimeMillis() - start)
+            } finally {
+                if (image !== source && !image.isRecycled) image.recycle()
+            }
+        }
+    }
+
+    /**
+     * Панели страницы — по уменьшенной копии изображения.
+     *
+     * Уменьшение обязательно: детектор перебирает пиксели, и на полном кадре
+     * 3 Мпкс это секунды. 400 px по длинной стороне хватает, чтобы обводки
+     * кадров остались линиями, а работа занимала десятки миллисекунд.
+     */
+    private fun panelsOf(image: Bitmap): List<KomaPanels.Box> = runCatching {
+        val scale = KomaPanels.TARGET.toFloat() / max(image.width, image.height)
+        val small = if (scale >= 1f) image else Bitmap.createScaledBitmap(
+            image,
+            max(8, (image.width * scale).toInt()),
+            max(8, (image.height * scale).toInt()),
+            true,
+        )
+        try {
+            val pixels = IntArray(small.width * small.height)
+            small.getPixels(pixels, 0, small.width, 0, 0, small.width, small.height)
+            KomaPanels.detect(small.width, small.height, pixels)
+        } finally {
+            if (small !== image && !small.isRecycled) small.recycle()
+        }
+    }.getOrDefault(emptyList())
+
     /**
      * Добавляет найденный блок, схлопывая перекрытия от соседних тайлов.
      *

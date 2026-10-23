@@ -91,6 +91,8 @@ import eu.kanade.presentation.util.Tab
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import eu.kanade.tachiyomi.data.tts.AutoReadEngine
+import eu.kanade.tachiyomi.ui.koma.KomaOcrEngine
+import eu.kanade.tachiyomi.ui.koma.KomaReadingOrder
 import eu.kanade.tachiyomi.data.tts.TtsSpeaker
 import kotlinx.coroutines.delay
 import eu.kanade.tachiyomi.util.system.toast
@@ -858,6 +860,10 @@ data object BrowserTab : Tab {
         val pip by WebStore.pipMode
         var immersive by remember { mutableStateOf(false) }
         val scope = rememberCoroutineScope()
+        // KOMA-движок один на вкладку: у него внутри ONNX-сессии, и создавать их
+        // на каждый скан — это секунды ожидания и лишняя память.
+        val komaEngine = remember { KomaOcrEngine(ctx.applicationContext) }
+        DisposableEffect(Unit) { onDispose { runCatching { komaEngine.close() } } }
         var saving by remember { mutableStateOf(false) }
         var saveMsg by remember { mutableStateOf<String?>(null) }
 
@@ -928,7 +934,7 @@ data object BrowserTab : Tab {
                     // весь экран и «плывали» по странице).
                     if (cropped !== clean) ocrFrame = cropped
                     val prefsN = Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
-                    var result = ocrWithPreprocess(ctx, cropped)
+                    var result = ocrWithPreprocess(ctx, cropped, komaEngine)
                     if (result.first.isBlank() && cropped !== clean) {
 
                         // v1.9.41: ретрай на увеличении — мелкий/бледный текст
@@ -938,7 +944,7 @@ data object BrowserTab : Tab {
                             (cropped.height * 1.5f).toInt().coerceAtLeast(1),
                             true,
                         )
-                        result = ocrWithPreprocess(ctx, up)
+                        result = ocrWithPreprocess(ctx, up, komaEngine)
                         runCatching { up.recycle() }
                     }
                     val (text, regions) = result
@@ -2081,7 +2087,22 @@ private fun applyBrowserOcrMode(context: android.content.Context) {
 
 /** OCR с препроцессом: текст + рамки реплик (нормализованные 0..1). */
 
-private suspend fun ocrWithPreprocess(context: android.content.Context, src: android.graphics.Bitmap): Pair<String, List<Pair<mihon.domain.ocr.model.OcrBoundingBox, String>>> {
+private suspend fun ocrWithPreprocess(
+    context: android.content.Context,
+    src: android.graphics.Bitmap,
+    koma: KomaOcrEngine? = null,
+): Pair<String, List<Pair<mihon.domain.ocr.model.OcrBoundingBox, String>>> {
+        // KOMA первым: в читалке работают её рамки и её порядок чтения, и в
+        // браузере должно быть ровно то же самое. Старый движок кириллицы
+        // (до KOMA) остаётся только как запас, если KOMA ничего не прочитала.
+        // Режим движка лежит в тех же префах, что и остальные настройки браузера
+        // (browserOcrMode — приватная функция экрана, отсюда не видна).
+        val mode = context.getSharedPreferences("browser_ocr", 0)
+            .getString("engine_mode", "auto") ?: "auto"
+        if (koma != null && mode != "online") {
+            val viaKoma = ocrWithKoma(koma, src)
+            if (viaKoma.second.isNotEmpty()) return viaKoma
+        }
         val pre = preprocessForOcr(src)
         val bmp = if (pre.width < 1200) {
             val k = minOf(3f, 1200f / pre.width)
@@ -2115,6 +2136,34 @@ private suspend fun ocrWithPreprocess(context: android.content.Context, src: and
             "" to emptyList()
         }
     }
+
+/**
+ * Распознавание кадра браузера движком KOMA — тот же путь, что в читалке.
+ *
+ * Возвращает реплики в порядке чтения манги (панель за панелью, справа налево),
+ * поэтому и рамки на экране, и озвучка идут в том же порядке, что и в читалке.
+ */
+private suspend fun ocrWithKoma(
+    engine: KomaOcrEngine,
+    src: android.graphics.Bitmap,
+): Pair<String, List<Pair<mihon.domain.ocr.model.OcrBoundingBox, String>>> = try {
+    val page = engine.recognizeImage(src)
+    val lines = KomaReadingOrder.order(
+        regions = page.regions,
+        rtl = true,
+        onlyCyrillic = true,
+        panels = page.panels,
+    )
+    val regions = lines.mapNotNull { line ->
+        val box = mihon.domain.ocr.model.OcrBoundingBox(line.left, line.top, line.right, line.bottom)
+        if (!box.isValid() || line.text.isBlank()) null else box to line.text
+    }
+    regions.joinToString("\n") { it.second } to regions
+} catch (e: kotlinx.coroutines.CancellationException) {
+    throw e
+} catch (e: Exception) {
+    "" to emptyList()
+}
 
 /** v1.9.44: фиксер похожих символов (M E Ч / А Т М / 5→Б) до вывода. */
 private fun ocrFixedRegions(

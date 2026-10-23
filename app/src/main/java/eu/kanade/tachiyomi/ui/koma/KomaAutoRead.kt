@@ -261,7 +261,13 @@ object KomaReadingOrder {
     }
 
     /** Порядок чтения: панель за панелью, внутри панели — строки сверху вниз. */
-    fun order(regions: List<OcrRegion>, rtl: Boolean, onlyCyrillic: Boolean): List<Line> {
+    fun order(
+        regions: List<OcrRegion>,
+        rtl: Boolean,
+        onlyCyrillic: Boolean,
+        /** Панели страницы в порядке чтения (см. [KomaPanels]); пусто — рамок нет. */
+        panels: List<KomaPanels.Box> = emptyList(),
+    ): List<Line> {
         val source = regions
             // Латинские двойники чиним ДО фильтра по языку: иначе фрагмент с
             // одной-двумя латинскими буквами («He6лuцa») отбрасывался целиком,
@@ -278,13 +284,31 @@ object KomaReadingOrder {
         // верхняя строка левой, верхняя строка правой, вторая строка левой…
         // Теперь страница режется на панели разрезами по пустым полосам, и
         // каждая панель вычитывается целиком, прежде чем начаться следующая.
-        return splitPanels(source, rtl, depth = 0)
-            .flatMap { panel -> bubblesOf(panel, rtl) }
+        // Порядок чтения идёт ПО ПАНЕЛЯМ, найденным детектором кадров: панель
+        // вычитывается целиком, прежде чем начаться следующая. Доверяем
+        // детектору, только если он нашёл хотя бы две панели и в них лежит
+        // почти весь текст (PANEL_TRUST); иначе — прежний разбор по облачкам,
+        // который работает и на страницах без рамок.
+        val ordered = if (panels.size >= 2 && KomaPanels.coverage(source, panels) >= PANEL_TRUST) {
+            KomaPanels.assign(source, panels).flatMap { panel -> bubblesOf(panel, rtl) }
+        } else {
+            splitPanels(source, rtl, depth = 0).flatMap { panel -> bubblesOf(panel, rtl) }
+        }
+        return ordered
+            // Языковая починка — на СОБРАННОЙ реплике, а не на обрывке: модель
+            // путает буквы в словах, и словарь это чинит («ПОШЕВЕАИТЬСЯ» →
+            // «ПОШЕВЕЛИТЬСЯ», «СЮОДА» → «СЮДА», «ТРУ» → «ТРИ»), возвращает
+            // потерянные дефисы («ЧТОТО» → «ЧТО-ТО») и склеивает слово,
+            // разорванное на две строки бокса («РАССЧИ ТВВАЮ»).
+            .map { it.copy(text = KomaWords.finish(it.text)) }
     }
 
     /** Доля страницы, ниже которой разрез не считается разрезом. */
     private const val Y_CUT = 0.022f
     private const val X_CUT = 0.035f
+
+    /** Доля текста внутри панелей, при которой детектору кадров можно верить. */
+    private const val PANEL_TRUST = 0.75f
 
     /**
      * Рекурсивные разрезы страницы (XY-cut).
@@ -748,6 +772,7 @@ object KomaAutoRead {
                 // реплики одного ряда читались слева направо — «вразброс».
                 rtl = book.mode == "rtl",
                 onlyCyrillic = language == "Кириллица" || language == "Авто",
+                panels = result?.panels.orEmpty(),
             ).filter { spokenKeys.add(KomaReadingOrder.key(it.text) + "@" + index) }
 
             // Страница без реплик: это не «пусто», а кадр с рисунком или

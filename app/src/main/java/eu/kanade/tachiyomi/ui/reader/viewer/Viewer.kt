@@ -89,4 +89,10 @@ interface Viewer {
      * области, как раньше.
      */
     fun displayedPageRect(): RectF? = null
+
+    /**
+     * Догнать озвучиваемую реплику: если её рамка вне экрана, прокрутить
+     * страницу (без изменения масштаба). false — двигать нечего или некуда.
+     */
+    fun followOcrRegion(box: mihon.domain.ocr.model.OcrBoundingBox): Boolean = false
 }
