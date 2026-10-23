@@ -42,8 +42,6 @@ data class PageOcr(val regions: List<OcrRegion>, val engine: String, val millis:
 
 /** Как движок называется в интерфейсе: ровно как в исходниках KOMA. */
 const val ENGINE_NAME="PaddleOCR · кириллица"
-/** Версия разбора страницы: меняется вместе с логикой порядка чтения. */
-const val READ_ORDER_VERSION="9"
 
 class KomaOcrEngine(private val context: Context) {
     private val mutex=Mutex()
@@ -53,10 +51,7 @@ class KomaOcrEngine(private val context: Context) {
     private var rec: OrtSession?=null
     private val env by lazy { OrtEnvironment.getEnvironment() }
     private val dictionary by lazy { listOf("")+context.assets.open("koma/models/cyrillic.txt").bufferedReader().readLines()+listOf(" ") }
-    // Версия разбора в имени файла: после правок склейки блоков старый кэш
-    // отдавал бы прежние разрезанные реплики, и обновление выглядело бы так,
-    // будто ничего не изменилось.
-    private fun cacheFile(id:String,page:Int,language:String)=File(root,"${id}_${page}_${language}_$READ_ORDER_VERSION.json")
+    private fun cacheFile(id:String,page:Int,language:String)=File(root,"${id}_${page}_${language}.json")
     fun cached(id:String,page:Int,language:String):PageOcr? = runCatching { PageOcr.from(JSONObject(cacheFile(id,page,language).readText())) }.getOrNull()
     fun store(id:String,page:Int,language:String,result:PageOcr){cacheFile(id,page,language).writeText(result.json().toString())}
     fun cacheCount():Int=root.listFiles()?.size ?: 0
@@ -114,27 +109,20 @@ class KomaOcrEngine(private val context: Context) {
             try {
                 val script=if(language=="Авто")if(book.category=="Комиксы")"Латиница" else "Японский" else language
                 val regions=mutableListOf<OcrRegion>()
-                if(script=="Кириллица") {
-                    // ОДНА РАМКА НА ВСЮ ВИДИМУЮ СТРАНИЦУ. Детектор только
-                    // отвечает на вопрос «где текст», а на куски для
-                    // распознавания страницу режем мы сами (см. paddlePage).
+                val tileHeight=if(image.height>2800)1800 else image.height
+                var y=0
+                while(y<image.height) {
                     ensureActive()
-                    paddlePage(image).forEach { addRegion(regions,it) }
-                } else {
-                    val tileHeight=if(image.height>2800)1800 else image.height
-                    var y=0
-                    while(y<image.height) {
-                        ensureActive()
-                        val h=min(tileHeight,image.height-y)
-                        val tile=Bitmap.createBitmap(image,0,y,image.width,h)
-                        ml(tile,script).forEach { r ->
-                            val mapped=r.copy(top=(y+r.top*h)/image.height,bottom=(y+r.bottom*h)/image.height)
-                            addRegion(regions,mapped)
-                        }
-                        if(tile!==image)tile.recycle()
-                        if(y+h>=image.height)break
-                        y+=tileHeight-160
+                    val h=min(tileHeight,image.height-y)
+                    val tile=Bitmap.createBitmap(image,0,y,image.width,h)
+                    val found=if(script=="Кириллица")paddle(tile)else ml(tile,script)
+                    found.forEach { r ->
+                        val mapped=r.copy(top=(y+r.top*h)/image.height,bottom=(y+r.bottom*h)/image.height)
+                        if(regions.none { it.text==mapped.text && abs(it.top-mapped.top)<.015f })regions.add(mapped)
                     }
+                    if(tile!==image)tile.recycle()
+                    if(y+h>=image.height)break
+                    y+=tileHeight-160
                 }
                 val sorted=if(book.mode=="rtl" && script=="Японский") regions.sortedWith(compareByDescending<OcrRegion> { (it.left*40).toInt() }.thenBy { it.top }) else regions.sortedWith(compareBy<OcrRegion> { (it.top*80).toInt() }.thenBy { if(book.mode=="rtl")-it.left else it.left })
                 PageOcr(sorted,if(script=="Кириллица")ENGINE_NAME else "ML Kit · $script",System.currentTimeMillis()-start).also { store(book.id,page,language,it) }
@@ -153,47 +141,6 @@ class KomaOcrEngine(private val context: Context) {
             }
         }
     }
-    /**
-     * Добавляет найденный блок, схлопывая перекрытия от соседних тайлов.
-     *
-     * Тайлы нарезаны с перекрытием, поэтому одна и та же строка приходит дважды,
-     * а строка на границе приходит разрезанной пополам. Раньше сравнивался
-     * только текст и верхняя граница: разрезанный пополам обрывок оставался
-     * второй, «лишней» строкой, и реплика на экране шла кусками. Теперь блоки,
-     * перекрывающиеся по площади, склеиваются в один — побеждает тот, где больше
-     * букв, а рамка берётся по объединению.
-     */
-    private fun addRegion(regions:MutableList<OcrRegion>,block:OcrRegion) {
-        val blockWidth=max(block.right-block.left,1e-4f)
-        val blockHeight=max(block.bottom-block.top,1e-4f)
-        var best=-1
-        var bestShare=0f
-        for (index in regions.indices) {
-            val other=regions[index]
-            val overlapWidth=min(other.right,block.right)-max(other.left,block.left)
-            val overlapHeight=min(other.bottom,block.bottom)-max(other.top,block.top)
-            if (overlapWidth<=0f || overlapHeight<=0f) continue
-            val otherArea=max((other.right-other.left)*(other.bottom-other.top),1e-6f)
-            val share=overlapWidth*overlapHeight/min(otherArea,blockWidth*blockHeight)
-            // 60% площади меньшего блока — это тот же самый текст, а не соседняя
-            // строка: соседние строки перекрываются только рамками, площадью — нет.
-            if (share>bestShare) { bestShare=share;best=index }
-        }
-        if (best<0 || bestShare<.6f) { regions.add(block);return }
-        val other=regions[best]
-        val letters={r:OcrRegion -> r.text.count { c->c.isLetterOrDigit() }}
-        val text=if (letters(block)>letters(other)) block.text else other.text
-        regions[best]=OcrRegion(
-            text,
-            min(other.left,block.left),
-            min(other.top,block.top),
-            max(other.right,block.right),
-            max(other.bottom,block.bottom),
-            listOfNotNull(other.confidence,block.confidence).maxOrNull(),
-            other.kind,
-        )
-    }
-
     private suspend fun ml(bitmap:Bitmap,script:String):List<OcrRegion> {
         val recognizer=mlModels.getOrPut(script) { when(script){
             "Японский"->TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
@@ -228,107 +175,15 @@ class KomaOcrEngine(private val context: Context) {
         runCatching { rec?.close() };rec=null
         mlModels.values.forEach { runCatching { it.close() } };mlModels.clear()
     }
-    /**
-     * Одна рамка на видимую часть страницы, а на строки её режем мы сами.
-     *
-     * Детектор отвечает только на вопрос «где текст». Дальше:
-     *
-     *  1. детектор проходит страницу тайлами (модель видит максимум 960 px по
-     *     длинной стороне) и отдаёт боксы в пикселях СТРАНИЦЫ;
-     *  2. бокс часто накрывает не строку, а весь блок из нескольких строк —
-     *     поэтому внутри бокса считается проекция «есть тёмные пиксели» по
-     *     строкам и по столбцам, и блок режется на отдельные текстовые строки
-     *     (по вертикали — по пустым промежуткам, по горизонтали — по краям
-     *     текста);
-     *  3. каждая строка распознаётся ОТДЕЛЬНО и из полного разрешения страницы:
-     *     раньше фрагмент резался ровно по рамке детектора, буквы на краю
-     *     срезались, и в реплике оставались обрывки («ХАНУ.», «И РАСЧИТЫВАЮ»);
-     *  4. у рамки результата координаты САМОЙ строки, без полей, — иначе при
-     *     склейке в облачко строки наезжали друг на друга.
-     */
-    private fun paddlePage(image:Bitmap):List<OcrRegion> {
+    @Suppress("UNCHECKED_CAST")
+    private fun paddle(bitmap:Bitmap):List<OcrRegion> {
         if(det==null)det=session("detection.onnx")
         if(rec==null)rec=session("cyrillic.onnx")
-        val boxes=detectPage(image).take(400)
-        val out=mutableListOf<OcrRegion>()
-        for(box in boxes) {
-            for(line in textLines(image,box)) {
-                recognizeRect(image,line,0.25f)?.let { out.add(it) }
-            }
-        }
-        // Страховка. Разрез по строкам — эвристика; на тёмных страницах с
-        // крупным рисунком она может не найти ни одной строки, и раньше вся
-        // страница объявлялась пустой («Текст не найден», 0 областей), хотя
-        // реплики на ней есть. Если после разреза не осталось ни одного
-        // результата — распознаём боксы целиком, как до разреза.
-        if(out.isEmpty()) {
-            for(box in boxes.take(80)) {
-                recognizeRect(image,box,0.15f)?.let { out.add(it) }
-            }
-        }
-        return out
-    }
-
-    /**
-     * Распознаёт прямоугольник страницы.
-     *
-     * Куски для распознавания берутся ШИРЕ рамки: обрезка вплотную по буквам
-     * режет края глифов, и модель читает «ЕЙ» как «5», а «ВЫ» как «Бы».
-     * Координаты результата при этом остаются по самой рамке — по ним потом
-     * собирается облачко, и лишние поля сдвинули бы строки друг на друга.
-     */
-    private fun recognizeRect(image:Bitmap,line:Rect,minScore:Float):OcrRegion? {
-        val padY=max(2,(line.height()*0.18f).toInt())
-        val padX=max(2,(line.height()*0.10f).toInt())
-        val cropLeft=(line.left-padX).coerceAtLeast(0)
-        val cropTop=(line.top-padY).coerceAtLeast(0)
-        val cropRight=(line.right+padX).coerceAtMost(image.width)
-        val cropBottom=(line.bottom+padY).coerceAtMost(image.height)
-        if(cropRight-cropLeft<2 || cropBottom-cropTop<2) return null
-        var crop=Bitmap.createBitmap(image,cropLeft,cropTop,cropRight-cropLeft,cropBottom-cropTop)
-        if(crop.height>crop.width*1.8f) {
-            val rotated=Bitmap.createBitmap(crop,0,0,crop.width,crop.height,Matrix().apply { postRotate(90f) },true)
-            if(!crop.isRecycled)crop.recycle()
-            crop=rotated
-        }
-        val recognition=decode(crop)
-        if(!crop.isRecycled)crop.recycle()
-        if(recognition.first.isBlank() || recognition.second<minScore) return null
-        return OcrRegion(
-            recognition.first,
-            line.left.toFloat()/image.width,
-            line.top.toFloat()/image.height,
-            line.right.toFloat()/image.width,
-            line.bottom.toFloat()/image.height,
-            recognition.second,
-        )
-    }
-
-    /** Боксы детектора по всей странице, в пикселях страницы. */
-    private fun detectPage(image:Bitmap):List<Rect> {
-        val tileHeight=if(image.height>2800)1800 else image.height
-        val found=mutableListOf<Rect>()
-        var y=0
-        while(y<image.height) {
-            val h=min(tileHeight,image.height-y)
-            val tile=Bitmap.createBitmap(image,0,y,image.width,h)
-            detectTile(tile).forEach { found.add(Rect(it.left,it.top+y,it.right,it.bottom+y)) }
-            if(tile!==image && !tile.isRecycled)tile.recycle()
-            if(y+h>=image.height)break
-            y+=tileHeight-160
-        }
-        return found
-    }
-
-    /** Детектор на одном тайле: боксы в пикселях тайла. */
-    @Suppress("UNCHECKED_CAST")
-    private fun detectTile(bitmap:Bitmap):List<Rect> {
         val ratio=min(1f,960f/max(bitmap.width,bitmap.height))
-        val w=max(32,(bitmap.width*ratio/32).roundToInt()*32)
-        val h=max(32,(bitmap.height*ratio/32).roundToInt()*32)
+        val w=max(32,(bitmap.width*ratio/32).roundToInt()*32);val h=max(32,(bitmap.height*ratio/32).roundToInt()*32)
         val scaled=Bitmap.createScaledBitmap(bitmap,w,h,true)
         val pixels=IntArray(w*h);scaled.getPixels(pixels,0,w,0,0,w,h)
-        if(scaled!==bitmap && !scaled.isRecycled)scaled.recycle()
+        if(scaled!==bitmap)scaled.recycle()
         val data=FloatArray(3*w*h);val mean=floatArrayOf(.485f,.456f,.406f);val std=floatArrayOf(.229f,.224f,.225f)
         for(c in 0..2)for(i in pixels.indices){val channel=(pixels[i] shr (c*8)) and 255;data[c*w*h+i]=(channel/255f-mean[c])/std[c]}
         val boxes=OnnxTensor.createTensor(env,FloatBuffer.wrap(data),longArrayOf(1,3,h.toLong(),w.toLong())).use { tensor ->
@@ -337,106 +192,18 @@ class KomaOcrEngine(private val context: Context) {
                 components(map)
             }
         }
-        return boxes.take(400).map { b ->
-            val x1=(b.left.toFloat()/w*bitmap.width).toInt().coerceIn(0,bitmap.width-1)
-            val x2=(b.right.toFloat()/w*bitmap.width).toInt().coerceIn(x1+1,bitmap.width)
-            val y1=(b.top.toFloat()/h*bitmap.height).toInt().coerceIn(0,bitmap.height-1)
-            val y2=(b.bottom.toFloat()/h*bitmap.height).toInt().coerceIn(y1+1,bitmap.height)
-            Rect(x1,y1,x2,y2)
+        val out=mutableListOf<OcrRegion>()
+        for(b in boxes.take(400)) {
+            val x1=(b.left.toFloat()/w*bitmap.width).toInt().coerceIn(0,bitmap.width-1);val x2=(b.right.toFloat()/w*bitmap.width).toInt().coerceIn(x1+1,bitmap.width)
+            val y1=(b.top.toFloat()/h*bitmap.height).toInt().coerceIn(0,bitmap.height-1);val y2=(b.bottom.toFloat()/h*bitmap.height).toInt().coerceIn(y1+1,bitmap.height)
+            var crop=Bitmap.createBitmap(bitmap,x1,y1,x2-x1,y2-y1)
+            if(crop.height>crop.width*1.8f){val rotated=Bitmap.createBitmap(crop,0,0,crop.width,crop.height,Matrix().apply { postRotate(90f) },true);if(crop!==bitmap)crop.recycle();crop=rotated}
+            val recognition=decode(crop)
+            if(crop!==bitmap)crop.recycle()
+            if(recognition.first.isNotBlank() && recognition.second>.25f)out.add(OcrRegion(recognition.first,x1.toFloat()/bitmap.width,y1.toFloat()/bitmap.height,x2.toFloat()/bitmap.width,y2.toFloat()/bitmap.height,recognition.second))
         }
+        return out
     }
-
-    /**
-     * Режет бокс детектора на отдельные текстовые строки.
-     *
-     * Бокс от детектора часто накрывает весь блок строк: если распознавать его
-     * целиком, модель видит четыре строки, сжатые в одну, и выдаёт мусор
-     * («ЕЙ НЕ ПОМОЖЕТ ДАЖЕ ПОЛНОЧНИЦА?» → «5ЕН АЯ ПОДНОШЕНИЯ? ПООИАЕТТ»).
-     * Поэтому внутри бокса считается профиль тёмных пикселей: пустые полосы —
-     * границы строк, а по горизонтали строка обрезается по краям текста.
-     */
-    private fun textLines(image:Bitmap,box:Rect):List<Rect> {
-        val pad=max(2,(box.height()*0.12f).toInt())
-        val left=(box.left-pad).coerceAtLeast(0)
-        val right=(box.right+pad).coerceAtMost(image.width)
-        val top=(box.top-pad).coerceAtLeast(0)
-        val bottom=(box.bottom+pad).coerceAtMost(image.height)
-        if(right-left<4 || bottom-top<4) return emptyList()
-        val scale=min(1f,400f/(right-left))
-        val w=max(4,((right-left)*scale).roundToInt())
-        val h=max(4,((bottom-top)*scale).roundToInt())
-        val raw=Bitmap.createBitmap(image,left,top,right-left,bottom-top)
-        val small=Bitmap.createScaledBitmap(raw,w,h,true)
-        if(raw!==small && !raw.isRecycled)raw.recycle()
-        val pixels=IntArray(w*h);small.getPixels(pixels,0,w,0,0,w,h)
-        if(!small.isRecycled)small.recycle()
-        val luma=IntArray(w*h)
-        for(i in pixels.indices) {
-            val p=pixels[i]
-            luma[i]=(299*((p shr 16) and 255)+587*((p shr 8) and 255)+114*(p and 255))/1000
-        }
-        // Тёмный текст на светлом — обычный случай; светлый на тёмном (кадр
-        // ночной сцены, инвертированная вставка) тоже бывает. Полярность
-        // определяется по МЕДИАНЕ яркости: среднее сбивается на тёмной
-        // странице в светлом облачке, и текст считался фоном — страница
-        // объявлялась пустой.
-        val sorted=luma.clone();sorted.sort()
-        val light = sorted[sorted.size/2] < 100
-        fun ink(index:Int)=if(light) luma[index]>105 else luma[index]<150
-        val runs=mutableListOf<IntArray>()
-        var y=0
-        while(y<h) {
-            if(!rowHasInk(luma,w,y,light)) { y++;continue }
-            var end=y
-            while(end<h && rowHasInk(luma,w,end,light)) end++
-            if(end>y) runs.add(intArrayOf(y,end))
-            y=end.coerceAtLeast(y+1)
-        }
-        // Разрез ничего не дал (тёмный рисунок, шум) — отдаём бокс целиком:
-        // лучше распознать его как одну строку, чем потерять реплику.
-        if(runs.isEmpty()) return listOf(Rect(left,top,right,bottom))
-        val heights=runs.map{it[1]-it[0]}.sorted()
-        val median=heights[heights.size/2].coerceAtLeast(1)
-        // Склеиваем полосы, разделённые крошечным зазором: точка над «й» или
-        // просвет внутри буквы не должны рвать строку.
-        val merged=mutableListOf<IntArray>()
-        for(run in runs) {
-            val last=merged.lastOrNull()
-            if(last!=null && run[0]-last[1]<=max(1,(median*0.35f).toInt())) last[1]=run[1]
-            else merged.add(intArrayOf(run[0],run[1]))
-        }
-        val lines=mutableListOf<Rect>()
-        for(run in merged) {
-            // Короткие полосы не выбрасываем: «ОНА» и «ДА,» — это целые
-            // реплики из одной строки, раньше они пропадали из чтения.
-            if(run[1]-run[0]<2) continue
-            var x0=w;var x1=-1
-            for(yy in run[0] until run[1]) for(xx in 0 until w) {
-                if(ink(yy*w+xx)) { if(xx<x0)x0=xx; if(xx>x1)x1=xx }
-            }
-            if(x1<0) continue
-            val px0=(left+x0/scale).toInt().coerceIn(left,right-1)
-            val px1=(left+(x1+1)/scale).toInt().coerceIn(px0+1,right)
-            val py0=(top+run[0]/scale).toInt().coerceIn(top,bottom-1)
-            val py1=(top+run[1]/scale).toInt().coerceIn(py0+1,bottom)
-            lines.add(Rect(px0,py0,px1,py1))
-        }
-        return lines.ifEmpty { listOf(Rect(left,top,right,bottom)) }
-    }
-
-    private fun rowHasInk(luma:IntArray,width:Int,y:Int,light:Boolean):Boolean {
-        val offset=y*width
-        // Порог — доля ширины, а не «хоть один пиксель»: иначе тонкая рамка
-        // облачка держала бы строку и склеивала соседние.
-        val need=max(2,width/80)
-        var count=0
-        for(x in 0 until width) {
-            val value=luma[offset+x]
-            if(if(light) value>105 else value<150) { count++;if(count>=need) return true }
-        }
-        return false
-    }
-
     private fun components(map:Array<FloatArray>):List<Rect> {
         val h=map.size;val w=map[0].size;val visited=BooleanArray(w*h);val queue=IntArray(w*h);val boxes=mutableListOf<Rect>()
         val dx=intArrayOf(-1,1,0,0);val dy=intArrayOf(0,0,-1,1)
@@ -447,12 +214,7 @@ class KomaOcrEngine(private val context: Context) {
             while(start<end){val n=queue[start++];val xx=n%w;val yy=n/w;score+=map[yy][xx];minX=min(minX,xx);maxX=max(maxX,xx);minY=min(minY,yy);maxY=max(maxY,yy)
                 for(i in 0..3){val nx=xx+dx[i];val ny=yy+dy[i];if(nx in 0 until w && ny in 0 until h){val ni=ny*w+nx;if(!visited[ni] && map[ny][nx]>.3f){visited[ni]=true;queue[end++]=ni}}}
             }
-            // Порог средней уверенности 0.35, а не 0.5: на тёмных страницах с
-            // крупным рисунком белые облачка дают 0.4–0.5, и при строгом пороге
-            // детектор не отдавал НИ ОДНОГО бокса — страница объявлялась пустой
-            // («0 областей»), хотя реплики на ней есть. Мусорные боксы отсеются
-            // на распознавании.
-            if(end<6 || score/end<.35f || maxX-minX<2 || maxY-minY<2)continue
+            if(end<6 || score/end<.5f || maxX-minX<2 || maxY-minY<2)continue
             val expand=max(2,((maxX-minX)*(maxY-minY)*1.5f/(2*(maxX-minX+maxY-minY))).roundToInt())
             boxes.add(Rect(max(0,minX-expand),max(0,minY-expand),min(w,maxX+expand+1),min(h,maxY+expand+1)))
         }
@@ -470,18 +232,7 @@ class KomaOcrEngine(private val context: Context) {
             rec!!.run(mapOf(rec!!.inputNames.first() to tensor)).use { result ->
                 val values=(result[0].value as Array<Array<FloatArray>>)[0];val text=StringBuilder();var prev=0;var score=0f;var count=0
                 values.forEach { logits -> var best=0;for(i in logits.indices)if(logits[i]>logits[best])best=i
-                    if(best!=0 && best!=prev){
-                        text.append(dictionary.getOrElse(best){""})
-                        // Уверенность — вероятность символа (softmax), а не сырой
-                        // логит: логит бывает отрицательным, и короткие строки
-                        // («ОНА», «ДА,») отбрасывались порогом, хотя прочитаны
-                        // верно. Из-за этого слова пропадали из реплик.
-                        var sumExp=0.0
-                        for(value in logits)sumExp+=exp((value-logits[best]).toDouble())
-                        score+=(1.0/sumExp).toFloat()
-                        count++
-                    }
-                    prev=best
+                    if(best!=0 && best!=prev){text.append(dictionary.getOrElse(best){""});score+=logits[best];count++};prev=best
                 }
                 text.toString() to if(count>0)score/count else 0f
             }

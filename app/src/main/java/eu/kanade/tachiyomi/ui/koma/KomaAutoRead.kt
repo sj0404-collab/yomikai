@@ -371,29 +371,12 @@ object KomaReadingOrder {
                 if (overlap <= lineHeight * 0.35f) continue
                 val blockLeft = block.minOf { it.left }
                 val blockRight = block.maxOf { it.right }
-                // Расстояние берётся ПО МОДУЛЮ. Раньше для фрагмента слева от
-                // блока разность шла с минусом, он считался «перекрытием» и
-                // приклеивался к чужой строке даже через всё поле страницы —
-                // отсюда склейка соседних панелей в одну реплику.
                 val gap = when {
                     region.left > blockRight -> region.left - blockRight
-                    region.right < blockLeft -> blockLeft - region.right
+                    region.right < blockLeft -> region.right - blockLeft
                     else -> 0f
                 }
-                // Разрыв внутри строки небольшой. Раньше порог был 1.6 высоты
-                // строки, и две реплики, стоящие рядом по горизонтали,
-                // склеивались в одну «строку»: слова шли вперемешку
-                // («ПЕПЕЛЬНЫЕ ДАВАЙТЕ, ГРЕМЛИНЫ, СКОРЕЕ…»), а часть реплик
-                // пропадала. Исключение — разреженные буквы крупного заголовка:
-                // короткие фрагменты на одной высоте склеиваются и через поле.
-                val shortHead = head.text.count { it.isLetterOrDigit() } <= 3
-                val shortRegion = region.text.count { it.isLetterOrDigit() } <= 3
-                val gapLimit = if (shortHead && shortRegion && overlap >= lineHeight * 0.7f) {
-                    lineHeight * 2.5f
-                } else {
-                    lineHeight * 0.45f
-                }
-                if (gap > gapLimit) continue
+                if (gap > lineHeight * 1.6f) continue
                 if (gap < -lineHeight * 0.9f) continue
                 if (gap < bestGap) {
                     bestGap = gap
@@ -434,8 +417,8 @@ object KomaReadingOrder {
         // 3. Строки одного облачка — в ОДНУ реплику.
         val bubbles = mergeBubbles(lines)
 
-        // 4. Внутри панели — полосами сверху вниз, внутри полосы по RTL/LTR.
-        return orderBubbles(bubbles, rtl)
+        // 4. Внутри панели — сверху вниз.
+        return bubbles.sortedWith(compareBy({ (it.top * 200).toInt() }, { if (rtl) -it.left else it.left }))
     }
 
     /**
@@ -449,122 +432,23 @@ object KomaReadingOrder {
      */
     private fun mergeBubbles(lines: List<Line>): List<Line> {
         if (lines.size <= 1) return lines
-        val sorted = lines.sortedWith(compareBy({ it.top }, { it.left }))
+        val sorted = lines.sortedBy { it.top }
         val result = ArrayList<Line>(sorted.size)
         for (line in sorted) {
-            // Строка сравнивается со ВСЕМИ уже собранными облачками, а не только
-            // с последним. Когда облачка стоят рядом по горизонтали, их строки
-            // идут по высоте вперемешку (верх левого, верх правого, вторая
-            // строка левого…): «последнее» облачко в этот момент чужое, строка
-            // уходила в новое — и реплика рвалась на куски. Берём ближайшее по
-            // зазору среди подходящих.
-            var bestIndex = -1
-            var bestGap = Float.MAX_VALUE
-            for (index in result.indices) {
-                val bubble = result[index]
-                if (!sameBubble(bubble, line)) continue
-                val gap = line.top - bubble.bottom
-                if (gap < bestGap) {
-                    bestGap = gap
-                    bestIndex = index
-                }
-            }
-            if (bestIndex >= 0) {
-                val bubble = result[bestIndex]
-                result[bestIndex] = Line(
-                    text = joinBubbleText(bubble.text, line.text),
-                    left = min(bubble.left, line.left),
-                    top = min(bubble.top, line.top),
-                    right = max(bubble.right, line.right),
-                    bottom = max(bubble.bottom, line.bottom),
+            val last = result.lastOrNull()
+            if (last != null && sameBubble(last, line)) {
+                result[result.lastIndex] = Line(
+                    text = joinBubbleText(last.text, line.text),
+                    left = min(last.left, line.left),
+                    top = min(last.top, line.top),
+                    right = max(last.right, line.right),
+                    bottom = max(last.bottom, line.bottom),
                 )
             } else {
                 result += line
             }
         }
-        return absorbOrphans(result)
-    }
-
-    /**
-     * Обрывок в одну-две буквы, лежащий ВНУТРИ рамки соседней реплики, —
-     * это часть её слова, а не отдельная реплика. Детектор иногда отдаёт
-     * «Небы» и «лица» отдельными блоками: без этой склейки слово терялось
-     * («Небылица» → «небца») или читалось отдельно.
-     */
-    private fun absorbOrphans(bubbles: List<Line>): List<Line> {
-        if (bubbles.size <= 1) return bubbles
-        val alive = bubbles.toMutableList()
-        var pass = 0
-        while (pass++ < 4) {
-            var merged = false
-            for (orphan in alive.toList()) {
-                if (orphan.text.count { it.isLetterOrDigit() } > 3) continue
-                val cx = (orphan.left + orphan.right) / 2f
-                val cy = (orphan.top + orphan.bottom) / 2f
-                var targetIndex = -1
-                var bestDistance = Float.MAX_VALUE
-                for (index in alive.indices) {
-                    val bubble = alive[index]
-                    if (bubble === orphan) continue
-                    val padX = (bubble.right - bubble.left) * 0.12f
-                    val padY = (bubble.bottom - bubble.top) * 0.35f
-                    if (cx < bubble.left - padX || cx > bubble.right + padX) continue
-                    if (cy < bubble.top - padY || cy > bubble.bottom + padY) continue
-                    val distance = abs(cy - (bubble.top + bubble.bottom) / 2f)
-                    if (distance < bestDistance) {
-                        bestDistance = distance
-                        targetIndex = index
-                    }
-                }
-                if (targetIndex < 0) continue
-                val bubble = alive[targetIndex]
-                val above = cy < (bubble.top + bubble.bottom) / 2f
-                val text = if (above) {
-                    joinBubbleText(orphan.text, bubble.text)
-                } else {
-                    joinBubbleText(bubble.text, orphan.text)
-                }
-                alive[targetIndex] = Line(
-                    text = text,
-                    left = min(bubble.left, orphan.left),
-                    top = min(bubble.top, orphan.top),
-                    right = max(bubble.right, orphan.right),
-                    bottom = max(bubble.bottom, orphan.bottom),
-                )
-                val dropIndex = alive.indexOfFirst { it === orphan }
-                if (dropIndex >= 0) alive.removeAt(dropIndex)
-                merged = true
-                break
-            }
-            if (!merged) break
-        }
-        return alive
-    }
-
-    /**
-     * Порядок облачков внутри панели: полосами по высоте.
-     *
-     * Полоса — облачка, верх которых отличается не больше чем на 0.8 высоты
-     * строки. Внутри полосы — по направлению чтения (справа налево), поэтому
-     * две реплики одного ряда читаются по очереди, а не «лесенкой» по
-     * округлённой высоте, когда верхняя строка правой опережает среднюю левой.
-     */
-    private fun orderBubbles(bubbles: List<Line>, rtl: Boolean): List<Line> {
-        if (bubbles.size <= 1) return bubbles
-        val heights = bubbles.map { it.bottom - it.top }.sorted()
-        val median = heights[heights.size / 2]
-        val tolerance = max(0.02f, median * 0.8f)
-        val bands = mutableListOf<MutableList<Line>>()
-        var bandTop = 0f
-        for (bubble in bubbles.sortedBy { it.top }) {
-            if (bands.isNotEmpty() && bubble.top - bandTop <= tolerance) {
-                bands.last() += bubble
-            } else {
-                bands += mutableListOf(bubble)
-                bandTop = bubble.top
-            }
-        }
-        return bands.flatMap { band -> band.sortedBy { if (rtl) -it.left else it.left } }
+        return result
     }
 
     private fun sameBubble(a: Line, b: Line): Boolean {
