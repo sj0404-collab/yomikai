@@ -23,6 +23,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.nio.FloatBuffer
+import java.util.zip.GZIPInputStream
+import kotlin.concurrent.thread
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.*
@@ -43,12 +45,28 @@ data class PageOcr(val regions: List<OcrRegion>, val engine: String, val millis:
 /** Как движок называется в интерфейсе: ровно как в исходниках KOMA. */
 const val ENGINE_NAME="PaddleOCR · кириллица"
 /** Версия разбора страницы: меняется вместе с логикой порядка чтения. */
-const val READ_ORDER_VERSION="8"
+const val READ_ORDER_VERSION="9"
 
 class KomaOcrEngine(private val context: Context) {
     private companion object {
         /** Сетка покрытия страницы для добора потерянных вторым проходом кусков. */
         const val GRID = 200
+    }
+
+    /**
+     * Словарь языковой починки читается в ФОНЕ: 250 000 слов, на телефоне это
+     * заметная работа, и первая страница не должна её ждать. Пока словарь не
+     * готов, [KomaWords] ничего не правит — текст показывается как распознан.
+     */
+    init { thread(name="koma-words", isDaemon=true) { warmWords() } }
+
+    private fun warmWords() {
+        if (KomaWords.isReady()) return
+        runCatching {
+            context.assets.open("koma/dict/ru_250k.txt.gz").use { raw ->
+                GZIPInputStream(raw).bufferedReader().use { reader -> KomaWords.load(reader.lineSequence()) }
+            }
+        }
     }
 
     private val mutex=Mutex()
