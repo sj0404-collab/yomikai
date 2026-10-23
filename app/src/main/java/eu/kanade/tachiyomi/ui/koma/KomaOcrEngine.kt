@@ -42,6 +42,8 @@ data class PageOcr(val regions: List<OcrRegion>, val engine: String, val millis:
 
 /** Как движок называется в интерфейсе: ровно как в исходниках KOMA. */
 const val ENGINE_NAME="PaddleOCR · кириллица"
+/** Версия разбора страницы: меняется вместе с логикой порядка чтения. */
+const val READ_ORDER_VERSION="5"
 
 class KomaOcrEngine(private val context: Context) {
     private val mutex=Mutex()
@@ -51,7 +53,10 @@ class KomaOcrEngine(private val context: Context) {
     private var rec: OrtSession?=null
     private val env by lazy { OrtEnvironment.getEnvironment() }
     private val dictionary by lazy { listOf("")+context.assets.open("koma/models/cyrillic.txt").bufferedReader().readLines()+listOf(" ") }
-    private fun cacheFile(id:String,page:Int,language:String)=File(root,"${id}_${page}_${language}.json")
+    // Версия разбора в имени файла: после правок склейки блоков старый кэш
+    // отдавал бы прежние разрезанные реплики, и обновление выглядело бы так,
+    // будто ничего не изменилось.
+    private fun cacheFile(id:String,page:Int,language:String)=File(root,"${id}_${page}_${language}_$READ_ORDER_VERSION.json")
     fun cached(id:String,page:Int,language:String):PageOcr? = runCatching { PageOcr.from(JSONObject(cacheFile(id,page,language).readText())) }.getOrNull()
     fun store(id:String,page:Int,language:String,result:PageOcr){cacheFile(id,page,language).writeText(result.json().toString())}
     fun cacheCount():Int=root.listFiles()?.size ?: 0
@@ -118,7 +123,7 @@ class KomaOcrEngine(private val context: Context) {
                     val found=if(script=="Кириллица")paddle(tile)else ml(tile,script)
                     found.forEach { r ->
                         val mapped=r.copy(top=(y+r.top*h)/image.height,bottom=(y+r.bottom*h)/image.height)
-                        if(regions.none { it.text==mapped.text && abs(it.top-mapped.top)<.015f })regions.add(mapped)
+                        addRegion(regions,mapped)
                     }
                     if(tile!==image)tile.recycle()
                     if(y+h>=image.height)break
@@ -141,6 +146,47 @@ class KomaOcrEngine(private val context: Context) {
             }
         }
     }
+    /**
+     * Добавляет найденный блок, схлопывая перекрытия от соседних тайлов.
+     *
+     * Тайлы нарезаны с перекрытием, поэтому одна и та же строка приходит дважды,
+     * а строка на границе приходит разрезанной пополам. Раньше сравнивался
+     * только текст и верхняя граница: разрезанный пополам обрывок оставался
+     * второй, «лишней» строкой, и реплика на экране шла кусками. Теперь блоки,
+     * перекрывающиеся по площади, склеиваются в один — побеждает тот, где больше
+     * букв, а рамка берётся по объединению.
+     */
+    private fun addRegion(regions:MutableList<OcrRegion>,block:OcrRegion) {
+        val blockWidth=max(block.right-block.left,1e-4f)
+        val blockHeight=max(block.bottom-block.top,1e-4f)
+        var best=-1
+        var bestShare=0f
+        for (index in regions.indices) {
+            val other=regions[index]
+            val overlapWidth=min(other.right,block.right)-max(other.left,block.left)
+            val overlapHeight=min(other.bottom,block.bottom)-max(other.top,block.top)
+            if (overlapWidth<=0f || overlapHeight<=0f) continue
+            val otherArea=max((other.right-other.left)*(other.bottom-other.top),1e-6f)
+            val share=overlapWidth*overlapHeight/min(otherArea,blockWidth*blockHeight)
+            // 60% площади меньшего блока — это тот же самый текст, а не соседняя
+            // строка: соседние строки перекрываются только рамками, площадью — нет.
+            if (share>bestShare) { bestShare=share;best=index }
+        }
+        if (best<0 || bestShare<.6f) { regions.add(block);return }
+        val other=regions[best]
+        val letters={r:OcrRegion -> r.text.count { c->c.isLetterOrDigit() }}
+        val text=if (letters(block)>letters(other)) block.text else other.text
+        regions[best]=OcrRegion(
+            text,
+            min(other.left,block.left),
+            min(other.top,block.top),
+            max(other.right,block.right),
+            max(other.bottom,block.bottom),
+            listOfNotNull(other.confidence,block.confidence).maxOrNull(),
+            other.kind,
+        )
+    }
+
     private suspend fun ml(bitmap:Bitmap,script:String):List<OcrRegion> {
         val recognizer=mlModels.getOrPut(script) { when(script){
             "Японский"->TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
