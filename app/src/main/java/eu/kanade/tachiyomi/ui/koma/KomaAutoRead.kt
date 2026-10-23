@@ -270,6 +270,10 @@ object KomaReadingOrder {
             // Фрагмент из одной буквы — это часть слова, а не мусор: раньше
             // такие отбрасывались, и слова теряли буквы («Небылица» → «Небца»).
             .filter { it.text.any { ch -> ch.isLetterOrDigit() } }
+            // «OHO», «PABA» — строки из одних двойников. Внутри русской реплики
+            // они читаются как «ОНО», «РАЗА»; фильтр по языку их не пропускает,
+            // поэтому спасаем по соседству с настоящей русской строкой.
+            .let { if (onlyCyrillic) KomaText.rescueLookalikeLines(it) else it }
             .filter { !onlyCyrillic || isCyrillic(it.text) }
         if (source.isEmpty()) return emptyList()
 

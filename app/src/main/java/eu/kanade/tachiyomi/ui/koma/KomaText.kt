@@ -53,6 +53,47 @@ object KomaText {
         }
     }
 
+    private val lookalikeChars = lookalikes.keys
+    private val vowels = "аеиоуыэюяёАЕИОУЫЭЮЯЁ".toSet()
+
+    /** Строка целиком из символов-двойников: «OHO», «PABA», «BECEΛO». */
+    fun isLookalikeOnly(text: String): Boolean {
+        val letters = text.filter { it.isLetterOrDigit() }
+        return letters.isNotEmpty() && letters.all { it in lookalikeChars }
+    }
+
+    fun convertAll(text: String): String = text.map { lookalikes[it] ?: it }.joinToString("")
+
+    /**
+     * Спасает строки, набранные целиком латинскими двойниками («OHO»).
+     *
+     * Починка двойников решает по строке: если в строке нет ни одной русской
+     * буквы, строка считается латинской и отбрасывается фильтром языка. Из-за
+     * этого на странице 16 пропадало слово «ОНО» в подписи — модель отдала
+     * «OHO». Спасаем такую строку, только если вплотную к ней (по вертикали в
+     * пределах четырёх высот строки, с перекрытием по горизонтали) стоит
+     * настоящая русская строка: значит, это часть той же реплики, а не
+     * латинская надпись или звуковой эффект.
+     */
+    fun rescueLookalikeLines(regions: List<OcrRegion>): List<OcrRegion> {
+        val cyrillic = regions.filter { isRussianLine(it.text) }
+        if (cyrillic.isEmpty()) return regions
+        val heights = regions.map { it.bottom - it.top }.sorted()
+        val lineHeight = if (heights.isEmpty()) 0.02f else heights[heights.size / 2]
+        return regions.map { region ->
+            if (isRussianLine(region.text) || !isLookalikeOnly(region.text)) return@map region
+            val rescued = convertAll(region.text)
+            if (!isRussianLine(rescued) || rescued.none { it in vowels }) return@map region
+            val width = region.right - region.left
+            val neighbour = cyrillic.any { other ->
+                val overlap = minOf(region.right, other.right) - maxOf(region.left, other.left)
+                val gap = region.top - other.bottom
+                overlap > 0.2f * width && gap > -4f * lineHeight && gap < 4f * lineHeight
+            }
+            if (neighbour) region.copy(text = rescued) else region
+        }
+    }
+
     fun cleanSpeech(raw: String): String {
         var text = raw
             .replace(Regex("(?<=\\p{L})\\s*-\\s*(?=\\p{L})"), "")
