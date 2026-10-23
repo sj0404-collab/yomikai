@@ -158,6 +158,7 @@ class KomaOcrEngine(private val context: Context) {
      */
     private fun addRegion(regions:MutableList<OcrRegion>,block:OcrRegion) {
         val blockWidth=max(block.right-block.left,1e-4f)
+        val blockHeight=max(block.bottom-block.top,1e-4f)
         var best=-1
         var bestShare=0f
         for (index in regions.indices) {
