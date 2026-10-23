@@ -43,7 +43,7 @@ data class PageOcr(val regions: List<OcrRegion>, val engine: String, val millis:
 /** Как движок называется в интерфейсе: ровно как в исходниках KOMA. */
 const val ENGINE_NAME="PaddleOCR · кириллица"
 /** Версия разбора страницы: меняется вместе с логикой порядка чтения. */
-const val READ_ORDER_VERSION="5"
+const val READ_ORDER_VERSION="6"
 
 class KomaOcrEngine(private val context: Context) {
     private val mutex=Mutex()
@@ -114,20 +114,27 @@ class KomaOcrEngine(private val context: Context) {
             try {
                 val script=if(language=="Авто")if(book.category=="Комиксы")"Латиница" else "Японский" else language
                 val regions=mutableListOf<OcrRegion>()
-                val tileHeight=if(image.height>2800)1800 else image.height
-                var y=0
-                while(y<image.height) {
+                if(script=="Кириллица") {
+                    // ОДНА РАМКА НА ВСЮ ВИДИМУЮ СТРАНИЦУ. Детектор только
+                    // отвечает на вопрос «где текст», а на куски для
+                    // распознавания страницу режем мы сами (см. paddlePage).
                     ensureActive()
-                    val h=min(tileHeight,image.height-y)
-                    val tile=Bitmap.createBitmap(image,0,y,image.width,h)
-                    val found=if(script=="Кириллица")paddle(tile)else ml(tile,script)
-                    found.forEach { r ->
-                        val mapped=r.copy(top=(y+r.top*h)/image.height,bottom=(y+r.bottom*h)/image.height)
-                        addRegion(regions,mapped)
+                    paddlePage(image).forEach { addRegion(regions,it) }
+                } else {
+                    val tileHeight=if(image.height>2800)1800 else image.height
+                    var y=0
+                    while(y<image.height) {
+                        ensureActive()
+                        val h=min(tileHeight,image.height-y)
+                        val tile=Bitmap.createBitmap(image,0,y,image.width,h)
+                        ml(tile,script).forEach { r ->
+                            val mapped=r.copy(top=(y+r.top*h)/image.height,bottom=(y+r.bottom*h)/image.height)
+                            addRegion(regions,mapped)
+                        }
+                        if(tile!==image)tile.recycle()
+                        if(y+h>=image.height)break
+                        y+=tileHeight-160
                     }
-                    if(tile!==image)tile.recycle()
-                    if(y+h>=image.height)break
-                    y+=tileHeight-160
                 }
                 val sorted=if(book.mode=="rtl" && script=="Японский") regions.sortedWith(compareByDescending<OcrRegion> { (it.left*40).toInt() }.thenBy { it.top }) else regions.sortedWith(compareBy<OcrRegion> { (it.top*80).toInt() }.thenBy { if(book.mode=="rtl")-it.left else it.left })
                 PageOcr(sorted,if(script=="Кириллица")ENGINE_NAME else "ML Kit · $script",System.currentTimeMillis()-start).also { store(book.id,page,language,it) }
@@ -221,15 +228,75 @@ class KomaOcrEngine(private val context: Context) {
         runCatching { rec?.close() };rec=null
         mlModels.values.forEach { runCatching { it.close() } };mlModels.clear()
     }
-    @Suppress("UNCHECKED_CAST")
-    private fun paddle(bitmap:Bitmap):List<OcrRegion> {
+    /**
+     * Одна рамка на видимую часть страницы, а куски для распознавания режем сами.
+     *
+     * Раньше каждый фрагмент детектора распознавался отдельным вызовом и
+     * обрезался ровно по своей рамке: буквы на краю срезались, буква «у» и
+     * «.» попадали в соседний кусок, и в реплике оставались обрывки
+     * («ХАНУ.», «У НИХ СЕГОДНЯ», «И РАСЧИТЫВАЮ»). Теперь:
+     *
+     *  1. детектор проходит страницу один раз (тайлы с перекрытием нужны только
+     *     потому, что модель видит максимум 960 px);
+     *  2. найденные боксы собираются в СТРОКИ — куски одной строки стоят
+     *     вплотную, чужие реплики разделены полем;
+     *  3. каждый кусок режется из полного разрешения страницы с полями по краям
+     *     (треть высоты сверху и снизу), поэтому строка попадает в него целиком;
+     *  4. распознаётся по одному разу на строку, а не на фрагмент.
+     */
+    private fun paddlePage(image:Bitmap):List<OcrRegion> {
         if(det==null)det=session("detection.onnx")
         if(rec==null)rec=session("cyrillic.onnx")
+        val strips=lineStrips(image,detectPage(image))
+        val out=mutableListOf<OcrRegion>()
+        for(strip in strips.take(400)) {
+            var crop=Bitmap.createBitmap(image,strip.left,strip.top,strip.width(),strip.height())
+            if(crop.height>crop.width*1.8f) {
+                val rotated=Bitmap.createBitmap(crop,0,0,crop.width,crop.height,Matrix().apply { postRotate(90f) },true)
+                if(!crop.isRecycled)crop.recycle()
+                crop=rotated
+            }
+            val recognition=decode(crop)
+            if(!crop.isRecycled)crop.recycle()
+            if(recognition.first.isNotBlank() && recognition.second>.25f) {
+                out.add(OcrRegion(
+                    recognition.first,
+                    strip.left.toFloat()/image.width,
+                    strip.top.toFloat()/image.height,
+                    strip.right.toFloat()/image.width,
+                    strip.bottom.toFloat()/image.height,
+                    recognition.second,
+                ))
+            }
+        }
+        return out
+    }
+
+    /** Боксы детектора по всей странице, в пикселях страницы. */
+    private fun detectPage(image:Bitmap):List<Rect> {
+        val tileHeight=if(image.height>2800)1800 else image.height
+        val found=mutableListOf<Rect>()
+        var y=0
+        while(y<image.height) {
+            val h=min(tileHeight,image.height-y)
+            val tile=Bitmap.createBitmap(image,0,y,image.width,h)
+            detectTile(tile).forEach { found.add(Rect(it.left,it.top+y,it.right,it.bottom+y)) }
+            if(tile!==image && !tile.isRecycled)tile.recycle()
+            if(y+h>=image.height)break
+            y+=tileHeight-160
+        }
+        return found
+    }
+
+    /** Детектор на одном тайле: боксы в пикселях тайла. */
+    @Suppress("UNCHECKED_CAST")
+    private fun detectTile(bitmap:Bitmap):List<Rect> {
         val ratio=min(1f,960f/max(bitmap.width,bitmap.height))
-        val w=max(32,(bitmap.width*ratio/32).roundToInt()*32);val h=max(32,(bitmap.height*ratio/32).roundToInt()*32)
+        val w=max(32,(bitmap.width*ratio/32).roundToInt()*32)
+        val h=max(32,(bitmap.height*ratio/32).roundToInt()*32)
         val scaled=Bitmap.createScaledBitmap(bitmap,w,h,true)
         val pixels=IntArray(w*h);scaled.getPixels(pixels,0,w,0,0,w,h)
-        if(scaled!==bitmap)scaled.recycle()
+        if(scaled!==bitmap && !scaled.isRecycled)scaled.recycle()
         val data=FloatArray(3*w*h);val mean=floatArrayOf(.485f,.456f,.406f);val std=floatArrayOf(.229f,.224f,.225f)
         for(c in 0..2)for(i in pixels.indices){val channel=(pixels[i] shr (c*8)) and 255;data[c*w*h+i]=(channel/255f-mean[c])/std[c]}
         val boxes=OnnxTensor.createTensor(env,FloatBuffer.wrap(data),longArrayOf(1,3,h.toLong(),w.toLong())).use { tensor ->
@@ -238,18 +305,79 @@ class KomaOcrEngine(private val context: Context) {
                 components(map)
             }
         }
-        val out=mutableListOf<OcrRegion>()
-        for(b in boxes.take(400)) {
-            val x1=(b.left.toFloat()/w*bitmap.width).toInt().coerceIn(0,bitmap.width-1);val x2=(b.right.toFloat()/w*bitmap.width).toInt().coerceIn(x1+1,bitmap.width)
-            val y1=(b.top.toFloat()/h*bitmap.height).toInt().coerceIn(0,bitmap.height-1);val y2=(b.bottom.toFloat()/h*bitmap.height).toInt().coerceIn(y1+1,bitmap.height)
-            var crop=Bitmap.createBitmap(bitmap,x1,y1,x2-x1,y2-y1)
-            if(crop.height>crop.width*1.8f){val rotated=Bitmap.createBitmap(crop,0,0,crop.width,crop.height,Matrix().apply { postRotate(90f) },true);if(crop!==bitmap)crop.recycle();crop=rotated}
-            val recognition=decode(crop)
-            if(crop!==bitmap)crop.recycle()
-            if(recognition.first.isNotBlank() && recognition.second>.25f)out.add(OcrRegion(recognition.first,x1.toFloat()/bitmap.width,y1.toFloat()/bitmap.height,x2.toFloat()/bitmap.width,y2.toFloat()/bitmap.height,recognition.second))
+        return boxes.take(400).map { b ->
+            val x1=(b.left.toFloat()/w*bitmap.width).toInt().coerceIn(0,bitmap.width-1)
+            val x2=(b.right.toFloat()/w*bitmap.width).toInt().coerceIn(x1+1,bitmap.width)
+            val y1=(b.top.toFloat()/h*bitmap.height).toInt().coerceIn(0,bitmap.height-1)
+            val y2=(b.bottom.toFloat()/h*bitmap.height).toInt().coerceIn(y1+1,bitmap.height)
+            Rect(x1,y1,x2,y2)
         }
-        return out
     }
+
+    /**
+     * Куски для распознавания: строки, собранные из фрагментов детектора.
+     *
+     * Куски перекрываются по вертикали, потому что к строке добавляется треть
+     * её высоты сверху и снизу: буква, которую детектор обрезал, всё равно
+     * попадёт в кусок целиком.
+     */
+    private fun lineStrips(image:Bitmap,boxes:List<Rect>):List<Rect> {
+        if(boxes.isEmpty())return emptyList()
+        val groups=mutableListOf<MutableList<Rect>>()
+        for(box in boxes.sortedWith(compareBy({it.top},{it.left}))) {
+            var target:MutableList<Rect>?=null
+            var bestGap=Float.MAX_VALUE
+            for(group in groups) {
+                val top=group.minOf{it.top}
+                val bottom=group.maxOf{it.bottom}
+                val overlap=min(bottom,box.bottom)-max(top,box.top)
+                val shortest=min(bottom-top,box.height()).coerceAtLeast(1)
+                // Одна строка — это общая вертикальная полоса.
+                if(overlap<shortest*0.5f)continue
+                val left=group.minOf{it.left}
+                val right=group.maxOf{it.right}
+                val gap=when {
+                    box.left>right->box.left-right
+                    box.right<left->left-box.right
+                    else->0
+                }
+                // Фрагменты одной строки стоят почти вплотную; между соседними
+                // репликами всегда есть поле заметно больше высоты букв.
+                if(gap>box.height()*1.2f)continue
+                if(gap.toFloat()<bestGap) { bestGap=gap.toFloat();target=group }
+            }
+            if(target!=null)target.add(box) else groups.add(mutableListOf(box))
+        }
+        val strips=mutableListOf<Rect>()
+        for(group in groups) {
+            val heights=group.map{it.height()}.sorted()
+            val median=heights[heights.size/2].coerceAtLeast(1)
+            // Если в одну «строку» попали две (у детектора бывает), режем по
+            // высоте: кусок не должен быть выше двух строк.
+            val rows=mutableListOf<MutableList<Rect>>()
+            for(box in group.sortedBy{it.top}) {
+                val last=rows.lastOrNull()
+                if(last!=null && box.top-last.maxOf{it.bottom}<=median*0.6f)last.add(box) else rows.add(mutableListOf(box))
+            }
+            for(row in rows) {
+                val left=row.minOf{it.left}
+                val right=row.maxOf{it.right}
+                val top=row.minOf{it.top}
+                val bottom=row.maxOf{it.bottom}
+                val height=(bottom-top).coerceAtLeast(1)
+                val padY=(height*0.35f).toInt()
+                val padX=(height*0.30f).toInt()
+                strips.add(Rect(
+                    (left-padX).coerceAtLeast(0),
+                    (top-padY).coerceAtLeast(0),
+                    (right+padX).coerceAtMost(image.width),
+                    (bottom+padY).coerceAtMost(image.height),
+                ))
+            }
+        }
+        return strips
+    }
+
     private fun components(map:Array<FloatArray>):List<Rect> {
         val h=map.size;val w=map[0].size;val visited=BooleanArray(w*h);val queue=IntArray(w*h);val boxes=mutableListOf<Rect>()
         val dx=intArrayOf(-1,1,0,0);val dy=intArrayOf(0,0,-1,1)
