@@ -43,7 +43,7 @@ data class PageOcr(val regions: List<OcrRegion>, val engine: String, val millis:
 /** Как движок называется в интерфейсе: ровно как в исходниках KOMA. */
 const val ENGINE_NAME="PaddleOCR · кириллица"
 /** Версия разбора страницы: меняется вместе с логикой порядка чтения. */
-const val READ_ORDER_VERSION="7"
+const val READ_ORDER_VERSION="8"
 
 class KomaOcrEngine(private val context: Context) {
     private val mutex=Mutex()
@@ -252,7 +252,18 @@ class KomaOcrEngine(private val context: Context) {
         val out=mutableListOf<OcrRegion>()
         for(box in detectPage(image).take(400)) {
             for(line in textLines(image,box)) {
-                var crop=Bitmap.createBitmap(image,line.left,line.top,line.width(),line.height())
+                // КУСОК ШИРЕ СТРОКИ, КООРДИНАТЫ — ПО СТРОКЕ. Обрезка вплотную
+                // по буквам режет края глифов и задевает выносные элементы, и
+                // модель читает «ЕЙ» как «5», а «ВЫ» как «Бы». Поэтому в
+                // распознавание идёт кусок с полями, а в результат — рамка
+                // самой строки (по ней потом собирается облачко).
+                val padY=max(2,(line.height()*0.18f).toInt())
+                val padX=max(2,(line.height()*0.10f).toInt())
+                val cropLeft=(line.left-padX).coerceAtLeast(0)
+                val cropTop=(line.top-padY).coerceAtLeast(0)
+                val cropRight=(line.right+padX).coerceAtMost(image.width)
+                val cropBottom=(line.bottom+padY).coerceAtMost(image.height)
+                var crop=Bitmap.createBitmap(image,cropLeft,cropTop,cropRight-cropLeft,cropBottom-cropTop)
                 if(crop.height>crop.width*1.8f) {
                     val rotated=Bitmap.createBitmap(crop,0,0,crop.width,crop.height,Matrix().apply { postRotate(90f) },true)
                     if(!crop.isRecycled)crop.recycle()
@@ -346,13 +357,16 @@ class KomaOcrEngine(private val context: Context) {
             val p=pixels[i]
             luma[i]=(299*((p shr 16) and 255)+587*((p shr 8) and 255)+114*(p and 255))/1000
         }
-        val dark=150
+        // Тёмный текст на светлом — обычный случай; светлый на тёмном (кадр
+        // ночной сцены, инвертированная вставка) раньше вообще не находился.
+        val light = luma.average() < 110
+        fun ink(index:Int)=if(light) luma[index]>105 else luma[index]<150
         val runs=mutableListOf<IntArray>()
         var y=0
         while(y<h) {
-            if(!rowHasInk(luma,w,y,dark)) { y++;continue }
+            if(!rowHasInk(luma,w,y,light)) { y++;continue }
             var end=y
-            while(end<h && rowHasInk(luma,w,end,dark)) end++
+            while(end<h && rowHasInk(luma,w,end,light)) end++
             if(end>y) runs.add(intArrayOf(y,end))
             y=end.coerceAtLeast(y+1)
         }
@@ -371,10 +385,12 @@ class KomaOcrEngine(private val context: Context) {
         }
         val lines=mutableListOf<Rect>()
         for(run in merged) {
-            if(run[1]-run[0]<max(2,(median*0.4f).toInt())) continue
+            // Короткие полосы не выбрасываем: «ОНА» и «ДА,» — это целые
+            // реплики из одной строки, раньше они пропадали из чтения.
+            if(run[1]-run[0]<2) continue
             var x0=w;var x1=-1
             for(yy in run[0] until run[1]) for(xx in 0 until w) {
-                if(luma[yy*w+xx]<dark) { if(xx<x0)x0=xx; if(xx>x1)x1=xx }
+                if(ink(yy*w+xx)) { if(xx<x0)x0=xx; if(xx>x1)x1=xx }
             }
             if(x1<0) continue
             val px0=(left+x0/scale).toInt().coerceIn(left,right-1)
@@ -386,11 +402,16 @@ class KomaOcrEngine(private val context: Context) {
         return lines
     }
 
-    private fun rowHasInk(luma:IntArray,width:Int,y:Int,dark:Int):Boolean {
+    private fun rowHasInk(luma:IntArray,width:Int,y:Int,light:Boolean):Boolean {
         val offset=y*width
-        val need=max(1,width/60)
+        // Порог — доля ширины, а не «хоть один пиксель»: иначе тонкая рамка
+        // облачка держала бы строку и склеивала соседние.
+        val need=max(2,width/80)
         var count=0
-        for(x in 0 until width) if(luma[offset+x]<dark) { count++;if(count>=need) return true }
+        for(x in 0 until width) {
+            val value=luma[offset+x]
+            if(if(light) value>105 else value<150) { count++;if(count>=need) return true }
+        }
         return false
     }
 
@@ -422,7 +443,18 @@ class KomaOcrEngine(private val context: Context) {
             rec!!.run(mapOf(rec!!.inputNames.first() to tensor)).use { result ->
                 val values=(result[0].value as Array<Array<FloatArray>>)[0];val text=StringBuilder();var prev=0;var score=0f;var count=0
                 values.forEach { logits -> var best=0;for(i in logits.indices)if(logits[i]>logits[best])best=i
-                    if(best!=0 && best!=prev){text.append(dictionary.getOrElse(best){""});score+=logits[best];count++};prev=best
+                    if(best!=0 && best!=prev){
+                        text.append(dictionary.getOrElse(best){""})
+                        // Уверенность — вероятность символа (softmax), а не сырой
+                        // логит: логит бывает отрицательным, и короткие строки
+                        // («ОНА», «ДА,») отбрасывались порогом, хотя прочитаны
+                        // верно. Из-за этого слова пропадали из реплик.
+                        var sumExp=0.0
+                        for(value in logits)sumExp+=exp((value-logits[best]).toDouble())
+                        score+=(1.0/sumExp).toFloat()
+                        count++
+                    }
+                    prev=best
                 }
                 text.toString() to if(count>0)score/count else 0f
             }
