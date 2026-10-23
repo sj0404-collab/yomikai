@@ -93,6 +93,27 @@ class KomaOcrEngine(private val context: Context) {
         if(bounds.outWidth/sample>1400)options.inPreferredConfig=Bitmap.Config.RGB_565
         return stream().use { BitmapFactory.decodeStream(it,null,options) } ?: throw IllegalStateException("Повреждённая страница: $path")
     }
+    /**
+     * Увеличение страницы вдвое перед распознаванием.
+     *
+     * Мелкий шрифт на странице 700–1200 px по ширине модель читает плохо:
+     * путает «ЕЙ»/«5», «ЛУЧШЕ»/«ЛУ4ШЕ», теряет окончания. Увеличение вдвое
+     * подняло качество в лаборатории (lab/verify.py). Чтобы не съесть память,
+     * увеличиваем только небольшие страницы и не больше 12 Мпкс.
+     */
+    private fun upscaleForOcr(source:Bitmap):Bitmap {
+        val longSide=max(source.width,source.height)
+        if(longSide>=1600) return source
+        val targetWidth=source.width*2
+        val targetHeight=source.height*2
+        if(targetWidth.toLong()*targetHeight>12_000_000L) return source
+        return try {
+            Bitmap.createScaledBitmap(source,targetWidth,targetHeight,true)
+        } catch(t:Throwable) {
+            source
+        }
+    }
+
     /** Последняя ошибка распознавания в читалке: её показывает экран. */
     var lastError:String?=null
         private set
@@ -110,7 +131,12 @@ class KomaOcrEngine(private val context: Context) {
             if(!force) cached(book.id,page,language)?.let{return@withLock it}
             val path=book.pages.getOrNull(page)
                 ?: run { lastError="Страница ${page+1} отсутствует в файле"; return@withLock PageOcr(emptyList(),ENGINE_NAME,System.currentTimeMillis()-start) }
-            val image=try { bitmap(path) } catch(t:Throwable) { lastError=describe(t); return@withLock PageOcr(emptyList(),ENGINE_NAME,System.currentTimeMillis()-start) }
+            val decoded=try { bitmap(path) } catch(t:Throwable) { lastError=describe(t); return@withLock PageOcr(emptyList(),ENGINE_NAME,System.currentTimeMillis()-start) }
+            // Увеличение ×2 перед распознаванием: на маленьких страницах буквы
+            // занимают 8–10 px, и модель путает «ЕЙ» с «5», а «ЛУЧШЕ» с «ЛУ4ШЕ».
+            // В лаборатории увеличение дало 5 реплик из 5 там, где без него
+            // пропадала целая реплика. Предел — 12 Мпкс, чтобы не ловить OOM.
+            val image=upscaleForOcr(decoded)
             try {
                 val script=if(language=="Авто")if(book.category=="Комиксы")"Латиница" else "Японский" else language
                 val regions=mutableListOf<OcrRegion>()
@@ -150,6 +176,7 @@ class KomaOcrEngine(private val context: Context) {
                 // отрисовке. Свою копию (если кэш промахнулся) освобождаем.
                 val cachedCopy = runCatching { pageCache.get(path) }.getOrNull()
                 if (image !== cachedCopy && !image.isRecycled) image.recycle()
+                if (decoded !== image && decoded !== cachedCopy && !decoded.isRecycled) decoded.recycle()
             }
         }
     }
@@ -294,20 +321,36 @@ class KomaOcrEngine(private val context: Context) {
     /** Детектор на одном тайле: боксы в пикселях тайла. */
     @Suppress("UNCHECKED_CAST")
     private fun detectTile(bitmap:Bitmap):List<Rect> {
-        val ratio=min(1f,960f/max(bitmap.width,bitmap.height))
+        // Длинная сторона входа детектора 1600, а не 960: на 960 мелкие
+        // реплики терялись целиком (в лаборатории это видно на странице 2 —
+        // пропадала целая реплика «ВАУ! ЭТО ЗВУЧИТ ОЧЕНЬ ВЕСЬ ВЕСЕЛО!»).
+        val ratio=min(1f,1600f/max(bitmap.width,bitmap.height))
         val w=max(32,(bitmap.width*ratio/32).roundToInt()*32)
         val h=max(32,(bitmap.height*ratio/32).roundToInt()*32)
         val scaled=Bitmap.createScaledBitmap(bitmap,w,h,true)
         val pixels=IntArray(w*h);scaled.getPixels(pixels,0,w,0,0,w,h)
         if(scaled!==bitmap && !scaled.isRecycled)scaled.recycle()
-        val data=FloatArray(3*w*h);val mean=floatArrayOf(.485f,.456f,.406f);val std=floatArrayOf(.229f,.224f,.225f)
-        for(c in 0..2)for(i in pixels.indices){val channel=(pixels[i] shr (c*8)) and 255;data[c*w*h+i]=(channel/255f-mean[c])/std[c]}
-        val boxes=OnnxTensor.createTensor(env,FloatBuffer.wrap(data),longArrayOf(1,3,h.toLong(),w.toLong())).use { tensor ->
-            det!!.run(mapOf(det!!.inputNames.first() to tensor)).use { result ->
-                val map=(result[0].value as Array<Array<Array<FloatArray>>>)[0][0]
-                components(map)
+        // Пиксели 0..1 без ImageNet-нормализации: в лаборатории (lab/) именно
+        // так карта вероятностей совпадает с тем, что показывает приложение, а
+        // с нормализацией она уходит в ноль. Чтобы не зависеть от поведения
+        // рантайма на конкретном телефоне, если так боксов не нашлось —
+        // повторяем с нормализацией.
+        fun run(normalize:Boolean):List<Rect> {
+            val data=FloatArray(3*w*h)
+            val mean=floatArrayOf(.485f,.456f,.406f);val std=floatArrayOf(.229f,.224f,.225f)
+            for(c in 0..2)for(i in pixels.indices){
+                val channel=((pixels[i] shr (c*8)) and 255)/255f
+                data[c*w*h+i]=if(normalize)(channel-mean[c])/std[c] else channel
+            }
+            return OnnxTensor.createTensor(env,FloatBuffer.wrap(data),longArrayOf(1,3,h.toLong(),w.toLong())).use { tensor ->
+                det!!.run(mapOf(det!!.inputNames.first() to tensor)).use { result ->
+                    val map=(result[0].value as Array<Array<Array<FloatArray>>>)[0][0]
+                    components(map)
+                }
             }
         }
+        var boxes=run(false)
+        if(boxes.isEmpty()) boxes=run(true)
         return boxes.take(400).map { b ->
             val x1=(b.left.toFloat()/w*bitmap.width).toInt().coerceIn(0,bitmap.width-1)
             val x2=(b.right.toFloat()/w*bitmap.width).toInt().coerceIn(x1+1,bitmap.width)
