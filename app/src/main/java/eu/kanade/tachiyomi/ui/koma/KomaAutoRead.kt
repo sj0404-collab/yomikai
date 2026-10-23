@@ -620,14 +620,38 @@ object KomaReadingOrder {
     private val lookalikes = mapOf(
         'a' to 'а', 'e' to 'е', 'o' to 'о', 'c' to 'с', 'p' to 'р', 'x' to 'х',
         'y' to 'у', 'k' to 'к', 'm' to 'м', 't' to 'т', 'b' to 'в', 'h' to 'н',
+        'u' to 'и', 'n' to 'п',
         'A' to 'А', 'E' to 'Е', 'O' to 'О', 'C' to 'С', 'P' to 'Р', 'X' to 'Х',
         'Y' to 'У', 'K' to 'К', 'M' to 'М', 'T' to 'Т', 'B' to 'В', 'H' to 'Н',
+        'U' to 'И',
+        // Греческие заглавные: модель пишет ими русские буквы («HETΛOXO ПPO-»).
+        'Λ' to 'Л', 'Δ' to 'Д', 'Α' to 'А', 'Β' to 'В', 'Ε' to 'Е', 'Ζ' to 'З',
+        'Η' to 'Н', 'Ι' to 'И', 'Κ' to 'К', 'Μ' to 'М', 'Ν' to 'Н', 'Ο' to 'О',
+        'Ρ' to 'Р', 'Τ' to 'Т', 'Υ' to 'У', 'Χ' to 'Х',
+        // Цифры-двойники: «3ВУ4ИТ» вместо «ЗВУЧИТ».
+        '3' to 'з', '4' to 'ч', '0' to 'о', '6' to 'б', '8' to 'в',
     )
 
-    private fun fixLookalikes(raw: String): String = raw.split(' ').joinToString(" ") { word ->
-        val hasCyrillic = word.any { it in 'а'..'я' || it in 'А'..'Я' || it == 'ё' || it == 'Ё' }
-        if (!hasCyrillic) return@joinToString word
-        word.map { lookalikes[it] ?: it }.joinToString("")
+    private val greekLookalikes = setOf('Λ', 'Δ', 'Α', 'Β', 'Ε', 'Ζ', 'Η', 'Ι', 'Κ', 'Μ', 'Ν', 'Ο', 'Ρ', 'Τ', 'Υ', 'Χ')
+
+    private fun fixLookalikes(raw: String): String {
+        fun isRussian(ch: Char) = ch in 'а'..'я' || ch in 'А'..'Я' || ch == 'ё' || ch == 'Ё'
+        // Решение по СТРОКЕ, а не по слову: если в строке есть русские буквы или
+        // греческие двойники, то и слова из одних латинских/греческих символов
+        // переводятся в кириллицу. Раньше «HETΛOXO», «ПРО-» и «BECEΛO»
+        // оставались латиницей, и такая строка отбрасывалась фильтром языка —
+        // слова пропадали из реплики целиком.
+        val lineIsRussian = raw.any { isRussian(it) || it in greekLookalikes }
+        return raw.split(' ').joinToString(" ") { word ->
+            val letters = word.filter { it.isLetterOrDigit() }
+            val convertible = letters.isNotEmpty() && letters.all { it in lookalikes }
+            val wordHasRussian = word.any { isRussian(it) }
+            if (lineIsRussian && (wordHasRussian || convertible)) {
+                word.map { lookalikes[it] ?: it }.joinToString("")
+            } else {
+                word
+            }
+        }
     }
 
     private fun cleanSpeech(raw: String): String {
