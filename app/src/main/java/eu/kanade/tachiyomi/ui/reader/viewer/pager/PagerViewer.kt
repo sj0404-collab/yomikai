@@ -215,6 +215,13 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         return matched
     }
 
+    override fun followOcrRegion(box: mihon.domain.ocr.model.OcrBoundingBox): Boolean {
+        val holder = pager.children
+            .filterIsInstance(PagerPageHolder::class.java)
+            .firstOrNull { it.isShown } ?: return false
+        return holder.followBoundingBox(box)
+    }
+
     override fun displayedPageRect(): android.graphics.RectF? {
         val holder = pager.children
             .filterIsInstance(PagerPageHolder::class.java)

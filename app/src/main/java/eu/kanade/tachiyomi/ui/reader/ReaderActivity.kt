@@ -1319,6 +1319,14 @@ class ReaderActivity : BaseActivity() {
                     androidx.compose.runtime.LaunchedEffect(spokenText) {
                         eu.kanade.presentation.reader.components.OcrCurrentBubble.set(spokenText)
                     }
+                    // Догоняем читаемую реплику. Озвучка идёт вниз по странице, а
+                    // экран оставался неподвижным: читатель видел верх кадра и не
+                    // видел того, что уже читается. Масштаб не меняем — только
+                    // прокрутка, и только если реплика ушла за пределы экрана.
+                    androidx.compose.runtime.LaunchedEffect(autoRegion) {
+                        val region = autoRegion ?: return@LaunchedEffect
+                        runCatching { viewModel.state.value.viewer?.followOcrRegion(region.box) }
+                    }
                     androidx.compose.runtime.DisposableEffect(Unit) {
                         onDispose { eu.kanade.presentation.reader.components.OcrCurrentBubble.clear() }
                     }

@@ -231,6 +231,41 @@ class KomaOcrEngine(private val context: Context) {
         }
     }
     /**
+     * Распознавание произвольного кадра: вкладка «Браузер», снимок экрана,
+     * выделенная область. Путь тот же, что у страницы книги — два прохода,
+     * рамки по строкам, панели и порядок чтения, — только без книги и кэша.
+     *
+     * Нужен, чтобы в браузере были ТЕ ЖЕ рамки и тот же порядок чтения, что в
+     * читалке: до этого там работал старый движок кириллицы (до KOMA), и рамки
+     * на экране были чужие.
+     */
+    suspend fun recognizeImage(source: Bitmap): PageOcr = withContext(Dispatchers.Default) {
+        mutex.withLock {
+            lastError = null
+            val start = System.currentTimeMillis()
+            val image = upscaleForOcr(source)
+            try {
+                ensureActive()
+                val main = paddlePage(image)
+                ensureActive()
+                val rescue = if (main.size < 600) paddlePage(source, 960f) else emptyList()
+                val regions = mutableListOf<OcrRegion>()
+                (main + rescued(main, rescue)).forEach { addRegion(regions, it) }
+                val sorted = regions.sortedWith(
+                    compareBy<OcrRegion> { (it.top * 80).toInt() }.thenByDescending { it.left },
+                )
+                PageOcr(sorted, ENGINE_NAME, System.currentTimeMillis() - start, panels = panelsOf(image))
+            } catch (t: Throwable) {
+                if (t is kotlinx.coroutines.CancellationException) throw t
+                lastError = describe(t)
+                PageOcr(emptyList(), ENGINE_NAME, System.currentTimeMillis() - start)
+            } finally {
+                if (image !== source && !image.isRecycled) image.recycle()
+            }
+        }
+    }
+
+    /**
      * Панели страницы — по уменьшенной копии изображения.
      *
      * Уменьшение обязательно: детектор перебирает пиксели, и на полном кадре

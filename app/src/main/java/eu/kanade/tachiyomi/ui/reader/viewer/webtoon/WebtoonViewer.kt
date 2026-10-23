@@ -257,6 +257,18 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
         return matched
     }
 
+    override fun followOcrRegion(box: mihon.domain.ocr.model.OcrBoundingBox): Boolean {
+        val height = frame.height.toFloat()
+        if (height <= 0f) return false
+        val pageView = recycler.children
+            .filterIsInstance<ReaderPageImageView>()
+            .firstOrNull { child ->
+                val top = child.y + recycler.y
+                top <= height / 2f && height / 2f <= top + child.height
+            } ?: return false
+        return pageView.followBoundingBox(box)
+    }
+
     override fun displayedPageRect(): android.graphics.RectF? {
         val height = frame.height.toFloat()
         val width = frame.width.toFloat()
