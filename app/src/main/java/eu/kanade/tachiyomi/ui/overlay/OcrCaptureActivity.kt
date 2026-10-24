@@ -33,13 +33,20 @@ class OcrCaptureActivity : ComponentActivity() {
             fail("Захват экрана недоступен")
             return
         }
-        if (!hasRegion()) {
-            fail("Сначала выделите область рамки кнопкой ✏")
+        // В режиме «Авто — весь экран» выделение не нужно: служба сама возьмёт
+        // видимую часть приложения. Раньше диалог захвата не открывался вовсе,
+        // и оверлей «не работал» при выбранном «весь экран».
+        if (!hasRegion() && !regionIsAuto()) {
+            fail("Сначала выделите область рамки кнопкой ✏ или выберите «Авто — весь экран»")
             return
         }
         runCatching { captureLauncher.launch(mpm.createScreenCaptureIntent()) }
             .onFailure { fail("Захват экрана недоступен") }
     }
+
+    /** Режим «Авто — весь экран»: область не требуется. */
+    private fun regionIsAuto(): Boolean =
+        Injekt.get<OcrPreferences>().overlayRegionMode().get() == "auto"
 
     /** Задана ли область рамки: без неё захват запускать незачем. */
     private fun hasRegion(): Boolean =

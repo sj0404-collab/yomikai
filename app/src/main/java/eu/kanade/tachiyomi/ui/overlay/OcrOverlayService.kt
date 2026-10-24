@@ -352,6 +352,19 @@ class OcrOverlayService : Service() {
     private var readJob: kotlinx.coroutines.Job? = null
     private var readProjection: android.media.projection.MediaProjection? = null
 
+    /** Колбэк проекции: система может остановить захват в любой момент. */
+    private var projectionCallback: android.media.projection.MediaProjection.Callback? = null
+
+    /**
+     * Пользователь просил читать, но захват сейчас на паузе (экран погас или
+     * система остановила проекцию). По этому флагу панель честно говорит,
+     * что нужно нажать ▶ заново, вместо тишины.
+     */
+    private var readingWanted = false
+
+    /** Приёмник «экран погас/включился»: чтение не должно идти в чёрный экран. */
+    private var screenReceiver: android.content.BroadcastReceiver? = null
+
     /**
      * Геометрия экрана в координатах окон оверлея.
      *
@@ -414,6 +427,22 @@ class OcrOverlayService : Service() {
     }
 
     /** Прямоугольник зафиксированной области в пикселях экрана. */
+    /**
+     * Область чтения для текущего режима.
+     *
+     * В режиме «Авто — весь экран» выделять ничего не нужно: читается видимая
+     * часть приложения (без строки состояния и панели навигации). Раньше здесь
+     * возвращался null, и ▶ отказывался запускаться с «Сначала выделите
+     * область», хотя человек выбрал именно «весь экран».
+     */
+    private fun readRegionRect(): Rect? {
+        if (prefs.overlayRegionMode().get() == "auto") {
+            val content = screenGeom().content
+            return content.takeIf { it.width() > 0 && it.height() > 0 }
+        }
+        return fixedRegionRect() ?: screenGeom().content.takeIf { it.width() > 0 && it.height() > 0 }
+    }
+
     private fun fixedRegionRect(): Rect? {
         val region = parseRegion() ?: return null
         val content = screenGeom().content
@@ -440,9 +469,16 @@ class OcrOverlayService : Service() {
         projectionGranted = true
         runCatching { ensureForeground() }
 
-        val rect = fixedRegionRect()
+        val rect = readRegionRect()
         if (rect == null) {
-            toast("Сначала задайте область рамки")
+            // Раньше здесь просто был тост, а проекция оставалась живой:
+            // следующий запуск чтения получал SecurityException от уже
+            // «занятого» захвата, и оверлей выглядел сломанным.
+            runCatching { projection.stop() }
+            projectionGranted = false
+            runCatching { ensureForeground() }
+            toast("Сначала задайте область: «Задать область» в настройках оверлея")
+            setBubble("Область не задана — откройте настройки оверлея и нажмите «Задать область»")
             return
         }
         if (!OverlayGestureService.isEnabled()) {
@@ -453,6 +489,8 @@ class OcrOverlayService : Service() {
         }
         stopReading()
         readProjection = projection
+        watchProjection(projection)
+        readingWanted = true
         val engine = OverlayCaptureEngine(applicationContext, projection)
         capture = engine
         val reader = OverlayAutoReader(applicationContext, engine)
@@ -469,19 +507,27 @@ class OcrOverlayService : Service() {
             },
         )
         readingState.value = true
+        applyKeepScreenOn()
         toast("Чтение: ${reader.engineTitle()}")
     }
 
-    fun stopReading() {
+    fun stopReading(userStopped: Boolean = true) {
         readJob?.cancel()
         readJob = null
         runCatching { capture?.stop() }
         capture = null
+        projectionCallback?.let { cb -> readProjection?.let { p -> runCatching { p.unregisterCallback(cb) } } }
+        projectionCallback = null
         runCatching { readProjection?.stop() }
         readProjection = null
         autoReader = null
         readingState.value = false
+        // Пользователь нажал «стоп» — значит и «хотел читать» больше не true.
+        // При системной паузе (экран погас / проекция умерла) флаг остаётся:
+        // панель по нему подсказывает, что нужно нажать ▶ заново.
+        if (userStopped) readingWanted = false
         runCatching { readEngine.stop() }
+        applyKeepScreenOn()
     }
 
     val isReading: Boolean get() = readingState.value
@@ -506,6 +552,124 @@ class OcrOverlayService : Service() {
         // показывал foreground — счётчик навсегда залипал в «мы на экране», и
         // кнопка не появлялась нигде.
         ProcessLifecycleOwner.get().lifecycle.addObserver(processLifecycleObserver)
+        registerScreenReceiver()
+    }
+
+    /**
+     * Слушает выключение и включение экрана.
+     *
+     * Зачем: во время чтения рамки никто не касается телефона, срабатывает
+     * штатный таймаут подсветки — экран гаснет, захват начинает отдавать
+     * чёрные кадры, озвучка читает пустоту, а на части прошивок ещё и
+     * обрывается MediaProjection, после чего сервис «перезапускался».
+     * Теперь: подсветку держим флагом окна (см. [applyKeepScreenOn]),
+     * при выключении экрана чтение встаёт на паузу, а после включения
+     * честно сообщаем, что нужно нажать ▶.
+     */
+    private fun registerScreenReceiver() {
+        if (screenReceiver != null) return
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    Intent.ACTION_SCREEN_OFF -> onScreenOff()
+                    Intent.ACTION_SCREEN_ON -> onScreenOn()
+                }
+            }
+        }
+        val filter = android.content.IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+        }
+        // RECEIVER_NOT_EXPORTED: на Android 14+ регистрация без флага падает
+        // с SecurityException для части приёмников; для системных трансляций
+        // этот флаг безопасен и обязателен по духу новых правил.
+        runCatching {
+            androidx.core.content.ContextCompat.registerReceiver(
+                this,
+                receiver,
+                filter,
+                androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
+        }
+            .onSuccess { screenReceiver = receiver }
+            .onFailure { logcat(LogPriority.ERROR, it) { "OcrOverlay: экранный приёмник не зарегистрирован" } }
+    }
+
+    private fun unregisterScreenReceiver() {
+        screenReceiver?.let { runCatching { unregisterReceiver(it) } }
+        screenReceiver = null
+    }
+
+    private fun onScreenOff() {
+        if (!isReading) return
+        if (!prefs.overlayPauseOnScreenOff().get()) return
+        // Останавливаем цикл и захват: чёрные кадры распознавать бессмысленно,
+        // а очередь синтезатора иначе продолжает говорить в погашенный экран.
+        stopReading(userStopped = false)
+        readingState.value = false
+        setBubble("Экран погас — чтение приостановлено")
+        refreshNotification()
+    }
+
+    private fun onScreenOn() {
+        if (!readingWanted) return
+        if (isReading) return
+        setBubble(
+            if (readProjection != null) "Экран включён. Нажмите ▶, чтобы продолжить чтение"
+            else "Экран включён. Захват экрана остановлен — нажмите ▶ заново",
+        )
+        refreshNotification()
+    }
+
+    /**
+     * Держит подсветку включённой, пока идёт чтение.
+     *
+     * Флаг ставится на СОБСТВЕННОЕ окно оверлея — это единственный законный
+     * способ не дать экрану погаснуть, когда поверх чужого приложения висит
+     * наша панель (FLAG_KEEP_SCREEN_ON на чужое окно поставить нельзя).
+     */
+    private fun applyKeepScreenOn() {
+        val lp = params ?: return
+        val want = isReading && prefs.overlayKeepScreenOn().get()
+        val has = (lp.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) != 0
+        if (want == has) return
+        lp.flags = if (want) {
+            lp.flags or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        } else {
+            lp.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON.inv()
+        }
+        runCatching { root?.let { wm.updateViewLayout(it, lp) } }
+    }
+
+    /**
+     * Подписывается на остановку проекции.
+     *
+     * Без этого после системной остановки захвата сервис продолжал считать
+     * себя читающим: панель показывала «чтение», кадры не приходили, а
+     * пользователь видел зависание и перезапуск. Теперь цикл гаснет, а панель
+     * говорит причину.
+     */
+    private fun watchProjection(projection: android.media.projection.MediaProjection) {
+        val callback = object : android.media.projection.MediaProjection.Callback() {
+            override fun onStop() {
+                uiHandler.post {
+                    capture?.markProjectionDead()
+                    stopReading(userStopped = false)
+                    projectionGranted = false
+                    projectionCallback?.let { cb ->
+                        runCatching { projection.unregisterCallback(cb) }
+                    }
+                    projectionCallback = null
+                    readProjection = null
+                    applyKeepScreenOn()
+                    setBubble("Захват экрана остановлен системой — нажмите ▶ заново")
+                    refreshNotification()
+                }
+            }
+        }
+        projectionCallback = callback
+        runCatching { projection.registerCallback(callback, uiHandler) }
+            .onFailure { logcat(LogPriority.ERROR, it) { "OcrOverlay: колбэк проекции не подписан" } }
     }
 
     /**
@@ -524,6 +688,20 @@ class OcrOverlayService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        // Всё тело — под защитой: любой сбой окна/проекции/уведомления раньше
+        // валил сервис (а с START_STICKY он поднимался заново и падал снова —
+        // это и было «перезапускается»). Теперь команда логируется, панель
+        // остаётся живой, а пользователь видит причину в тосте.
+        return try {
+            handleCommand(intent)
+        } catch (t: Throwable) {
+            logcat(LogPriority.ERROR, t) { "OcrOverlay: команда сервиса упала" }
+            setBubble("Сбой оверлея: " + (t.message ?: t.javaClass.simpleName))
+            START_STICKY
+        }
+    }
+
+    private fun handleCommand(intent: Intent?): Int {
         ensureForeground()
         if (root == null) buildOverlay()
         when (intent?.action) {
@@ -597,9 +775,16 @@ class OcrOverlayService : Service() {
         }
         applyClipboardWatch()
         applyFrame()
+        applyKeepScreenOn()
         // Панель не должна висеть поверх наших собственных настроек и
         // читалки: иначе полупрозрачная панель лежала на экране поверх текста.
         updatePanelVisibility()
+        // Сервис поднял сам Android после смерти процесса (intent == null):
+        // захват экрана пережить перезапуск не может, поэтому честно просим
+        // заново нажать ▶, вместо молчаливо «читающего» оверлея без кадров.
+        if (intent == null && readingWanted && !isReading) {
+            setBubble("Оверлей восстановлен. Для чтения нажмите ▶ — захват экрана нужно разрешить заново")
+        }
         return START_STICKY
     }
 
@@ -1243,7 +1428,10 @@ class OcrOverlayService : Service() {
         attempt: Int,
     ) {
         runCatching { wm.addView(layout, p) }
-            .onSuccess { updatePanelVisibility() }
+            .onSuccess {
+                updatePanelVisibility()
+                applyKeepScreenOn()
+            }
             .onFailure { e ->
                 logcat(LogPriority.ERROR, e) {
                     "OcrOverlay: не удалось добавить окно кнопки " +
@@ -1584,10 +1772,11 @@ class OcrOverlayService : Service() {
 
     private fun scanOnceWith(projection: android.media.projection.MediaProjection) {
         projectionGranted = true
+        watchProjection(projection)
         runCatching { ensureForeground() }
         // Без заданной рамки сканируем всю область приложения, а не весь
         // дисплей: часы и панель навигации в кадре не нужны.
-        val rect = fixedRegionRect() ?: screenGeom().content
+        val rect = readRegionRect() ?: screenGeom().content
         val engine = OverlayCaptureEngine(applicationContext, projection)
         val reader = OverlayAutoReader(applicationContext, engine)
         serviceScope.launch {
@@ -1774,6 +1963,9 @@ class OcrOverlayService : Service() {
 
     override fun onDestroy() {
         stopReading()
+        unregisterScreenReceiver()
+        projectionCallback?.let { cb -> readProjection?.let { p -> runCatching { p.unregisterCallback(cb) } } }
+        projectionCallback = null
         // Цикл чтения живёт в serviceScope: без отмены задача продолжала бы
         // держать сервис и захват после его смерти.
         serviceScope.cancel()

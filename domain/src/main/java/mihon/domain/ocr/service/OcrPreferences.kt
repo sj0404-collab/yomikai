@@ -582,6 +582,27 @@ class OcrPreferences(
     /** Длина свайпа в процентах высоты области. */
     fun overlayScrollStep() = preferenceStore.getInt("pref_overlay_scroll_step", 45)
 
+    /**
+     * Не давать экрану гаснуть, пока оверлей читает.
+     *
+     * Жалоба: «потом экран гаснет и перезапускается» — во время чтения никто
+     * не касается телефона, срабатывает штатный таймаут подсветки, экран
+     * уходит в сон, захват отдаёт чёрные кадры, а после пробуждения сервис
+     * приходилось поднимать заново. Флаг KEEP_SCREEN_ON на окне оверлея
+     * держит подсветку ровно пока он читает.
+     */
+    fun overlayKeepScreenOn() = preferenceStore.getBoolean("pref_overlay_keep_screen_on", true)
+
+    /**
+     * Пауза чтения при выключении экрана.
+     *
+     * Пока экран погашен, захватывать нечего: кадры чёрные, распознавание
+     * жжёт батарею, а очередь TTS продолжает говорить в пустоту. По умолчанию
+     * чтение останавливается и НЕ продолжается само — продолжение требует
+     * свежего согласия на захват на части прошивок.
+     */
+    fun overlayPauseOnScreenOff() = preferenceStore.getBoolean("pref_overlay_pause_screen_off", true)
+
     // ---- Озвучка книг (свои настройки, отдельно от читалки манги) ----
     fun bookSpeechRate() = preferenceStore.getFloat("pref_book_speech_rate", 1.0f)
     fun bookSpeechPitch() = preferenceStore.getFloat("pref_book_speech_pitch", 1.0f)
