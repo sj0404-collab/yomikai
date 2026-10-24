@@ -105,16 +105,32 @@ object KomaCasting {
 
     // ── Разбор «кто говорит» из текста ──────────────────────────────────────
     /**
-     * Имя говорящего из подписи «АКИ: …» или из разметки `{имя:Аки}`.
-     * Возвращает null, если подписи нет: тогда голос решается вручную/авто.
+     * Разметка `{имя:Аки}` и подпись «АКИ: …».
+     *
+     * Экранирование закрывающей скобки обязательно: Android компилирует regexp
+     * через ICU, и одиночная `}` после квантификатора `{1,40}` — синтаксическая
+     * ошибка, а не «литеральная скобка». Из-за этого v2.9.19 падала на старте
+     * авточтения (PatternSyntaxException в KomaAutoRead.run). Плюс сами шаблоны
+     * собираются безопасно: сбой компиляции превращается в null, а не в краш.
      */
+    private val markedRegex: Regex? by lazy {
+        runCatching { Regex("\\{\\s*(?:имя|name)\\s*:\\s*([^}]{1,40})\\}", RegexOption.IGNORE_CASE) }.getOrNull()
+    }
+    private val speakerPrefix: Regex? by lazy {
+        runCatching { Regex("^\\s*([\\p{Lu}][\\p{L}]{1,20})\\s*:\\s+") }.getOrNull()
+    }
+    private val speakerDash: Regex? by lazy {
+        runCatching { Regex("^\\s*([\\p{Lu}][\\p{L}]{1,20})\\s*[—-]\\s+") }.getOrNull()
+    }
+    private val markedStrip: Regex? by lazy {
+        runCatching { Regex("\\{\\s*(?:имя|name)\\s*:\\s*[^}]{1,40}\\}", RegexOption.IGNORE_CASE) }.getOrNull()
+    }
+
     fun speakerName(text: String): String? {
-        val marked = Regex("\\{\\s*(?:имя|name)\\s*:\\s*([^}]{1,40})}", RegexOption.IGNORE_CASE)
-            .find(text)?.groupValues?.get(1)?.trim()
+        val marked = markedRegex?.find(text)?.groupValues?.getOrNull(1)?.trim()
         if (!marked.isNullOrBlank()) return marked
-        val prefix = Regex("^\\s*([\\p{Lu}][\\p{L}]{1,20})\\s*:\\s+").find(text)
-            ?: Regex("^\\s*([\\p{Lu}][\\p{L}]{1,20})\\s*[—-]\\s+").find(text)
-        val name = prefix?.groupValues?.get(1)?.trim()
+        val prefix = speakerPrefix?.find(text) ?: speakerDash?.find(text)
+        val name = prefix?.groupValues?.getOrNull(1)?.trim()
         // «НЕ:», «ДА:» и прочие короткие служебные слова именем не считаем.
         if (name == null || name.length < 3) return null
         return name
@@ -122,9 +138,11 @@ object KomaCasting {
 
     /** Текст без подписи — её озвучивать не нужно. */
     fun stripSpeaker(text: String): String {
-        var out = Regex("\\{\\s*(?:имя|name)\\s*:\\s*[^}]{1,40}}", RegexOption.IGNORE_CASE).replace(text, "")
+        var out = markedStrip?.replace(text, "") ?: text
         val name = speakerName(out) ?: return out.trim()
-        out = out.replaceFirst(Regex("^\\s*${Regex.escape(name)}\\s*[:—-]\\s*"), "")
+        out = runCatching {
+            out.replaceFirst(Regex("^\\s*${Regex.escape(name)}\\s*[:—-]\\s*"), "")
+        }.getOrDefault(out)
         return out.trim()
     }
 
