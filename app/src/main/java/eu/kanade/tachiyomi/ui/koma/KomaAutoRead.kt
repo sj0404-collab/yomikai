@@ -1050,7 +1050,10 @@ object KomaAutoRead {
                     rtl = book.mode == "rtl",
                     onlyCyrillic = language == "Кириллица" || language == "Авто",
                     panels = result?.panels.orEmpty(),
-                ).filter { spokenKeys.add(KomaReadingOrder.key(it.text) + "@" + index + "b" + band.index) }
+                // Ключ НЕ содержит номер полосы: соседние полосы перекрываются
+                // на 15%, и реплика со стыка попадает в обе. Иначе она читалась
+                // бы дважды.
+                ).filter { spokenKeys.add(KomaReadingOrder.key(it.text) + "@" + index) }
 
                 // Кадр без реплик: это не «пусто», а рисунок или звуковой эффект
                 // («ЦАП!», «ПРРР»). Полоса проезжается плавно, место в главе не
