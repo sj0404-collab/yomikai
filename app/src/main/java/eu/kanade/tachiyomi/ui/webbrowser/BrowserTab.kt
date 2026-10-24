@@ -127,6 +127,7 @@ import androidx.compose.foundation.background
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import mihon.data.ocr.OcrNotificationManager
 import kotlin.math.roundToInt
 
@@ -1051,11 +1052,23 @@ data object BrowserTab : Tab {
 
 
                 var finished = false
+                // Кадр распознаём ТЕМ ЖЕ движком, что читалка (KOMA), и отдаём
+                // результат движку озвучки готовым набором реплик. Раньше здесь
+                // работал старый движок кириллицы (до KOMA): на кадре сайта он
+                // падал, и авточтение останавливалось с «не удалось распознать
+                // текст страницы», а рамки были чужие. Онлайн-режим (Google
+                // Lens) оставлен как был — там распознаёт сама сеть.
+                val komaFrame = if (browserModeNow(ctx) != "online") {
+                    withTimeoutOrNull(45_000) { komaFrameResult(komaEngine, bmp, wv.scrollY) }
+                } else {
+                    null
+                }
                 readEngine.readFrame(
                     bitmap = bmp,
                     chapterId = -1L,
                     pageIndex = wv.scrollY,
                     onPageFinished = { finished = true },
+                    cachedResult = komaFrame,
                 )
                 // Правильный цикл: СНАЧАЛА кадр целиком читается (скан →
                 // распознавание → озвучка), и только ПОТОМ плавная автопрокрутка
@@ -2136,6 +2149,56 @@ private suspend fun ocrWithPreprocess(
             "" to emptyList()
         }
     }
+
+/** Режим движка браузера: auto / online / offline (те же префы, что в меню). */
+private fun browserModeNow(context: android.content.Context): String =
+    context.getSharedPreferences("browser_ocr", 0).getString("engine_mode", "auto") ?: "auto"
+
+/**
+ * Кадр браузера → готовый результат распознавания для движка озвучки.
+ *
+ * Реплики уже в порядке чтения KOMA (панель за панелью, справа налево), а номер
+ * панели проставлен в каждой: движок озвучки сохраняет этот порядок и не
+ * сортирует реплики заново по геометрии.
+ */
+private suspend fun komaFrameResult(
+    engine: KomaOcrEngine,
+    frame: android.graphics.Bitmap,
+    pageIndex: Int,
+): mihon.domain.ocr.model.OcrPageResult? = runCatching {
+    val page = engine.recognizeImage(frame)
+    val lines = KomaReadingOrder.order(
+        regions = page.regions,
+        rtl = true,
+        onlyCyrillic = true,
+        panels = page.panels,
+    )
+    if (lines.isEmpty()) return@runCatching null
+    val panels = page.panels
+    mihon.domain.ocr.model.OcrPageResult(
+        chapterId = -1L,
+        pageIndex = pageIndex,
+        ocrModel = mihon.domain.ocr.model.OcrModel.CYRILLIC,
+        imageWidth = frame.width,
+        imageHeight = frame.height,
+        regions = lines.mapIndexed { index, line ->
+            val cx = (line.left + line.right) / 2f
+            val cy = (line.top + line.bottom) / 2f
+            // Панели нет (вебтун, сплошной кадр) — считаем весь кадр одной
+            // панелью: так движок озвучки сохранит порядок, а не пересортирует.
+            val panel = panels.indexOfFirst { it.contains(cx, cy) }.let { if (it >= 0) it else if (panels.isEmpty()) 0 else -1 }
+            mihon.domain.ocr.model.OcrRegion(
+                order = index,
+                text = line.text,
+                boundingBox = mihon.domain.ocr.model.OcrBoundingBox(
+                    line.left, line.top, line.right, line.bottom,
+                ),
+                textOrientation = mihon.domain.ocr.model.OcrTextOrientation.Horizontal,
+                panelIndex = panel,
+            )
+        },
+    )
+}.getOrNull()
 
 /**
  * Распознавание кадра браузера движком KOMA — тот же путь, что в читалке.

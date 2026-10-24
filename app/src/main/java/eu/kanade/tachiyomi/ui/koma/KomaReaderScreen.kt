@@ -316,17 +316,7 @@ fun KomaReaderScreen(
     val export=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")){uri ->
         if(uri!=null)scope.launch {try {withContext(Dispatchers.IO){context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { out ->
             out.appendLine(book.title);out.appendLine("Локальное распознавание KOMA. Результат требует проверки.")
-            // Экспорт идёт в том же порядке, в каком страница читается: раньше
-            // в файл попадали сырые области детектора — строки вперемешку.
-            book.pages.indices.forEach { n -> engine.cached(book.id,n,language)?.let { r ->
-                val body = KomaReadingOrder.pageText(
-                    regions = r.regions,
-                    rtl = book.mode == "rtl",
-                    onlyCyrillic = language == "Кириллица" || language == "Авто",
-                    panels = r.panels,
-                ).ifBlank { r.text }
-                out.appendLine("\n— Страница ${n+1} —\n$body")
-            } }
+            book.pages.indices.forEach { n -> engine.cached(book.id,n,language)?.let { r -> out.appendLine("\n— Страница ${n+1} —\n${r.text}") } }
         }};error="Распознанный текст сохранён"}catch(e:Exception){error=e.message}}
     }
     Scaffold(containerColor=Color(0xFF171A17),topBar={
@@ -445,21 +435,7 @@ fun KomaReaderScreen(
                 Spacer(Modifier.height(12.dp))
                 LanguageChooser(language){language=it}
                 if(scanning){LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical=16.dp));Text(if(batchTotal>0)"Обработано $batchProgress из $batchTotal страниц" else "Нейросеть читает изображение…",fontSize=12.sp)}
-                // Текст по порядку чтения — то же, что слышно в озвучке. Сырые
-                // области детектора остаются на случай разбора: их видно, если
-                // включить «как распознано».
-                val orderedText = remember(result, language, mode) {
-                    result?.let {
-                        KomaReadingOrder.pageText(
-                            regions = it.regions,
-                            rtl = mode == "rtl",
-                            onlyCyrillic = language == "Кириллица" || language == "Авто",
-                            panels = it.panels,
-                        )
-                    }.orEmpty()
-                }
-                var rawView by remember(result){mutableStateOf(false)}
-                var edit by remember(result, orderedText){mutableStateOf(orderedText.ifBlank { result?.text.orEmpty() })}
+                var edit by remember(result){mutableStateOf(result?.text.orEmpty())}
                 val fontPath=repo.prefs.getString("font_${book.category}",null)
                 val font=remember(fontPath){if(fontPath!=null)runCatching{FontFamily(androidx.compose.ui.text.font.Typeface(android.graphics.Typeface.createFromFile(fontPath)))}.getOrNull()else null}
                 if(result!=null) {
@@ -480,13 +456,6 @@ fun KomaReaderScreen(
                             }
                         }
                         Spacer(Modifier.height(8.dp))
-                    }
-                    // Переключатель для разбора: сырые области детектора нужны,
-                    // когда что-то потерялось, но по умолчанию текст — реплики
-                    // по порядку чтения, без «ЧTО?» и «ПОШЕВЕ- / ЛИЦЬСЯ».
-                    Row(Modifier.fillMaxWidth().padding(bottom=6.dp),verticalAlignment=Alignment.CenterVertically){
-                        Text("По порядку чтения",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.weight(1f))
-                        TextButton(onClick={rawView=!rawView;edit=if(rawView)result?.text.orEmpty() else orderedText.ifBlank { result?.text.orEmpty() }}){Text(if(rawView)"Как распознано" else "Показать как распознано",fontSize=10.sp)}
                     }
                     OutlinedTextField(value=edit,onValueChange={edit=it},modifier=Modifier.fillMaxWidth().heightIn(min=140.dp,max=280.dp),textStyle=LocalTextStyle.current.copy(fontFamily=font ?: when(book.category){"Манга"->FontFamily.Serif;"Маньхуа"->FontFamily.Cursive;"Комиксы"->FontFamily.Monospace;else->FontFamily.SansSerif},fontSize=15.sp),placeholder={Text("Текст не найден. Попробуйте другой язык или более чёткую страницу.")},shape=RoundedCornerShape(14.dp))
                     Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween){TextButton(onClick={result=result!!.copy(edited=edit);engine.store(book.id,page,language,result!!);error="Исправления сохранены"}){Text("Сохранить правки",fontSize=11.sp)};TextButton(onClick={clipboard.setText(AnnotatedString(edit))}){Icon(Icons.Outlined.ContentCopy,null,Modifier.size(15.dp));Text(" Копировать",fontSize=11.sp)}}
