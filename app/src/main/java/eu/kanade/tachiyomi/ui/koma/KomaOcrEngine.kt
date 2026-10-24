@@ -625,18 +625,18 @@ class KomaOcrEngine(private val context: Context) {
      */
     private fun decodeBetter(crop:Bitmap):Pair<String,Float> {
         val first=decode(crop)
-        val letters=first.first.count { it.isLetterOrDigit() }
-        if(letters>=3 && first.second>=0.55f) return first
+        // Слово уже прочитано целиком (три буквы и больше) — не трогаем.
+        // Раньше повтор запускался ещё и по низкой уверенности, и бинаризация
+        // портила верное слово: «ГОРА» → «ГСРА» (на скринтоне О сливается с С).
+        if(first.first.count { it.isLetter() }>=3) return first
         var best=first
         for(polarity in 0..1) {
             val binar=binarize(crop,polarity)
             val attempt=decode(binar)
             if(binar!==crop && !binar.isRecycled) binar.recycle()
-            val gain=attempt.first.count { it.isLetterOrDigit() }
-            if(gain>best.first.count { it.isLetterOrDigit() } ||
-                (gain==best.first.count { it.isLetterOrDigit() } && attempt.second>best.second)) {
-                best=attempt
-            }
+            // Заменяем только на вариант, где букв СТРОГО больше: «И» → «ТРИ»
+            // (слово было потеряно), но «ГОРА» не превращается в «ГСРА».
+            if(attempt.first.count { it.isLetter() }>best.first.count { it.isLetter() }) best=attempt
         }
         return best
     }
