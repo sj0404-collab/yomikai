@@ -315,6 +315,25 @@ object KomaReadingOrder {
             .map { it.copy(text = KomaWords.finish(it.text)) }
     }
 
+    /**
+     * Текст страницы в порядке чтения — то же, что слышно в озвучке.
+     *
+     * Раньше «Текст страницы» и экспорт показывали СЫРЫЕ области детектора:
+     * строки шли как попало, слова рвались на переносах («ПОШЕВЕ-» /
+     * «ЛИЦЬСЯ»), а латинские и греческие двойники так и оставались в тексте
+     * («ЧTО?», «PAΔA», «СЮΔА», «OHO»). Порядок и починка применялись только к
+     * репликам для показа и озвучки. Теперь текст страницы — ровно те реплики,
+     * что видит и слышит читатель.
+     */
+    fun pageText(
+        regions: List<OcrRegion>,
+        rtl: Boolean,
+        onlyCyrillic: Boolean,
+        panels: List<KomaPanels.Box> = emptyList(),
+    ): String = order(regions, rtl, onlyCyrillic, panels)
+        .joinToString("\n") { it.text }
+        .trim()
+
     /** Доля страницы, ниже которой разрез не считается разрезом. */
     private const val Y_CUT = 0.022f
     private const val X_CUT = 0.035f
