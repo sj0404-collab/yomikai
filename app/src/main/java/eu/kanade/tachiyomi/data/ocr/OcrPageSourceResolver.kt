@@ -144,6 +144,14 @@ data class OcrPageInput(
     val pageIndex: Int,
     val openBitmap: suspend () -> Bitmap?,
     val openBitmapRegion: suspend (Rect) -> Bitmap?,
+    /**
+     * Сырой поток исходника, если источник его отдаёт (локальная папка, скачанная
+     * глава, архив). Читалка KOMA копирует страницу на диск БАЙТ В БАЙТ: раньше
+     * каждая страница декодировалась и пережималась в JPEG 90 — глава из 30
+     * страниц открывалась десятки секунд, а качество падало (JPEG поверх JPEG),
+     * из-за чего потом хуже работало распознавание.
+     */
+    val openStream: (suspend () -> InputStream?)? = null,
 )
 
 internal class ResolvedOcrPages(

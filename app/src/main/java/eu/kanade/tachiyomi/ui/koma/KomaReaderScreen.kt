@@ -47,6 +47,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import mihon.domain.ocr.model.OcrRegion
+import eu.kanade.tachiyomi.data.tts.SpeakerGenderService
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+import android.graphics.Bitmap
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -78,11 +82,47 @@ fun KomaReaderScreen(
     val scroll=rememberLazyListState(initialFirstVisibleItemIndex=book.progress.coerceIn(0,book.pages.lastIndex.coerceAtLeast(0)))
     val page=if(mode=="vertical")scroll.firstVisibleItemIndex else pager.currentPage
     val currentPage by rememberUpdatedState(page)
+    // ── Полосы страницы ──────────────────────────────────────────────────────
+    // Страница выше экрана в несколько раз (вебтун) читается полосами: видимая
+    // часть плюс перекрытие. Обычная страница — одна полоса [0..1], и всё
+    // работает как раньше.
+    val currentPath = book.pages.getOrNull(page)
+    val currentHeight = currentPath?.let { pageHeights[it] } ?: 0
+    val viewportFraction = if(mode=="vertical" && currentHeight>0 && viewportPx>0)
+        viewportPx.toFloat()/currentHeight else 1f
+    val bands = remember(mode,currentPath,viewportFraction) {
+        if(mode=="vertical") KomaBands.of(viewportFraction) else KomaBands.whole
+    }
+    // Какая полоса сейчас на экране: считаем по центру видимой области.
+    val visibleFraction = if(mode=="vertical" && currentHeight>0 && scroll.firstVisibleItemIndex==page)
+        (scroll.firstVisibleItemScrollOffset + viewportPx/2f)/currentHeight else 0f
+    val bandIndex = bands.indexOfLast { it.top<=visibleFraction }.coerceAtLeast(0)
+    val band = bands.getOrElse(bandIndex) { KomaBand.Whole }
+    fun slot(b: KomaBand)= if(b.whole) 0 else b.index+1
+    /** Полосы произвольной страницы — для прогрева вперёд и авточтения. */
+    fun bandsOf(index: Int): List<KomaBand> {
+        if(mode!="vertical") return KomaBands.whole
+        val path=book.pages.getOrNull(index) ?: return KomaBands.whole
+        pageHeights[path]?.let { h -> if(h>0 && viewportPx>0) return KomaBands.of(viewportPx.toFloat()/h) }
+        val size=engine.pageSize(path) ?: return KomaBands.of(viewportFraction)
+        if(size.first<=0 || size.second<=0) return KomaBands.of(viewportFraction)
+        val shownWidth = 1080f
+        val shownHeight = shownWidth*size.second/size.first
+        return KomaBands.of(if(viewportPx>0) viewportPx/shownHeight else viewportFraction)
+    }
     val autoRequested=remember{mutableSetOf<String>()}
     // Кириллица — по умолчанию: библиотека русская, и раньше каждый раз
     // приходилось переключать язык руками (а «Авто» уводил манхву в японский).
     var language by remember { mutableStateOf(repo.prefs.getString("ocrLanguage","Кириллица") ?: "Кириллица") }
     val tts = remember { KomaTts(context) }
+    // Очередь распознавания: текущая полоса — первой, следующие страницы
+    // греются в фоне, пока читается эта.
+    val languageNow by rememberUpdatedState(language)
+    val bookNow by rememberUpdatedState(book)
+    val ocrQueue = remember(book.id) {
+        KomaOcrQueue(scope) { p, b -> engine.recognize(bookNow, p, languageNow, false, b) }
+    }
+    DisposableEffect(book.id) { onDispose { ocrQueue.cancel() } }
     val autoState by KomaAutoRead.state.collectAsState()
     val autoReading = autoState.running
     var speechRate by remember { mutableFloatStateOf(tts.rate()) }
@@ -97,17 +137,46 @@ fun KomaReaderScreen(
     // Высота каждой страницы в пикселях при вписывании по ширине (для
     // автопрокрутки к текущей реплике внутри длинной страницы-вебтуна).
     val pageHeights = remember { mutableStateMapOf<String,Int>() }
+    // Реальная видимая высота ленты (px). Именно она — «экран» для детектора:
+    // раньше размером экрана считалась целая страница, и KOMA читала текст
+    // ниже видимой области.
+    var viewportPx by remember { mutableIntStateOf(0) }
+    LaunchedEffect(scroll) {
+        snapshotFlow { scroll.layoutInfo.viewportSize.height }.collect { if(it>0) viewportPx=it }
+    }
     var voices by remember { mutableStateOf<List<android.speech.tts.Voice>>(emptyList()) }
     var selectedVoice by remember { mutableStateOf(tts.selectedVoiceName()) }
     // Контекст приложения нужен уведомлению, которое рисует контроллер.
     LaunchedEffect(Unit) { AppContextHolder.context = context.applicationContext }
+    // ── Голоса персонажей ────────────────────────────────────────────────────
+    // «Разные голоса» и «полуручной режим» живут настройками, чтобы обычное
+    // чтение одним голосом оставалось доступным.
+    var multiVoice by remember { mutableStateOf(repo.prefs.getBoolean("multiVoice",false)) }
+    var manualCasting by remember { mutableStateOf(repo.prefs.getBoolean("manualCasting",false)) }
+    val ocrPrefs = remember { runCatching { Injekt.get<mihon.domain.ocr.service.OcrPreferences>() }.getOrNull() }
+    // Пол, определённый по картинке (Gemini) — только если введён ключ.
+    val genderByText = remember { mutableStateMapOf<String,String>() }
+    fun kindFor(text:String): KomaCasting.Kind? {
+        if(!multiVoice && !manualCasting) return null
+        val saved = KomaCasting.savedKind(context,book.id,text)
+        if(saved != null) return saved
+        val name = KomaCasting.speakerName(text)
+        if(name != null) {
+            val byName = KomaCasting.savedName(context,book.id,name)
+            if(byName != null) return byName
+        }
+        return when(genderByText[KomaReadingOrder.key(text)]) {
+            "male" -> KomaCasting.Kind.MAN
+            "female" -> KomaCasting.Kind.WOMAN
+            else -> null
+        }
+    }
     var result by remember { mutableStateOf<PageOcr?>(null) }
     var scanJob by remember { mutableStateOf<Job?>(null) }
     var scrollJob by remember { mutableStateOf<Job?>(null) }
-    // Прогрев следующей страницы: пока голос читает текущую, распознавание уже
-    // идёт. Именно это даёт «страница готова к моменту, когда дочитали», вместо
-    // паузы в несколько секунд на каждой странице.
-    var prefetchJob by remember { mutableStateOf<Job?>(null) }
+    // Прогрев идёт через KomaOcrQueue (см. ниже): одна текущая полоса и две
+    // страницы вперёд. Прежний одиночный prefetchJob стартовал только ПОСЛЕ
+    // распознавания текущей страницы, поэтому «очереди наперёд» не было.
     var scanning by remember { mutableStateOf(false) }
     var batchProgress by remember { mutableIntStateOf(0) }
     var batchTotal by remember { mutableIntStateOf(0) }
@@ -135,19 +204,34 @@ fun KomaReaderScreen(
                     engine.lastError?.let { error=it }
                     if(failed>0) error=(error?.plus("\n\n") ?: "")+"Не удалось обработать страниц: $failed"
                 } else {
+                    // Распознаём ТУ полосу, которая на экране: у длинного
+                    // вебтуна это видимая часть, а не вся страница целиком.
                     val current=page
-                    val r=engine.recognize(book,current,language,force)
-                    if(current==currentPage)result=r
+                    val currentBand=band
+                    val r=engine.recognize(book,current,language,force,currentBand)
+                    if(current==currentPage && currentBand.index==band.index)result=r
                     engine.lastError?.let { error=it }
                 }
             } catch(e:CancellationException){throw e}catch(e:Throwable){error=e.localizedMessage ?: e::class.simpleName ?: "Распознавание не удалось"}finally{scanning=false;batchTotal=0}
         }
     }
-    LaunchedEffect(page,language,scanning) {
+    LaunchedEffect(page,language,scanning,bandIndex) {
         save(book.copy(progress=page,mode=mode))
-        result=engine.cached(book.id,page,language)
-        val key="$page:$language"
+        // В вертикальной ленте ждём реальную высоту страницы: без неё нельзя
+        // понять, где кончается экран, и распознавание пошло бы по всей
+        // странице (ровно та жалоба «читает за пределами экрана»).
+        if(mode=="vertical" && currentHeight==0) return@LaunchedEffect
+        // Сначала кэш именно этой полосы, затем — страницы целиком (старый
+        // кэш после обновления версии разбора уже не подойдёт, но если полоса
+        // совпадает со страницей, он и есть нужный).
+        result=engine.cached(book.id,page,language,slot(band)) ?: engine.cached(book.id,page,language)
+        val key="$page:$bandIndex:$language"
         if(repo.prefs.getBoolean("autoOcr",true) && result==null && !scanning && key !in autoRequested) { autoRequested.add(key);scan() }
+    }
+    LaunchedEffect(page,bandIndex,viewportPx,viewportFraction,language) {
+        if(scanning) return@LaunchedEffect
+        if(engine.cached(book.id,page,language,slot(band))==null) ocrQueue.enqueue(page,band,urgent=true)
+        ocrQueue.warmAhead(page,book.pages.lastIndex) { bandsOf(it) }
     }
     DisposableEffect(Unit){
         val window=(context as? android.app.Activity)?.window
@@ -190,20 +274,13 @@ fun KomaReaderScreen(
             language = language,
             from = if(mode=="vertical")scroll.firstVisibleItemIndex else pager.currentPage,
             tts = tts,
-            recognize = { index ->
-                val ready = engine.cached(book.id,index,language)
-                if (ready != null) ready else {
-                    val result = runCatching { engine.recognize(book,index,language) }.getOrNull()
-                    // Пока эта страница озвучивается — распознаём следующую.
-                    val next = index + 1
-                    if (next < book.pages.size && prefetchJob?.isActive != true) {
-                        prefetchJob = scope.launch {
-                            runCatching { engine.recognize(book,next,language) }
-                        }
-                    }
-                    result
-                }
+            recognize = { index, pageBand ->
+                // Полоса берётся из кэша, если её уже распознали (очередь
+                // работает впереди), иначе распознаётся сейчас.
+                val ready = engine.cached(book.id,index,language,slot(pageBand))
+                if (ready != null) ready else runCatching { engine.recognize(book,index,language,false,pageBand) }.getOrNull()
             },
+            bandsOf = { index -> bandsOf(index) },
             onPage = { index ->
                 // В ленте НЕ дёргаем scrollToItem на каждой странице: у элемента
                 // страницы это сбрасывает смещение на ноль, и экран прыгал в
@@ -269,6 +346,26 @@ fun KomaReaderScreen(
                     delay(900)
                 }
             },
+            manualCasting = manualCasting,
+            kindOf = { _, line -> kindFor(line.text) },
+            voiceOfKind = { kind -> KomaCasting.voice(kind) },
+            rememberKind = { line, kind ->
+                KomaCasting.saveKind(context,book.id,line.text,kind)
+                KomaCasting.speakerName(line.text)?.let { name -> KomaCasting.saveName(context,book.id,name,kind) }
+            },
+            onBand = { index, pageBand ->
+                // Прокрутка к читаемой полосе: у вебтуна это сдвиг ВНУТРИ
+                // страницы, иначе экран стоял бы на её начале.
+                if (mode == "vertical") {
+                    val h = book.pages.getOrNull(index)?.let { pageHeights[it] } ?: 0
+                    if (h > 0 && pageBand.top > 0.01f) {
+                        scrollJob?.cancel()
+                        scrollJob = scope.launch {
+                            runCatching { scroll.animateScrollToItem(index, (pageBand.top * h).toInt()) }
+                        }
+                    }
+                }
+            },
             onLine = { line ->
                 // Автопрокрутка к текущей реплике — только если её не видно.
                 //
@@ -310,6 +407,27 @@ fun KomaReaderScreen(
         )
         readTrigger=0
     }
+    // ── Кто говорит по картинке (необязательно) ──────────────────────────────
+    // Работает только когда в настройках OCR введён ключ Gemini: сервис смотрит
+    // на лица и хвостики облачков и отвечает male/female для каждой реплики.
+    // Без ключа всё решается правилами и полуручным режимом — офлайн.
+    LaunchedEffect(autoReading, page, bubbles) {
+        if(!autoReading) return@LaunchedEffect
+        val prefs=ocrPrefs ?: return@LaunchedEffect
+        if(runCatching { prefs.googleApiKey().get() }.getOrNull().isNullOrBlank()) return@LaunchedEffect
+        val lines=bubbles.orEmpty().map { it.text }.filter { it.isNotBlank() }
+        if(lines.isEmpty()) return@LaunchedEffect
+        val jpeg=runCatching {
+            withContext(Dispatchers.IO) {
+                val bmp=engine.bitmap(book.pages[page])
+                java.io.ByteArrayOutputStream().use { out ->
+                    bmp.compress(Bitmap.CompressFormat.JPEG,80,out); out.toByteArray()
+                }
+            }
+        }.getOrNull() ?: return@LaunchedEffect
+        val genders=runCatching { SpeakerGenderService.detect(jpeg,lines,prefs) }.getOrNull().orEmpty()
+        lines.forEachIndexed { i,t -> genders.getOrNull(i)?.let { g -> genderByText[KomaReadingOrder.key(t)]=g } }
+    }
     // Уведомление живёт, пока идёт чтение; при уходе с экрана гасим его.
     DisposableEffect(Unit){ onDispose { KomaAutoRead.stop() } }
     BackHandler { if(voiceDialog)voiceDialog=false else if(sheet!=null)sheet=null else if(autoReading)KomaAutoRead.stop() else onClose() }
@@ -318,7 +436,7 @@ fun KomaReaderScreen(
             out.appendLine(book.title);out.appendLine("Локальное распознавание KOMA. Результат требует проверки.")
             // Экспорт идёт в том же порядке, в каком страница читается: раньше
             // в файл попадали сырые области детектора — строки вперемешку.
-            book.pages.indices.forEach { n -> engine.cached(book.id,n,language)?.let { r ->
+            book.pages.indices.forEach { n -> engine.cachedAny(book.id,n,language)?.let { r ->
                 val body = KomaReadingOrder.pageText(
                     regions = r.regions,
                     rtl = book.mode == "rtl",
@@ -441,7 +559,7 @@ fun KomaReaderScreen(
                 TextButton(onClick={deleteConfirm=true}){Icon(Icons.Outlined.DeleteOutline,null,Modifier.size(18.dp));Text("  Удалить из библиотеки")}
             }
             "ocr" -> Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).imePadding().padding(horizontal=24.dp).padding(bottom=22.dp)) {
-                Row(verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text("Текст страницы ${page+1}",fontSize=23.sp,fontWeight=FontWeight.Bold);Text(result?.engine ?: "$ENGINE_NAME · офлайн",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=5.dp))};Icon(Icons.Outlined.VerifiedUser,null,tint=MaterialTheme.colorScheme.secondary)}
+                Row(verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(if(bands.size>1 && !band.whole) "Текст страницы ${page+1} · экран ${band.index+1}/${bands.size}" else "Текст страницы ${page+1}",fontSize=23.sp,fontWeight=FontWeight.Bold);Text(result?.engine ?: "$ENGINE_NAME · офлайн",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=5.dp))};Icon(Icons.Outlined.VerifiedUser,null,tint=MaterialTheme.colorScheme.secondary)}
                 Spacer(Modifier.height(12.dp))
                 LanguageChooser(language){language=it}
                 if(scanning){LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical=16.dp));Text(if(batchTotal>0)"Обработано $batchProgress из $batchTotal страниц" else "Нейросеть читает изображение…",fontSize=12.sp)}
@@ -525,6 +643,26 @@ fun KomaReaderScreen(
                 }
                 if(list.isNotEmpty()) Spacer(Modifier.height(8.dp))
                 Text("Порядок — панель за панелью, внутри панели сверху вниз. Эти же фразы уходят в синтезатор.",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                Box(Modifier.fillMaxWidth().padding(vertical=12.dp).height(1.dp).background(Color(0xFF39412F)))
+                Text("Голоса персонажей",fontSize=13.sp,fontWeight=FontWeight.Bold)
+                Row(Modifier.fillMaxWidth().padding(vertical=4.dp),verticalAlignment=Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Разные голоса",fontSize=12.sp)
+                        Text("Каждой реплике — свой голос: пол и возраст через высоту и темп.",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(checked=multiVoice,onCheckedChange={ multiVoice=it;repo.prefs.edit().putBoolean("multiVoice",it).apply() })
+                }
+                Row(Modifier.fillMaxWidth().padding(vertical=4.dp),verticalAlignment=Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Спрашивать, кто говорит",fontSize=12.sp)
+                        Text("Проход останавливается на реплике: «мужской» → парень, ребёнок, старик, взрослый.",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(checked=manualCasting,onCheckedChange={ manualCasting=it;repo.prefs.edit().putBoolean("manualCasting",it).apply() })
+                }
+                if(runCatching { ocrPrefs?.googleApiKey()?.get() }.getOrNull().isNullOrBlank()) {
+                    Text("Ключ Google AI не введён: пол по картинке не определяется, работает ручной выбор и подписи вида «ИМЯ: …».",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=6.dp))
+                }
+                TextButton(onClick={ KomaCasting.clearBook(context,book.id) }){Text("Сбросить назначения голосов",fontSize=11.sp)}
             }
             "pages" -> {
                 Text("Страницы",Modifier.padding(horizontal=24.dp),fontSize=24.sp,fontWeight=FontWeight.Bold)
@@ -533,6 +671,14 @@ fun KomaReaderScreen(
                 }
             }
         }
+    }
+    // Полуручной режим: проход стоит на реплике, пока не выбран персонаж.
+    autoState.awaiting?.let { request ->
+        CastingDialog(
+            request = request,
+            onPick = { kind -> KomaAutoRead.assignRole(kind) },
+            onDismiss = { KomaAutoRead.assignRole(null) },
+        )
     }
     if(voiceDialog) AlertDialog(
         onDismissRequest={voiceDialog=false},
@@ -615,4 +761,65 @@ fun SectionLabel(text:String){Text(text,Modifier.padding(top=22.dp,bottom=9.dp),
 @Composable
 fun LanguageChooser(selected:String,onSelect:(String)->Unit) {
     Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)){ocrLanguages.forEach { name->FilterChip(selected=selected==name,onClick={onSelect(name)},label={Text(name,fontSize=11.sp)},shape=RoundedCornerShape(10.dp))}}
+}
+
+/**
+ * Выбор «кто говорит» в полуручном режиме.
+ *
+ * Сначала крупные кнопки («мужской», «женский», «другое»), затем тип персонажа:
+ * парень, ребёнок, старик, взрослый — для девушек так же. Выбор запоминается по
+ * тексту реплики и по подписи имени, поэтому та же фраза в следующий раз звучит
+ * сразу нужным голосом.
+ */
+@Composable
+private fun CastingDialog(
+    request: KomaCasting.Request,
+    onPick: (KomaCasting.Kind) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var group by remember(request) { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (group == null) "Кто говорит?" else "Какой голос?") },
+        text = {
+            Column {
+                Text(request.line.take(160), fontSize = 13.sp, color = Color(0xFFD7DCD0))
+                request.speaker?.let {
+                    Text("Подпись: $it", fontSize = 11.sp, color = Orange, modifier = Modifier.padding(top = 6.dp))
+                }
+                Spacer(Modifier.height(12.dp))
+                if (group == null) {
+                    Button(
+                        onClick = { group = "male" },
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                    ) { Text("Мужской") }
+                    Button(
+                        onClick = { group = "female" },
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                    ) { Text("Женский") }
+                    Button(
+                        onClick = { group = "neutral" },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Другое") }
+                } else {
+                    val kinds = when (group) {
+                        "male" -> KomaCasting.Kind.male
+                        "female" -> KomaCasting.Kind.female
+                        else -> KomaCasting.Kind.other
+                    }
+                    kinds.forEach { kind ->
+                        TextButton(
+                            onClick = { onPick(kind) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("${kind.title} · ${kind.age.title.lowercase()}", fontSize = 14.sp) }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (group != null) TextButton(onClick = { group = null }) { Text("Назад") }
+            else TextButton(onClick = onDismiss) { Text("Просто читать") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },
+    )
 }

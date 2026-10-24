@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.ui.koma
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.BitmapRegionDecoder
 import android.graphics.Matrix
 import android.graphics.Rect
 import ai.onnxruntime.OnnxTensor
@@ -59,7 +60,7 @@ data class PageOcr(
 /** Как движок называется в интерфейсе: ровно как в исходниках KOMA. */
 const val ENGINE_NAME="PaddleOCR · кириллица"
 /** Версия разбора страницы: меняется вместе с логикой порядка чтения. */
-const val READ_ORDER_VERSION="10"
+const val READ_ORDER_VERSION="11"
 
 class KomaOcrEngine(private val context: Context) {
     private companion object {
@@ -93,9 +94,15 @@ class KomaOcrEngine(private val context: Context) {
     // Версия разбора в имени файла: после правок склейки блоков старый кэш
     // отдавал бы прежние разрезанные реплики, и обновление выглядело бы так,
     // будто ничего не изменилось.
-    private fun cacheFile(id:String,page:Int,language:String)=File(root,"${id}_${page}_${language}_$READ_ORDER_VERSION.json")
-    fun cached(id:String,page:Int,language:String):PageOcr? = runCatching { PageOcr.from(JSONObject(cacheFile(id,page,language).readText())) }.getOrNull()
-    fun store(id:String,page:Int,language:String,result:PageOcr){cacheFile(id,page,language).writeText(result.json().toString())}
+    // Полоса страницы — отдельная единица распознавания (см. KomaBands): у
+    // длинного вебтуна каждая полоса кэшируется сама по себе, иначе кэш одного
+    // экрана затирал бы другой.
+    private fun cacheFile(id:String,page:Int,language:String,band:Int=0)=File(root,"${id}_${page}_${language}_b$band"+"_$READ_ORDER_VERSION.json")
+    fun cached(id:String,page:Int,language:String,band:Int=0):PageOcr? = runCatching { PageOcr.from(JSONObject(cacheFile(id,page,language,band).readText())) }.getOrNull()
+    fun store(id:String,page:Int,language:String,result:PageOcr,band:Int=0){cacheFile(id,page,language,band).writeText(result.json().toString())}
+    /** Есть ли готовый разбор хотя бы одной полосы страницы. */
+    fun cachedAny(id:String,page:Int,language:String):PageOcr? =
+        cached(id,page,language) ?: (1..MAX_BANDS).firstNotNullOfOrNull { cached(id,page,language,it) }
     fun cacheCount():Int=root.listFiles()?.size ?: 0
     fun clear(){root.listFiles()?.forEach{it.delete()}}
     /**
@@ -116,16 +123,25 @@ class KomaOcrEngine(private val context: Context) {
     }
 
     private fun decode(path:String):Bitmap {
+        // Страница могла ещё копироваться на диск (см. KomaChapterCache):
+        // ждём её файл, а не показываем ошибку.
+        KomaChapterCache.awaitFile(path)
         fun stream()=if(path.startsWith("file:///android_asset/")) context.assets.open(path.removePrefix("file:///android_asset/")) else File(path.removePrefix("file://")).inputStream()
         val bounds=BitmapFactory.Options().apply { inJustDecodeBounds=true }
         stream().use{BitmapFactory.decodeStream(it,null,bounds)}
         if(bounds.outWidth<=0 || bounds.outHeight<=0) throw IllegalStateException("Не удалось прочитать изображение: $path")
-        // 10 Мпкс — это ~40 МБ на страницу в ARGB_8888. Раньше допускалось
-        // 20 Мпкс (80 МБ): на телефоне с 3 ГБ такой кадр вместе с OOM давал
-        // вылет при распознавании. Плюс RGB_565 на больших кадрах: цвет для
-        // чтения текста не нужен, а память вдвое меньше.
+        // Бюджет площади 16 Мпкс в RGB_565 — это ~32 МБ на страницу.
+        // Ключевое отличие от прежнего правила: длинный вебтун больше НЕ
+        // ужимается по площади до 600 px по ширине. Раньше страница 1200×9000
+        // (10,8 Мпкс) получала sample=2 → 600 px, и на экране 1080 px картинка
+        // была мыльной, а мелкий текст нечитаемым — это и есть жалоба «большие
+        // страницы манхвы не расширяются». Теперь ширина сохраняется, а для
+        // распознавания страница всё равно режется на полосы (decodeRegion).
         var sample=1
-        while(bounds.outWidth.toLong()*bounds.outHeight/(sample*sample)>10_000_000L || bounds.outWidth/sample>2800)sample*=2
+        while(
+            bounds.outWidth.toLong()*bounds.outHeight/(sample.toLong()*sample)>16_000_000L ||
+            bounds.outWidth/sample>2600
+        ) sample*=2
         val options=BitmapFactory.Options().apply{inSampleSize=sample}
         if(bounds.outWidth/sample>1400)options.inPreferredConfig=Bitmap.Config.RGB_565
         return stream().use { BitmapFactory.decodeStream(it,null,options) } ?: throw IllegalStateException("Повреждённая страница: $path")
@@ -151,6 +167,66 @@ class KomaOcrEngine(private val context: Context) {
         }
     }
 
+    /**
+     * Полоса страницы в её исходном разрешении.
+     *
+     * `BitmapRegionDecoder` читает с диска только нужные строки: страница
+     * 1200×9000 больше не декодируется целиком ради одной полосы, и на вход
+     * модели попадает полная ширина (а не 600 px после общего даунскейла).
+     */
+    private fun region(path:String,band:KomaBand):Bitmap {
+        KomaChapterCache.awaitFile(path)
+        val plain=path.removePrefix("file://")
+        val decoder=try {
+            when {
+                path.startsWith("file:///android_asset/") -> {
+                    val bytes=context.assets.open(path.removePrefix("file:///android_asset/")).use{ it.readBytes() }
+                    BitmapRegionDecoder.newInstance(bytes,0,bytes.size)
+                }
+                android.os.Build.VERSION.SDK_INT>=31 -> {
+                    val fd=android.os.ParcelFileDescriptor.open(File(plain),android.os.ParcelFileDescriptor.MODE_READ_ONLY)
+                    BitmapRegionDecoder.newInstance(fd)
+                }
+                else -> @Suppress("DEPRECATION") BitmapRegionDecoder.newInstance(plain,false)
+            }
+        } catch(t:Throwable) { null }
+            ?: return bitmap(path)
+        return try {
+            val core=decoder.width/2400
+            var sample=1
+            while(sample*2<=core.coerceAtLeast(1)) sample*=2
+            val top=(band.top*decoder.height).toInt().coerceIn(0,decoder.height-1)
+            val bottom=(band.bottom*decoder.height).toInt().coerceIn(top+1,decoder.height)
+            val options=BitmapFactory.Options().apply {
+                inSampleSize=sample
+                if(decoder.width/sample>1400) inPreferredConfig=Bitmap.Config.RGB_565
+            }
+            decoder.decodeRegion(android.graphics.Rect(0,top,decoder.width,bottom),options) ?: bitmap(path)
+        } catch(t:Throwable) {
+            bitmap(path)
+        } finally {
+            runCatching { decoder.recycle() }
+        }
+    }
+
+    /** Размер страницы в пикселях без декодирования картинки. */
+    fun pageSize(path:String, waitMs:Long=0):Pair<Int,Int>? {
+        // Ждать файл на главном потоке нельзя: экран спрашивает размер для
+        // прогрева. Ждём только когда явно попросили.
+        if(waitMs>0) KomaChapterCache.awaitFile(path,waitMs)
+        val bounds=BitmapFactory.Options().apply { inJustDecodeBounds=true }
+        val read=runCatching {
+            if(path.startsWith("file:///android_asset/")) {
+                context.assets.open(path.removePrefix("file:///android_asset/")).use{ BitmapFactory.decodeStream(it,null,bounds) }
+            } else {
+                File(path.removePrefix("file://")).inputStream().use{ BitmapFactory.decodeStream(it,null,bounds) }
+            }
+        }
+        if(read.isFailure) return null
+        if(bounds.outWidth<=0 || bounds.outHeight<=0) return null
+        return Pair(bounds.outWidth,bounds.outHeight)
+    }
+
     /** Последняя ошибка распознавания в читалке: её показывает экран. */
     var lastError:String?=null
         private set
@@ -161,14 +237,17 @@ class KomaOcrEngine(private val context: Context) {
         else -> listOfNotNull(t::class.simpleName, t.message).joinToString(": ").ifBlank { "неизвестная ошибка" }
     }
 
-    suspend fun recognize(book:Book,page:Int,language:String,force:Boolean=false):PageOcr = withContext(Dispatchers.Default) {
+    suspend fun recognize(book:Book,page:Int,language:String,force:Boolean=false,band:KomaBand=KomaBand.Whole):PageOcr = withContext(Dispatchers.Default) {
         mutex.withLock {
             lastError=null
             val start=System.currentTimeMillis()
-            if(!force) cached(book.id,page,language)?.let{return@withLock it}
+            // Ключ кэша: 0 — страница целиком, 1..N — полосы. Иначе кэш одного
+            // экрана длинного вебтуна затирал бы соседние.
+            val slot=if(band.whole)0 else band.index+1
+            if(!force) cached(book.id,page,language,slot)?.let{return@withLock it}
             val path=book.pages.getOrNull(page)
                 ?: run { lastError="Страница ${page+1} отсутствует в файле"; return@withLock PageOcr(emptyList(),ENGINE_NAME,System.currentTimeMillis()-start) }
-            val decoded=try { bitmap(path) } catch(t:Throwable) { lastError=describe(t); return@withLock PageOcr(emptyList(),ENGINE_NAME,System.currentTimeMillis()-start) }
+            val decoded=try { if(band.whole) bitmap(path) else region(path,band) } catch(t:Throwable) { lastError=describe(t); return@withLock PageOcr(emptyList(),ENGINE_NAME,System.currentTimeMillis()-start) }
             // Увеличение ×2 перед распознаванием: на маленьких страницах буквы
             // занимают 8–10 px, и модель путает «ЕЙ» с «5», а «ЛУЧШЕ» с «ЛУ4ШЕ».
             // В лаборатории увеличение дало 5 реплик из 5 там, где без него
@@ -212,8 +291,12 @@ class KomaOcrEngine(private val context: Context) {
                 val sorted=if(book.mode=="rtl" && script=="Японский") regions.sortedWith(compareByDescending<OcrRegion> { (it.left*40).toInt() }.thenBy { it.top }) else regions.sortedWith(compareBy<OcrRegion> { (it.top*80).toInt() }.thenBy { if(book.mode=="rtl")-it.left else it.left })
                 // Панели ищутся по тому же изображению, что ушло в распознавание:
                 // порядок чтения потом идёт по кадрам (KomaReadingOrder).
-                val panels=if(script=="Кириллица") panelsOf(image) else emptyList()
-                PageOcr(sorted,if(script=="Кириллица")ENGINE_NAME else "ML Kit · $script",System.currentTimeMillis()-start,panels=panels).also { store(book.id,page,language,it) }
+                val rawPanels=if(script=="Кириллица") panelsOf(image) else emptyList()
+                // Координаты полосы переводим в координаты СТРАНИЦЫ: экран, рамки
+                // и подсветка работают с одним и тем же масштабом.
+                val onPage=if(band.whole) sorted else sorted.map { it.copy(top=band.mapY(it.top),bottom=band.mapY(it.bottom)) }
+                val panels=if(band.whole) rawPanels else rawPanels.map { KomaPanels.Box(it.left,band.mapY(it.top),it.right,band.mapY(it.bottom)) }
+                PageOcr(onPage,if(script=="Кириллица")ENGINE_NAME else "ML Kit · $script",System.currentTimeMillis()-start,panels=panels).also { store(book.id,page,language,it,slot) }
             } catch(t:Throwable) {
                 if(t is kotlinx.coroutines.CancellationException) throw t
                 // Битая страница, нехватка памяти, сбой нативного ONNX — всё

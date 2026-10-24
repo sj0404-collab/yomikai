@@ -196,36 +196,61 @@ internal class KomaChapterLoader(private val context: Context) {
         val chapter = getChapter.await(chapterId) ?: return null
 
         val id = "chapter-$chapterId"
-        val dir = File(context.cacheDir, "koma-chapter/$chapterId")
-        val cached = dir.listFiles()?.filter { it.isFile && it.length() > 0 }?.sortedBy { it.name }.orEmpty()
-
-        val pages = if (cached.isNotEmpty()) {
-            cached.map { it.absolutePath }
-        } else {
-            val resolved = withIOContext { resolver.resolve(manga, chapter) }
-            val written = mutableListOf<String>()
-            try {
-                dir.mkdirs()
-                resolved.pages.sortedBy { it.pageIndex }.forEachIndexed { index, page ->
-                    val bitmap = runCatching { page.openBitmap() }.getOrNull() ?: return@forEachIndexed
-                    runCatching {
-                        val file = File(dir, "%04d.jpg".format(index))
-                        withContext(Dispatchers.IO) {
-                            file.outputStream().use { out ->
-                                bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
-                            }
-                        }
-                        written += file.absolutePath
-                    }
-                    if (!bitmap.isRecycled) bitmap.recycle()
-                }
-            } finally {
-                runCatching { resolved.close() }
+        val dir = KomaChapterCache.dir(context, id)
+        // ── Быстрый путь ─────────────────────────────────────────────────────
+        // Глава уже разложена на диск в прошлый раз: источник не трогаем вообще.
+        // Раньше здесь каждый раз заново создавались копии в cacheDir, поэтому
+        // ЛОКАЛЬНАЯ глава открывалась как сетевая.
+        val knownCount = runCatching { java.io.File(dir, ".count").readText().trim().toInt() }.getOrNull()
+        if (knownCount != null && knownCount > 0) {
+            val fastPaths = KomaChapterCache.paths(context, id, knownCount)
+            if (fastPaths.all { KomaChapterCache.ready(it) }) {
+                return buildBook(manga, chapter, id, fastPaths)
             }
-            written
         }
 
-        if (pages.isEmpty()) return null
+        val resolved = withIOContext { resolver.resolve(manga, chapter) }
+        val count = resolved.pages.size
+        if (count == 0) {
+            runCatching { resolved.close() }
+            return null
+        }
+        val paths = KomaChapterCache.paths(context, id, count)
+        val progress = KomaChapterProgress.load(context, id).coerceIn(0, count - 1)
+        // Копирование идёт в фоне: страница, которая нужна сейчас, — первой.
+        // Читалка открывается сразу, а страница, которую ещё копируют, ждёт
+        // своего файла (KomaOcrEngine → KomaChapterCache.awaitFile).
+        val job = KomaChapterCache.prefetch(
+            context = context,
+            bookId = id,
+            pages = resolved.pages,
+            paths = paths,
+            priority = listOf(progress, progress + 1, 0),
+        )
+        if (job == null) {
+            runCatching { resolved.close() }
+        } else {
+            // Архив/PDF-дескриптор закрываем только после последней страницы,
+            // иначе источник закроется под руками у фонового копирования.
+            job.invokeOnCompletion {
+                runCatching {
+                    if (paths.all { KomaChapterCache.ready(it) }) {
+                        java.io.File(dir, ".count").writeText(count.toString())
+                    }
+                }
+                runCatching { resolved.close() }
+            }
+        }
+        return buildBook(manga, chapter, id, paths, progress)
+    }
+
+    private fun buildBook(
+        manga: tachiyomi.domain.manga.model.Manga,
+        chapter: tachiyomi.domain.chapter.model.Chapter,
+        id: String,
+        paths: List<String>,
+        progress: Int = KomaChapterProgress.load(context, id).coerceIn(0, paths.lastIndex.coerceAtLeast(0)),
+    ): Book {
         val title = buildString {
             append(manga.title)
             chapter.name.takeIf { it.isNotBlank() }?.let { append(" · ").append(it) }
@@ -235,8 +260,8 @@ internal class KomaChapterLoader(private val context: Context) {
             title = title,
             author = manga.author.orEmpty(),
             category = if (manga.genre?.any { it.contains("манхва", ignoreCase = true) } == true) "Манхва" else "Манга",
-            pages = pages,
-            progress = KomaChapterProgress.load(context, id).coerceIn(0, pages.lastIndex),
+            pages = paths,
+            progress = progress,
             // Режим берём у самой книги: вебтун и «вертикально» читаются
             // лентой, RTL — справа налево, LTR — слева направо. Раньше здесь
             // жёстко стоял "rtl", и любая манхва открывалась страницами.
