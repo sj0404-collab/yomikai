@@ -109,10 +109,8 @@ object KomaCasting {
         kind = "slot${slot + 1}",
     )
 
-    companion object SlotDefaults {
-        /** Тембры по умолчанию: низкий, средний, высокий. */
-        val DEFAULT_PITCH = floatArrayOf(0.85f, 1.0f, 1.18f)
-    }
+    /** Тембры по умолчанию: низкий, средний, высокий. */
+    val DEFAULT_PITCH = floatArrayOf(0.85f, 1.0f, 1.18f)
 
     /** Сохранённый ручной тип для этой реплики (тем же текстом — тем же голосом). */
     fun savedKind(context: Context, bookId: String, text: String): Kind? =

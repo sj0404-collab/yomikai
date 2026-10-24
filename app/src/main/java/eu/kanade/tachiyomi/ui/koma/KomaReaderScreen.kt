@@ -168,6 +168,7 @@ fun KomaReaderScreen(
     var manualCasting by remember { mutableStateOf(repo.prefs.getBoolean("manualCasting",false)) }
     val ocrPrefs = remember { runCatching { Injekt.get<mihon.domain.ocr.service.OcrPreferences>() }.getOrNull() }
     // Пол, определённый по картинке (Gemini) — только если введён ключ.
+    val genderByText = remember { mutableStateMapOf<String,String>() }
     // ── Три голоса с ползунками тембра ───────────────────────────────────────
     // Пользователь: «сделай пресеты по моим голосам, три голоса просто с
     // ползунками от низкого до высокого тембра рядом возле посмотреть рамки, а
