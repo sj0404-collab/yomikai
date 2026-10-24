@@ -184,6 +184,18 @@ fun KomaReaderScreen(
             else -> null
         }
     }
+    // Перерисовка списка голосов после выбора персонажа (назначения лежат в
+    // prefs, сами по себе они не триггерят рекомпозицию).
+    var castingRev by remember { mutableIntStateOf(0) }
+    var pickLine by remember { mutableStateOf<KomaCasting.Request?>(null) }
+    var addCharacter by remember { mutableStateOf(false) }
+    var newName by remember { mutableStateOf("") }
+    // «Как читать диалоги?» — один вопрос при первом открытии книги. Раньше
+    // настройка голосов пряталась в шторке «Как читается», и найти её в читалке
+    // было невозможно (жалоба пользователя).
+    var askVoices by remember(book.id) {
+        mutableStateOf(!repo.prefs.getBoolean("voiceAsk_${book.id}", false))
+    }
     var result by remember { mutableStateOf<PageOcr?>(null) }
     var scanJob by remember { mutableStateOf<Job?>(null) }
     var scrollJob by remember { mutableStateOf<Job?>(null) }
@@ -494,6 +506,7 @@ fun KomaReaderScreen(
                         DropdownMenuItem(text={Text(if(book.favorite)"Убрать из избранного" else "В избранное")},onClick={save(book.copy(favorite=!book.favorite));overflow=false})
                         DropdownMenuItem(text={Text("Как читать эту историю")},onClick={sheet="settings";overflow=false})
                         DropdownMenuItem(text={Text("Как читается")},onClick={sheet="speech";overflow=false})
+                        DropdownMenuItem(text={Text("Голоса персонажей")},onClick={sheet="voices";overflow=false})
                         DropdownMenuItem(text={Text("Все страницы")},onClick={sheet="pages";overflow=false})
                         DropdownMenuItem(text={Text("Рамки текста")},onClick={showRegions=!showRegions;overflow=false})
                         DropdownMenuItem(text={Text(if(autoScroll)"Автопрокрутка: вкл" else "Автопрокрутка: выкл")},onClick={autoScroll=!autoScroll;repo.prefs.edit().putBoolean("autoScroll",autoScroll).apply();overflow=false})
@@ -518,6 +531,9 @@ fun KomaReaderScreen(
                     }
                     IconToggleButton(checked=autoScroll,onCheckedChange={autoScroll=it;repo.prefs.edit().putBoolean("autoScroll",it).apply()}){Icon(Icons.Outlined.SwapVert,"Автопрокрутка",tint=if(autoScroll)Orange else Color(0xFF9EAB9A))}
                     IconToggleButton(checked=showRegions,onCheckedChange={showRegions=it}){Icon(Icons.Outlined.CropFree,"Рамки текста",tint=if(showRegions)Orange else Color(0xFF9EAB9A))}
+                    // Голоса — всегда на виду: именно этого не хватало, выбор
+                    // персонажа был спрятан в меню «Как читается».
+                    IconButton(onClick={sheet="voices"}){Icon(Icons.Outlined.RecordVoiceOver,"Голоса",tint=if(multiVoice||manualCasting)Orange else Color(0xFF9EAB9A))}
                     IconButton(onClick={sheet="pages"}){Icon(Icons.Outlined.GridView,"Все страницы",tint=Color(0xFF9EAB9A))}
                 }
                 if(batchTotal>0){LinearProgressIndicator(progress={batchProgress.toFloat()/batchTotal},modifier=Modifier.fillMaxWidth(),color=Orange);Text("Страница $batchProgress из $batchTotal",fontSize=10.sp,color=Color.White)}
@@ -716,6 +732,73 @@ fun KomaReaderScreen(
                 }
                 TextButton(onClick={ KomaCasting.clearBook(context,book.id) }){Text("Сбросить назначения голосов",fontSize=11.sp)}
             }
+            "voices" -> Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal=22.dp).padding(bottom=26.dp)) {
+                Text("Голоса",fontSize=23.sp,fontWeight=FontWeight.Bold)
+                Text("Кто читает диалоги в этой книге",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=4.dp,bottom=12.dp))
+                // Голос движка — то, что звучит по умолчанию.
+                Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Голос озвучки",fontSize=12.sp,fontWeight=FontWeight.Bold)
+                        Text(selectedVoice ?: "системный по умолчанию",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis)
+                    }
+                    TextButton(onClick={voiceDialog=true}){Text("Сменить",fontSize=11.sp)}
+                }
+                Box(Modifier.fillMaxWidth().padding(vertical=8.dp).height(1.dp).background(Color(0xFF39412F)))
+                Row(Modifier.fillMaxWidth().padding(vertical=4.dp),verticalAlignment=Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Разные голоса",fontSize=13.sp)
+                        Text("Каждому персонажу — свой голос (пол и возраст через высоту и темп).",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(checked=multiVoice,onCheckedChange={multiVoice=it;repo.prefs.edit().putBoolean("multiVoice",it).apply()})
+                }
+                Row(Modifier.fillMaxWidth().padding(vertical=4.dp),verticalAlignment=Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Спрашивать, кто говорит",fontSize=13.sp)
+                        Text("Проход встаёт на реплике: «мужской» → парень, ребёнок, старик, взрослый.",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(checked=manualCasting,onCheckedChange={manualCasting=it;repo.prefs.edit().putBoolean("manualCasting",it).apply()})
+                }
+                Box(Modifier.fillMaxWidth().padding(vertical=10.dp).height(1.dp).background(Color(0xFF39412F)))
+                val rev=castingRev
+                val linesNow=bubbles.orEmpty()
+                Text("Реплики страницы ${page+1} (${linesNow.size})",fontSize=12.sp,fontWeight=FontWeight.Bold)
+                if(linesNow.isEmpty()) {
+                    Text("Реплик нет: страница ещё не распознана или на ней только рисунок.",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=8.dp))
+                    TextButton(onClick={sheet=null;if(result==null)scan()}){Text("Распознать страницу",fontSize=11.sp)}
+                }
+                linesNow.forEachIndexed { index,line ->
+                    val kind=runCatching { KomaCasting.savedKind(context,book.id,line.text) }.getOrNull()
+                    val byName=runCatching { KomaCasting.speakerName(line.text)?.let { n -> KomaCasting.savedName(context,book.id,n) } }.getOrNull()
+                    val auto=when(genderByText[KomaReadingOrder.key(line.text)]){"male"->"муж.";"female"->"жен.";else->null}
+                    Row(Modifier.fillMaxWidth().padding(vertical=3.dp),verticalAlignment=Alignment.CenterVertically) {
+                        Text("${index+1}.",fontSize=11.sp,color=Orange,modifier=Modifier.padding(end=6.dp))
+                        Text(line.text,fontSize=11.sp,modifier=Modifier.weight(1f),maxLines=2,overflow=TextOverflow.Ellipsis)
+                        OutlinedButton(onClick={
+                            pickLine=KomaCasting.Request(book.id,page,line.text,KomaCasting.speakerName(line.text))
+                        },contentPadding=PaddingValues(horizontal=8.dp,vertical=2.dp),modifier=Modifier.padding(start=6.dp)) {
+                            Text((kind?:byName)?.title ?: auto ?: "голос",fontSize=10.sp)
+                        }
+                        IconButton(onClick={
+                            val voice=(kind?:byName)?.let { KomaCasting.voice(it) }
+                            scope.launch { runCatching {
+                                tts.speakVoiced(
+                                    texts=listOf(KomaCasting.stripSpeaker(line.text)),
+                                    voiceFor={ voice ?: KomaVoice() },
+                                    onLineStart={},
+                                )
+                            } }
+                        },modifier=Modifier.size(30.dp)) { Icon(Icons.Outlined.VolumeUp,null,Modifier.size(15.dp),tint=Orange) }
+                    }
+                }
+                if(runCatching { ocrPrefs?.googleApiKey()?.get() }.getOrNull().isNullOrBlank()) {
+                    Text("Без ключа Google AI пол по картинке не определяется — работает ручной выбор и подписи «ИМЯ: …».",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=8.dp))
+                }
+                Row(Modifier.fillMaxWidth().padding(top=6.dp)) {
+                    TextButton(onClick={ newName="";addCharacter=true }){Text("Добавить персонажа",fontSize=11.sp)}
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick={ KomaCasting.clearBook(context,book.id);castingRev++ }){Text("Сбросить",fontSize=11.sp)}
+                }
+            }
             "pages" -> {
                 Text("Страницы",Modifier.padding(horizontal=24.dp),fontSize=24.sp,fontWeight=FontWeight.Bold)
                 LazyColumn(Modifier.fillMaxWidth().heightIn(max=540.dp).padding(horizontal=16.dp)) {
@@ -724,6 +807,52 @@ fun KomaReaderScreen(
             }
         }
     }
+    // Выбор персонажа для конкретной реплики из панели «Голоса».
+    pickLine?.let { request ->
+        CastingDialog(
+            request = request,
+            onPick = { kind ->
+                if(request.line.isNotBlank()) KomaCasting.saveKind(context,book.id,request.line,kind)
+                KomaCasting.speakerName(request.line)?.let { name -> KomaCasting.saveName(context,book.id,name,kind) }
+                castingRev++
+                pickLine=null
+            },
+            onDismiss = { pickLine=null },
+        )
+    }
+    // Новый персонаж по имени: дальше все его реплики («ИМЯ: …» и выбор в
+    // полуручном режиме) звучат этим голосом во всей книге.
+    if(addCharacter) AlertDialog(
+        onDismissRequest={addCharacter=false},
+        title={Text("Новый персонаж")},
+        text={ Column(Modifier.heightIn(max=420.dp).verticalScroll(rememberScrollState())) {
+            OutlinedTextField(value=newName,onValueChange={newName=it},singleLine=true,label={Text("Имя (как в реплике)")},modifier=Modifier.fillMaxWidth())
+            Spacer(Modifier.height(10.dp))
+            (KomaCasting.Kind.male+KomaCasting.Kind.female+KomaCasting.Kind.other).forEach { kind ->
+                TextButton(onClick={
+                    KomaCasting.saveName(context,book.id,newName,kind)
+                    castingRev++;addCharacter=false
+                },enabled=newName.trim().length>=2,modifier=Modifier.fillMaxWidth()){
+                    Text("${kind.title} · ${kind.age.title.lowercase()}",fontSize=13.sp)
+                }
+            }
+        } },
+        confirmButton={ TextButton(onClick={addCharacter=false}){Text("Отмена")} },
+    )
+    // Первое открытие книги: сразу спросить, как читать диалоги. Раньше эта
+    // настройка лежала в шторке «Как читается», и в читалке её не было видно.
+    if(askVoices) AlertDialog(
+        onDismissRequest={ askVoices=false;repo.prefs.edit().putBoolean("voiceAsk_${book.id}",true).apply() },
+        title={Text("Как читать диалоги?")},
+        text={ Column {
+            Text("Это можно поменять в любой момент — кнопка «Голоса» внизу читалки.",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(12.dp))
+            Button(onClick={ multiVoice=false;manualCasting=false;askVoices=false;repo.prefs.edit().putBoolean("multiVoice",false).putBoolean("manualCasting",false).putBoolean("voiceAsk_${book.id}",true).apply() },modifier=Modifier.fillMaxWidth().padding(bottom=6.dp)){Text("Одним голосом")}
+            Button(onClick={ multiVoice=true;manualCasting=false;askVoices=false;repo.prefs.edit().putBoolean("multiVoice",true).putBoolean("manualCasting",false).putBoolean("voiceAsk_${book.id}",true).apply() },modifier=Modifier.fillMaxWidth().padding(bottom=6.dp)){Text("Разные голоса по подписям")}
+            Button(onClick={ multiVoice=true;manualCasting=true;askVoices=false;repo.prefs.edit().putBoolean("multiVoice",true).putBoolean("manualCasting",true).putBoolean("voiceAsk_${book.id}",true).apply() },modifier=Modifier.fillMaxWidth()){Text("Спрашивать, кто говорит")}
+        } },
+        confirmButton={},
+    )
     // Полуручной режим: проход стоит на реплике, пока не выбран персонаж.
     autoState.awaiting?.let { request ->
         CastingDialog(
