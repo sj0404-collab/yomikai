@@ -106,6 +106,7 @@ internal fun buildSuspendStreamDecoderOcrInput(
                 }
             }
         },
+        openStream = { openStream() },
     )
 }
 

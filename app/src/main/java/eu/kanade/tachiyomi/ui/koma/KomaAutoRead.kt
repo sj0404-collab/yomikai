@@ -14,11 +14,13 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import eu.kanade.tachiyomi.data.tts.VoiceHelper
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
@@ -46,6 +48,12 @@ class KomaTts(private val context: Context) {
         private set
 
     private val waiting = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
+    /** Ожидание синтеза в файл (предсинтез реплик вперёд). */
+    private val synthWait = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
+    /** Синтез серийный: setPitch/setVoice глобальны для движка. */
+    private val synthLock = kotlinx.coroutines.sync.Mutex()
+    private val audioDir = java.io.File(context.cacheDir, "koma-tts").apply { mkdirs() }
+    private var media: android.media.MediaPlayer? = null
     private val localIndex = ConcurrentHashMap<String, Int>()
     /** Колбэк «реплика реально началась» — приходит из потока синтезатора. */
     @Volatile
@@ -92,16 +100,24 @@ class KomaTts(private val context: Context) {
                     lineStarted?.invoke(index)
                 }
                 override fun onDone(utteranceId: String?) {
-                    utteranceId?.let { waiting.remove(it)?.complete(Unit) }
+                    val id = utteranceId ?: return
+                    // Синтез в файл и живая речь ждут по разным картам: иначе
+                    // готовый файл «завершал» бы реплику, которая ещё звучит.
+                    synthWait.remove(id)?.complete(true)
+                    waiting.remove(id)?.complete(Unit)
                 }
 
                 @Deprecated("Deprecated in Java")
                 override fun onError(utteranceId: String?) {
-                    utteranceId?.let { waiting.remove(it)?.complete(Unit) }
+                    val id = utteranceId ?: return
+                    synthWait.remove(id)?.complete(false)
+                    waiting.remove(id)?.complete(Unit)
                 }
 
                 override fun onError(utteranceId: String?, errorCode: Int) {
-                    utteranceId?.let { waiting.remove(it)?.complete(Unit) }
+                    val id = utteranceId ?: return
+                    synthWait.remove(id)?.complete(false)
+                    waiting.remove(id)?.complete(Unit)
                 }
             },
         )
@@ -192,6 +208,162 @@ class KomaTts(private val context: Context) {
     }
 
 
+    /**
+     * Ставит голос и множители реплики. Питч/темп — единственный способ передать
+     * пол и возраст на движках без отдельных «мужских» голосов.
+     */
+    private fun applyVoice(voice: KomaVoice) {
+        runCatching { tts.setPitch(voice.pitch.coerceIn(0.5f, 2f)) }
+        runCatching { tts.setSpeechRate((rate() * voice.rate).coerceIn(0.4f, 2.5f)) }
+        val name = voice.voice
+        if (!name.isNullOrBlank()) {
+            runCatching { voices().firstOrNull { it.name == name }?.let { tts.voice = it } }
+        } else {
+            applySavedVoice()
+        }
+    }
+
+    /** Возвращает базовый голос пользователя после реплики другого персонажа. */
+    private fun restoreVoice() {
+        runCatching { tts.setPitch(1f) }
+        runCatching { tts.setSpeechRate(rate()) }
+        applySavedVoice()
+    }
+
+    /**
+     * Синтез реплики В ФАЙЛ с её собственным голосом.
+     *
+     * Это ключ к двум требованиям сразу: «движок уже наготове» (файл готов до
+     * того, как дошли до реплики) и «разные голоса персонажей» (в одной очереди
+     * TTS голос поменять нельзя — он применяется в момент синтеза).
+     */
+    private suspend fun synthesize(text: String, voice: KomaVoice, file: java.io.File): Boolean =
+        synthLock.withLock {
+            if (!available) {
+                false
+            } else {
+                val id = "synth-" + UUID.randomUUID()
+                val done = CompletableDeferred<Boolean>()
+                synthWait[id] = done
+                try {
+                    applyVoice(voice)
+                    val params = android.os.Bundle().apply {
+                        putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, id)
+                    }
+                    val queued = runCatching { tts.synthesizeToFile(text, params, file, id) }
+                        .getOrDefault(TextToSpeech.ERROR)
+                    if (queued != TextToSpeech.SUCCESS) {
+                        false
+                    } else {
+                        withTimeoutOrNull(max(15_000, text.length * 300L)) { done.await() } ?: false
+                    }
+                } finally {
+                    synthWait.remove(id)
+                    restoreVoice()
+                }
+            }
+        }
+
+    /** Проигрывает готовый файл и ждёт окончания звука. */
+    private suspend fun playFile(file: java.io.File): Boolean = withContext(Dispatchers.IO) {
+        val player = android.media.MediaPlayer()
+        media = player
+        try {
+            player.setAudioAttributes(
+                android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build(),
+            )
+            player.setDataSource(file.absolutePath)
+            player.prepare()
+            val done = CompletableDeferred<Unit>()
+            player.setOnCompletionListener { done.complete(Unit) }
+            player.setOnErrorListener { _, _, _ -> done.complete(Unit); true }
+            player.start()
+            withTimeoutOrNull(180_000) { done.await() }
+            !file.delete()
+            true
+        } catch (t: Throwable) {
+            false
+        } finally {
+            runCatching { player.release() }
+            if (media === player) media = null
+        }
+    }
+
+    /**
+     * Озвучка реплик с разными голосами и предсинтезом вперёд.
+     *
+     * @param voiceFor голос реплики, известный заранее (обычный режим).
+     * @param resolve   голос, который решается ПЕРЕД репликой: полуручной режим
+     *   ждёт здесь выбора пользователя, поэтому предсинтез для таких реплик
+     *   не делается — иначе озвучился бы старый голос.
+     * @param prefetchable можно ли синтезировать реплику заранее.
+     */
+    suspend fun speakVoiced(
+        texts: List<String>,
+        voiceFor: (Int) -> KomaVoice,
+        resolve: suspend (Int) -> KomaVoice? = { null },
+        prefetchable: (Int) -> Boolean = { true },
+        onLineStart: (Int) -> Unit,
+    ): Unit = withContext(Dispatchers.IO) {
+        val lines = texts.map { it.trim() }
+        if (lines.isEmpty() || !available) return@withContext
+        val files = arrayOfNulls<java.io.File>(lines.size)
+        val jobs = arrayOfNulls<kotlinx.coroutines.Deferred<Boolean>?>(lines.size)
+
+        fun ensureSynth(index: Int) {
+            if (index !in lines.indices || jobs[index] != null) return
+            if (lines[index].isEmpty()) return
+            val file = java.io.File(audioDir, "line-${UUID.randomUUID()}.wav")
+            files[index] = file
+            jobs[index] = kotlinx.coroutines.CoroutineScope(Dispatchers.IO).async {
+                runCatching { synthesize(lines[index], voiceFor(index), file) }.getOrDefault(false)
+            }
+        }
+
+        // Две реплики вперёд: пока звучит текущая, следующая уже синтезируется.
+        lines.indices.filter { prefetchable(it) }.take(2).forEach { ensureSynth(it) }
+
+        for (index in lines.indices) {
+            if (lines[index].isEmpty()) continue
+            // Полуручной режим: голос может быть выбран прямо сейчас.
+            val chosen = resolve(index)
+            val file = files[index]
+            val ready = jobs[index]?.await() == true
+            if (ready && file != null && playFile(file)) {
+                onLineStart(index)
+                if (index + 1 < lines.size && prefetchable(index + 1)) ensureSynth(index + 1)
+                if (index + 2 < lines.size && prefetchable(index + 2)) ensureSynth(index + 2)
+                continue
+            }
+            // Движок не умеет синтез в файл (или файл не сыграл) — читаем
+            // напрямую, но всё равно своим голосом для этой реплики.
+            if (file != null) runCatching { file.delete() }
+            files[index] = null
+            jobs[index] = null
+            localIndex.clear()
+            lineStarted = { offset -> if (offset == 0) onLineStart(index) }
+            val id = UUID.randomUUID().toString()
+            localIndex[id] = 0
+            applyVoice(chosen ?: voiceFor(index))
+            val done = CompletableDeferred<Unit>()
+            waiting[id] = done
+            val queued = runCatching { tts.speak(lines[index], TextToSpeech.QUEUE_FLUSH, null, id) }
+                .getOrDefault(TextToSpeech.ERROR)
+            if (queued == TextToSpeech.SUCCESS) {
+                withTimeoutOrNull(max(15_000, lines[index].length * 300L)) { done.await() }
+            }
+            waiting.remove(id)
+            localIndex.clear()
+            lineStarted = null
+            restoreVoice()
+            if (index + 1 < lines.size && prefetchable(index + 1)) ensureSynth(index + 1)
+        }
+        lines.indices.forEach { files[it]?.let { f -> runCatching { f.delete() } } }
+    }
+
     /** Произносит строку и ждёт окончания. */
     suspend fun speak(text: String, timeoutMs: Long = 30_000): Unit = withContext(Dispatchers.IO) {
         val line = text.trim()
@@ -214,8 +386,11 @@ class KomaTts(private val context: Context) {
 
     fun stop() {
         runCatching { tts.stop() }
+        runCatching { media?.stop() }
         waiting.values.forEach { it.complete(Unit) }
         waiting.clear()
+        synthWait.values.forEach { it.complete(false) }
+        synthWait.clear()
     }
 
     fun shutdown() {
@@ -723,6 +898,10 @@ object KomaAutoRead {
         val currentLine: String = "",
         val spoken: List<String> = emptyList(),
         val status: String = "",
+        /** Полуручной режим: ждём выбора «кто говорит» для этой реплики. */
+        val awaiting: KomaCasting.Request? = null,
+        /** Голос текущей реплики — для подписи в оверлее. */
+        val currentVoice: String = "",
     )
 
     private val _state = MutableStateFlow(State())
@@ -765,6 +944,31 @@ object KomaAutoRead {
         runCatching { activeTts?.stop() }
     }
 
+    /** Ожидание выбора персонажа в полуручном режиме. */
+    private var roleWaiter: CompletableDeferred<KomaCasting.Kind?>? = null
+
+    /**
+     * Останавливает проход на реплике и ждёт, пока пользователь выберет тип
+     * («мужской» → парень/ребёнок/старик/взрослый и т.д.).
+     */
+    private suspend fun awaitRole(request: KomaCasting.Request): KomaCasting.Kind? {
+        val waiter = CompletableDeferred<KomaCasting.Kind?>()
+        roleWaiter = waiter
+        _state.value = _state.value.copy(awaiting = request, status = "Кто говорит?")
+        KomaAutoReadNotifier.update(_state.value)
+        return try {
+            withTimeoutOrNull(120_000) { waiter.await() }
+        } finally {
+            roleWaiter = null
+            _state.value = _state.value.copy(awaiting = null)
+        }
+    }
+
+    /** Выбор пользователя в полуручном режиме. null — «просто читать». */
+    fun assignRole(kind: KomaCasting.Kind?) {
+        roleWaiter?.complete(kind)
+    }
+
     /** Идёт ли реальное чтение прямо сейчас (есть живой синтезатор). */
     fun isActive(): Boolean = activeTts != null
 
@@ -790,12 +994,30 @@ object KomaAutoRead {
         language: String,
         from: Int,
         tts: KomaTts,
-        recognize: suspend (index: Int) -> PageOcr?,
+        recognize: suspend (index: Int, band: KomaBand) -> PageOcr?,
         onPage: suspend (index: Int) -> Unit,
+        /**
+         * Полосы страницы: у манхвы кадр выше экрана в несколько раз, и читать
+         * его целиком нельзя — голос уходил в текст, которого не видно.
+         */
+        bandsOf: (index: Int) -> List<KomaBand> = { KomaBands.whole },
+        /** Экран прокручивает ленту к читаемой полосе. */
+        onBand: suspend (index: Int, band: KomaBand) -> Unit = { _, _ -> },
         onResult: (PageOcr?) -> Unit,
         onLine: (KomaReadingOrder.Line) -> Unit = {},
         /** Страница без реплик (арт, звуковые эффекты): не «перескочить», а проехать. */
         onSilentPage: suspend (index: Int) -> Unit = {},
+        /**
+         * Полуручной режим: остановиться на реплике без назначенного персонажа и
+         * дождаться выбора пользователя.
+         */
+        manualCasting: Boolean = false,
+        /** Кто говорит по правилам (сохранённый выбор, подпись, автоопределение). */
+        kindOf: suspend (index: Int, line: KomaReadingOrder.Line) -> KomaCasting.Kind? = { _, _ -> null },
+        /** Голос для типа персонажа. */
+        voiceOfKind: (KomaCasting.Kind) -> KomaVoice = { KomaCasting.voice(it) },
+        /** Экран запоминает выбор, чтобы та же реплика/имя звучали так же. */
+        rememberKind: (KomaReadingOrder.Line, KomaCasting.Kind) -> Unit = { _, _ -> },
     ) {
         stopped = false
         paused = false
@@ -810,73 +1032,121 @@ object KomaAutoRead {
         _state.value = State(running = true, page = from, pageCount = pages.size)
 
         var index = from.coerceIn(0, pages.lastIndex)
-        while (!stopped && index <= pages.lastIndex) {
+        readLoop@ while (!stopped && index <= pages.lastIndex) {
             onPage(index)
-            val result = recognize(index)
-            onResult(result)
-            val lines = KomaReadingOrder.order(
-                regions = result?.regions.orEmpty(),
-                // Направление внутри строки — из режима чтения, а не из языка:
-                // русская манга читается справа налево так же, как японская.
-                // Раньше условие требовало «Японский», и в переводной манге
-                // реплики одного ряда читались слева направо — «вразброс».
-                rtl = book.mode == "rtl",
-                onlyCyrillic = language == "Кириллица" || language == "Авто",
-                panels = result?.panels.orEmpty(),
-            ).filter { spokenKeys.add(KomaReadingOrder.key(it.text) + "@" + index) }
+            val bands = bandsOf(index).ifEmpty { KomaBands.whole }
+            var spokeOnPage = false
+            for (band in bands) {
+                if (stopped) break
+                onBand(index, band)
+                val result = recognize(index, band)
+                onResult(result)
+                val lines = KomaReadingOrder.order(
+                    regions = result?.regions.orEmpty(),
+                    // Направление внутри строки — из режима чтения, а не из языка:
+                    // русская манга читается справа налево так же, как японская.
+                    // Раньше условие требовало «Японский», и в переводной манге
+                    // реплики одного ряда читались слева направо — «вразброс».
+                    rtl = book.mode == "rtl",
+                    onlyCyrillic = language == "Кириллица" || language == "Авто",
+                    panels = result?.panels.orEmpty(),
+                ).filter { spokenKeys.add(KomaReadingOrder.key(it.text) + "@" + index + "b" + band.index) }
 
-            // Страница без реплик: это не «пусто», а кадр с рисунком или
-            // звуковым эффектом («ЦАП!», «ПРРР»). Раньше такая страница просто
-            // пропускалась рывком — читатель терял место в главе. Теперь
-            // проезжаем её плавно, как обычный кадр без озвучки.
-            if (lines.isEmpty()) {
+                // Кадр без реплик: это не «пусто», а рисунок или звуковой эффект
+                // («ЦАП!», «ПРРР»). Полоса проезжается плавно, место в главе не
+                // теряется.
+                if (lines.isEmpty()) {
+                    _state.value = _state.value.copy(
+                        running = true,
+                        page = index,
+                        pageCount = pages.size,
+                        status = if (bands.size > 1 && !band.whole) "" else "Страница ${index + 1}: без реплик",
+                        currentLine = "",
+                    )
+                    continue
+                }
+                spokeOnPage = true
+
                 _state.value = _state.value.copy(
                     running = true,
                     page = index,
                     pageCount = pages.size,
-                    status = "Страница ${index + 1}: без реплик",
+                    status = "",
+                    spoken = emptyList(),
                     currentLine = "",
                 )
-                onSilentPage(index)
-                if (stopped) break
-                index++
-                if (index <= pages.lastIndex) delay(120)
-                continue
-            }
 
-            _state.value = _state.value.copy(
-                running = true,
-                page = index,
-                pageCount = pages.size,
-                status = "",
-                spoken = emptyList(),
-                currentLine = "",
-            )
+                _state.value = _state.value.copy(spoken = lines.map { it.text }.takeLast(24))
 
-            _state.value = _state.value.copy(spoken = lines.map { it.text }.takeLast(24))
-
-            // Озвучиваем страницу очередью, но с возможностью паузы и пропуска:
-            // очередь прерывается, а после «продолжить» начинаем с реплики,
-            // перед которой остановились.
-            var startAt = 0
-            while (startAt < lines.size && !stopped) {
-                while (paused && !stopped) delay(120)
-                if (stopped) break
-                skipRequested = false
-                var reached = startAt
-                tts.speakAll(lines.drop(startAt).map { it.text }) { offset ->
-                    val line = lines.getOrNull(startAt + offset) ?: return@speakAll
-                    reached = startAt + offset
-                    _state.value = _state.value.copy(currentLine = line.text)
-                    onLine(line)
+                // Озвучиваем полосу очередью, но с возможностью паузы и пропуска:
+                // очередь прерывается, а после «продолжить» начинаем с реплики,
+                // перед которой остановились.
+                var startAt = 0
+                // Голоса реплик этой полосы: решаются один раз, чтобы предсинтез
+                // вперёд знал, каким голосом синтезировать следующую реплику.
+                val voices = arrayOfNulls<KomaVoice>(lines.size)
+                // В обычном (не полуручном) режиме «кто говорит» известно заранее
+                // по правилам — тогда голоса назначаются сразу, и предсинтез
+                // реплик вперёд успевает подготовить звук до показа строки.
+                if (!manualCasting) {
+                    lines.forEachIndexed { i, line ->
+                        kindOf(index, line)?.let { kind -> voices[i] = voiceOfKind(kind) }
+                    }
                 }
-                if (paused || skipRequested) {
-                    startAt = (reached + 1).coerceAtMost(lines.size)
-                    continue
+                while (startAt < lines.size && !stopped) {
+                    while (paused && !stopped) delay(120)
+                    if (stopped) break
+                    skipRequested = false
+                    var reached = startAt
+                    tts.speakVoiced(
+                        texts = lines.drop(startAt).map { KomaCasting.stripSpeaker(it.text) },
+                        voiceFor = { offset -> voices.getOrNull(startAt + offset) ?: KomaVoice() },
+                        resolve = role@{ offset ->
+                            val lineIndex = startAt + offset
+                            val line = lines.getOrNull(lineIndex) ?: return@role null
+                            if (voices[lineIndex] != null) return@role voices[lineIndex]
+                            var kind = kindOf(index, line)
+                            if (kind == null && manualCasting && !stopped && !paused) {
+                                // Полуручной режим: проход встаёт на реплике, пока
+                                // человек не скажет, кто это говорит.
+                                val request = KomaCasting.Request(
+                                    bookId = book.id,
+                                    page = index,
+                                    line = line.text,
+                                    speaker = KomaCasting.speakerName(line.text),
+                                )
+                                kind = awaitRole(request)
+                            }
+                            if (kind != null) {
+                                rememberKind(line, kind)
+                                val voice = voiceOfKind(kind)
+                                voices[lineIndex] = voice
+                                _state.value = _state.value.copy(currentVoice = voice.title)
+                                return@role voice
+                            }
+                            null
+                        },
+                        prefetchable = { offset -> voices.getOrNull(startAt + offset) != null },
+                        onLineStart = start@{ offset ->
+                            val line = lines.getOrNull(startAt + offset) ?: return@start
+                            reached = startAt + offset
+                            _state.value = _state.value.copy(currentLine = line.text)
+                            onLine(line)
+                        },
+                    )
+                    if (paused || skipRequested) {
+                        startAt = (reached + 1).coerceAtMost(lines.size)
+                        continue
+                    }
+                    break
                 }
-                break
+                tts.stop()
+                if (stopped) break
             }
-            tts.stop()
+            if (stopped) break@readLoop
+            // Полоса без реплик на длинной странице — не повод останавливать
+            // прокрутку: экран просто едет дальше по ленте.
+            if (!spokeOnPage) onSilentPage(index)
             if (stopped) break
             index++
             if (index <= pages.lastIndex) delay(150)

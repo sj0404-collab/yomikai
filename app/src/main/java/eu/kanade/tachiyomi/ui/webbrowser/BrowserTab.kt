@@ -231,8 +231,23 @@ data object BrowserTab : Tab {
         val wv = sharedWebView ?: return null
         val js = """
             (function() {
-                var vh = window.innerHeight, vw = window.innerWidth;
-                var minArea = vw * vh * 0.08; // картинка >=8% экрана
+                // РЕАЛЬНО видимая область, а не layout-вьюпорт.
+                // При useWideViewPort+overviewMode браузер верстает страницу под
+                // ~980 CSS-px («как планшет»), и window.innerWidth/innerHeight
+                // описывают вьюпорт вёрстки, а не экран телефона. Плюс к этому
+                // пользовательский щипок сдвигает visualViewport. Из-за этого
+                // зона книги считалась по «планшетному» экрану и захватывала
+                // кусок страницы ЗА пределами видимой области — жалоба «читает
+                // текст за пределами экрана».
+                var vv = window.visualViewport;
+                var vx = vv ? vv.offsetLeft : 0, vy = vv ? vv.offsetTop : 0;
+                var vw = Math.max(1, vv ? vv.width : window.innerWidth);
+                var vh = Math.max(1, vv ? vv.height : window.innerHeight);
+                function visLeft(r){ return Math.min(r.right, vx + vw) - Math.max(r.left, vx); }
+                function visTop(r){ return Math.min(r.bottom, vy + vh) - Math.max(r.top, vy); }
+                function relX(x){ return (x - vx) / vw; }
+                function relY(y){ return (y - vy) / vh; }
+                var minArea = vw * vh * 0.08; // картинка >=8% видимой области
                 var top = vh, bottom = 0, left = vw, right = 0, found = false;
                 // Старница манги часто рисуется не только <img>/<canvas>, но и
                 // <div> с background-image (полноэкранные/вебтун-ридеры). Ловим
@@ -243,15 +258,14 @@ data object BrowserTab : Tab {
                     var el = nodes[i];
                     var r = el.getBoundingClientRect();
                     if (r.width < 1 || r.height < 1) continue;
-                    var visW = Math.min(r.right, vw) - Math.max(r.left, 0);
-                    var visH = Math.min(r.bottom, vh) - Math.max(r.top, 0);
+                    var visW = visLeft(r), visH = visTop(r);
                     if (visW <= 0 || visH <= 0) continue;
                     if (visW * visH < minArea) continue;
                     found = true;
-                    top = Math.min(top, Math.max(r.top, 0));
-                    bottom = Math.max(bottom, Math.min(r.bottom, vh));
-                    left = Math.min(left, Math.max(r.left, 0));
-                    right = Math.max(right, Math.min(r.right, vw));
+                    top = Math.min(top, Math.max(r.top, vy));
+                    bottom = Math.max(bottom, Math.min(r.bottom, vy + vh));
+                    left = Math.min(left, Math.max(r.left, vx));
+                    right = Math.max(right, Math.min(r.right, vx + vw));
                 }
                 // Вычесть фиксированные шапку/подвал ридера (навигация «— том N
                 // глава M →», счётчик «N/M»): они обычно position:fixed/sticky.
@@ -266,22 +280,25 @@ data object BrowserTab : Tab {
                         if (cs.position !== 'fixed' && cs.position !== 'sticky' && cs.position !== 'absolute') continue;
                         var cr = c.getBoundingClientRect();
                         if (cr.height < 10 || cr.height > vh * 0.35) continue;
-                        if (cr.top >= 0 && cr.top < vh * 0.5) head = Math.max(head, Math.min(cr.bottom, vh));
-                        if (cr.bottom <= vh && cr.bottom > vh * 0.5) foot = Math.min(foot, Math.max(cr.top, 0));
+                        if (cr.top >= vy && cr.top < vy + vh * 0.5) head = Math.max(head, Math.min(cr.bottom, vy + vh));
+                        if (cr.bottom <= vy + vh && cr.bottom > vy + vh * 0.5) foot = Math.min(foot, Math.max(cr.top, vy));
                     }
                     return [head, foot];
                 }
+                // Шапка/подвал ищутся в координатах вьюпорта вёрстки: переводим
+                // их в видимую область, иначе зона начиналась бы выше экрана.
                 var hf = shrinkToContent();
+                hf = [Math.max(hf[0], vy), Math.min(hf[1], vy + vh)];
                 if (found) {
                     top = Math.max(top, hf[0]);
                     bottom = Math.min(bottom, hf[1]);
                     if (bottom - top > vh * 0.10) {
-                        return (left / vw) + "," + (top / vh) + "," + (right / vw) + "," + (bottom / vh);
+                        return relX(left) + "," + relY(top) + "," + relX(right) + "," + relY(bottom);
                     }
                 } else if (hf[1] - hf[0] > vh * 0.30) {
                     // Зона не нашлась, но есть фиксированная шапка/подвал ридера —
                     // отдаём полосу контента между ними, а не весь экран.
-                    return "0," + (hf[0] / vh) + ",1," + (hf[1] / vh);
+                    return "0," + relY(Math.max(hf[0], vy)) + ",1," + relY(Math.min(hf[1], vy + vh));
                 }
                 return "";
             })()
@@ -316,11 +333,16 @@ data object BrowserTab : Tab {
         val wv = sharedWebView ?: return emptyList()
         val js = """
             (function() {
-                var vh = window.innerHeight, vw = window.innerWidth;
+                var vv = window.visualViewport;
+                var vx = vv ? vv.offsetLeft : 0, vy = vv ? vv.offsetTop : 0;
+                var vw = Math.max(1, vv ? vv.width : window.innerWidth);
+                var vh = Math.max(1, vv ? vv.height : window.innerHeight);
                 var out = [];
                 function push(r) {
-                    var l = Math.max(0, r.left) / vw, t = Math.max(0, r.top) / vh;
-                    var rr = Math.min(vw, r.right) / vw, bb = Math.min(vh, r.bottom) / vh;
+                    // Доли считаются от видимой области: реклама и шапки за
+                    // краем экрана не должны «вычитаться» из кадра книги.
+                    var l = (Math.max(r.left, vx) - vx) / vw, t = (Math.max(r.top, vy) - vy) / vh;
+                    var rr = (Math.min(r.right, vx + vw) - vx) / vw, bb = (Math.min(r.bottom, vy + vh) - vy) / vh;
                     if (rr - l < 0.02 || bb - t < 0.015) return;
                     out.push(l.toFixed(4) + "," + t.toFixed(4) + "," + rr.toFixed(4) + "," + bb.toFixed(4));
                 }
@@ -334,7 +356,7 @@ data object BrowserTab : Tab {
                 for (var i = 0; i < junk.length; i++) {
                     var r = junk[i].getBoundingClientRect();
                     if (r.width < 24 || r.height < 16) continue;
-                    if (r.bottom < 0 || r.top > vh) continue;
+                    if (r.bottom < vy || r.top > vy + vh) continue;
                     if (r.width * r.height > vw * vh * 0.5) continue;
                     push(r);
                 }
@@ -348,7 +370,7 @@ data object BrowserTab : Tab {
                     if (csm.display === 'none' || csm.visibility === 'hidden' || parseFloat(csm.opacity || '1') < 0.05) continue;
                     var rm = mo.getBoundingClientRect();
                     if (rm.width < 24 || rm.height < 12) continue;
-                    if (rm.bottom < 0 || rm.top > vh) continue;
+                    if (rm.bottom < vy || rm.top > vy + vh) continue;
                     var am = rm.width * rm.height;
                     if (am < vw * vh * 0.01) continue;
                     if (am > vw * vh * 0.60) continue;
