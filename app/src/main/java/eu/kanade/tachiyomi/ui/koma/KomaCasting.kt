@@ -75,6 +75,45 @@ object KomaCasting {
     private fun keyOf(bookId: String, text: String): String =
         "role:$bookId:" + KomaReadingOrder.key(text).take(120)
 
+    // ── Пресеты голоса (три ползунка тембра) ────────────────────────────────
+    // Пользователь: «сделай пресеты по моим голосам, три голоса просто с
+    // ползунками от низкого до высокого тембра». Слот 0..2 — это не персонаж, а
+    // просто три настраиваемых голоса: их выбирают кнопками 1/2/3 в читалке.
+    private fun slotKey(bookId: String, text: String) =
+        "slot:$bookId:" + KomaReadingOrder.key(text).take(120)
+
+    /** Какой слот (1..3 → 0..2) назначен реплике, null — голос по умолчанию. */
+    fun savedSlot(context: Context, bookId: String, text: String): Int? =
+        prefs(context).getInt(slotKey(bookId, text), -1).takeIf { it in 0..2 }
+
+    fun saveSlot(context: Context, bookId: String, text: String, slot: Int?) {
+        val edit = prefs(context).edit()
+        if (slot == null) edit.remove(slotKey(bookId, text)) else edit.putInt(slotKey(bookId, text), slot)
+        edit.apply()
+    }
+
+    /** Тембр слота (множитель питча): 0.7 — низкий, 1.0 — обычный, 1.4 — высокий. */
+    fun savedPitch(context: Context, slot: Int): Float =
+        prefs(context).getFloat("pitch:$slot", DEFAULT_PITCH[slot.coerceIn(0, 2)])
+
+    fun savePitch(context: Context, slot: Int, pitch: Float) {
+        prefs(context).edit().putFloat("pitch:$slot", pitch.coerceIn(0.6f, 1.6f)).apply()
+    }
+
+    /** Голос слота: тот же системный голос, меняется только тембр. */
+    fun slotVoice(slot: Int, pitch: Float): KomaVoice = KomaVoice(
+        voice = null,
+        pitch = pitch.coerceIn(0.6f, 1.6f),
+        rate = 1f,
+        title = "Голос ${slot + 1}",
+        kind = "slot${slot + 1}",
+    )
+
+    companion object SlotDefaults {
+        /** Тембры по умолчанию: низкий, средний, высокий. */
+        val DEFAULT_PITCH = floatArrayOf(0.85f, 1.0f, 1.18f)
+    }
+
     /** Сохранённый ручной тип для этой реплики (тем же текстом — тем же голосом). */
     fun savedKind(context: Context, bookId: String, text: String): Kind? =
         Kind.fromId(prefs(context).getString(keyOf(bookId, text), null))
