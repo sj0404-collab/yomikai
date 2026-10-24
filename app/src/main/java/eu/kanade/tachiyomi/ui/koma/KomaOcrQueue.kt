@@ -53,7 +53,7 @@ class KomaOcrQueue(
     /** Ставит задачу: [urgent] — на экране, иначе в очередь «наперёд». */
     fun enqueue(page: Int, band: KomaBand, urgent: Boolean = false) {
         if (queued.add(id(page, band))) {
-            val channel = if (urgent) urgent else ahead
+            val channel: Channel<Key> = if (urgent) this.urgent else ahead
             if (channel.trySend(Key(page, band)).isFailure) queued.remove(id(page, band))
         }
     }

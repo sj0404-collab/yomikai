@@ -82,6 +82,16 @@ fun KomaReaderScreen(
     val scroll=rememberLazyListState(initialFirstVisibleItemIndex=book.progress.coerceIn(0,book.pages.lastIndex.coerceAtLeast(0)))
     val page=if(mode=="vertical")scroll.firstVisibleItemIndex else pager.currentPage
     val currentPage by rememberUpdatedState(page)
+    // Высота каждой страницы в пикселях при вписывании по ширине (для
+    // автопрокрутки и для нарезки на полосы внутри длинной страницы-вебтуна).
+    val pageHeights = remember { mutableStateMapOf<String,Int>() }
+    // Реальная видимая высота ленты (px). Именно она — «экран» для детектора:
+    // раньше размером экрана считалась целая страница, и KOMA читала текст
+    // ниже видимой области.
+    var viewportPx by remember { mutableIntStateOf(0) }
+    LaunchedEffect(scroll) {
+        snapshotFlow { scroll.layoutInfo.viewportSize.height }.collect { if(it>0) viewportPx=it }
+    }
     // ── Полосы страницы ──────────────────────────────────────────────────────
     // Страница выше экрана в несколько раз (вебтун) читается полосами: видимая
     // часть плюс перекрытие. Обычная страница — одна полоса [0..1], и всё
@@ -134,16 +144,7 @@ fun KomaReaderScreen(
     LaunchedEffect(autoReading) { if(autoReading) barsVisible=false }
     var overflow by remember { mutableStateOf(false) }
     var autoScroll by remember { mutableStateOf(repo.prefs.getBoolean("autoScroll",true)) }
-    // Высота каждой страницы в пикселях при вписывании по ширине (для
-    // автопрокрутки к текущей реплике внутри длинной страницы-вебтуна).
-    val pageHeights = remember { mutableStateMapOf<String,Int>() }
-    // Реальная видимая высота ленты (px). Именно она — «экран» для детектора:
-    // раньше размером экрана считалась целая страница, и KOMA читала текст
-    // ниже видимой области.
-    var viewportPx by remember { mutableIntStateOf(0) }
-    LaunchedEffect(scroll) {
-        snapshotFlow { scroll.layoutInfo.viewportSize.height }.collect { if(it>0) viewportPx=it }
-    }
+
     var voices by remember { mutableStateOf<List<android.speech.tts.Voice>>(emptyList()) }
     var selectedVoice by remember { mutableStateOf(tts.selectedVoiceName()) }
     // Контекст приложения нужен уведомлению, которое рисует контроллер.
