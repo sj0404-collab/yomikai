@@ -1065,7 +1065,15 @@ class AutoReadEngine(
                 var lines: List<Line> = result.regions.map {
                     // v1.9.44: OCR-путаница латиницы/кириллицы (M E Ч, А Т М) и
                     // цифр (5→Б) лечится фиксером похожих символов.
-                    Line(normalizeOcrTextForDisplay(CyrillicTranslitFixer.autoFixCyrillic(it.text)).trim(), it.boundingBox)
+                    // Номер панели переносится: готовый разбор (снимок страницы,
+                    // кадр браузера) уже пришёл разложенным по панелям, и терять
+                    // этот номер значит заново сортировать реплики геометрией —
+                    // ровно то, из-за чего они шли вперемешку.
+                    Line(
+                        normalizeOcrTextForDisplay(CyrillicTranslitFixer.autoFixCyrillic(it.text)).trim(),
+                        it.boundingBox,
+                        it.panelIndex,
+                    )
                 }
                 val wholePage = result.regions.size == 1 && result.regions.first().isWholePage
                 // v1.9.91: полностраничные (AI) движки распознают ВСЮ видимую
