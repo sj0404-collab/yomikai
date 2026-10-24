@@ -394,7 +394,7 @@ class KomaOcrEngine(private val context: Context) {
                     if(!crop.isRecycled)crop.recycle()
                     crop=rotated
                 }
-                val recognition=decode(crop)
+                val recognition=decodeBetter(crop)
                 if(!crop.isRecycled)crop.recycle()
                 if(recognition.first.isNotBlank() && recognition.second>.25f) {
                     out.add(OcrRegion(
@@ -610,6 +610,58 @@ class KomaOcrEngine(private val context: Context) {
         return boxes.sortedBy { it.top }
     }
     @Suppress("UNCHECKED_CAST")
+    /**
+     * Распознавание кропа с повтором по бинаризованному изображению.
+     *
+     * Модель обучена на книжном тексте: чёрные буквы на светлом фоне она читает
+     * хорошо, а светлые буквы на тёмном скринтоне — нет. На стр. 16 так терялось
+     * слово «ТРИ» в облачке «ТРИ РАЗА»: с исходного кропа модель отдавала одну
+     * букву «И» (0.31), и строка уходила в фильтр языка.
+     *
+     * Проверено перебором на этом облачке: с бинаризацией (оба направления)
+     * «ТРИ» читается уверенно — 0.73–0.81 против 0.31, «РАЗА» — 0.79.
+     * Поэтому: если с первого раза получилось мало букв или низкая уверенность,
+     * пробуем два бинарных варианта и берём лучший по числу букв.
+     */
+    private fun decodeBetter(crop:Bitmap):Pair<String,Float> {
+        val first=decode(crop)
+        val letters=first.first.count { it.isLetterOrDigit() }
+        if(letters>=3 && first.second>=0.55f) return first
+        var best=first
+        for(polarity in 0..1) {
+            val binar=binarize(crop,polarity)
+            val attempt=decode(binar)
+            if(binar!==crop && !binar.isRecycled) binar.recycle()
+            val gain=attempt.first.count { it.isLetterOrDigit() }
+            if(gain>best.first.count { it.isLetterOrDigit() } ||
+                (gain==best.first.count { it.isLetterOrDigit() } && attempt.second>best.second)) {
+                best=attempt
+            }
+        }
+        return best
+    }
+
+    /** Чёрно-белая копия кропа: 0 — тёмное на белом, 1 — светлое на чёрном. */
+    private fun binarize(src:Bitmap,polarity:Int):Bitmap {
+        val w=src.width
+        val h=src.height
+        if(w<2 || h<2) return src
+        return try {
+            val pixels=IntArray(w*h)
+            src.getPixels(pixels,0,w,0,0,w,h)
+            for(i in pixels.indices) {
+                val pixel=pixels[i]
+                val luma=(((pixel shr 16) and 0xFF)*77+((pixel shr 8) and 0xFF)*151+(pixel and 0xFF)*28) shr 8
+                val dark=luma<110
+                val value=if(polarity==0) { if(dark) 0 else 255 } else { if(dark) 255 else 0 }
+                pixels[i]=(0xFF shl 24) or (value shl 16) or (value shl 8) or value
+            }
+            Bitmap.createBitmap(pixels,w,h,Bitmap.Config.ARGB_8888)
+        } catch(t:Throwable) {
+            src
+        }
+    }
+
     private fun decode(bitmap:Bitmap):Pair<String,Float> {
         if(bitmap.width<2 || bitmap.height<2) return "" to 0f
         val width=(48f*bitmap.width/bitmap.height).roundToInt().coerceIn(8,960);val padded=max(320,width)
