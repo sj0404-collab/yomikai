@@ -53,6 +53,23 @@ object KomaText {
         }
     }
 
+    /**
+     * Строка состоит ТОЛЬКО из символов-двойников: «OHO», «4YBC», «PA3A».
+     *
+     * Такие строки модель выдаёт целиком латиницей/цифрами, и прежнее правило
+     * «переводим, если в строке есть хоть одна русская буква» их не трогало.
+     * Дальше фильтр языка выбрасывал их как нерусские — на странице 16 из
+     * реплик пропадали «ОНО», «ЧУВС-» и «РАЗА», хотя в распознанном тексте они
+     * были. Теперь такая строка переводится принудительно.
+     */
+    fun isLookalikeOnly(text: String): Boolean {
+        val letters = text.filter { it.isLetterOrDigit() }
+        return letters.isNotEmpty() && letters.all { it in lookalikes }
+    }
+
+    /** Переводит строку целиком, даже если русских букв в ней нет. */
+    fun fixLookalikesForced(raw: String): String = raw.map { lookalikes[it] ?: it }.joinToString("")
+
     fun cleanSpeech(raw: String): String {
         var text = raw
             .replace(Regex("(?<=\\p{L})\\s*-\\s*(?=\\p{L})"), "")

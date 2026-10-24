@@ -105,7 +105,11 @@ object KomaWords {
 
     fun correctLine(text: String): String {
         val fixed = WORD.replace(text) { correctWord(it.value) }
-        return balanceQuotes(restoreHyphens(repairSplitWords(fixed)))
+        // Висячий дефис в конце реплики («ПОШЕВЕ-») — это разрыв строки в
+        // облачке, а не дефис в слове: синтезатор читал его как паузу и
+        // получалось «пошеве… литься». Склеивать уже нечего — убираем.
+        val cleaned = fixed.replace(Regex("(?<=\\p{L})-\\s*$"), "")
+        return balanceQuotes(restoreHyphens(repairSplitWords(cleaned)))
     }
 
     /** Как часто такое буквосочетание встречается в языке (лог-правдоподобие). */

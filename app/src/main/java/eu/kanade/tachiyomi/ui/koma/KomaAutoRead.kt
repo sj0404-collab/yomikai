@@ -272,7 +272,19 @@ object KomaReadingOrder {
             // Латинские двойники чиним ДО фильтра по языку: иначе фрагмент с
             // одной-двумя латинскими буквами («He6лuцa») отбрасывался целиком,
             // и слова пропадали из озвучки.
-            .map { it.copy(text = fixLookalikes(normalize(it.text))) }
+            .map {
+                val text = normalize(it.text)
+                val fixed = fixLookalikes(text)
+                // Строка из одних двойников («OHO», «4YBC», «PA3A») по-русски не
+                // выглядит, и фильтр языка её терял. Переводим принудительно —
+                // но только когда читаем кириллицу: на английской странице
+                // латинские строки должны остаться латиницей.
+                if (onlyCyrillic && !isCyrillic(fixed) && KomaText.isLookalikeOnly(fixed)) {
+                    it.copy(text = KomaText.fixLookalikesForced(fixed))
+                } else {
+                    it.copy(text = fixed)
+                }
+            }
             // Фрагмент из одной буквы — это часть слова, а не мусор: раньше
             // такие отбрасывались, и слова теряли буквы («Небылица» → «Небца»).
             .filter { it.text.any { ch -> ch.isLetterOrDigit() } }

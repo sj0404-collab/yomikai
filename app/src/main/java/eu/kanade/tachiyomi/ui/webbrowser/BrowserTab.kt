@@ -858,6 +858,9 @@ data object BrowserTab : Tab {
         var ocrFrame by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
         var ocrRegions by remember { mutableStateOf<List<Pair<mihon.domain.ocr.model.OcrBoundingBox, String>>>(emptyList()) }
         var showOcrCard by remember { mutableStateOf(false) }
+        // Зона книги в долях окна WebView: по ней KOMA-оверлей кладёт рамки
+        // ровно на текст (координаты реплик нормализованы к этой зоне).
+        var readZone by remember { mutableStateOf<android.graphics.RectF?>(null) }
         val pip by WebStore.pipMode
         var immersive by remember { mutableStateOf(false) }
         val scope = rememberCoroutineScope()
@@ -1044,6 +1047,7 @@ data object BrowserTab : Tab {
                 // Только страница книги: зона крупных картинок, без UI сайта
                 val zone = detectBookZone()
                 readEngine.highlightZone = zone
+                readZone = zone
                 if (junkFrameSkip % 4 == 0) {
                     cachedJunk = detectOverlayJunkRects()
                 }
@@ -1272,13 +1276,18 @@ data object BrowserTab : Tab {
                 },
             )
             }
+            // Прозрачный оверлей KOMA: тонкие рамки вокруг распознанных реплик и
+            // номера рядом — как в KOMA-читалке. Живёт ВНУТРИ области WebView,
+            // поэтому координаты кадра ложатся на текст без пересчёта.
+            if (isAutoRead || frameRegions.isNotEmpty()) {
+                KomaFrameOverlay(
+                    regions = frameRegions,
+                    currentText = currentRegion?.text,
+                    zone = readZone,
+                )
+            }
             }
 
-        }
-
-        // Линейка чтения (как в AlReader): подсветка текущей реплики
-        currentRegion?.let { region ->
-            eu.kanade.presentation.reader.components.AutoReadHighlight(region = region, engine = readEngine)
         }
 
         // Per-bubble значки 🔊 на рамках распознанных реплик. Тап — озвучить
@@ -2173,7 +2182,10 @@ private suspend fun komaFrameResult(
         onlyCyrillic = true,
         panels = page.panels,
     )
-    if (lines.isEmpty()) return@runCatching null
+    // Обрывки без букв («7i», «!!») и одиночные звуки в озвучку не отдаём:
+    // синтезатор читает их по буквам, и голос звучит «рыпящим».
+    val spoken = lines.filter { line -> line.text.count { it.isLetter() } >= 2 }
+    if (spoken.isEmpty()) return@runCatching null
     val panels = page.panels
     mihon.domain.ocr.model.OcrPageResult(
         chapterId = -1L,
@@ -2181,7 +2193,7 @@ private suspend fun komaFrameResult(
         ocrModel = mihon.domain.ocr.model.OcrModel.CYRILLIC,
         imageWidth = frame.width,
         imageHeight = frame.height,
-        regions = lines.mapIndexed { index, line ->
+        regions = spoken.mapIndexed { index, line ->
             val cx = (line.left + line.right) / 2f
             val cy = (line.top + line.bottom) / 2f
             // Панели нет (вебтун, сплошной кадр) — считаем весь кадр одной
