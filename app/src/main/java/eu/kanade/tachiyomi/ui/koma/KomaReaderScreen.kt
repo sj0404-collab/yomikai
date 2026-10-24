@@ -89,6 +89,10 @@ fun KomaReaderScreen(
     // раньше размером экрана считалась целая страница, и KOMA читала текст
     // ниже видимой области.
     var viewportPx by remember { mutableIntStateOf(0) }
+    var viewportWidthPx by remember { mutableIntStateOf(0) }
+    // Вертикальный скролл ВНУТРИ текущей страницы (режим «страница», длинный кадр).
+    val pageScroll = remember(currentPage) { androidx.compose.foundation.ScrollState(0) }
+    val pageSizes = remember { mutableStateMapOf<String,IntArray>() }
     LaunchedEffect(scroll) {
         snapshotFlow { scroll.layoutInfo.viewportSize.height }.collect { if(it>0) viewportPx=it }
     }
@@ -98,27 +102,35 @@ fun KomaReaderScreen(
     // работает как раньше.
     val currentPath = book.pages.getOrNull(page)
     val currentHeight = currentPath?.let { pageHeights[it] } ?: 0
-    val viewportFraction = if(mode=="vertical" && currentHeight>0 && viewportPx>0)
+    // Доля видимой части страницы. В ленте — всегда экран/страница; в режиме
+    // «страница» — то же самое, если кадр длиннее экрана (вебтун в манге).
+    val viewportFraction = if(currentHeight>0 && viewportPx>0)
         viewportPx.toFloat()/currentHeight else 1f
-    val bands = remember(mode,currentPath,viewportFraction) {
-        if(mode=="vertical") KomaBands.of(viewportFraction) else KomaBands.whole
+    val bands = remember(currentPath,viewportFraction) {
+        KomaBands.of(viewportFraction)
     }
-    // Какая полоса сейчас на экране: считаем по центру видимой области.
-    val visibleFraction = if(mode=="vertical" && currentHeight>0 && scroll.firstVisibleItemIndex==page)
-        (scroll.firstVisibleItemScrollOffset + viewportPx/2f)/currentHeight else 0f
+    // Какая полоса сейчас на экране: центр видимой области.
+    val offsetInPage = if(mode=="vertical")
+        (if(scroll.firstVisibleItemIndex==page) scroll.firstVisibleItemScrollOffset else 0)
+    else pageScroll.value
+    val visibleFraction = if(currentHeight>0) (offsetInPage+viewportPx/2f)/currentHeight else 0f
     val bandIndex = bands.indexOfLast { it.top<=visibleFraction }.coerceAtLeast(0)
     val band = bands.getOrElse(bandIndex) { KomaBand.Whole }
     fun slot(b: KomaBand)= if(b.whole) 0 else b.index+1
     /** Полосы произвольной страницы — для прогрева вперёд и авточтения. */
     fun bandsOf(index: Int): List<KomaBand> {
-        if(mode!="vertical") return KomaBands.whole
         val path=book.pages.getOrNull(index) ?: return KomaBands.whole
-        pageHeights[path]?.let { h -> if(h>0 && viewportPx>0) return KomaBands.of(viewportPx.toFloat()/h) }
-        val size=engine.pageSize(path) ?: return KomaBands.of(viewportFraction)
-        if(size.first<=0 || size.second<=0) return KomaBands.of(viewportFraction)
-        val shownWidth = 1080f
-        val shownHeight = shownWidth*size.second/size.first
-        return KomaBands.of(if(viewportPx>0) viewportPx/shownHeight else viewportFraction)
+        val vp=viewportPx
+        if(vp<=0) return KomaBands.whole
+        val known=pageHeights[path]
+        if(known!=null && known>0) return KomaBands.of(vp.toFloat()/known)
+        val size=pageSizes[path] ?: engine.pageSize(path)?.let { intArrayOf(it.first,it.second) }?.also { pageSizes[path]=it }
+            ?: return KomaBands.of(viewportFraction)
+        if(size[0]<=0 || size[1]<=0) return KomaBands.of(viewportFraction)
+        // Страница вписана по ширине экрана (так её и показывает читалка).
+        val shownWidth = if(viewportWidthPx>0) viewportWidthPx.toFloat() else 1080f
+        val shownHeight = shownWidth*size[1]/size[0]
+        return KomaBands.of(vp/shownHeight)
     }
     val autoRequested=remember{mutableSetOf<String>()}
     // Кириллица — по умолчанию: библиотека русская, и раньше каждый раз
@@ -221,7 +233,7 @@ fun KomaReaderScreen(
         // В вертикальной ленте ждём реальную высоту страницы: без неё нельзя
         // понять, где кончается экран, и распознавание пошло бы по всей
         // странице (ровно та жалоба «читает за пределами экрана»).
-        if(mode=="vertical" && currentHeight==0) return@LaunchedEffect
+        if(currentHeight==0) return@LaunchedEffect
         // Сначала кэш именно этой полосы, затем — страницы целиком (старый
         // кэш после обновления версии разбора уже не подойдёт, но если полоса
         // совпадает со страницей, он и есть нужный).
@@ -357,12 +369,17 @@ fun KomaReaderScreen(
             onBand = { index, pageBand ->
                 // Прокрутка к читаемой полосе: у вебтуна это сдвиг ВНУТРИ
                 // страницы, иначе экран стоял бы на её начале.
-                if (mode == "vertical") {
-                    val h = book.pages.getOrNull(index)?.let { pageHeights[it] } ?: 0
-                    if (h > 0 && pageBand.top > 0.01f) {
-                        scrollJob?.cancel()
-                        scrollJob = scope.launch {
-                            runCatching { scroll.animateScrollToItem(index, (pageBand.top * h).toInt()) }
+                val h = book.pages.getOrNull(index)?.let { pageHeights[it] } ?: 0
+                if (h > 0) {
+                    val target = (pageBand.top * h).toInt()
+                    scrollJob?.cancel()
+                    scrollJob = scope.launch {
+                        runCatching {
+                            if (mode == "vertical") {
+                                scroll.animateScrollToItem(index, target)
+                            } else if (index == page && pageBand.top > 0.01f) {
+                                pageScroll.animateScrollTo(target)
+                            }
                         }
                     }
                 }
@@ -376,6 +393,18 @@ fun KomaReaderScreen(
                 // Теперь лента не трогается, пока реплика в удобной полосе
                 // экрана, и не спорит с пальцем: пока идёт прокрутка жестом,
                 // автопрокрутка молчит.
+                // Режим «страница» с длинным кадром: реплику тоже надо довести
+                // до экрана, иначе голос читает то, чего не видно.
+                if (mode != "vertical" && autoScroll && currentHeight > 0 && !pageScroll.isScrollInProgress) {
+                    val bubbleTop = (line.top * currentHeight).toInt()
+                    val visible = bubbleTop >= pageScroll.value &&
+                        bubbleTop <= pageScroll.value + viewportPx * 0.75f
+                    if (!visible) {
+                        val desired = (bubbleTop - viewportPx * 0.25f).toInt().coerceAtLeast(0)
+                        scrollJob?.cancel()
+                        scrollJob = scope.launch { runCatching { pageScroll.animateScrollTo(desired) } }
+                    }
+                }
                 if (mode == "vertical" && autoScroll && !scroll.isScrollInProgress) {
                     val target = autoState.page
                     val path = book.pages.getOrNull(target)
@@ -501,11 +530,33 @@ fun KomaReaderScreen(
             }
         }
     }) { inset ->
-        Box(Modifier.fillMaxSize().padding(inset)) {
+        // Размеры области чтения нужны ОБОИМ режимам: в «страницах» (справа
+        // налево / слева направо) длинная страница-вебтун тоже выше экрана, и
+        // без видимой высоты она считалась целой страницей — распознавание шло
+        // по 30 секунд, а читался текст за пределами экрана.
+        BoxWithConstraints(Modifier.fillMaxSize().padding(inset)) {
+            val density=androidx.compose.ui.platform.LocalDensity.current
+            val visibleH=with(density){maxHeight.roundToPx()}
+            val visibleW=with(density){maxWidth.roundToPx()}
+            LaunchedEffect(visibleH){ if(visibleH>0) viewportPx=visibleH }
+            LaunchedEffect(visibleW){ if(visibleW>0) viewportWidthPx=visibleW }
             if(mode=="vertical")LazyColumn(state=scroll,modifier=Modifier.fillMaxSize()) {
                 itemsIndexed(book.pages,key={n,_->n}) { n,path -> PageImage(path,engine,true,if(n==page && (showRegions||autoReading))bubbles else null,if(n==page)autoState.currentLine else null,{h->pageHeights[path]=h},{barsVisible=!barsVisible}) }
-            } else HorizontalPager(state=pager,reverseLayout=mode=="rtl",modifier=Modifier.fillMaxSize(),beyondViewportPageCount=0) { n -> PageImage(book.pages[n],engine,false,if(n==page && (showRegions||autoReading))bubbles else null,if(n==page)autoState.currentLine else null,onTap={barsVisible=!barsVisible}) }
-
+            } else HorizontalPager(state=pager,reverseLayout=mode=="rtl",modifier=Modifier.fillMaxSize(),beyondViewportPageCount=0) { n ->
+                PageImage(
+                    path=book.pages[n],
+                    engine=engine,
+                    vertical=false,
+                    boxes=if(n==page && (showRegions||autoReading))bubbles else null,
+                    currentLine=if(n==page)autoState.currentLine else null,
+                    onHeight={h->pageHeights[book.pages[n]]=h},
+                    onTap={barsVisible=!barsVisible},
+                    // Длинная страница листается ВНУТРИ страницы: состояние
+                    // скролла живёт в экране, чтобы авточтение могло довести
+                    // экран до читаемой полосы.
+                    scrollState=if(n==page)pageScroll else null,
+                )
+            }
         }
     }
     // Плавающая кнопка авточтения: не мешает чтению, но всегда под рукой —
@@ -704,53 +755,99 @@ fun KomaReaderScreen(
 }
 
 @Composable
-private fun PageImage(path:String,engine:KomaOcrEngine,vertical:Boolean,boxes:List<KomaReadingOrder.Line>?,currentLine:String?=null,onHeight:(Int)->Unit={},onTap:()->Unit={}) {
+private fun PageImage(
+    path:String,
+    engine:KomaOcrEngine,
+    vertical:Boolean,
+    boxes:List<KomaReadingOrder.Line>?,
+    currentLine:String?=null,
+    onHeight:(Int)->Unit={},
+    onTap:()->Unit={},
+    scrollState:androidx.compose.foundation.ScrollState?=null,
+) {
     var bitmap by remember(path){mutableStateOf<android.graphics.Bitmap?>(null)}
     var error by remember(path){mutableStateOf<String?>(null)}
     var retry by remember(path){mutableIntStateOf(0)}
-    var scale by remember(path){mutableFloatStateOf(1f)}
-    var offset by remember(path){mutableStateOf(Offset.Zero)}
     LaunchedEffect(path,retry){try{bitmap=withContext(Dispatchers.IO){engine.bitmap(path)}}catch(e:Throwable){error=e.message ?: "Не удалось открыть страницу"}}
     // Битмап НЕ освобождаем вручную: recycle() во время отрисовки даёт
     // «Canvas: trying to use a recycled bitmap» — падение рендер-потока.
-    // Память ограничиваем на входе (потолок 10 Мпкс, RGB_565), а сборщик
-    // забирает кадр, как только страница уходит из композиции.
     val b=bitmap
-    if(b==null) Box(Modifier.fillMaxWidth().then(if(vertical)Modifier.height(320.dp)else Modifier.fillMaxHeight()),contentAlignment=Alignment.Center){if(error==null)CircularProgressIndicator(color=Orange)else TextButton(onClick={error=null;retry++}){Text("Не удалось открыть. Повторить")}}
-    else BoxWithConstraints(Modifier.fillMaxWidth().then(if(vertical)Modifier.aspectRatio(b.width.toFloat()/b.height)else Modifier.fillMaxHeight()).clip(RoundedCornerShape(0.dp)),contentAlignment=Alignment.Center) {
-        val ratio=b.width.toFloat()/b.height
-        val width=if(vertical || maxWidth/maxHeight<ratio)maxWidth else maxHeight*ratio
-        val height=width/ratio
-        // Высота страницы при вписывании по ширине — нужна автопрокрутке,
-        // чтобы прокрутить длинный вебтун до текущей реплики.
-        val density=androidx.compose.ui.platform.LocalDensity.current
-        LaunchedEffect(height,density){ runCatching { onHeight(with(density){ height.roundToPx() }) } }
-        val transform=rememberTransformableState { zoom,pan,_-> scale=(scale*zoom).coerceIn(1f,5f);offset=if(scale>1f)offset+pan else Offset.Zero }
-        Box(Modifier.size(width,height).graphicsLayer(scaleX=scale,scaleY=scale,translationX=offset.x,translationY=offset.y).transformable(state=transform,canPan={scale>1f}).pointerInput(path){detectTapGestures(onTap={onTap()},onDoubleTap={scale=if(scale>1f)1f else 2.5f;offset=Offset.Zero})}) {
-            Image(b.asImageBitmap(),"Страница",Modifier.fillMaxSize(),contentScale=ContentScale.FillBounds)
-            if(boxes!=null)Canvas(Modifier.fillMaxSize()) {
-                // Одна рамка на РЕПЛИКУ: строки облачка уже склеены в
-                // KomaReadingOrder, поэтому «Я ТОЖЕ ТАК СЧИТАЮ…» — это один
-                // прямоугольник, а не пять полос с отдельным чтением каждой.
-                val spoken=if(currentLine.isNullOrBlank())null else KomaReadingOrder.key(currentLine)
-                boxes.forEach { r ->
-                    val isCurrent=spoken!=null && KomaReadingOrder.key(r.text)==spoken
-                    // Скруглённый прямоугольник — как контур реплики в KOMA.
-                    val radius = CornerRadius(8.dp.toPx(), 8.dp.toPx())
-                    drawRoundRect(
-                        color = if(isCurrent)Orange.copy(alpha=0.35f) else Color.Transparent,
-                        topLeft = Offset(r.left*size.width,r.top*size.height),
-                        size = Size((r.right-r.left)*size.width,(r.bottom-r.top)*size.height),
-                        cornerRadius = radius,
-                    )
-                    drawRoundRect(
-                        color = if(isCurrent)Orange else Orange.copy(alpha=0.7f),
-                        topLeft = Offset(r.left*size.width,r.top*size.height),
-                        size = Size((r.right-r.left)*size.width,(r.bottom-r.top)*size.height),
-                        cornerRadius = radius,
-                        style = Stroke(if(isCurrent)2.5.dp.toPx() else 1.5.dp.toPx()),
-                    )
-                }
+    val density=androidx.compose.ui.platform.LocalDensity.current
+    when {
+        b==null -> Box(
+            Modifier.fillMaxWidth().then(if(vertical)Modifier.height(320.dp)else Modifier.fillMaxHeight()),
+            contentAlignment=Alignment.Center,
+        ){
+            if(error==null)CircularProgressIndicator(color=Orange)
+            else TextButton(onClick={error=null;retry++}){Text("Не удалось открыть. Повторить")}
+        }
+        // ── Длинный кадр в режиме «страница» ────────────────────────────────
+        // Раньше такая страница вписывалась по ВЫСОТЕ: вебтун 900×5400 на
+        // экране 1080×2400 превращался в полоску шириной ~150 px — ровно то,
+        // что видно на скриншотах 21:00 («большие страницы не расширяются»).
+        // Теперь страница занимает всю ширину, а листается вниз; полосы
+        // распознавания считаются по той же высоте.
+        !vertical && b.height.toFloat()/b.width>2.2f -> BoxWithConstraints(Modifier.fillMaxWidth().fillMaxHeight()) {
+            val width=maxWidth
+            val height=width*b.height/b.width
+            val ownState=rememberScrollState()
+            val st=scrollState ?: ownState
+            LaunchedEffect(height,density){ runCatching { onHeight(with(density){ height.roundToPx() }) } }
+            Box(Modifier.fillMaxSize().verticalScroll(st)) {
+                PageBody(b,boxes,currentLine,path,onTap,Modifier.size(width,height))
+            }
+        }
+        else -> BoxWithConstraints(
+            Modifier.fillMaxWidth().then(if(vertical)Modifier.aspectRatio(b.width.toFloat()/b.height)else Modifier.fillMaxHeight()).clip(RoundedCornerShape(0.dp)),
+            contentAlignment=Alignment.Center,
+        ) {
+            val ratio=b.width.toFloat()/b.height
+            val width=if(vertical || maxWidth/maxHeight<ratio)maxWidth else maxHeight*ratio
+            val height=width/ratio
+            // Высота страницы при вписывании по ширине — нужна автопрокрутке,
+            // чтобы прокрутить длинный вебтун до текущей реплики.
+            LaunchedEffect(height,density){ runCatching { onHeight(with(density){ height.roundToPx() }) } }
+            PageBody(b,boxes,currentLine,path,onTap,Modifier.size(width,height))
+        }
+    }
+}
+
+/** Рисунок страницы с рамками реплик и жестами (щипок, двойной тап). */
+@Composable
+private fun PageBody(
+    b:android.graphics.Bitmap,
+    boxes:List<KomaReadingOrder.Line>?,
+    currentLine:String?,
+    path:String,
+    onTap:()->Unit,
+    modifier:Modifier,
+) {
+    var scale by remember(path){mutableFloatStateOf(1f)}
+    var offset by remember(path){mutableStateOf(Offset.Zero)}
+    val transform=rememberTransformableState { zoom,pan,_-> scale=(scale*zoom).coerceIn(1f,5f);offset=if(scale>1f)offset+pan else Offset.Zero }
+    Box(modifier.graphicsLayer(scaleX=scale,scaleY=scale,translationX=offset.x,translationY=offset.y).transformable(state=transform,canPan={scale>1f}).pointerInput(path){detectTapGestures(onTap={onTap()},onDoubleTap={scale=if(scale>1f)1f else 2.5f;offset=Offset.Zero})}) {
+        Image(b.asImageBitmap(),"Страница",Modifier.fillMaxSize(),contentScale=ContentScale.FillBounds)
+        if(boxes!=null)Canvas(Modifier.fillMaxSize()) {
+            // Одна рамка на РЕПЛИКУ: строки облачка уже склеены в
+            // KomaReadingOrder, поэтому «Я ТОЖЕ ТАК СЧИТАЮ…» — это один
+            // прямоугольник, а не пять полос с отдельным чтением каждой.
+            val spoken=if(currentLine.isNullOrBlank())null else KomaReadingOrder.key(currentLine)
+            boxes.forEach { r ->
+                val isCurrent=spoken!=null && KomaReadingOrder.key(r.text)==spoken
+                val radius = CornerRadius(8.dp.toPx(), 8.dp.toPx())
+                drawRoundRect(
+                    color = if(isCurrent)Orange.copy(alpha=0.35f) else Color.Transparent,
+                    topLeft = Offset(r.left*size.width,r.top*size.height),
+                    size = Size((r.right-r.left)*size.width,(r.bottom-r.top)*size.height),
+                    cornerRadius = radius,
+                )
+                drawRoundRect(
+                    color = if(isCurrent)Orange else Orange.copy(alpha=0.7f),
+                    topLeft = Offset(r.left*size.width,r.top*size.height),
+                    size = Size((r.right-r.left)*size.width,(r.bottom-r.top)*size.height),
+                    cornerRadius = radius,
+                    style = Stroke(if(isCurrent)2.5.dp.toPx() else 1.5.dp.toPx()),
+                )
             }
         }
     }
