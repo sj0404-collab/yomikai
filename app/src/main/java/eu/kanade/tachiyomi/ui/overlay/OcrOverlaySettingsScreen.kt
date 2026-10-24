@@ -25,8 +25,11 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -38,8 +41,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import cafe.adriel.voyager.core.screen.Screen
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
@@ -84,7 +95,42 @@ object OcrOverlaySettingsScreen : Screen {
         val ownEngine by prefs.overlayOwnEngine().changes()
             .collectAsState(initial = prefs.overlayOwnEngine().get())
 
-        val canDraw = OcrOverlayService.canDrawOverlays(context)
+        // Разрешение проверяется НА КАЖДОМ возврате на экран: раньше значение
+        // считалось один раз, и после выдачи разрешения в системных настройках
+        // красная плашка «нет разрешения» оставалась висеть до перезапуска.
+        var canDraw by remember { mutableStateOf(OcrOverlayService.canDrawOverlays(context)) }
+        var sdkInt by remember { mutableIntStateOf(Build.VERSION.SDK_INT) }
+        val lifecycleOwner = LocalLifecycleOwner.current
+        DisposableEffect(lifecycleOwner) {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) {
+                    canDraw = OcrOverlayService.canDrawOverlays(context)
+                    sdkInt = Build.VERSION.SDK_INT
+                    gestureEnabled = OverlayGestureService.isEnabled()
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
+        var gestureEnabled by remember { mutableStateOf(OverlayGestureService.isEnabled()) }
+        // Уведомление обязательно для foreground-службы на Android 13+:
+        // без него система может прибить сервис — «потом перезапускается».
+        var notifGranted by remember {
+            mutableStateOf(
+                Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                    ContextCompat.checkSelfPermission(
+                        context,
+                        android.Manifest.permission.POST_NOTIFICATIONS,
+                    ) == PackageManager.PERMISSION_GRANTED,
+            )
+        }
+        val notifLauncher = rememberLauncherForActivityResult(
+            ActivityResultContracts.RequestPermission(),
+        ) { granted -> notifGranted = granted }
+        val keepScreenOn by prefs.overlayKeepScreenOn().changes()
+            .collectAsState(initial = prefs.overlayKeepScreenOn().get())
+        val pauseOnOff by prefs.overlayPauseOnScreenOff().changes()
+            .collectAsState(initial = prefs.overlayPauseOnScreenOff().get())
 
         Column(modifier = Modifier.fillMaxSize()) {
             androidx.compose.material3.TopAppBar(
@@ -103,9 +149,22 @@ object OcrOverlaySettingsScreen : Screen {
             ) {
                 if (!canDraw) {
                     WarningNote(
-                        text = "Нет разрешения «отображать поверх других приложений» — оверлей не появится.",
+                        text = "Нет разрешения «отображать поверх других приложений» — кнопка оверлея не появится. " +
+                            "Выдайте его и вернитесь на этот экран.",
                         actionLabel = "Выдать разрешение",
                         onAction = { OcrOverlayService.requestPermission(context) },
+                    )
+                }
+                if (!notifGranted) {
+                    WarningNote(
+                        text = "Нет разрешения на уведомления. Без него Android может остановить службу оверлея — " +
+                            "именно так чтение «перезапускалось».",
+                        actionLabel = "Разрешить",
+                        onAction = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                notifLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                        },
                     )
                 }
 
@@ -117,9 +176,14 @@ object OcrOverlaySettingsScreen : Screen {
                     TextButton(
                         onClick = {
                             if (!OcrOverlayService.canDrawOverlays(context)) {
+                                // Сразу ведём в системные настройки и говорим,
+                                // что делать дальше: раньше нажатие молча
+                                // открывало список разрешений без объяснений.
+                                context.toast("Разрешите «Поверх других приложений», затем снова «Запустить»")
                                 OcrOverlayService.requestPermission(context)
                             } else {
                                 OcrOverlayService.start(context)
+                                context.toast("Оверлей включён — ищите круглую кнопку у края экрана")
                             }
                         },
                     ) { Text("Запустить") }
@@ -140,11 +204,21 @@ object OcrOverlaySettingsScreen : Screen {
                     },
                 )
                 Text(
-                    text = if (fixedRegion.isBlank()) {
-                        "Область не выбрана. Нажми «Задать область» и обведи пальцем " +
-                            "нужный прямоугольник — рамка появится поверх приложения."
-                    } else {
-                        "Область: $fixedRegion. Чтобы передвинуть — нажми «Задать область» заново."
+                    text = when {
+                        // «Авто — весь экран» НЕ требует выделения: раньше здесь
+                        // висело «Область не выбрана», хотя режим выбрал весь
+                        // экран, и это выглядело как поломка.
+                        regionMode == "auto" && fixedRegion.isBlank() ->
+                            "Область не нужна: читается видимая часть экрана приложения " +
+                                "(без строки состояния и панели навигации)."
+                        fixedRegion.isBlank() ->
+                            "Область не выбрана. Нажми «Задать область» и обведи пальцем " +
+                                "нужный прямоугольник — рамка появится поверх приложения."
+                        regionMode == "auto" ->
+                            "Сохранённая область: $fixedRegion. Режим «Авто» её не использует — " +
+                                "выберите «Фикс», чтобы читать только её."
+                        else ->
+                            "Область: $fixedRegion. Чтобы передвинуть — нажми «Задать область» заново."
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -185,6 +259,23 @@ object OcrOverlaySettingsScreen : Screen {
                         OcrOverlayService.refresh(context)
                     },
                 )
+                SwitchRow(
+                    title = "Не гасить экран во время чтения",
+                    subtitle = "Пока оверлей читает, подсветка не гаснет по таймауту — " +
+                        "именно из-за этого чтение обрывалось",
+                    checked = keepScreenOn,
+                    onChange = {
+                        prefs.overlayKeepScreenOn().set(it)
+                        OcrOverlayService.refresh(context)
+                    },
+                )
+                SwitchRow(
+                    title = "Пауза, когда экран гаснет",
+                    subtitle = "Чёрные кадры не распознаются; после включения экрана " +
+                        "нужно нажать ▶ заново",
+                    checked = pauseOnOff,
+                    onChange = { prefs.overlayPauseOnScreenOff().set(it) },
+                )
 
                 OverlaySectionTitle("Чтение рамки и своя прокрутка")
                 Text(
@@ -199,12 +290,26 @@ object OcrOverlaySettingsScreen : Screen {
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 )
                 SwitchRow(
-                    title = "Служба доступности включена",
+                    title = if (gestureEnabled) "Служба доступности включена" else "Служба доступности выключена",
                     subtitle = "Нужна для прокрутки. Если выключена, чтение озвучивает " +
                         "кадр, но листать не сможет.",
-                    checked = OverlayGestureService.isEnabled(),
+                    checked = gestureEnabled,
                     onChange = { context.requestGestureService() },
                 )
+                if (!gestureEnabled && sdkInt >= Build.VERSION_CODES.TIRAMISU) {
+                    // Android 13+ блокирует Службу доступности у приложений,
+                    // установленных не из магазина: переключатель в системных
+                    // настройках серый, и человек видит «Доступ к настройкам
+                    // ограничен». Программно это не обойти — ведём в «О
+                    // приложении», где нужный пункт меню.
+                    WarningNote(
+                        text = "Android 13+ блокирует Службу доступности у APK не из магазина. " +
+                            "Откройте «О приложении» → ⋮ → «Разрешить ограниченные настройки», " +
+                            "затем включите переключатель снова.",
+                        actionLabel = "О приложении",
+                        onAction = { context.openAppDetails() },
+                    )
+                }
                 Text(
                     text = "Переключатель серый и не включается? Android 13+ блокирует " +
                         "Службу доступности у приложений не из магазина. Нажмите здесь, " +

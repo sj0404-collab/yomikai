@@ -79,8 +79,11 @@ class OverlayAutoReader(
                 .recognizeText(image, if (prefs.overlayOwnEngine().get()) engineModel() else null)
                 .trim()
                 .takeIf { it.isNotBlank() }
-        } catch (e: Exception) {
-            Log.e(TAG, "overlay read failed", e)
+        } catch (t: Throwable) {
+            // Не только Exception: OutOfMemoryError на большом кадре раньше
+            // проходил мимо обработчика и валил процесс. Теперь один плохой
+            // кадр — просто «не прочиталось».
+            Log.e(TAG, "overlay read failed", t)
             null
         } finally {
             if (!bmp.isRecycled) bmp.recycle()
@@ -112,6 +115,13 @@ class OverlayAutoReader(
         while (isActive) {
             val text = readOnce(region)
             if (text == null) {
+                // Проекция могла умереть (экран погас, систему остановила
+                // захват): раньше цикл продолжал «читать» и жёг батарею, пока
+                // пользователь не замечал, что ничего не происходит.
+                if (!capture.isAlive) {
+                    onNote("Захват экрана остановлен — нажмите ▶, чтобы читать снова")
+                    return@launch
+                }
                 onNote("Не удалось прочитать кадр")
                 // Кадр может не успеть прогрузиться; ждать и пробовать
                 // снова вхолостую только жжёт батарею.
