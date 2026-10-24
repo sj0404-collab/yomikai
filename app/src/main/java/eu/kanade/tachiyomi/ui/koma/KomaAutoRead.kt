@@ -898,8 +898,8 @@ object KomaAutoRead {
         val currentLine: String = "",
         val spoken: List<String> = emptyList(),
         val status: String = "",
-        /** Полуручной режим: ждём выбора «кто говорит» для этой реплики. */
-        val awaiting: KomaCasting.Request? = null,
+        /** Полуручной режим: ждём выбора голоса для этой реплики. */
+        val awaiting: String? = null,
         /** Голос текущей реплики — для подписи в оверлее. */
         val currentVoice: String = "",
     )
@@ -944,29 +944,36 @@ object KomaAutoRead {
         runCatching { activeTts?.stop() }
     }
 
-    /** Ожидание выбора персонажа в полуручном режиме. */
-    private var roleWaiter: CompletableDeferred<KomaCasting.Kind?>? = null
+    /** Ожидание выбора голоса (слот 1..3) в полуручном режиме. */
+    private var slotWaiter: CompletableDeferred<Int?>? = null
 
     /**
-     * Останавливает проход на реплике и ждёт, пока пользователь выберет тип
-     * («мужской» → парень/ребёнок/старик/взрослый и т.д.).
+     * Останавливает проход на реплике и ждёт, пока пользователь нажмёт ОДНУ из
+     * трёх кнопок голоса в читалке.
+     *
+     * Раньше здесь открывалось модальное окно на пол экрана после каждой
+     * реплики, и читать было невозможно (жалоба пользователя). Теперь
+     * состояние [State.awaiting] лишь подсвечивает компактную панель голосов
+     * внизу: три кнопки и «по умолчанию».
      */
-    private suspend fun awaitRole(request: KomaCasting.Request): KomaCasting.Kind? {
-        val waiter = CompletableDeferred<KomaCasting.Kind?>()
-        roleWaiter = waiter
-        _state.value = _state.value.copy(awaiting = request, status = "Кто говорит?")
+    private suspend fun awaitSlot(line: String): Int? {
+        val waiter = CompletableDeferred<Int?>()
+        slotWaiter = waiter
+        _state.value = _state.value.copy(awaiting = line, status = "Кто говорит?")
         KomaAutoReadNotifier.update(_state.value)
         return try {
-            withTimeoutOrNull(120_000) { waiter.await() }
+            // Ждём не дольше минуты: если человек не выбирает, реплика читается
+            // голосом по умолчанию и проход идёт дальше.
+            withTimeoutOrNull(60_000) { waiter.await() }
         } finally {
-            roleWaiter = null
+            slotWaiter = null
             _state.value = _state.value.copy(awaiting = null)
         }
     }
 
-    /** Выбор пользователя в полуручном режиме. null — «просто читать». */
-    fun assignRole(kind: KomaCasting.Kind?) {
-        roleWaiter?.complete(kind)
+    /** Нажатие голоса 1/2/3 в панели. null — «по умолчанию». */
+    fun assignSlot(slot: Int?) {
+        slotWaiter?.complete(slot)
     }
 
     /** Идёт ли реальное чтение прямо сейчас (есть живой синтезатор). */
@@ -1011,13 +1018,17 @@ object KomaAutoRead {
          * Полуручной режим: остановиться на реплике без назначенного персонажа и
          * дождаться выбора пользователя.
          */
+        /**
+         * Полуручной режим: проход встаёт на реплике, пока в панели внизу не
+         * нажмут голос 1/2/3. По умолчанию выключен: голос НЕ меняется сам.
+         */
         manualCasting: Boolean = false,
-        /** Кто говорит по правилам (сохранённый выбор, подпись, автоопределение). */
-        kindOf: suspend (index: Int, line: KomaReadingOrder.Line) -> KomaCasting.Kind? = { _, _ -> null },
-        /** Голос для типа персонажа. */
-        voiceOfKind: (KomaCasting.Kind) -> KomaVoice = { KomaCasting.voice(it) },
-        /** Экран запоминает выбор, чтобы та же реплика/имя звучали так же. */
-        rememberKind: (KomaReadingOrder.Line, KomaCasting.Kind) -> Unit = { _, _ -> },
+        /** Назначенный голос реплики (слот 0..2) или null — голос по умолчанию. */
+        slotOf: (index: Int, line: KomaReadingOrder.Line) -> Int? = { _, _ -> null },
+        /** Голос слота: тот же системный голос, меняется только тембр. */
+        voiceForSlot: (slot: Int) -> KomaVoice = { KomaCasting.slotVoice(it, KomaCasting.DEFAULT_PITCH[it.coerceIn(0, 2)]) },
+        /** Экран запоминает выбор, чтобы та же реплика звучала так же. */
+        rememberSlot: (KomaReadingOrder.Line, Int) -> Unit = { _, _ -> },
     ) {
         stopped = false
         paused = false
@@ -1093,7 +1104,7 @@ object KomaAutoRead {
                 // реплик вперёд успевает подготовить звук до показа строки.
                 if (!manualCasting) {
                     lines.forEachIndexed { i, line ->
-                        kindOf(index, line)?.let { kind -> voices[i] = voiceOfKind(kind) }
+                        slotOf(index, line)?.let { slot -> voices[i] = voiceForSlot(slot) }
                     }
                 }
                 while (startAt < lines.size && !stopped) {
@@ -1108,21 +1119,15 @@ object KomaAutoRead {
                             val lineIndex = startAt + offset
                             val line = lines.getOrNull(lineIndex) ?: return@role null
                             if (voices[lineIndex] != null) return@role voices[lineIndex]
-                            var kind = kindOf(index, line)
-                            if (kind == null && manualCasting && !stopped && !paused) {
+                            var slot = slotOf(index, line)
+                            if (slot == null && manualCasting && !stopped && !paused) {
                                 // Полуручной режим: проход встаёт на реплике, пока
-                                // человек не скажет, кто это говорит.
-                                val request = KomaCasting.Request(
-                                    bookId = book.id,
-                                    page = index,
-                                    line = line.text,
-                                    speaker = KomaCasting.speakerName(line.text),
-                                )
-                                kind = awaitRole(request)
+                                // внизу не нажмут голос 1, 2 или 3.
+                                slot = awaitSlot(line.text)
                             }
-                            if (kind != null) {
-                                rememberKind(line, kind)
-                                val voice = voiceOfKind(kind)
+                            if (slot != null) {
+                                rememberSlot(line, slot)
+                                val voice = voiceForSlot(slot)
                                 voices[lineIndex] = voice
                                 _state.value = _state.value.copy(currentVoice = voice.title)
                                 return@role voice
