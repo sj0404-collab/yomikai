@@ -100,6 +100,9 @@ object OcrOverlaySettingsScreen : Screen {
         // красная плашка «нет разрешения» оставалась висеть до перезапуска.
         var canDraw by remember { mutableStateOf(OcrOverlayService.canDrawOverlays(context)) }
         var sdkInt by remember { mutableIntStateOf(Build.VERSION.SDK_INT) }
+        // Состояние Службы доступности объявлено ДО наблюдателя: он его
+        // обновляет при возврате на экран из системных настроек.
+        var gestureEnabled by remember { mutableStateOf(OverlayGestureService.isEnabled()) }
         val lifecycleOwner = LocalLifecycleOwner.current
         DisposableEffect(lifecycleOwner) {
             val observer = LifecycleEventObserver { _, event ->
@@ -112,7 +115,6 @@ object OcrOverlaySettingsScreen : Screen {
             lifecycleOwner.lifecycle.addObserver(observer)
             onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
         }
-        var gestureEnabled by remember { mutableStateOf(OverlayGestureService.isEnabled()) }
         // Уведомление обязательно для foreground-службы на Android 13+:
         // без него система может прибить сервис — «потом перезапускается».
         var notifGranted by remember {
