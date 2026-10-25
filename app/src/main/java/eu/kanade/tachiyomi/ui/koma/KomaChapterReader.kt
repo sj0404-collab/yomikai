@@ -86,6 +86,7 @@ class KomaReaderActivity : AppCompatActivity() {
                     val engine = remember { KomaOcrEngine(context) }
                     KomaReaderScreen(
                         initial = s.book,
+                        mangaIdForChoice = mangaId,
                         repo = repo,
                         engine = engine,
                         onClose = { finish() },

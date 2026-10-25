@@ -179,6 +179,19 @@ class MangaScreen(
         // лишний вопрос.
         var readerChoiceChapter by remember { mutableStateOf<Chapter?>(null) }
 
+        // Открытие главы с выбором читалки. Лямбда внутри Content — только здесь
+        // доступно состояние диалога; приватный метод экрана его не видит.
+        val openChapter: (Chapter) -> Unit = { chapter ->
+            val saved = eu.kanade.tachiyomi.ui.reader.ReaderLauncher
+                .savedMode(context, chapter.mangaId)
+            if (saved != null) {
+                eu.kanade.tachiyomi.ui.reader.ReaderLauncher
+                    .open(context, chapter.mangaId, chapter.id, saved)
+            } else {
+                readerChoiceChapter = chapter
+            }
+        }
+
 
         // Открытие читалки в режиме авточтения после фонового скана главы.
         LaunchedEffect(autoReadState.openChapterId) {
@@ -211,7 +224,7 @@ class MangaScreen(
             chapterSwipeStartAction = screenModel.chapterSwipeStartAction,
             chapterSwipeEndAction = screenModel.chapterSwipeEndAction,
             navigateUp = navigator::pop,
-            onChapterClicked = { openChapter(context, it) },
+            onChapterClicked = { openChapter(it) },
             onDownloadChapter = screenModel::runChapterDownloadActions.takeIf { !successState.source.isLocalOrStub() },
             onAddToLibraryClicked = {
                 screenModel.toggleFavorite()
@@ -248,7 +261,7 @@ class MangaScreen(
             onTagSearch = { scope.launch { performGenreSearch(navigator, it, screenModel.source!!) } },
             onFilterButtonClicked = screenModel::showSettingsDialog,
             onRefresh = screenModel::fetchAllFromSource,
-            onContinueReading = { continueReading(context, screenModel.getNextUnreadChapter()) },
+            onContinueReading = { screenModel.getNextUnreadChapter()?.let(openChapter) },
             // Вторая кнопка рядом с «Читать»: обложка с голосом = сканировать
             // главу онлайн-моделью, озвучить и открыть в авточтении. Показывает-
             // ся только когда скан ещё не идёт и глава не открыта.
@@ -636,27 +649,6 @@ class MangaScreen(
                 },
                 onDismissRequest = { readerChoiceChapter = null },
             )
-        }
-    }
-
-    private fun continueReading(context: Context, unreadChapter: Chapter?) {
-        if (unreadChapter != null) openChapter(context, unreadChapter)
-    }
-
-    /**
-     * Открыть главу.
-     *
-     * Если для серии уже выбрали читалку — открываем сразу в ней. Иначе
-     * показываем выбор: «Манга · постранично» (основная читалка) или
-     * «Манхва · вертикальная лента» (KOMA). Раньше все главы молча уходили в
-     * KOMA, и манга читалась не тем способом, каким её надо читать.
-     */
-    private fun openChapter(context: Context, chapter: Chapter) {
-        val saved = eu.kanade.tachiyomi.ui.reader.ReaderLauncher.savedMode(context, chapter.mangaId)
-        if (saved != null) {
-            eu.kanade.tachiyomi.ui.reader.ReaderLauncher.open(context, chapter.mangaId, chapter.id, saved)
-        } else {
-            readerChoiceChapter = chapter
         }
     }
 
