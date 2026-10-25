@@ -36,12 +36,15 @@ object SettingsContentTypeScreen : SearchableSettings {
         val items = ContentType.entries.map { type ->
             Preference.PreferenceItem.TextPreference(
                 title = "${type.icon} ${type.displayName}",
+                // Честные подписи: раньше здесь были обещания вкладок «Кинозал» и
+                // «Аудиокниги», которых в приложении нет, и кнопка выглядела
+                // нерабочей. Теперь она переключает раздел «Сайты» и пресет OCR.
                 subtitle = when (type) {
-                    ContentType.MANGA -> "Источники RU/EN/JA. Типовой вкладки нет — работает текущая библиотека; «Браузер» и «AI» не меняются."
-                    ContentType.ANIME -> "Источники RU/EN/JA; вкладка «Кинозал» — сайты аниме и видеоплеер."
-                    ContentType.RANOBE -> "Источники RU/EN; вкладка «Ранобэ» — сайты ранобэ и чтение."
-                    ContentType.BOOKS -> "Источники RU/EN; вкладка «Аудиокниги» — сайты аудиокниг и прослушивание."
-                    ContentType.DRAMAS -> "Источники RU/JA/EN; вкладка «Кинозал» — сайты дорам и видеоплеер."
+                    ContentType.MANGA -> "Раздел «Сайты» в источниках: манга-сайты. Расширения показываются все."
+                    ContentType.ANIME -> "Раздел «Сайты»: аниме-сайты (AnimeVost, AniLibria, AnimeGO, Animelib)."
+                    ContentType.RANOBE -> "Раздел «Сайты»: ранобэ (RuRanobe, RanobeLib, RanobeHub)."
+                    ContentType.BOOKS -> "Раздел «Сайты»: книги (Author.Today) и своя локальная библиотека."
+                    ContentType.DRAMAS -> "Раздел «Сайты»: дорамы; отдельных сайтов пока нет — только ссылки из каталога."
                 },
                 widget = {
                     if (current == type) {

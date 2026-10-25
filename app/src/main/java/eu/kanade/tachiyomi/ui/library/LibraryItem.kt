@@ -23,18 +23,33 @@ data class LibraryItem(
      * @return true if the manga matches the query, false otherwise.
      */
     fun matches(constraint: String, sourceManager: SourceManager): Boolean {
-        val source = sourceManager.getOrStub(libraryManga.manga.source)
-        val sourceName by lazy { source.getNameForMangaInfo() }
+        // Источник нужен только для `src:` и для сравнения с его названием,
+        // поэтому создаётся лениво: раньше getOrStub вызывался для КАЖДОГО
+        // тайтла на каждое нажатие клавиши, и поиск по большой библиотеке
+        // заметно тормозил.
+        val sourceName by lazy { sourceManager.getOrStub(libraryManga.manga.source).getNameForMangaInfo() }
         if (constraint.startsWith("id:", true)) {
             return id == constraint.substringAfter("id:").toLongOrNull()
         } else if (constraint.startsWith("src:", true)) {
             val querySource = constraint.substringAfter("src:")
             return if (querySource.equals(LOCAL_SOURCE_ID_ALIAS, ignoreCase = true)) {
-                source.id == LocalSource.ID
+                libraryManga.manga.source == LocalSource.ID
             } else {
-                source.id == querySource.toLongOrNull()
+                libraryManga.manga.source == querySource.toLongOrNull()
             }
         }
+        // Мягкий поиск: «ё» = «е», без учёта регистра и знаков, и все слова
+        // запроса должны найтись в любом порядке. Раньше искалась ТОЧНАЯ
+        // подстрока, поэтому «берс макс» не находило «Берсерк Максимус», а
+        // «елка» — «Ёлка».
+        val haystack = buildString {
+            append(libraryManga.manga.title).append(' ')
+            libraryManga.manga.author?.let { append(it).append(' ') }
+            libraryManga.manga.artist?.let { append(it).append(' ') }
+            libraryManga.manga.description?.let { append(it).append(' ') }
+            libraryManga.manga.genre?.let { g -> g.forEach { append(it).append(' ') } }
+        }
+        if (softMatch(haystack, constraint)) return true
         return libraryManga.manga.title.contains(constraint, true) ||
             (libraryManga.manga.author?.contains(constraint, true) ?: false) ||
             (libraryManga.manga.artist?.contains(constraint, true) ?: false) ||
@@ -72,4 +87,25 @@ data class LibraryItem(
         val isLocal: Boolean,
         val sourceLanguage: String,
     )
+}
+
+/** Нормализация для поиска: регистр, «ё», знаки → пробелы. */
+private fun normalizeForSearch(text: String): String =
+    text.lowercase()
+        .replace('ё', 'е')
+        .map { if (it.isLetterOrDigit()) it else ' ' }
+        .joinToString("")
+        .split(' ')
+        .filter { it.isNotEmpty() }
+        .joinToString(" ")
+
+/**
+ * Все слова запроса есть в тексте (в любом порядке). Пустой запрос совпадает
+ * со всем — вызывающий код такой случай не использует, но поведение предсказуемо.
+ */
+private fun softMatch(haystack: String, needle: String): Boolean {
+    val query = normalizeForSearch(needle.substringAfterLast(','))
+    if (query.isBlank()) return false
+    val text = normalizeForSearch(haystack)
+    return query.split(' ').all { token -> text.contains(token) }
 }

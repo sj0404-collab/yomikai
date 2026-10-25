@@ -24,4 +24,21 @@ class NetworkPreferences(
     val proxyPort: Preference<Int> = preferenceStore.getInt("pref_proxy_port", 8080)
     val proxyUser: Preference<String> = preferenceStore.getString("pref_proxy_user", "")
     val proxyPassword: Preference<String> = preferenceStore.getString("pref_proxy_password", "")
+
+    // ── Авто-прокси ─────────────────────────────────────────────────────────
+    /**
+     * Список прокси «host:port» по одному в строке.
+     *
+     * Зачем отдельно от одиночного прокси: заблокированные сайты (MangaLib,
+     * MangaHub, Remanga…) чаще всего открываются через любой живой прокси, но
+     * какой из них жив сегодня — заранее неизвестно. При старте приложение само
+     * выбирает первый, который отвечает, и работает через него.
+     */
+    val proxyPool: Preference<String> = preferenceStore.getString("pref_proxy_pool", "")
+
+    /** Включать прокси автоматически, если прямой запрос не проходит. */
+    val autoProxy: Preference<Boolean> = preferenceStore.getBoolean("pref_auto_proxy", false)
+
+    /** Тип прокси для пула: 0 = HTTP, 1 = SOCKS. */
+    val proxyPoolType: Preference<Int> = preferenceStore.getInt("pref_proxy_pool_type", 0)
 }

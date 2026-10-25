@@ -44,14 +44,12 @@ class SourcesScreenModel(
     }
 
     private fun collectLatestSources(sources: List<Source>) {
-        // Фильтрация по типу контента: русские = манга/ранобэ, английские = аниме/манга
-        val filtered = when (contentType) {
-            ContentType.MANGA -> sources.filter { it.lang in listOf("ru", "all", "en", "ja") }
-            ContentType.ANIME -> sources.filter { it.lang in listOf("ru", "en", "ja", "all") }
-            ContentType.RANOBE -> sources.filter { it.lang in listOf("ru", "en") }
-            ContentType.BOOKS -> sources.filter { it.lang in listOf("ru", "en") }
-            ContentType.DRAMAS -> sources.filter { it.lang in listOf("ru", "ja", "en") }
-        }
+        // Раньше тип контента фильтровал источники ПО ЯЗЫКУ (манга = ru/en/ja), из-за
+        // чего «Аниме», «Ранобэ» и «Книги» отличались от «Манги» одним и тем же
+        // списком, а источники на других языках просто исчезали. Расширения —
+        // это всегда манга-каталоги, тип контента к ним не применяется: он
+        // переключает раздел «Сайты» (см. WebSiteCatalog) и настройку OCR.
+        val filtered = sources
 
         mutableState.update { state ->
             val map = TreeMap<String, MutableList<Source>> { d1, d2 ->

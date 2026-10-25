@@ -128,7 +128,12 @@ class AppModule(val app: Application) : InjektModule {
         addSingletonFactory { ChapterCache(app, get()) }
         addSingletonFactory { CoverCache(app) }
 
-        addSingletonFactory { NetworkHelper(app, get()) }
+        // Домены известных сайтов подставляются в сетевой слой ДО создания
+        // клиента: иначе первый же запрос уйдёт на мёртвый адрес расширения.
+        addSingletonFactory {
+            eu.kanade.tachiyomi.data.source.HostOverrides.install(app)
+            NetworkHelper(app, get())
+        }
         addSingletonFactory { JavaScriptEngine(app) }
 
         addSingletonFactory<SourceManager> { AndroidSourceManager(app, get(), get()) }

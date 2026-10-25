@@ -75,16 +75,23 @@ object KomaCasting {
     private fun keyOf(bookId: String, text: String): String =
         "role:$bookId:" + KomaReadingOrder.key(text).take(120)
 
-    // ── Пресеты голоса (три ползунка тембра) ────────────────────────────────
-    // Пользователь: «сделай пресеты по моим голосам, три голоса просто с
-    // ползунками от низкого до высокого тембра». Слот 0..2 — это не персонаж, а
-    // просто три настраиваемых голоса: их выбирают кнопками 1/2/3 в читалке.
+    // ── Пресеты голоса: четыре голоса с тембром ─────────────────────────────
+    // Пользователь: сначала «три голоса с ползунками от низкого до высокого
+    // тембра», затем «на каждый тембр 3 разных голоса, например f1, f2, m1 от
+    // Tera TTS, можно и 4 — m2». Итог: четыре слота ж1/ж2/м1/м2. У каждого
+    // свой НАСТОЯЩИЙ голос движка (или автоподбор по полу) и свой тембр —
+    // ползунок остаётся, но теперь он правит голос, а не подменяет его.
+    const val SLOT_COUNT = 4
+
+    /** Подписи слотов в интерфейсе. */
+    val SLOT_TITLES = listOf("ж1", "ж2", "м1", "м2")
+
     private fun slotKey(bookId: String, text: String) =
         "slot:$bookId:" + KomaReadingOrder.key(text).take(120)
 
-    /** Какой слот (1..3 → 0..2) назначен реплике, null — голос по умолчанию. */
+    /** Какой слот (0..3) назначен реплике, null — голос по умолчанию. */
     fun savedSlot(context: Context, bookId: String, text: String): Int? =
-        prefs(context).getInt(slotKey(bookId, text), -1).takeIf { it in 0..2 }
+        prefs(context).getInt(slotKey(bookId, text), -1).takeIf { it in 0 until SLOT_COUNT }
 
     fun saveSlot(context: Context, bookId: String, text: String, slot: Int?) {
         val edit = prefs(context).edit()
@@ -92,25 +99,47 @@ object KomaCasting {
         edit.apply()
     }
 
-    /** Тембр слота (множитель питча): 0.7 — низкий, 1.0 — обычный, 1.4 — высокий. */
+    /** Тембр слота (множитель питча): 0.6 — низкий, 1.0 — обычный, 1.6 — высокий. */
     fun savedPitch(context: Context, slot: Int): Float =
-        prefs(context).getFloat("pitch:$slot", DEFAULT_PITCH[slot.coerceIn(0, 2)])
+        prefs(context).getFloat("pitch:$slot", DEFAULT_PITCH[slot.coerceIn(0, SLOT_COUNT - 1)])
 
     fun savePitch(context: Context, slot: Int, pitch: Float) {
         prefs(context).edit().putFloat("pitch:$slot", pitch.coerceIn(0.6f, 1.6f)).apply()
     }
 
-    /** Голос слота: тот же системный голос, меняется только тембр. */
-    fun slotVoice(slot: Int, pitch: Float): KomaVoice = KomaVoice(
-        voice = null,
+    /**
+     * Имя системного голоса, выбранного для слота вручную.
+     * null — автоподбор по полу слота (ж1/ж2 → женский, м1/м2 → мужской).
+     */
+    fun savedVoiceName(context: Context, slot: Int): String? =
+        prefs(context).getString("voice:$slot", null)?.takeIf { it.isNotBlank() }
+
+    fun saveVoiceName(context: Context, slot: Int, name: String?) {
+        val edit = prefs(context).edit()
+        if (name.isNullOrBlank()) edit.remove("voice:$slot") else edit.putString("voice:$slot", name)
+        edit.apply()
+    }
+
+    /**
+     * Голос слота.
+     *
+     * [voiceName] — конкретный голос движка (Tera/RHVoice/Google). Если null,
+     * голос остаётся системным, а слот меняет только тембр — так работает
+     * «авто»-режим и случай, когда в движке всего один голос.
+     */
+    fun slotVoice(slot: Int, pitch: Float, voiceName: String? = null): KomaVoice = KomaVoice(
+        voice = voiceName?.takeIf { it.isNotBlank() },
         pitch = pitch.coerceIn(0.6f, 1.6f),
         rate = 1f,
-        title = "Голос ${slot + 1}",
+        title = "Голос " + SLOT_TITLES.getOrElse(slot) { (slot + 1).toString() },
         kind = "slot${slot + 1}",
     )
 
-    /** Тембры по умолчанию: низкий, средний, высокий. */
-    val DEFAULT_PITCH = floatArrayOf(0.85f, 1.0f, 1.18f)
+    /**
+     * Тембры по умолчанию: если в движке один голос, слоты всё равно должны
+     * звучать по-разному — ж1/ж2 чуть выше и ниже, м1/м2 заметно ниже.
+     */
+    val DEFAULT_PITCH = floatArrayOf(1.0f, 1.08f, 0.92f, 0.84f)
 
     /** Сохранённый ручной тип для этой реплики (тем же текстом — тем же голосом). */
     fun savedKind(context: Context, bookId: String, text: String): Kind? =

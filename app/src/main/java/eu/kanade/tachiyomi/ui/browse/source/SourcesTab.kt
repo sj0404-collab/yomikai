@@ -36,12 +36,26 @@ fun Screen.sourcesTab(): TabContent {
     val navigator = LocalNavigator.currentOrThrow
     val sourcePrefs = remember { Injekt.get<SourcePreferences>() }
     var contentType by remember { mutableStateOf(sourcePrefs.contentType.get()) }
+    // Тип контента меняется в настройках — вкладка должна это видеть без
+    // перезапуска (раньше значение читалось один раз и оставалось старым).
+    LaunchedEffect(Unit) {
+        sourcePrefs.contentType.changes().collect { contentType = it }
+    }
     val screenModel = rememberScreenModel(contentType.name) { SourcesScreenModel(contentType = contentType) }
     val state by screenModel.state.collectAsState()
 
     return TabContent(
         titleRes = MR.strings.label_sources,
         actions = listOf(
+            AppBar.Action(
+                title = "Сайты: поиск и новинки",
+                icon = Icons.Outlined.TravelExplore,
+                onClick = {
+                    navigator.push(
+                        eu.kanade.tachiyomi.ui.websources.WebCatalogScreen(contentType.name),
+                    )
+                },
+            ),
             AppBar.Action(
                 title = "Лента обновлений",
                 icon = Icons.Outlined.DynamicFeed,

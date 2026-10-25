@@ -41,8 +41,17 @@ import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
+import androidx.compose.ui.platform.LocalContext
+import eu.kanade.tachiyomi.data.FeedCache
+import eu.kanade.tachiyomi.data.websources.WebSiteCatalog
+import eu.kanade.domain.source.service.SourcePreferences
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import tachiyomi.domain.source.service.SourceManager
@@ -58,6 +67,9 @@ class FeedScreen : Screen() {
         FeedScreenContent(
             onNavigateUp = { navigator.pop() },
             onOpenSource = { sourceId, query -> navigator.push(BrowseSourceScreen(sourceId, query)) },
+            onOpenUrl = { url, title ->
+                navigator.push(eu.kanade.tachiyomi.ui.webview.WebViewScreen(url, title))
+            },
         )
     }
 }
@@ -74,6 +86,7 @@ private data class FeedEntry(
 private fun FeedScreenContent(
     onNavigateUp: () -> Unit,
     onOpenSource: (Long, String) -> Unit,
+    onOpenUrl: (String, String?) -> Unit,
 ) {
     var loading by remember { mutableStateOf(true) }
     var entries by remember { mutableStateOf<List<FeedEntry>>(emptyList()) }
@@ -84,47 +97,107 @@ private fun FeedScreenContent(
 
     val sourceManager = remember { Injekt.get<SourceManager>() }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val catalogPrefs = remember { Injekt.get<SourcePreferences>() }
+    val webSites = remember {
+        WebSiteCatalog.all(catalogPrefs).filter { WebSiteCatalog.isEnabled(catalogPrefs, it.id) }
+    }
+    var siteFilter by remember { mutableStateOf<String?>(null) }
+
+    // Сколько источников тянем одновременно. Раньше лента шла строго по одному
+    // (до 15 секунд на источник) — при 20 источниках это минуты ожидания и
+    // пустой экран, из-за чего лента выглядела «мёртвой».
+    val parallel = 6
 
     LaunchedEffect(retryKey) {
-        loading = true
+        // Сразу показываем прошлый снимок — даже без сети лента не пустая.
+        if (retryKey == 0) {
+            val cached = withContext(Dispatchers.IO) { FeedCache.load(context) }
+            if (cached.isNotEmpty()) {
+                entries = cached.map { row ->
+                    FeedEntry(
+                        sourceId = row.sourceId,
+                        sourceName = row.sourceName,
+                        lang = row.lang,
+                        mangas = row.titles.map { cachedManga(it) },
+                        error = row.error,
+                    )
+                }.sortedByDescending { it.mangas.size }
+                loading = false
+            }
+        }
+        loading = entries.isEmpty()
         failedSources = emptyList()
+
         withContext(Dispatchers.IO) {
             val sources = sourceManager.getOnlineSources()
                 .filterIsInstance<CatalogueSource>()
                 .filter { it.supportsLatest }
-            val result = mutableListOf<FeedEntry>()
-            val failures = mutableListOf<Pair<String, String>>()
+            val gate = Semaphore(parallel)
+            val failures = java.util.Collections.synchronizedList(mutableListOf<Pair<String, String>>())
+            val done = java.util.Collections.synchronizedList(mutableListOf<FeedCache.Row>())
 
-            for (source in sources) {
-                val page = runCatching {
-                    withTimeout(15_000L) { source.getLatestUpdates(1) }
-                }
-                val lang = source.lang
-                if (page.isSuccess) {
-                    val mangas = page.getOrNull()?.mangas?.take(30) ?: emptyList()
-                    if (mangas.isNotEmpty()) {
-                        result += FeedEntry(source.id, source.name, lang, mangas)
+            coroutineScope {
+                sources.map { source ->
+                    async {
+                        gate.withPermit {
+                            val page = runCatching {
+                                withTimeout(20_000L) { source.getLatestUpdates(1) }
+                            }
+                            val mangas = page.getOrNull()?.mangas?.take(30).orEmpty()
+                            val error = page.exceptionOrNull()?.let { it.message ?: "Неизвестная ошибка" }
+                            if (error != null) failures += source.name to error
+                            val entry = FeedEntry(source.id, source.name, source.lang, mangas, error)
+                            // Публикуем сразу: пользователь видит источники по мере
+                            // готовности, а не ждёт самый медленный.
+                            if (mangas.isNotEmpty() || error != null) {
+                                entries = (entries.filterNot { it.sourceId == source.id } + entry)
+                                    .sortedByDescending { it.mangas.size }
+                            }
+                            done += FeedCache.Row(
+                                sourceId = source.id,
+                                sourceName = source.name,
+                                lang = source.lang,
+                                titles = mangas.map { it.title },
+                                error = error,
+                                at = System.currentTimeMillis(),
+                            )
+                        }
                     }
-                } else {
-                    val err = page.exceptionOrNull()?.message ?: "Неизвестная ошибка"
-                    failures += source.name to err
-                    result += FeedEntry(source.id, source.name, lang, emptyList(), err)
-                }
+                }.awaitAll()
             }
-            entries = result.sortedByDescending { it.mangas.size }
-            failedSources = failures
-            loading = false
+            failedSources = failures.toList()
+            FeedCache.save(context, done.toList())
         }
+        loading = false
     }
 
     val availableLangs = remember(entries) {
         entries.map { it.lang }.distinct().sorted()
     }
 
+    // Поиск по ленте: раньше сравнивалось ТОЛЬКО название источника, поэтому
+    // «Берсерк» не находил ничего, хотя тайтл был на экране.
     val filteredEntries = remember(entries, selectedLang, searchQuery) {
-        entries.filter { entry ->
-            (selectedLang == null || entry.lang == selectedLang) &&
-                (searchQuery.isBlank() || entry.sourceName.contains(searchQuery, ignoreCase = true))
+        val q = searchQuery.trim()
+        entries.mapNotNull { entry ->
+            val bySource = q.isBlank() || entry.sourceName.contains(q, ignoreCase = true)
+            val titles = if (q.isBlank() || bySource) {
+                entry.mangas
+            } else {
+                entry.mangas.filter { it.title.contains(q, ignoreCase = true) }
+            }
+            when {
+                bySource || titles.isNotEmpty() -> entry.copy(mangas = titles)
+                else -> null
+            }
+        }.filter { selectedLang == null || it.lang == selectedLang }
+    }
+
+    val filteredSites = remember(webSites, siteFilter, searchQuery) {
+        webSites.filter { site ->
+            (siteFilter == null || site.type == siteFilter) &&
+                (searchQuery.isBlank() || site.name.contains(searchQuery.trim(), ignoreCase = true))
         }
     }
 
@@ -148,7 +221,8 @@ private fun FeedScreenContent(
         },
     ) { contentPadding ->
         when {
-            loading -> {
+            // Полоска загрузки на весь экран — только пока показывать нечего.
+            loading && entries.isEmpty() && filteredSites.isEmpty() -> {
                 Column(
                     modifier = Modifier
                         .padding(contentPadding)
@@ -188,6 +262,99 @@ private fun FeedScreenContent(
                                 .fillMaxWidth()
                                 .padding(horizontal = 16.dp, vertical = 8.dp),
                         )
+                    }
+
+                    // ── Сайты (каталог) ──────────────────────────────────
+                    // Расширения для RU-сайтов часто мертвы; здесь те же сайты
+                    // открываются напрямую — поиск и новинки на самом сайте.
+                    if (filteredSites.isNotEmpty()) {
+                        item(key = "sites_header") {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 14.dp, bottom = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("Сайты", style = MaterialTheme.typography.titleMedium)
+                                    Text(
+                                        "${filteredSites.size} сайтов · поиск и новинки открываются в приложении",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                        item(key = "sites_row") {
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                item {
+                                    AssistChip(
+                                        onClick = { siteFilter = null },
+                                        label = { Text("Все") },
+                                        colors = AssistChipDefaults.assistChipColors(
+                                            containerColor = if (siteFilter == null)
+                                                MaterialTheme.colorScheme.primaryContainer
+                                            else MaterialTheme.colorScheme.surfaceVariant,
+                                        ),
+                                    )
+                                }
+                                items(listOf("MANGA", "ANIME", "RANOBE", "BOOKS")) { type ->
+                                    AssistChip(
+                                        onClick = { siteFilter = if (siteFilter == type) null else type },
+                                        label = {
+                                            Text(
+                                                when (type) {
+                                                    "MANGA" -> "Манга"
+                                                    "ANIME" -> "Аниме"
+                                                    "RANOBE" -> "Ранобэ"
+                                                    else -> "Книги"
+                                                },
+                                            )
+                                        },
+                                        colors = AssistChipDefaults.assistChipColors(
+                                            containerColor = if (siteFilter == type)
+                                                MaterialTheme.colorScheme.primaryContainer
+                                            else MaterialTheme.colorScheme.surfaceVariant,
+                                        ),
+                                    )
+                                }
+                            }
+                        }
+                        items(filteredSites, key = { "site_${it.id}" }) { site ->
+                            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(site.name, style = MaterialTheme.typography.bodyLarge)
+                                        Text(
+                                            site.hosts.first(),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    TextButton(
+                                        onClick = {
+                                            val url = site.search?.let { WebSiteCatalog.searchUrl(site, searchQuery) }
+                                                ?: WebSiteCatalog.homeUrl(site)
+                                            onOpenUrl(url, site.name)
+                                        },
+                                    ) { Text("Поиск") }
+                                    TextButton(
+                                        onClick = {
+                                            onOpenUrl(WebSiteCatalog.latestUrl(site) ?: WebSiteCatalog.homeUrl(site), site.name)
+                                        },
+                                    ) { Text("Новинки") }
+                                }
+                                if (site.note != null) {
+                                    Text(
+                                        site.note,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                        }
                     }
 
                     // Фильтр по языку
@@ -296,4 +463,10 @@ private fun FeedScreenContent(
             }
         }
     }
+}
+
+/** Тайтл из кэша ленты: ссылка не нужна, клик ищет по названию в источнике. */
+private fun cachedManga(title: String): SManga = SManga.create().apply {
+    this.title = title
+    this.url = ""
 }

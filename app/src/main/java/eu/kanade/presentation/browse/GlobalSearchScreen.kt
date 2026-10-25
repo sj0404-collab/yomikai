@@ -1,10 +1,14 @@
 package eu.kanade.presentation.browse
 
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.browse.components.GlobalSearchCardRow
 import eu.kanade.presentation.browse.components.GlobalSearchErrorResultItem
 import eu.kanade.presentation.browse.components.GlobalSearchLoadingResultItem
@@ -51,6 +55,7 @@ fun GlobalSearchScreen(
     ) { paddingValues ->
         GlobalSearchContent(
             items = state.filteredItems,
+            hiddenByLanguage = state.hiddenByLanguage,
             contentPadding = paddingValues,
             getManga = getManga,
             onClickSource = onClickSource,
@@ -63,6 +68,7 @@ fun GlobalSearchScreen(
 @Composable
 internal fun GlobalSearchContent(
     items: Map<Source, SearchItemResult>,
+    hiddenByLanguage: Int = 0,
     contentPadding: PaddingValues,
     getManga: @Composable (Manga) -> State<Manga>,
     onClickSource: (Source) -> Unit,
@@ -73,6 +79,30 @@ internal fun GlobalSearchContent(
     LazyColumn(
         contentPadding = contentPadding,
     ) {
+        // Молчание поиска больше не «пустой экран без объяснений»: если
+        // источники скрыты фильтром языков, об этом сказано прямо.
+        if (hiddenByLanguage > 0) {
+            item(key = "hidden_by_language") {
+                Text(
+                    text = "Скрыто настройкой языков: $hiddenByLanguage источников. " +
+                        "Источники → Фильтр, чтобы включить.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
+        }
+        if (items.isEmpty()) {
+            item(key = "no_sources") {
+                Text(
+                    text = "Искать негде: нет ни одного включённого источника. " +
+                        "Установите расширения (Источники → Расширения) или откройте «Сайты».",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                )
+            }
+        }
         items.forEach { (source, result) ->
             item(key = source.id) {
                 GlobalSearchResultItem(

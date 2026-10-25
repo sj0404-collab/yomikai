@@ -106,4 +106,22 @@ class SourcePreferences(
         ContentType::name,
         { ContentType.valueOf(it) },
     )
+
+    /**
+     * Пользовательские домены: `host_из_расширения → рабочий_домен`.
+     *
+     * Жалоба пользователя: «фиксируется один сайт, сайт сменился, а в http
+     * по-прежнему фиксированное имя». Домен расширения менять нельзя, но можно
+     * переписать адрес запроса в сетевом слое — этим занимается
+     * [eu.kanade.tachiyomi.network.interceptor.HostRoutingInterceptor].
+     */
+    val hostOverrides: Preference<String> = preferenceStore.getString("host_overrides", "{}")
+
+    /** Автопереключение на зеркало при ошибке подключения. */
+    val autoDomainSwitch: Preference<Boolean> = preferenceStore.getBoolean("auto_domain_switch", true)
+
+    // ── каталог сайтов (см. WebSiteCatalog) ─────────────────────────────────
+    val webCatalogHosts: Preference<String> = preferenceStore.getString("web_catalog_hosts", "{}")
+    val webCatalogTemplates: Preference<String> = preferenceStore.getString("web_catalog_templates", "{}")
+    val webCatalogDisabled: Preference<String> = preferenceStore.getString("web_catalog_disabled", "[]")
 }
