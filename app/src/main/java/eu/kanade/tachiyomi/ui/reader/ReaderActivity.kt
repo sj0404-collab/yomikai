@@ -550,16 +550,24 @@ class ReaderActivity : BaseActivity() {
             NotificationReceiver.dismissNotification(this, manga.hashCode(), Notifications.ID_NEW_CHAPTERS)
 
             lifecycleScope.launchNonCancellable {
-                // Единственная читалка — KOMA. Экран KOMA распознаёт страницу
-                // своим движком (быстро и без «эха» в озвучке), рисует рамки по
-                // репликам и ведёт авточтение; основная лента Mihon остаётся
-                // резервным путём и открывается только явно — из меню KOMA или
-                // когда её страницы получить не удалось (extra skipKoma).
-                val komaFirst = intent.extras?.getBoolean("skipKoma") != true &&
-                    runCatching {
+                // Две читалки, и выбор запоминается для серии (ReaderLauncher):
+                // «Манга · постранично» — этот экран, «Манхва · вертикальная
+                // лента» — KOMA с рамками по репликам и озвучкой.
+                //
+                // Раньше решала одна настройка на всё приложение, и глава,
+                // открытая из истории или уведомления, уходила в KOMA даже
+                // когда для серии уже выбрали постраничное чтение — отсюда
+                // «читает неправильный вариант, а правильный не читает».
+                val savedReader = eu.kanade.tachiyomi.ui.reader.ReaderLauncher.savedMode(this@ReaderActivity, manga)
+                val komaFirst = when {
+                    intent.extras?.getBoolean("skipKoma") == true -> false
+                    savedReader == eu.kanade.tachiyomi.ui.reader.ReaderLauncher.MODE_PAGES -> false
+                    savedReader == eu.kanade.tachiyomi.ui.reader.ReaderLauncher.MODE_STRIP -> true
+                    else -> runCatching {
                         uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
                             .komaReaderFirst().get()
                     }.getOrDefault(true)
+                }
                 if (komaFirst) {
                     runCatching {
                         startActivity(

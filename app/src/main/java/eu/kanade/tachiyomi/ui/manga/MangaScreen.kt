@@ -174,6 +174,11 @@ class MangaScreen(
         // Скан занят — кнопки у глав гасим, чтобы не запустить второй поверх.
         val scanRunning = autoReadState.running || autoReadState.openChapterId != null
 
+        // Глава, для которой спрашиваем читалку. Показываем диалог только когда
+        // для серии ещё не выбрали: иначе тап по главе каждый раз упирался бы в
+        // лишний вопрос.
+        var readerChoiceChapter by remember { mutableStateOf<Chapter?>(null) }
+
 
         // Открытие читалки в режиме авточтения после фонового скана главы.
         LaunchedEffect(autoReadState.openChapterId) {
@@ -615,19 +620,59 @@ class MangaScreen(
                 onConfirm = screenModel::setExcludedScanlators,
             )
         }
+
+        // Выбор читалки для первой открываемой главы этой серии.
+        readerChoiceChapter?.let { chapter ->
+            eu.kanade.tachiyomi.ui.reader.ReaderChoiceDialog(
+                mangaTitle = successState.manga.title,
+                onChoose = { mode, rememberForManga ->
+                    if (rememberForManga) {
+                        eu.kanade.tachiyomi.ui.reader.ReaderLauncher
+                            .remember(context, chapter.mangaId, mode)
+                    }
+                    readerChoiceChapter = null
+                    eu.kanade.tachiyomi.ui.reader.ReaderLauncher
+                        .open(context, chapter.mangaId, chapter.id, mode)
+                },
+                onDismissRequest = { readerChoiceChapter = null },
+            )
+        }
     }
 
     private fun continueReading(context: Context, unreadChapter: Chapter?) {
         if (unreadChapter != null) openChapter(context, unreadChapter)
     }
 
+    /**
+     * Открыть главу.
+     *
+     * Если для серии уже выбрали читалку — открываем сразу в ней. Иначе
+     * показываем выбор: «Манга · постранично» (основная читалка) или
+     * «Манхва · вертикальная лента» (KOMA). Раньше все главы молча уходили в
+     * KOMA, и манга читалась не тем способом, каким её надо читать.
+     */
     private fun openChapter(context: Context, chapter: Chapter) {
-        context.startActivity(ReaderActivity.newIntent(context, chapter.mangaId, chapter.id))
+        val saved = eu.kanade.tachiyomi.ui.reader.ReaderLauncher.savedMode(context, chapter.mangaId)
+        if (saved != null) {
+            eu.kanade.tachiyomi.ui.reader.ReaderLauncher.open(context, chapter.mangaId, chapter.id, saved)
+        } else {
+            readerChoiceChapter = chapter
+        }
     }
 
-    /** Открыть главу сразу в режиме авточтения (после фонового скана). */
+    /**
+     * Открыть главу сразу в режиме авточтения (после фонового скана).
+     *
+     * Авточтение умеет только KOMA, поэтому выбор читалки здесь не спрашивается.
+     */
     private fun openChapterAutoRead(context: Context, chapter: Chapter) {
-        context.startActivity(ReaderActivity.newAutoReadIntent(context, chapter.mangaId, chapter.id))
+        eu.kanade.tachiyomi.ui.reader.ReaderLauncher.open(
+            context = context,
+            mangaId = chapter.mangaId,
+            chapterId = chapter.id,
+            mode = eu.kanade.tachiyomi.ui.reader.ReaderLauncher.MODE_STRIP,
+            autoRead = true,
+        )
     }
 
     private fun getMangaUrl(manga_: Manga?, source_: Source?): String? {
