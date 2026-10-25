@@ -617,7 +617,8 @@ fun KomaReaderScreen(
                     Row(Modifier.fillMaxWidth().padding(top=2.dp),verticalAlignment=Alignment.CenterVertically) {
                         Text("Голос:",fontSize=10.sp,color=Color(0xFFB2B8AD),modifier=Modifier.padding(end=6.dp))
                         Text(
-                            selectedVoice.substringAfterLast('/').ifBlank { "по умолчанию" },
+                            selectedVoice?.substringAfterLast('/')?.ifBlank { "по умолчанию" }
+                                ?: "по умолчанию",
                             fontSize=10.sp,color=Orange,
                             modifier=Modifier.weight(1f),
                         )
@@ -627,7 +628,7 @@ fun KomaReaderScreen(
                         IconButton(onClick={ scope.launch { runCatching {
                             tts.speakVoiced(
                                 texts=listOf(bubbles?.firstOrNull()?.text?.let { KomaCasting.stripSpeaker(it) } ?: "Так будет звучать голос."),
-                                voiceFor={ KomaVoice(name=selectedVoice) },
+                                voiceFor={ KomaVoice(voice=selectedVoice) },
                                 onLineStart={},
                             )
                         } } },modifier=Modifier.size(28.dp)){Icon(Icons.Outlined.VolumeUp,null,Modifier.size(15.dp),tint=Orange)}
