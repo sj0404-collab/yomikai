@@ -441,11 +441,16 @@ object KomaReadingOrder {
      * Признаки: её низ почти совпал с концом полосы и текст не закончен —
      * нет точки/вопроса/восклицания и он не заканчивается на закрывающую кавычку.
      */
-    fun cutAtBandBottom(line: Line, band: KomaBand): Boolean {
+    fun cutAtBandBottom(
+        line: Line,
+        band: KomaBand,
+        /** Запас из правил (KomaRules.cutMargin); по умолчанию — встроенный. */
+        cutMargin: Float = CUT_MARGIN,
+    ): Boolean {
         // Полоса во всю страницу ничего не режет: продолжения ждать неоткуда.
         if (band.whole) return false
         if (band.bottom <= line.bottom - 0.001f) return false
-        val nearBottom = line.bottom >= band.bottom - CUT_MARGIN
+        val nearBottom = line.bottom >= band.bottom - cutMargin
         if (!nearBottom) return false
         val text = line.text.trimEnd()
         if (text.isEmpty()) return false
@@ -474,6 +479,11 @@ object KomaReadingOrder {
         onlyCyrillic: Boolean,
         /** Панели страницы в порядке чтения (см. [KomaPanels]); пусто — рамок нет. */
         panels: List<KomaPanels.Box> = emptyList(),
+        /**
+         * Правила чтения. Приходят из [KomaRulesStore]: числа можно менять
+         * файлом/плагином без пересборки APK, порядок чтения при этом тот же.
+         */
+        rules: KomaRules = KomaRules.DEFAULT,
     ): List<Line> {
         val source = regions
             // Латинские двойники чиним ДО фильтра по языку: иначе фрагмент с
@@ -509,9 +519,9 @@ object KomaReadingOrder {
         // почти весь текст (PANEL_TRUST); иначе — прежний разбор по облачкам,
         // который работает и на страницах без рамок.
         val ordered = if (panels.size >= 2 && KomaPanels.coverage(source, panels) >= PANEL_TRUST) {
-            KomaPanels.assign(source, panels).flatMap { panel -> bubblesOf(panel, rtl) }
+            KomaPanels.assign(source, panels).flatMap { panel -> bubblesOf(panel, rtl, rules.bubbleGap) }
         } else {
-            splitPanels(source, rtl, depth = 0).flatMap { panel -> bubblesOf(panel, rtl) }
+            splitPanels(source, rtl, depth = 0).flatMap { panel -> bubblesOf(panel, rtl, rules.bubbleGap) }
         }
         return ordered
             // Языковая починка — на СОБРАННОЙ реплике, а не на обрывке: модель
@@ -628,7 +638,12 @@ object KomaReadingOrder {
     }
 
     /** Реплики одной панели: фрагменты → строки → облачка, сверху вниз. */
-    private fun bubblesOf(group: List<OcrRegion>, rtl: Boolean): List<Line> {
+    private fun bubblesOf(
+        group: List<OcrRegion>,
+        rtl: Boolean,
+        /** Зазор склейки фрагментов в долях высоты строки (KomaRules.bubbleGap). */
+        bubbleGap: Float = KomaRules.DEFAULT.bubbleGap,
+    ): List<Line> {
         if (group.isEmpty()) return emptyList()
 
         // 1. Фрагменты одной строки — в один блок: совпадает вертикальная полоса
@@ -672,7 +687,7 @@ object KomaReadingOrder {
                 val gapLimit = if (shortHead && shortRegion && overlap >= lineHeight * 0.7f) {
                     lineHeight * 2.5f
                 } else {
-                    lineHeight * 0.45f
+                    lineHeight * bubbleGap
                 }
                 if (gap > gapLimit) continue
                 if (gap < -lineHeight * 0.9f) continue
@@ -1091,6 +1106,9 @@ object KomaAutoRead {
             // Жалоба: «он снова делит рамку на два текста» — облачко на стыке
             // полос давало «УЖЕ ПОРА НА» и остаток как две разные реплики.
             var carry: String? = null
+            // Правила чтения (файл/плагин) читаются один раз на прогон: числа
+            // меняются без пересборки APK, а порядок чтения остаётся прежним.
+            val rules = KomaRulesStore.current(context)
             for (band in bands) {
                 if (stopped) break
                 onBand(index, band)
@@ -1105,6 +1123,9 @@ object KomaAutoRead {
                     rtl = book.mode == "rtl",
                     onlyCyrillic = language == "Кириллица" || language == "Авто",
                     panels = result?.panels.orEmpty(),
+                    // Числа (запас среза, зазор склейки) — из правил: файл
+                    // koma-rules.json меняется без пересборки APK.
+                    rules = rules,
                 // Ключ НЕ содержит номер полосы: соседние полосы перекрываются
                 // на 15%, и реплика со стыка попадает в обе. Иначе она читалась
                 // бы дважды.
@@ -1119,7 +1140,7 @@ object KomaAutoRead {
                 // Переносим только с полосы, за которой есть следующая: на
                 // последней полосе страницы продолжения уже не будет.
                 if (lines.isNotEmpty() && !band.whole && band !== bands.last() &&
-                    KomaReadingOrder.cutAtBandBottom(lines.last(), band)
+                    KomaReadingOrder.cutAtBandBottom(lines.last(), band, rules.cutMargin)
                 ) {
                     carry = lines.removeAt(lines.lastIndex).text
                 }

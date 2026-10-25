@@ -67,6 +67,22 @@ const val ENGINE_NAME="PaddleOCR · кириллица"
 const val READ_ORDER_VERSION="11"
 
 class KomaOcrEngine(private val context: Context) {
+
+    /**
+     * Действующие правила чтения: встроенные → файл → плагин (см. [KomaRulesStore]).
+     *
+     * Держим в поле, чтобы не трогать диск на каждом пикселе: перечитываем один
+     * раз в начале распознавания страницы. Файл поменяли — следующий проход
+     * («Распознать заново») уже работает по новым числам, без пересборки APK.
+     */
+    @Volatile private var rules: KomaRules = KomaRules.DEFAULT
+
+    private fun refreshRules() { rules = KomaRulesStore.current(context) }
+
+    /** Версия действующих правил — для шторки и буфера строк. */
+    fun rulesVersion(): String = rules.version
+
+    fun rulesText(): String = rules.toJson()
     private companion object {
         /** Сетка покрытия страницы для добора потерянных вторым проходом кусков. */
         const val GRID = 200
@@ -256,6 +272,7 @@ class KomaOcrEngine(private val context: Context) {
             // занимают 8–10 px, и модель путает «ЕЙ» с «5», а «ЛУЧШЕ» с «ЛУ4ШЕ».
             // В лаборатории увеличение дало 5 реплик из 5 там, где без него
             // пропадала целая реплика. Предел — 12 Мпкс, чтобы не ловить OOM.
+            refreshRules()
             val image=upscaleForOcr(decoded)
             try {
                 val script=if(language=="Авто")if(book.category=="Комиксы")"Латиница" else "Японский" else language
@@ -273,12 +290,12 @@ class KomaOcrEngine(private val context: Context) {
                     // текст («ЧТО?..» на странице 15) при этом читается как
                     // «4TO.» и выбрасывается фильтром языка. Второй проход
                     // возвращает только те куски, чьё место первый не прочитал.
-                    val rescue=if(main.size<600) paddlePage(decoded,960f) else emptyList()
+                    val rescue=if(main.size<rules.rescueMinRegions) paddlePage(decoded,rules.rescueSide) else emptyList()
                     // Третий проход — по кадру с растянутыми уровнями: бледный
                     // текст (серое название на обложке) ни на одной из первых
                     // двух попыток не находится.
-                    val boosted=if(main.size<600) contrastBoost(decoded) else null
-                    val faint=boosted?.let { runCatching { paddlePage(it,960f) }.getOrDefault(emptyList()) }.orEmpty()
+                    val boosted=if(main.size<rules.rescueMinRegions) contrastBoost(decoded) else null
+                    val faint=boosted?.let { runCatching { paddlePage(it,rules.rescueSide) }.getOrDefault(emptyList()) }.orEmpty()
                     if(boosted!=null && boosted!==decoded && !boosted.isRecycled) boosted.recycle()
                     val merged=main+rescued(main,rescue+faint)
                     merged.forEach { addRegion(regions,it) }
@@ -341,12 +358,13 @@ class KomaOcrEngine(private val context: Context) {
                 ensureActive()
                 val main = paddlePage(image)
                 ensureActive()
-                val rescue = if (main.size < 600) paddlePage(source, 960f) else emptyList()
+                refreshRules()
+                val rescue = if (main.size < rules.rescueMinRegions) paddlePage(source, rules.rescueSide) else emptyList()
                 // Тот же третий проход, что в читалке: бледный текст находится
                 // только на кадре с растянутыми уровнями. Читалка и браузер
                 // должны вести себя одинаково.
-                val boosted = if (main.size < 600) contrastBoost(source) else null
-                val faint = boosted?.let { runCatching { paddlePage(it, 960f) }.getOrDefault(emptyList()) }.orEmpty()
+                val boosted = if (main.size < rules.rescueMinRegions) contrastBoost(source) else null
+                val faint = boosted?.let { runCatching { paddlePage(it, rules.rescueSide) }.getOrDefault(emptyList()) }.orEmpty()
                 if (boosted != null && boosted !== source && !boosted.isRecycled) boosted.recycle()
                 val regions = mutableListOf<OcrRegion>()
                 (main + rescued(main, rescue + faint)).forEach { addRegion(regions, it) }
@@ -481,7 +499,10 @@ class KomaOcrEngine(private val context: Context) {
      *  4. у рамки результата координаты САМОЙ строки, без полей, — иначе при
      *     склейке в облачко строки наезжали друг на друга.
      */
-    private fun paddlePage(image:Bitmap, side:Float = 1600f):List<OcrRegion> {
+    private fun paddlePage(image:Bitmap, requestedSide:Float = -1f):List<OcrRegion> {
+        // Сторона детектора: явный аргумент (страховочные проходы) главнее
+        // значения из правил.
+        val side = if (requestedSide > 0f) requestedSide else rules.pageSide
         if(det==null)det=session("detection.onnx")
         if(rec==null)rec=session("cyrillic.onnx")
         val out=mutableListOf<OcrRegion>()
@@ -495,7 +516,7 @@ class KomaOcrEngine(private val context: Context) {
                 }
                 val recognition=decodeBetter(crop)
                 if(!crop.isRecycled)crop.recycle()
-                if(recognition.first.isNotBlank() && recognition.second>.25f) {
+                if(recognition.first.isNotBlank() && recognition.second>rules.minConfidence) {
                     out.add(OcrRegion(
                         recognition.first,
                         line.left.toFloat()/image.width,
@@ -709,10 +730,11 @@ class KomaOcrEngine(private val context: Context) {
             for(i in 0..255) { acc+=hist[i]; if(acc>=target) return i }
             return 255
         }
-        val low=percentile(0.02f)
-        val high=percentile(0.98f)
-        if(high-low<10) return -1
-        return (low+(high-low)*0.45f).toInt().coerceIn(40,235)
+        val r = rules
+        val low=percentile(r.inkLowPercentile)
+        val high=percentile(r.inkHighPercentile)
+        if(high-low<r.inkFlatSpread) return -1
+        return (low+(high-low)*r.inkCoefficient).toInt().coerceIn(r.inkMin,r.inkMax)
     }
 
     /**
@@ -724,14 +746,16 @@ class KomaOcrEngine(private val context: Context) {
      * кэшу страницы и рисуется на экране.
      */
     private fun contrastBoost(src:Bitmap):Bitmap? = try {
+        val gain=rules.contrastGain
+        val shift=rules.contrastOffset
         val out=Bitmap.createBitmap(src.width,src.height,Bitmap.Config.ARGB_8888)
         val paint=Paint(Paint.FILTER_BITMAP_FLAG).apply {
             colorFilter=ColorMatrixColorFilter(
                 ColorMatrix(
                     floatArrayOf(
-                        2.2f,0f,0f,0f,-140f,
-                        0f,2.2f,0f,0f,-140f,
-                        0f,0f,2.2f,0f,-140f,
+                        gain,0f,0f,0f,shift,
+                        0f,gain,0f,0f,shift,
+                        0f,0f,gain,0f,shift,
                         0f,0f,0f,1f,0f,
                     ),
                 ),
@@ -812,7 +836,7 @@ class KomaOcrEngine(private val context: Context) {
             }
             // Порог — по кропу, а не константа 110: иначе бледно-серые буквы
             // бинаризация превращала в белое поле, и повтор не помогал.
-            val threshold=inkThreshold(lumas).let { if(it<0) 110 else it }
+            val threshold=inkThreshold(lumas).let { if(it<0) rules.binarizeFallback else it }
             for(i in pixels.indices) {
                 val luma=lumas[i]
                 val dark=luma<threshold
