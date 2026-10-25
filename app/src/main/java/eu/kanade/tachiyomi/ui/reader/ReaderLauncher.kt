@@ -55,13 +55,15 @@ object ReaderLauncher {
     val PAGES = Option(
         mode = MODE_PAGES,
         title = "Манга · постранично",
-        subtitle = "Основная читалка: страницы, зум, свои настройки. Без рамок по репликам.",
+        subtitle = "Страницы, зум и настройки прежней читалки. Рамки по репликам, значок " +
+            "озвучки у каждой реплики и авточтение здесь тоже есть.",
     )
 
     val STRIP = Option(
         mode = MODE_STRIP,
         title = "Манхва · вертикальная лента",
-        subtitle = "Читалка KOMA: лента целиком, рамки по репликам, озвучка и авточтение.",
+        subtitle = "Читалка KOMA: длинный кадр режется на полосы — читается и то, что " +
+            "выше или ниже экрана. Рамки по репликам, озвучка и авточтение.",
     )
 
     /** Запомненный выбор для серии: null — ещё не выбирали. */
@@ -154,6 +156,17 @@ fun ReaderChoiceDialog(
                 ReaderChoiceOption(
                     option = ReaderLauncher.STRIP,
                     onClick = { onChoose(ReaderLauncher.MODE_STRIP, rememberForManga) },
+                )
+                // Главное, что нельзя терять из виду: рамки реплик, значок 🔊 и
+                // авточтение работают В ОБЕИХ читалках. Выбор — только про то,
+                // как листается страница, а не про то, есть ли рамки.
+                Text(
+                    "Рамки реплик, 🔈 у каждой реплики и авточтение есть в обеих " +
+                        "читалках. Разница только в том, как листается страница: " +
+                        "по одной или лентой с разбором на полосы.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 10.dp),
                 )
                 Row(
                     modifier = Modifier
