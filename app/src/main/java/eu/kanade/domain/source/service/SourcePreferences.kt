@@ -124,4 +124,5 @@ class SourcePreferences(
     val webCatalogHosts: Preference<String> = preferenceStore.getString("web_catalog_hosts", "{}")
     val webCatalogTemplates: Preference<String> = preferenceStore.getString("web_catalog_templates", "{}")
     val webCatalogDisabled: Preference<String> = preferenceStore.getString("web_catalog_disabled", "[]")
+    val webCatalogSelectors: Preference<String> = preferenceStore.getString("web_catalog_selectors", "{}")
 }

@@ -70,6 +70,9 @@ class FeedScreen : Screen() {
             onOpenUrl = { url, title ->
                 navigator.push(eu.kanade.tachiyomi.ui.webview.WebViewScreen(url, title))
             },
+            onOpenSiteGrid = { siteId, query, mode ->
+                navigator.push(eu.kanade.tachiyomi.ui.websources.WebSiteSearchScreen(siteId, query, mode))
+            },
         )
     }
 }
@@ -87,6 +90,7 @@ private fun FeedScreenContent(
     onNavigateUp: () -> Unit,
     onOpenSource: (Long, String) -> Unit,
     onOpenUrl: (String, String?) -> Unit,
+    onOpenSiteGrid: (String, String, String) -> Unit,
 ) {
     var loading by remember { mutableStateOf(true) }
     var entries by remember { mutableStateOf<List<FeedEntry>>(emptyList()) }
@@ -334,15 +338,15 @@ private fun FeedScreenContent(
                                     }
                                     TextButton(
                                         onClick = {
-                                            val url = site.search?.let { WebSiteCatalog.searchUrl(site, searchQuery) }
-                                                ?: WebSiteCatalog.homeUrl(site)
-                                            onOpenUrl(url, site.name)
+                                            if (searchQuery.isBlank()) {
+                                                onOpenUrl(WebSiteCatalog.homeUrl(site), site.name)
+                                            } else {
+                                                onOpenSiteGrid(site.id, searchQuery, "search")
+                                            }
                                         },
                                     ) { Text("Поиск") }
                                     TextButton(
-                                        onClick = {
-                                            onOpenUrl(WebSiteCatalog.latestUrl(site) ?: WebSiteCatalog.homeUrl(site), site.name)
-                                        },
+                                        onClick = { onOpenSiteGrid(site.id, "", "latest") },
                                     ) { Text("Новинки") }
                                 }
                                 if (site.note != null) {

@@ -37,6 +37,15 @@ data class WebSite(
     val latest: String?,
     /** Предупреждение для интерфейса (например «нужна авторизация»). */
     val note: String? = null,
+    /**
+     * CSS-селектор карточки результата в выдаче сайта. Если задан, разбор идёт
+     * строго по нему — это надёжнее эвристики и правится прямо в приложении.
+     */
+    val itemSelector: String? = null,
+    /** Селектор названия/ссылки внутри карточки. */
+    val titleSelector: String? = null,
+    /** Селектор обложки внутри карточки. */
+    val coverSelector: String? = null,
 )
 
 object WebSiteCatalog {
@@ -62,8 +71,14 @@ object WebSiteCatalog {
             name = "MangaHub",
             type = "MANGA",
             hosts = listOf("mangahub.io"),
-            search = "https://{host}/search?query={q}",
+            // Параметр именно «q»: в реальной выдаче ссылки выглядят как
+            // /search?q=…&order=…, а «query=» сайт молча игнорирует.
+            search = "https://{host}/search?q={q}",
             latest = "https://{host}/manga-list/latest-manga",
+            // Селекторы проверены 25.10.2026 на живой странице выдачи.
+            itemSelector = ".media-manga, .media",
+            titleSelector = "h4.media-heading a[href]",
+            coverSelector = "img.manga-thumb",
         ),
         WebSite(
             id = "remanga",
@@ -168,6 +183,7 @@ object WebSiteCatalog {
     private const val PREFS_HOSTS = "web_catalog_hosts"
     private const val PREFS_TEMPLATES = "web_catalog_templates"
     private const val PREFS_DISABLED = "web_catalog_disabled"
+    private const val PREFS_SELECTORS = "web_catalog_selectors"
 
     /** Все сайты с учётом пользовательских правок. */
     fun all(prefs: SourcePreferences, context: Context? = null): List<WebSite> =
@@ -210,10 +226,15 @@ object WebSiteCatalog {
         val hosts = if (manual == null) site.hosts else listOf(manual) + site.hosts.filter { it != manual }
         val tplRoot = runCatching { JSONObject(prefs.webCatalogTemplates.get()) }.getOrDefault(JSONObject())
         val obj = tplRoot.optJSONObject(site.id)
+        val selRoot = runCatching { JSONObject(prefs.webCatalogSelectors.get()) }.getOrDefault(JSONObject())
+        val sel = selRoot.optJSONObject(site.id)
         return site.copy(
             hosts = hosts,
             search = obj?.optString("search")?.takeIf { it.isNotBlank() } ?: site.search,
             latest = obj?.optString("latest")?.takeIf { it.isNotBlank() } ?: site.latest,
+            itemSelector = sel?.optString("item")?.takeIf { it.isNotBlank() } ?: site.itemSelector,
+            titleSelector = sel?.optString("title")?.takeIf { it.isNotBlank() } ?: site.titleSelector,
+            coverSelector = sel?.optString("cover")?.takeIf { it.isNotBlank() } ?: site.coverSelector,
         )
     }
 
@@ -242,6 +263,28 @@ object WebSiteCatalog {
             ?: site.hosts.first().let { "https://$it/" }
 
     fun homeUrl(site: WebSite): String = "https://${site.hosts.first()}/"
+
+    /** Сохранить CSS-селекторы разбора (пусто — вернуть каталог/эвристику). */
+    fun setSelectors(prefs: SourcePreferences, id: String, item: String?, title: String?, cover: String?) {
+        val root = runCatching { JSONObject(prefs.webCatalogSelectors.get()) }.getOrDefault(JSONObject())
+        root.put(
+            id,
+            JSONObject().apply {
+                item?.takeIf { it.isNotBlank() }?.let { put("item", it) }
+                title?.takeIf { it.isNotBlank() }?.let { put("title", it) }
+                cover?.takeIf { it.isNotBlank() }?.let { put("cover", it) }
+            },
+        )
+        prefs.webCatalogSelectors.set(root.toString())
+    }
+
+    fun clearSelectors(prefs: SourcePreferences, id: String) {
+        runCatching {
+            val root = JSONObject(prefs.webCatalogSelectors.get())
+            root.remove(id)
+            prefs.webCatalogSelectors.set(root.toString())
+        }
+    }
 
     /** Забыть пользовательский домен — вернуть каталог. */
     fun clearHost(prefs: SourcePreferences, id: String) {
