@@ -1,5 +1,5 @@
 {
-  "version": "2.9.35-sample",
+  "version": "2.9.36-sample",
   "inkLowPercentile": 0.02,
   "inkHighPercentile": 0.98,
   "inkFlatSpread": 10,
@@ -22,5 +22,13 @@
   "inkLevels": 1,
   "speechRate": 0,
   "autoScrollStep": 0.25,
-  "semiManual": false
+  "semiManual": false,
+  "mergeHeightRatio": 1.8,
+  "semiManualSettleMs": 700,
+  "wordFixes": {
+    "Пвтор": "Автор",
+    "Форирование": "Формирование",
+    "Тоu": "Том",
+    "raba": "глава"
+  }
 }
