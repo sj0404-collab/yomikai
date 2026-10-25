@@ -1,5 +1,5 @@
 {
-  "version": "2.9.34-sample",
+  "version": "2.9.35-sample",
   "inkLowPercentile": 0.02,
   "inkHighPercentile": 0.98,
   "inkFlatSpread": 10,
@@ -17,5 +17,10 @@
   "bandOverlap": 0.15,
   "bandsMax": 8,
   "wholeThreshold": 0.72,
-  "bubbleGap": 0.45
+  "bubbleGap": 0.45,
+  "inkTileRows": 4,
+  "inkLevels": 1,
+  "speechRate": 0,
+  "autoScrollStep": 0.25,
+  "semiManual": false
 }

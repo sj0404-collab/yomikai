@@ -60,6 +60,23 @@ data class KomaRules(
     /** Порог на случай, если участок однородный (старое поведение binarize). */
     @SerialName("binarizeFallback") val binarizeFallback: Int = 110,
 
+    // ── Несколько шрифтов на одной странице ──────────────────────────────────
+    /**
+     * На сколько горизонтальных подблоков режется бокс при поиске «чернил».
+     *
+     * Жалоба: заголовок каллиграфией и реплика жирным в одном боксе — порог
+     * считался один на двоих, вставал по тёмному тексту, и серый выпадал.
+     * Теперь у каждого подблока свой порог: 1 — старое поведение.
+     */
+    @SerialName("inkTileRows") val inkTileRows: Int = 4,
+    /**
+     * Сколько уровней «чернил» разрешено на участке: 1 — только тёмное
+     * (как раньше), 2 — тёмное ИЛИ серое (для страниц с каллиграфией и
+     * подписями поверх рисунка). Двухуровневый режим включён опцией: он
+     * добавляет найденного текста, но может поймать и шум.
+     */
+    @SerialName("inkLevels") val inkLevels: Int = 1,
+
     // ── Растяжка уровней (страховочный проход по бледному тексту) ────────────
     @SerialName("contrastGain") val contrastGain: Float = 2.2f,
     @SerialName("contrastOffset") val contrastOffset: Float = -140f,
@@ -79,6 +96,22 @@ data class KomaRules(
     @SerialName("wholeThreshold") val wholeThreshold: Float = 0.72f,
     /** Зазор (в долях высоты строки), в пределах которого фрагменты — одна реплика. */
     @SerialName("bubbleGap") val bubbleGap: Float = 0.45f,
+
+    // ── Сама читалка и авточтение ────────────────────────────────────────────
+    /**
+     * Скорость голоса. 0 — не трогать выбор в читалке (как в настройках).
+     * Так правило из файла МОЖЕТ подсказать скорость, но не спорит с ручной
+     * настройкой по умолчанию.
+     */
+    @SerialName("speechRate") val speechRate: Float = 0f,
+    /** Доля экрана, на которую доводим реплику/страницу при автопрокрутке. */
+    @SerialName("autoScrollStep") val autoScrollStep: Float = 0.25f,
+    /**
+     * Полуручной режим: прочитать то, что видно, остановиться и ждать, пока
+     * человек прокрутит сам. Экономит заряд и не тащит чтение туда, куда
+     * человек ещё не смотрит.
+     */
+    @SerialName("semiManual") val semiManual: Boolean = false,
 ) {
     /**
      * Приведение к безопасным диапазонам.
@@ -106,6 +139,10 @@ data class KomaRules(
         bandsMax = bandsMax.coerceIn(1, 32),
         wholeThreshold = wholeThreshold.coerceIn(0.1f, 1f),
         bubbleGap = bubbleGap.coerceIn(0.05f, 3f),
+        inkTileRows = inkTileRows.coerceIn(1, 16),
+        inkLevels = inkLevels.coerceIn(1, 2),
+        speechRate = speechRate.coerceIn(0f, 3f),
+        autoScrollStep = autoScrollStep.coerceIn(0.05f, 0.9f),
     ).let { if (it.inkMax <= it.inkMin) it.copy(inkMax = (it.inkMin + 1).coerceAtMost(255)) else it }
 
     fun toJson(): String = json.encodeToString(this)

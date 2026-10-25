@@ -42,21 +42,37 @@ object KomaBands {
      * @param viewportFrac какая доля высоты страницы видна на экране (0..1).
      *   `null` или значение ≥ [WHOLE_THRESHOLD] — страница читается целиком.
      */
-    fun of(viewportFrac: Float?): List<KomaBand> {
-        if (viewportFrac == null || viewportFrac <= 0f || viewportFrac >= WHOLE_THRESHOLD) {
+    fun of(
+        viewportFrac: Float?,
+        /** Числа берутся из правил: перекрытие, максимум полос, порог «вся страница». */
+        rules: KomaRules = KomaRules.DEFAULT,
+    ): List<KomaBand> {
+        val wholeThreshold = rules.wholeThreshold.coerceIn(0.3f, 1f)
+        val overlap = rules.bandOverlap.coerceIn(0f, 0.45f)
+        val maxBands = rules.bandsMax.coerceIn(1, 32)
+        return of(viewportFrac, wholeThreshold, overlap, maxBands)
+    }
+
+    private fun of(
+        viewportFrac: Float?,
+        wholeThreshold: Float,
+        overlap: Float,
+        maxBands: Int,
+    ): List<KomaBand> {
+        if (viewportFrac == null || viewportFrac <= 0f || viewportFrac >= wholeThreshold) {
             return listOf(KomaBand.Whole)
         }
-        val visible = viewportFrac.coerceIn(0.12f, WHOLE_THRESHOLD)
-        val bands = ArrayList<KomaBand>(MAX)
+        val visible = viewportFrac.coerceIn(0.12f, wholeThreshold)
+        val bands = ArrayList<KomaBand>(maxBands)
         var top = 0f
         var index = 0
-        while (index < MAX) {
+        while (index < maxBands) {
             val bottom = (top + visible).coerceAtMost(1f)
             bands += KomaBand(index, top, bottom)
             if (bottom >= 0.999f) break
             // Следующая полоса начинается с перекрытием — стык всегда попадает
             // в одну из полос целиком.
-            top = (bottom - visible * OVERLAP).coerceAtLeast(0.0001f)
+            top = (bottom - visible * overlap).coerceAtLeast(0.0001f)
             index++
         }
         // Последняя полоса дотягивается до низа страницы, иначе хвост текста
