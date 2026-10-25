@@ -308,6 +308,12 @@ fun KomaReaderScreen(
             )
         }
     }
+    // Реплики, которые уже прозвучали: по ним рамки гаснут до полупрозрачных.
+    // Список ведёт движок авточтения (state.spoken), поэтому экран и озвучка
+    // показывают одно и то же.
+    val spokenOfPage = remember(autoState.spoken) {
+        autoState.spoken.map { KomaReadingOrder.key(it) }.toSet()
+    }
     var readTrigger by remember { mutableIntStateOf(0) }
     // Авточтение НЕ включается само при открытии страницы. Запуск — только
     // кнопкой воспроизведения или явной командой «Сканировать и читать»
@@ -330,10 +336,21 @@ fun KomaReaderScreen(
             from = if(mode=="vertical")scroll.firstVisibleItemIndex else pager.currentPage,
             tts = tts,
             recognize = { index, pageBand ->
-                // Полоса берётся из кэша, если её уже распознали (очередь
-                // работает впереди), иначе распознаётся сейчас.
+                // Полоса берётся из кэша, только если в ней ЕСТЬ текст.
+                //
+                // Раньше пустой результат из кэша считался готовым ответом:
+                // очередь могла записать «текста нет» (например, не догрузился
+                // кадр), и полоса с названием на обложке после этого не
+                // распознавалась уже никогда — приложение молча её пролистывало.
+                // Теперь пустой кэш = повод распознать заново.
                 val ready = engine.cached(book.id,index,language,slot(pageBand))
-                if (ready != null) ready else runCatching { engine.recognize(book,index,language,false,pageBand) }.getOrNull()
+                    ?.takeIf { it.regions.isNotEmpty() }
+                if (ready != null) {
+                    ready
+                } else {
+                    runCatching { engine.recognize(book,index,language,true,pageBand) }.getOrNull()
+                        ?: engine.cached(book.id,index,language,slot(pageBand))
+                }
             },
             bandsOf = { index -> bandsOf(index) },
             onPage = { index ->
@@ -401,33 +418,46 @@ fun KomaReaderScreen(
                     delay(900)
                 }
             },
-            manualCasting = manualCasting,
-            slotOf = { _, line ->
-                // Приоритет: выбранный сейчас голос (кнопки 1/2/3 внизу) →
-                // назначение реплики (если включены «Разные голоса»).
-                if (selectedSlot in 0 until KomaCasting.SLOT_COUNT) selectedSlot else savedSlotFor(line.text)
-            },
+            // Один голос на всю книгу: слоты (ж1/ж2/м1/м2) отключены.
+            manualCasting = false,
+            slotOf = { _, _ -> null },
             voiceForSlot = { slot -> slotVoiceOf(slot) },
-            rememberSlot = { line, slot -> KomaCasting.saveSlot(context,book.id,line.text,slot) },
+            rememberSlot = { _, _ -> },
             onBand = { index, pageBand ->
-                // Прокрутка к читаемой полосе: у вебтуна это сдвиг ВНУТРИ
-                // страницы, иначе экран стоял бы на её начале.
+                // Прокрутка к читаемой полосе — только ВПЕРЁД.
+                //
+                // Полосы перекрываются на 15% (KomaBands.OVERLAP), чтобы реплика
+                // на стыке не потерялась. Но начало следующей полосы лежит ВЫШЕ
+                // конца прочитанной, и безусловный `animateScrollToItem(band.top)`
+                // откатывал ленту назад на ~0.7 экрана — ровно то, что видно на
+                // кадрах 12:00:06 → 12:00:52 (реплики на месте, а сверху снова
+                // титульный лист). Теперь едем, только если полоса ниже текущего
+                // положения ленты, и никогда не дёргаем экран назад.
                 val h = book.pages.getOrNull(index)?.let { pageHeights[it] } ?: 0
                 if (h > 0) {
-                    val target = (pageBand.top * h).toInt()
-                    scrollJob?.cancel()
-                    scrollJob = scope.launch {
-                        runCatching {
-                            if (mode == "vertical") {
-                                scroll.animateScrollToItem(index, target)
-                            } else if (index == page && pageBand.top > 0.01f) {
-                                pageScroll.animateScrollTo(target)
-                            }
+                val target = (pageBand.top * h).toInt()
+                if (mode == "vertical") {
+                    val curItem = scroll.firstVisibleItemIndex
+                    val curOffset = scroll.firstVisibleItemScrollOffset
+                    val forward = index > curItem || (index == curItem && target > curOffset + 8)
+                    if (forward) {
+                        scrollJob?.cancel()
+                        scrollJob = scope.launch {
+                            runCatching { scroll.animateScrollToItem(index, target) }
+                        }
+                    }
+                } else if (index == page && pageBand.top > 0.01f) {
+                    val forward = target > pageScroll.value + 8
+                    if (forward) {
+                        scrollJob?.cancel()
+                        scrollJob = scope.launch {
+                            runCatching { pageScroll.animateScrollTo(target) }
                         }
                     }
                 }
+                }
             },
-            onLine = { line ->
+            onLine = { linePage, line ->
                 // Автопрокрутка к текущей реплике — только если её не видно.
                 //
                 // Раньше на КАЖДУЮ строку ставилась позиция «реплика на 120 px
@@ -449,7 +479,10 @@ fun KomaReaderScreen(
                     }
                 }
                 if (mode == "vertical" && autoScroll && !scroll.isScrollInProgress) {
-                    val target = autoState.page
+                    // Страница — та, на которой реально звучит реплика (номер
+                    // пришёл из движка), а не «текущая по состоянию»: они
+                    // расходились на стыке страниц.
+                    val target = linePage.coerceIn(0, book.pages.lastIndex)
                     val path = book.pages.getOrNull(target)
                     val height = path?.let { pageHeights[it] } ?: 0
                     if (height > 0) {
@@ -469,9 +502,12 @@ fun KomaReaderScreen(
                         val visible = bubbleTop >= comfortableTop && bubbleBottom <= comfortableBottom
                         if (!visible && viewport > 0) {
                             val desired = (bubbleTop - viewport * 0.30f).toInt().coerceAtLeast(0)
+                            // Доводим реплику до удобной полосы ПОСТЕПЕННО:
+                            // мгновенный scrollToItem читался как рывок-сбой,
+                            // а не как переход к следующей реплике.
                             scrollJob?.cancel()
                             scrollJob = scope.launch {
-                                runCatching { scroll.scrollToItem(target, desired) }
+                                runCatching { scroll.animateScrollToItem(target, desired) }
                             }
                         }
                     }
@@ -565,70 +601,36 @@ fun KomaReaderScreen(
                     // Голоса — компактно, рядом с «Рамками текста»: три кнопки
                     // и ползунок тембра выбранного голоса. Никаких окон на пол
                     // экрана после каждой реплики.
-                    IconButton(onClick={voiceBar=!voiceBar}){Icon(Icons.Outlined.RecordVoiceOver,"Голоса",tint=if(voiceBar||selectedSlot>=0)Orange else Color(0xFF9EAB9A))}
+                    IconButton(onClick={voiceBar=!voiceBar}){Icon(Icons.Outlined.RecordVoiceOver,"Голос",tint=if(voiceBar)Orange else Color(0xFF9EAB9A))}
                     IconButton(onClick={sheet="pages"}){Icon(Icons.Outlined.GridView,"Все страницы",tint=Color(0xFF9EAB9A))}
                 }
                 // ── Три голоса: «по умолчанию» + 1/2/3 и ползунок тембра ────
                 // Полуручной режим больше не открывает окно: строка подсвечивается,
                 // а проход ждёт нажатия одной из трёх кнопок.
-                if(voiceBar || autoState.awaiting!=null) {
-                    val asking = autoState.awaiting
+                // ── Голос: ОДИН ─────────────────────────────────────────────
+                // Четыре слота (ж1/ж2/м1/м2 с ползунком тембра) убраны по
+                // просьбе владельца: совмещать разные голоса с разбивкой текста
+                // на реплики пока не получается — панель только мешала и
+                // разъезжалась по ширине. Вернёмся к этому, когда текст и голоса
+                // будут совмещаться надёжно; код слотов остаётся в KomaCasting.
+                if(voiceBar) {
                     Row(Modifier.fillMaxWidth().padding(top=2.dp),verticalAlignment=Alignment.CenterVertically) {
+                        Text("Голос:",fontSize=10.sp,color=Color(0xFFB2B8AD),modifier=Modifier.padding(end=6.dp))
                         Text(
-                            if(asking!=null) "Кто говорит?" else "Голос:",
-                            fontSize=10.sp,color=if(asking!=null) Orange else Color(0xFFB2B8AD),
-                            modifier=Modifier.padding(end=6.dp),
+                            selectedVoice.substringAfterLast('/').ifBlank { "по умолчанию" },
+                            fontSize=10.sp,color=Orange,
+                            modifier=Modifier.weight(1f),
                         )
-                        VoiceSlotChip(
-                            label="об.", selected=selectedSlot<0,
-                            onClick={ selectedSlot=-1;repo.prefs.edit().putInt("voiceSlot",-1).apply();KomaAutoRead.assignSlot(null) },
-                        )
-                        for(slot in 0 until KomaCasting.SLOT_COUNT) {
-                            Spacer(Modifier.width(4.dp))
-                            VoiceSlotChip(
-                                label=KomaCasting.SLOT_TITLES.getOrElse(slot){ "${slot+1}" },
-                                selected=selectedSlot==slot,
-                                onClick={
-                                    selectedSlot=slot
-                                    repo.prefs.edit().putInt("voiceSlot",slot).apply()
-                                    KomaAutoRead.assignSlot(slot)
-                                },
-                            )
+                        TextButton(onClick={ voiceDialog=true },contentPadding=PaddingValues(horizontal=6.dp)) {
+                            Text("выбрать",fontSize=10.sp,color=Orange)
                         }
-                        if(selectedSlot in 0 until KomaCasting.SLOT_COUNT) {
-                            Spacer(Modifier.width(8.dp))
-                            Text("низк.",fontSize=8.sp,color=Color(0xFF9EAB9A))
-                            Slider(
-                                value=slotPitch[selectedSlot], onValueChange={ v ->
-                                    val p=v.coerceIn(0.6f,1.6f)
-                                    slotPitch[selectedSlot]=p
-                                    KomaCasting.savePitch(context,selectedSlot,p)
-                                },
-                                valueRange=0.6f..1.6f,
-                                modifier=Modifier.weight(1f).height(22.dp),
-                                colors=SliderDefaults.colors(thumbColor=Orange,activeTrackColor=Orange,inactiveTrackColor=Color(0xFF51594D)),
+                        IconButton(onClick={ scope.launch { runCatching {
+                            tts.speakVoiced(
+                                texts=listOf(bubbles?.firstOrNull()?.text?.let { KomaCasting.stripSpeaker(it) } ?: "Так будет звучать голос."),
+                                voiceFor={ KomaVoice(name=selectedVoice) },
+                                onLineStart={},
                             )
-                            Text("выс.",fontSize=8.sp,color=Color(0xFF9EAB9A))
-                            // Выбор настоящего голоса движка для этого слота:
-                            // именно этого не хватало — слот раньше менял только тембр.
-                            TextButton(
-                                onClick={ slotPickerFor=selectedSlot },
-                                contentPadding=PaddingValues(horizontal=6.dp),
-                            ) {
-                                Text(
-                                    slotVoices.getOrNull(selectedSlot)?.substringAfterLast('/')?.take(10)
-                                        ?: "голос",
-                                    fontSize=9.sp,color=Orange,
-                                )
-                            }
-                            IconButton(onClick={ scope.launch { runCatching {
-                                tts.speakVoiced(
-                                    texts=listOf(bubbles?.firstOrNull()?.text?.let { KomaCasting.stripSpeaker(it) } ?: "Так будет звучать этот голос."),
-                                    voiceFor={ slotVoiceOf(selectedSlot) },
-                                    onLineStart={},
-                                )
-                            } } },modifier=Modifier.size(28.dp)){Icon(Icons.Outlined.VolumeUp,null,Modifier.size(15.dp),tint=Orange)}
-                        }
+                        } } },modifier=Modifier.size(28.dp)){Icon(Icons.Outlined.VolumeUp,null,Modifier.size(15.dp),tint=Orange)}
                     }
                 }
                 if(batchTotal>0){LinearProgressIndicator(progress={batchProgress.toFloat()/batchTotal},modifier=Modifier.fillMaxWidth(),color=Orange);Text("Страница $batchProgress из $batchTotal",fontSize=10.sp,color=Color.White)}
@@ -652,7 +654,7 @@ fun KomaReaderScreen(
             LaunchedEffect(visibleH){ if(visibleH>0) viewportPx=visibleH }
             LaunchedEffect(visibleW){ if(visibleW>0) viewportWidthPx=visibleW }
             if(mode=="vertical")LazyColumn(state=scroll,modifier=Modifier.fillMaxSize()) {
-                itemsIndexed(book.pages,key={n,_->n}) { n,path -> PageImage(path,engine,true,if(n==page && (showRegions||autoReading))bubbles else null,if(n==page)autoState.currentLine else null,{h->pageHeights[path]=h},{barsVisible=!barsVisible}) }
+                itemsIndexed(book.pages,key={n,_->n}) { n,path -> PageImage(path,engine,true,if(n==page && (showRegions||autoReading))bubbles else null,if(n==page)autoState.currentLine else null,{h->pageHeights[path]=h},{barsVisible=!barsVisible},spokenKeys=spokenOfPage) }
             } else HorizontalPager(state=pager,reverseLayout=mode=="rtl",modifier=Modifier.fillMaxSize(),beyondViewportPageCount=0) { n ->
                 PageImage(
                     path=book.pages[n],
@@ -666,6 +668,7 @@ fun KomaReaderScreen(
                     // скролла живёт в экране, чтобы авточтение могло довести
                     // экран до читаемой полосы.
                     scrollState=if(n==page)pageScroll else null,
+                    spokenKeys=spokenOfPage,
                 )
             }
         }
@@ -913,15 +916,24 @@ fun KomaReaderScreen(
         title={Text("Как читать диалоги?")},
         text={ Column {
             Text(
-                "Обычный голос озвучки не меняется. Внизу читалки есть три голоса " +
-                    "с ползунками тембра (низкий ↔ высокий) — включаются кнопками 1/2/3 " +
-                    "в любой момент.",
+                "Сейчас чтение идёт ОДНИМ голосом — так текст и озвучка не разъезжаются. " +
+                    "Разные голоса для персонажей вернём, когда научимся надёжно совмещать " +
+                    "их с распознанным текстом.",
                 fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(12.dp))
-            Button(onClick={ multiVoice=false;manualCasting=false;askVoices=false;repo.prefs.edit().putBoolean("multiVoice",false).putBoolean("manualCasting",false).putBoolean("voiceAsk_${book.id}",true).apply() },modifier=Modifier.fillMaxWidth().padding(bottom=6.dp)){Text("Одним голосом")}
-            Button(onClick={ multiVoice=true;manualCasting=false;askVoices=false;repo.prefs.edit().putBoolean("multiVoice",true).putBoolean("manualCasting",false).putBoolean("voiceAsk_${book.id}",true).apply() },modifier=Modifier.fillMaxWidth().padding(bottom=6.dp)){Text("Голоса 1/2/3, выбираю сам")}
-            Button(onClick={ multiVoice=true;manualCasting=true;askVoices=false;repo.prefs.edit().putBoolean("multiVoice",true).putBoolean("manualCasting",true).putBoolean("voiceAsk_${book.id}",true).apply() },modifier=Modifier.fillMaxWidth()){Text("Спрашивать на каждой реплике (без окон: строка внизу)")}
+            Button(
+                onClick={ multiVoice=false;manualCasting=false;askVoices=false
+                    repo.prefs.edit().putBoolean("multiVoice",false).putBoolean("manualCasting",false)
+                        .putBoolean("voiceAsk_${book.id}",true).apply() },
+                modifier=Modifier.fillMaxWidth().padding(bottom=6.dp),
+            ){ Text("Одним голосом") }
+            OutlinedButton(
+                onClick={ multiVoice=false;manualCasting=false;askVoices=false
+                    repo.prefs.edit().putBoolean("voiceAsk_${book.id}",true).apply()
+                    voiceDialog=true },
+                modifier=Modifier.fillMaxWidth(),
+            ){ Text("Выбрать голос") }
         } },
         confirmButton={},
     )
@@ -1009,6 +1021,7 @@ private fun PageImage(
     onHeight:(Int)->Unit={},
     onTap:()->Unit={},
     scrollState:androidx.compose.foundation.ScrollState?=null,
+    spokenKeys:Set<String> = emptySet(),
 ) {
     var bitmap by remember(path){mutableStateOf<android.graphics.Bitmap?>(null)}
     var error by remember(path){mutableStateOf<String?>(null)}
@@ -1039,7 +1052,7 @@ private fun PageImage(
             val st=scrollState ?: ownState
             LaunchedEffect(height,density){ runCatching { onHeight(with(density){ height.roundToPx() }) } }
             Box(Modifier.fillMaxSize().verticalScroll(st)) {
-                PageBody(b,boxes,currentLine,path,onTap,Modifier.size(width,height))
+                PageBody(b,boxes,currentLine,path,onTap,Modifier.size(width,height),spokenKeys)
             }
         }
         else -> BoxWithConstraints(
@@ -1052,7 +1065,7 @@ private fun PageImage(
             // Высота страницы при вписывании по ширине — нужна автопрокрутке,
             // чтобы прокрутить длинный вебтун до текущей реплики.
             LaunchedEffect(height,density){ runCatching { onHeight(with(density){ height.roundToPx() }) } }
-            PageBody(b,boxes,currentLine,path,onTap,Modifier.size(width,height))
+            PageBody(b,boxes,currentLine,path,onTap,Modifier.size(width,height),spokenKeys)
         }
     }
 }
@@ -1066,6 +1079,7 @@ private fun PageBody(
     path:String,
     onTap:()->Unit,
     modifier:Modifier,
+    spokenKeys:Set<String> = emptySet(),
 ) {
     var scale by remember(path){mutableFloatStateOf(1f)}
     var offset by remember(path){mutableStateOf(Offset.Zero)}
@@ -1078,7 +1092,12 @@ private fun PageBody(
             // прямоугольник, а не пять полос с отдельным чтением каждой.
             val spoken=if(currentLine.isNullOrBlank())null else KomaReadingOrder.key(currentLine)
             boxes.forEach { r ->
-                val isCurrent=spoken!=null && KomaReadingOrder.key(r.text)==spoken
+                val key=KomaReadingOrder.key(r.text)
+                val isCurrent=spoken!=null && key==spoken
+                // Уже прозвучавшая реплика гаснет до полупрозрачной рамки: видно,
+                // что её прочли, и она больше не «захватывает» внимание. Текст в
+                // озвучку повторно не попадает — движок помнит прочитанное.
+                val isDone=!isCurrent && key in spokenKeys
                 val radius = CornerRadius(8.dp.toPx(), 8.dp.toPx())
                 drawRoundRect(
                     color = if(isCurrent)Orange.copy(alpha=0.35f) else Color.Transparent,
@@ -1087,7 +1106,11 @@ private fun PageBody(
                     cornerRadius = radius,
                 )
                 drawRoundRect(
-                    color = if(isCurrent)Orange else Orange.copy(alpha=0.7f),
+                    color = when {
+                        isCurrent -> Orange
+                        isDone -> Orange.copy(alpha=0.18f)
+                        else -> Orange.copy(alpha=0.7f)
+                    },
                     topLeft = Offset(r.left*size.width,r.top*size.height),
                     size = Size((r.right-r.left)*size.width,(r.bottom-r.top)*size.height),
                     cornerRadius = radius,

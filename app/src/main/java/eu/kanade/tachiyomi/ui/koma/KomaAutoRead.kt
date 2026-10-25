@@ -1011,7 +1011,14 @@ object KomaAutoRead {
         /** Экран прокручивает ленту к читаемой полосе. */
         onBand: suspend (index: Int, band: KomaBand) -> Unit = { _, _ -> },
         onResult: (PageOcr?) -> Unit,
-        onLine: (KomaReadingOrder.Line) -> Unit = {},
+        /**
+         * Началась реплика [line] на странице [pageIndex].
+         *
+         * Номер страницы передаётся явно: раньше экран брал его из
+         * `state.page`, и при отставании состояния прокрутка уезжала на
+         * СОСЕДНЮЮ страницу — выглядело как «переход по репликам не туда».
+         */
+        onLine: (pageIndex: Int, line: KomaReadingOrder.Line) -> Unit = { _, _ -> },
         /** Страница без реплик (арт, звуковые эффекты): не «перескочить», а проехать. */
         onSilentPage: suspend (index: Int) -> Unit = {},
         /**
@@ -1074,7 +1081,15 @@ object KomaAutoRead {
                         running = true,
                         page = index,
                         pageCount = pages.size,
-                        status = if (bands.size > 1 && !band.whole) "" else "Страница ${index + 1}: без реплик",
+                        // Раньше на многополосных страницах здесь стояла пустая
+                        // строка — и «название обложки пропущено, хоть его видно»
+                        // выглядело как молчание приложения. Теперь сказано прямо,
+                        // какая полоса осталась без текста.
+                        status = if (bands.size > 1 && !band.whole) {
+                            "Страница ${index + 1}: полоса ${band.index + 1} без распознанного текста"
+                        } else {
+                            "Страница ${index + 1}: текст не распознан"
+                        },
                         currentLine = "",
                     )
                     continue
@@ -1139,7 +1154,7 @@ object KomaAutoRead {
                             val line = lines.getOrNull(startAt + offset) ?: return@start
                             reached = startAt + offset
                             _state.value = _state.value.copy(currentLine = line.text)
-                            onLine(line)
+                            onLine(index, line)
                         },
                     )
                     if (paused || skipRequested) {
