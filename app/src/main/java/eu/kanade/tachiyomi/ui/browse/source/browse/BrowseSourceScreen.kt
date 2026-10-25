@@ -26,6 +26,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -62,6 +63,7 @@ import mihon.feature.migration.dialog.MigrateMangaDialog
 import mihon.presentation.core.util.collectAsLazyPagingItems
 import tachiyomi.core.common.Constants
 import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.domain.library.model.LibraryIndex
 import tachiyomi.domain.source.model.StubSource
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
@@ -241,6 +243,56 @@ data class BrowseSourceScreen(
                                     )
                                 },
                             )
+                        }
+                    }
+
+                    // ── Алфавитный указатель источника ──────────────────────
+                    // В локальной библиотеке указатель был, а в сетевом
+                    // источнике — нет: буква уходила на сайт как текст «#б»
+                    // и ничего не находила. Здесь буква отправляется как
+                    // однобуквенный запрос, а список фильтруется по первой
+                    // букве названия.
+                    if (screenModel.source !is LocalSource) {
+                        Row(
+                            modifier = Modifier
+                                .horizontalScroll(rememberScrollState())
+                                .padding(horizontal = MaterialTheme.padding.small),
+                            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            FilterChip(
+                                selected = state.letterBarOpen || state.letter != null,
+                                onClick = { screenModel.toggleLetterBar() },
+                                label = { Text("А–Я") },
+                            )
+                            if (state.letterBarOpen || state.letter != null) {
+                                FilterChip(
+                                    selected = state.letter == null,
+                                    onClick = { screenModel.clearLetter() },
+                                    label = { Text("Все") },
+                                )
+                                LibraryIndex.LETTERS.forEach { key ->
+                                    FilterChip(
+                                        selected = state.letter == key,
+                                        onClick = {
+                                            if (state.letter == key) {
+                                                screenModel.clearLetter()
+                                            } else {
+                                                screenModel.setLetter(key)
+                                            }
+                                        },
+                                        label = {
+                                            Text(
+                                                when (key) {
+                                                    LibraryIndex.DIGITS -> "0–9"
+                                                    LibraryIndex.OTHER -> "·"
+                                                    else -> key.uppercase()
+                                                },
+                                            )
+                                        },
+                                    )
+                                }
+                            }
                         }
                     }
 

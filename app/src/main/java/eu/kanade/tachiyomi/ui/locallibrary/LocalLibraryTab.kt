@@ -17,11 +17,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -68,7 +70,15 @@ import uy.kohesive.injekt.api.get
  */
 data object LocalLibraryTab : Tab {
 
-    private data class ScanStats(val mangaDirs: Int, val archives: Int)
+    /**
+     * Итоги скана. [letters] — ключи алфавитного указателя, по которым реально
+     * есть содержимое: показывать 61 чип, из которых 50 пустых, бессмысленно.
+     */
+    private data class ScanStats(
+        val mangaDirs: Int,
+        val archives: Int,
+        val letters: Set<String> = emptySet(),
+    )
 
     /**
      * Кэш статистики между заходами на вкладку. Раньше scanStorage()
@@ -124,6 +134,17 @@ data object LocalLibraryTab : Tab {
         // Ключ превращается в служебный запрос «#а», который LocalSource
         // разбирает как «название начинается на…».
         var letter by remember { mutableStateOf<String?>(null) }
+        // Поиск по локальной библиотеке. Раньше его не было вообще: строка
+        // ввода существовала только в основной библиотеке, а тут можно было
+        // искать одну букву за другой. Теперь — обычное поле, как везде.
+        var searchQuery by remember { mutableStateOf("") }
+        // Запрос применяется с задержкой: каждый символ пересоздаёт ScreenModel
+        // и перечитывает папки, поэтому без debounce ввод «залипал» бы на диске.
+        var appliedQuery by remember { mutableStateOf("") }
+        LaunchedEffect(searchQuery) {
+            kotlinx.coroutines.delay(if (searchQuery.length < 2) 0 else 300)
+            appliedQuery = searchQuery
+        }
 
         val addFolderLauncher = rememberLauncherForActivityResult(
             contract = ActivityResultContracts.OpenDocumentTree(),
@@ -361,6 +382,27 @@ data object LocalLibraryTab : Tab {
                             }
                         }
                     }
+                    // Поиск по локальной библиотеке: одно поле, как в основной.
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = {
+                            searchQuery = it
+                            if (it.isNotBlank()) letter = null
+                        },
+                        singleLine = true,
+                        placeholder = { Text("Поиск по папкам и архивам") },
+                        leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(Icons.Outlined.Close, contentDescription = "Очистить")
+                                }
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 4.dp),
+                    )
                     // Алфавитный указатель: А–Я (с «ё»), A–Z, цифры и «прочие».
                     // Повторный тап по букве сбрасывает указатель.
                     LazyRow(
@@ -374,7 +416,8 @@ data object LocalLibraryTab : Tab {
                                 modifier = Modifier.padding(end = 4.dp),
                             )
                         }
-                        items(LibraryIndex.LETTERS, key = { "__index_$it" }) { letterKey ->
+                        val availableLetters = stats?.letters.orEmpty().ifEmpty { LibraryIndex.LETTERS.toSet() }
+                        items(LibraryIndex.LETTERS.filter { it in availableLetters }, key = { "__index_$it" }) { letterKey ->
                             FilterChip(
                                 selected = letter == letterKey,
                                 onClick = { letter = if (letter == letterKey) null else letterKey },
@@ -413,7 +456,9 @@ data object LocalLibraryTab : Tab {
             // использует фильтры источника по умолчанию (OrderBy.Popular =
             // «название, по возрастанию»), и для полосы букв это ровно то, что
             // ждёт пользователь.
-            val listingQuery = LibraryIndex.queryFor(letter)
+            // Приоритет: введённый текст → буква указателя → сортировка.
+            val listingQuery = appliedQuery.trim().ifBlank { null }
+                ?: LibraryIndex.queryFor(letter)
                 ?: if (sortByNewest) {
                     GetRemoteManga.QUERY_LATEST
                 } else {
@@ -423,6 +468,7 @@ data object LocalLibraryTab : Tab {
                 if (sortByNewest) "latest" else "az",
                 activeRoot,
                 letter.orEmpty(),
+                appliedQuery.trim(),
             ).joinToString("|")
             // ВАЖНО: одного data-класса экрана мало. Composable Navigator()
             // держит стек в remember{} и НЕ реагирует на новую ссылку screen:
@@ -483,10 +529,11 @@ data object LocalLibraryTab : Tab {
             .filterNot { it.name.orEmpty().startsWith('.') }
 
         val all = (local + external).distinctBy { it.name }
+        val letters = all.mapNotNull { LibraryIndex.firstLetterKey(it.name.orEmpty()) }.toSet()
         val dirs = all.count { it.isDirectory }
         val archives = all.count { file ->
             !file.isDirectory && file.extension.orEmpty().lowercase() in archiveExts
         }
-        return ScanStats(dirs, archives)
+        return ScanStats(dirs, archives, letters)
     }
 }

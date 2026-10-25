@@ -131,9 +131,9 @@ class BrowseSourceScreenModel(
      * Flow of Pager flow tied to [State.listing]
      */
     private val hideInLibraryItems = sourcePreferences.hideInLibraryItems.get()
-    val mangaPagerFlowFlow = state.map { it.listing }
+    val mangaPagerFlowFlow = state.map { it.listing to it.letter }
         .distinctUntilChanged()
-        .map { listing ->
+        .map { (listing, letter) ->
             Pager(PagingConfig(pageSize = 25)) {
                 getRemoteManga(sourceId, listing.query ?: "", listing.filters)
             }.flow.map { pagingData ->
@@ -145,6 +145,16 @@ class BrowseSourceScreenModel(
                         .stateIn(ioCoroutineScope)
                 }
                     .filter { !hideInLibraryItems || !it.value.favorite }
+                    // Указатель: оставляем только названия на выбранную букву.
+                    // Фильтр клиентский, поэтому он работает на любом источнике —
+                    // включая те, у которых своего алфавита нет вовсе.
+                    .let { data ->
+                        if (letter == null) {
+                            data
+                        } else {
+                            data.filter { manga -> LibraryIndex.matchesLetter(manga.value.title, letter) }
+                        }
+                    }
             }
                 .cachedIn(ioCoroutineScope)
         }
@@ -165,7 +175,35 @@ class BrowseSourceScreenModel(
     }
 
     fun setListing(listing: Listing) {
-        mutableState.update { it.copy(listing = listing, toolbarQuery = null) }
+        // Смена раздела сбрасывает указатель: иначе «Популярное» с буквой «ъ»
+        // выглядело бы как пустой источник.
+        mutableState.update { it.copy(listing = listing, toolbarQuery = null, letter = null) }
+    }
+
+    /** Раскрыть/свернуть полосу букв. */
+    fun toggleLetterBar() {
+        mutableState.update { it.copy(letterBarOpen = !it.letterBarOpen) }
+    }
+
+    /**
+     * Выбрать букву указателя.
+     *
+     * Буква уходит в поиск источника как обычный запрос (сайты ищут по одной
+     * букве нормально), а выдачу дополнительно фильтруем по первой букве
+     * названия — поэтому в списке не будет «середины слова».
+     */
+    fun setLetter(key: String?) {
+        if (key == null) {
+            clearLetter()
+            return
+        }
+        mutableState.update { it.copy(letter = key, letterBarOpen = true) }
+        search(query = key, filters = state.value.filters)
+    }
+
+    fun clearLetter() {
+        mutableState.update { it.copy(letter = null) }
+        setListing(Listing.Popular)
     }
 
     fun setFilters(filters: FilterList) {
@@ -483,6 +521,17 @@ class BrowseSourceScreenModel(
         val toolbarQuery: String? = null,
         val dialog: Dialog? = null,
         val savedSearches: ImmutableList<SavedSearchItem> = persistentListOf(),
+        /**
+         * Буква алфавитного указателя (ключ [LibraryIndex]), null — указатель выключен.
+         *
+         * Раньше указатель был только в локальной библиотеке. В источнике буква
+         * уходила бы в поиск сайта как текст («#б»), и он честно не находил
+         * ничего. Теперь буква отправляется как обычный однобуквенный запрос,
+         * а показываем мы только названия, начинающиеся на эту букву.
+         */
+        val letter: String? = null,
+        /** Раскрыта ли полоса букв. */
+        val letterBarOpen: Boolean = false,
     ) {
         val isUserQuery get() = listing is Listing.Search && !listing.query.isNullOrEmpty()
     }

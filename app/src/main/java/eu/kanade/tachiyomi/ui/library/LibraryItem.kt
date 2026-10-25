@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.library
 
 import eu.kanade.tachiyomi.source.getNameForMangaInfo
+import tachiyomi.domain.library.model.LibraryIndex
 import tachiyomi.domain.library.model.LibraryManga
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.source.local.LocalSource
@@ -49,7 +50,7 @@ data class LibraryItem(
             libraryManga.manga.description?.let { append(it).append(' ') }
             libraryManga.manga.genre?.let { g -> g.forEach { append(it).append(' ') } }
         }
-        if (softMatch(haystack, constraint)) return true
+        if (LibraryIndex.matchesText(haystack, constraint.substringAfterLast(','))) return true
         return libraryManga.manga.title.contains(constraint, true) ||
             (libraryManga.manga.author?.contains(constraint, true) ?: false) ||
             (libraryManga.manga.artist?.contains(constraint, true) ?: false) ||
@@ -87,25 +88,4 @@ data class LibraryItem(
         val isLocal: Boolean,
         val sourceLanguage: String,
     )
-}
-
-/** Нормализация для поиска: регистр, «ё», знаки → пробелы. */
-private fun normalizeForSearch(text: String): String =
-    text.lowercase()
-        .replace('ё', 'е')
-        .map { if (it.isLetterOrDigit()) it else ' ' }
-        .joinToString("")
-        .split(' ')
-        .filter { it.isNotEmpty() }
-        .joinToString(" ")
-
-/**
- * Все слова запроса есть в тексте (в любом порядке). Пустой запрос совпадает
- * со всем — вызывающий код такой случай не использует, но поведение предсказуемо.
- */
-private fun softMatch(haystack: String, needle: String): Boolean {
-    val query = normalizeForSearch(needle.substringAfterLast(','))
-    if (query.isBlank()) return false
-    val text = normalizeForSearch(haystack)
-    return query.split(' ').all { token -> text.contains(token) }
 }

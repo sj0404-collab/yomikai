@@ -112,4 +112,53 @@ class LibraryIndexTest {
             LibraryIndex.indexKey(query) shouldBe letter
         }
     }
+
+    // ── Мягкий поиск (общий для библиотеки, локальных папок и источников) ──
+
+    @Test
+    fun `matchesText ignores word order`() {
+        LibraryIndex.matchesText("Берсерк Максимус", "макс берс") shouldBe true
+        LibraryIndex.matchesText("Берсерк Максимус", "берс максима") shouldBe true
+        LibraryIndex.matchesText("Берсерк Максимус", "макс акира") shouldBe false
+    }
+
+    @Test
+    fun `matchesText treats yo as ye`() {
+        LibraryIndex.matchesText("Ёлка", "елка") shouldBe true
+        LibraryIndex.matchesText("Елка", "ёлка") shouldBe true
+        LibraryIndex.matchesText("Семён", "семен") shouldBe true
+    }
+
+    @Test
+    fun `matchesText ignores punctuation and case`() {
+        LibraryIndex.matchesText("Тетрадь смерти / Death Note", "death тетрадь") shouldBe true
+        LibraryIndex.matchesText("Re:Zero", "re zero") shouldBe true
+    }
+
+    @Test
+    fun `matchesText with blank query matches everything`() {
+        LibraryIndex.matchesText("Что угодно", "") shouldBe true
+    }
+
+    @Test
+    fun `firstLetterKey maps names to index keys`() {
+        LibraryIndex.firstLetterKey("Берсерк") shouldBe "б"
+        LibraryIndex.firstLetterKey("  Ёлка") shouldBe "ё"
+        LibraryIndex.firstLetterKey("Berserk") shouldBe "b"
+        LibraryIndex.firstLetterKey("12 monkeys") shouldBe LibraryIndex.DIGITS
+        LibraryIndex.firstLetterKey("[HorribleSubs] X") shouldBe LibraryIndex.OTHER
+    }
+
+    @Test
+    fun `matchesLetter keeps only titles starting with the letter`() {
+        LibraryIndex.matchesLetter("Берсерк", "б") shouldBe true
+        LibraryIndex.matchesLetter("Акира", "б") shouldBe false
+        LibraryIndex.matchesLetter("Акира", "а") shouldBe true
+    }
+
+    @Test
+    fun `plain search no longer requires an exact substring`() {
+        // Раньше это возвращало false: искалась точная подстрока «берс макс».
+        LibraryIndex.matches("Берсерк Максимус", "берс макс") shouldBe true
+    }
 }

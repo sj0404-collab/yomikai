@@ -75,12 +75,61 @@ object LibraryIndex {
      */
     fun matches(name: String, query: String): Boolean {
         val key = indexKey(query)
-        if (key == null) return name.contains(query.trim(), ignoreCase = true)
+        // Обычный запрос: мягкий поиск — все слова в любом порядке, «ё» = «е».
+        // Раньше требовалась ТОЧНАЯ подстрока, поэтому «берс» находило папку,
+        // а «берс том» — уже нет.
+        if (key == null) return matchesText(name, query)
         val first = name.trim().firstOrNull()?.lowercaseChar() ?: return false
         return when (key) {
             DIGITS -> first.isDigit()
             OTHER -> !first.isLetterOrDigit()
             else -> first == key.first()
         }
+    }
+
+    /**
+     * Ключ указателя для названия: «а»…«я», «ё», латиница, [DIGITS], [OTHER].
+     * Нужен интерфейсу, чтобы показывать только те буквы, по которым есть
+     * содержимое, и фильтровать уже загруженный список источника.
+     */
+    fun firstLetterKey(name: String): String? {
+        val first = name.trim().firstOrNull()?.lowercaseChar() ?: return null
+        return when {
+            first.isDigit() -> DIGITS
+            !first.isLetter() -> OTHER
+            else -> first.toString()
+        }
+    }
+
+    /** Совпадает ли название с ключом указателя. */
+    fun matchesLetter(name: String, key: String): Boolean = firstLetterKey(name) == key
+
+    /**
+     * Нормализация для поиска: регистр, «ё» → «е», всё, что не буква и не
+     * цифра, — в пробел. Одна реализация на всё приложение (библиотека,
+     * локальные папки, источники), чтобы один и тот же запрос вёл себя
+     * одинаково везде.
+     */
+    fun normalize(text: String): String {
+        val out = StringBuilder(text.length)
+        for (ch in text.lowercase()) {
+            when {
+                ch == 'ё' -> out.append('е')
+                ch.isLetterOrDigit() -> out.append(ch)
+                else -> out.append(' ')
+            }
+        }
+        return out.toString().split(' ').filter { it.isNotEmpty() }.joinToString(" ")
+    }
+
+    /**
+     * Мягкий поиск: каждое слово запроса должно найтись в тексте, порядок слов
+     * не важен, регистр и «ё/е» не важны. Пустой запрос совпадает со всем.
+     */
+    fun matchesText(haystack: String, query: String): Boolean {
+        val q = normalize(query)
+        if (q.isBlank()) return true
+        val text = normalize(haystack)
+        return q.split(' ').all { token -> text.contains(token) }
     }
 }
