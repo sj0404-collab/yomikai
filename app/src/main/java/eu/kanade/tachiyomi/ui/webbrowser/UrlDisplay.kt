@@ -8,14 +8,20 @@ package eu.kanade.tachiyomi.ui.webbrowser
  */
 object UrlDisplay {
 
-    /** Сравнение адресов без схемы, «www.», хвостового слэша и регистра. */
+    /**
+     * Сравнение адресов без схемы, «www.», хвостового слэша и регистра.
+     *
+     * Регистр снимается ПЕРВЫМ: иначе `HTTPS://Mangabuff.RU/...` и
+     * `https://mangabuff.ru/...` оставались разными адресами и снова давали
+     * две вкладки на одну страницу.
+     */
     fun normalize(url: String?): String = url.orEmpty()
         .trim()
+        .lowercase()
         .removePrefix("https://")
         .removePrefix("http://")
         .removePrefix("www.")
         .trimEnd('/')
-        .lowercase()
 
     /**
      * Короткий вид для строки навигации: без схемы и «www.», длинный хвост
@@ -25,12 +31,13 @@ object UrlDisplay {
      * обрезалось по ширине, потому что туда подставлялся полный URL.
      */
     fun pretty(url: String?, maxLength: Int = 46): String {
-        val host = url.orEmpty()
-            .trim()
-            .removePrefix("https://")
-            .removePrefix("http://")
-            .removePrefix("www.")
-            .trimEnd('/')
+        val trimmed = url.orEmpty().trim()
+        val noScheme = when {
+            trimmed.startsWith("https://", ignoreCase = true) -> trimmed.substring(8)
+            trimmed.startsWith("http://", ignoreCase = true) -> trimmed.substring(7)
+            else -> trimmed
+        }
+        val host = noScheme.removePrefix("www.").trimEnd('/')
         if (host.isBlank()) return ""
         if (host.length <= maxLength) return host
         val cut = host.take(maxLength)
