@@ -1,0 +1,21 @@
+{
+  "version": "2.9.34-sample",
+  "inkLowPercentile": 0.02,
+  "inkHighPercentile": 0.98,
+  "inkFlatSpread": 10,
+  "inkCoefficient": 0.45,
+  "inkMin": 40,
+  "inkMax": 235,
+  "binarizeFallback": 110,
+  "contrastGain": 2.2,
+  "contrastOffset": -140,
+  "rescueMinRegions": 600,
+  "pageSide": 1600,
+  "rescueSide": 960,
+  "minConfidence": 0.25,
+  "cutMargin": 0.06,
+  "bandOverlap": 0.15,
+  "bandsMax": 8,
+  "wholeThreshold": 0.72,
+  "bubbleGap": 0.45
+}

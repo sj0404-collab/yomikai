@@ -53,6 +53,7 @@ import eu.kanade.tachiyomi.data.tts.VoiceKind
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import android.graphics.Bitmap
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -233,6 +234,15 @@ fun KomaReaderScreen(
     var askVoices by remember(book.id) {
         mutableStateOf(!repo.prefs.getBoolean("voiceAsk_${book.id}", false))
     }
+    // Действующие правила (файл/плагин): объявлены до scan(), потому что
+    // распознавание записывает версию правил в буфер строк.
+    // rulesTick меняется кнопкой «Перезагрузить правила» — всё, что от них
+    // зависит, пересчитывается без пересборки APK и без нового OCR.
+    var rulesTick by remember { mutableIntStateOf(0) }
+    // Счётчик обновлений буфера: без него число строк в шторке «Правила»
+    // оставалось бы прежним, хотя распознавание уже дописало строки.
+    var bufferTick by remember { mutableIntStateOf(0) }
+    val rules = remember(rulesTick) { KomaRulesStore.current(context) }
     var result by remember { mutableStateOf<PageOcr?>(null) }
     var scanJob by remember { mutableStateOf<Job?>(null) }
     var scrollJob by remember { mutableStateOf<Job?>(null) }
@@ -272,6 +282,20 @@ fun KomaReaderScreen(
                     val currentBand=band
                     val r=engine.recognize(book,current,language,force,currentBand)
                     if(current==currentPage && currentBand.index==band.index)result=r
+                    // Буфер строк: то, что распознавание вернуло, ложится на диск.
+                    // Дальше правку правил можно проверять без нового OCR —
+                    // «Пересчитать порядок из буфера».
+                    runCatching {
+                        bufferTick++
+                        KomaLineBuffer.putRegions(
+                            context=context.applicationContext,
+                            book=book.id,
+                            page=current,
+                            band=currentBand.index,
+                            regions=r.regions,
+                            rulesVersion=engine.rulesVersion(),
+                        )
+                    }
                     engine.lastError?.let { error=it }
                 }
             } catch(e:CancellationException){throw e}catch(e:Throwable){error=e.localizedMessage ?: e::class.simpleName ?: "Распознавание не удалось"}finally{scanning=false;batchTotal=0}
@@ -305,13 +329,14 @@ fun KomaReaderScreen(
     // письменности, «уже прочитано», уведомление в шторке и плавающая кнопка.
     // Реплики страницы: строки облачка уже склеены (см. KomaReadingOrder), и
     // этот же список рисуется рамками — экран и озвучка видят одно и то же.
-    val bubbles = remember(result, language, mode) {
+    val bubbles = remember(result, language, mode, rules) {
         result?.let {
             KomaReadingOrder.order(
                 regions = it.regions,
                 rtl = mode == "rtl",
                 onlyCyrillic = language == "Кириллица" || language == "Авто",
                 panels = it.panels,
+                rules = rules,
             )
         }
     }
@@ -384,6 +409,7 @@ fun KomaReaderScreen(
                         rtl=mode=="rtl",
                         onlyCyrillic=language=="Кириллица"||language=="Авто",
                         panels=r.panels,
+                        rules=rules,
                     )
                     val shotPage=KomaAutoRead.state.value.page
                     runCatching {
@@ -547,6 +573,25 @@ fun KomaReaderScreen(
     // Уведомление живёт, пока идёт чтение; при уходе с экрана гасим его.
     DisposableEffect(Unit){ onDispose { KomaAutoRead.stop() } }
     BackHandler { if(voiceDialog)voiceDialog=false else if(sheet!=null)sheet=null else if(autoReading)KomaAutoRead.stop() else onClose() }
+    val bufferLines = remember(bufferTick, book.id, page, bandIndex) {
+        KomaLineBuffer.loadPage(context, book.id, page, bandIndex)
+    }
+    // Замена файла правил: .json — числа, .dex/.apk — плагин (как расширения
+    // Mihon, только файл в приватной папке приложения).
+    val rulesPick=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri ->
+        if(uri!=null) scope.launch {
+            val applied=runCatching {
+                val target=File(context.cacheDir, if(uri.toString().endsWith(".dex"))"koma-rules.dex" else "koma-rules.json")
+                context.contentResolver.openInputStream(uri)?.use { inp -> target.outputStream().use { out -> inp.copyTo(out) } }
+                KomaRulesStore.install(context, target)
+            }.getOrNull()
+            rulesTick++
+            error=if(applied!=null)
+                "Правила применены: ${applied.version} (${KomaRulesStore.source})"
+            else
+                "Файл не подошёл: нужен koma-rules.json или koma-rules.dex"
+        }
+    }
     val export=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")){uri ->
         if(uri!=null)scope.launch {try {withContext(Dispatchers.IO){context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { out ->
             out.appendLine(book.title);out.appendLine("Локальное распознавание KOMA. Результат требует проверки.")
@@ -583,6 +628,7 @@ fun KomaReaderScreen(
                         DropdownMenuItem(text={Text("Голоса персонажей")},onClick={sheet="voices";overflow=false})
                         DropdownMenuItem(text={Text("Все страницы")},onClick={sheet="pages";overflow=false})
                         DropdownMenuItem(text={Text("Рамки текста")},onClick={showRegions=!showRegions;overflow=false})
+                        DropdownMenuItem(text={Text("Правила и буфер строк")},onClick={sheet="rules";overflow=false})
                         DropdownMenuItem(text={Text(if(autoScroll)"Автопрокрутка: вкл" else "Автопрокрутка: выкл")},onClick={autoScroll=!autoScroll;repo.prefs.edit().putBoolean("autoScroll",autoScroll).apply();overflow=false})
                         DropdownMenuItem(text={Text("Экспорт распознанного")},onClick={overflow=false;export.launch("${book.title}_ocr.txt")})
                         // Две читалки подписаны по-разному, и выбор можно
@@ -713,6 +759,59 @@ fun KomaReaderScreen(
     }
     if(sheet!=null) ModalBottomSheet(onDismissRequest={sheet=null},containerColor=MaterialTheme.colorScheme.background,sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true)) {
         when(sheet){
+            // Правила чтения (файл/плагин) и буфер строк: и то и другое меняется
+            // без пересборки APK. Один экран, потому что это один сценарий:
+            // поправил числа → пересчитал порядок по буферу → посмотрел.
+            "rules" -> Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal=24.dp).padding(bottom=28.dp)) {
+                Text("Правила и буфер строк",fontSize=23.sp,fontWeight=FontWeight.Bold)
+                Text("Числа распознавания и порядка чтения. Меняются файлом правил или плагином — приложение пересобирать не нужно.",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=4.dp))
+                SectionLabel("ДЕЙСТВУЮЩИЕ ПРАВИЛА")
+                Text("Версия: ${rules.version}",fontSize=13.sp,fontWeight=FontWeight.Bold)
+                Text("Источник: ${KomaRulesStore.source}",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Папка: files/koma-plugins — koma-rules.json (числа) или koma-rules.dex (плагин)",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=2.dp))
+                KomaRulesStore.error()?.let { Text(it,fontSize=11.sp,color=Color(0xFFE57373),modifier=Modifier.padding(top=4.dp)) }
+                Row(Modifier.fillMaxWidth().padding(top=6.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick={ rulesPick.launch(arrayOf("*/*")) },shape=RoundedCornerShape(12.dp),modifier=Modifier.weight(1f)){Text("Заменить файл",fontSize=12.sp)}
+                    Button(onClick={
+                        rulesTick++
+                        val fresh=KomaRulesStore.reload(context)
+                        error="Правила перезагружены: ${fresh.version} (${KomaRulesStore.source})"
+                    },shape=RoundedCornerShape(12.dp),modifier=Modifier.weight(1f)){Text("Перезагрузить",fontSize=12.sp)}
+                }
+                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
+                    TextButton(onClick={ rulesTick++; KomaRulesStore.reset(context); error="Вернулись встроенные правила" }){Text("Сбросить к встроенным",fontSize=11.sp)}
+                    TextButton(onClick={ clipboard.setText(AnnotatedString(rules.toJson())) }){Text("Скопировать JSON",fontSize=11.sp)}
+                }
+                Box(Modifier.fillMaxWidth().padding(vertical=8.dp).height(1.dp).background(Color(0xFF39412F)))
+                SectionLabel("БУФЕР СТРОК")
+                Text("Строк в буфере книги: ${KomaLineBuffer.size(context)} · на этой странице: ${bufferLines.size}",fontSize=12.sp)
+                Text("Сохранённые строки этого прогона. Правку правил можно проверить без нового распознавания — порядок пересчитается по буферу.",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=2.dp))
+                if(bufferLines.isNotEmpty()) Column(Modifier.fillMaxWidth().heightIn(max=150.dp).verticalScroll(rememberScrollState()).padding(top=6.dp)) {
+                    bufferLines.forEach { line ->
+                        Row(Modifier.fillMaxWidth().padding(vertical=2.dp)) {
+                            Text("${line.band+1}",fontSize=10.sp,color=Orange,modifier=Modifier.padding(end=6.dp))
+                            Text(line.text,fontSize=11.sp,maxLines=2,overflow=TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    Button(onClick={
+                        val lines=KomaLineBuffer.loadPage(context,book.id,page,bandIndex)
+                        if(lines.isEmpty()) { error="Буфер этой страницы пуст — сначала «Распознать»" }
+                        else {
+                            result=PageOcr(regions=lines.map{it.toRegion()},engine="буфер строк",millis=0,panels=result?.panels.orEmpty())
+                            error="Порядок пересчитан из буфера: ${lines.size} строк, правила ${rules.version}"
+                        }
+                    },shape=RoundedCornerShape(12.dp),modifier=Modifier.weight(1f)){Text("Пересчитать из буфера",fontSize=12.sp)}
+                    OutlinedButton(onClick={
+                        val text=KomaLineBuffer.exportText(context,book.id)
+                        runCatching { File(context.filesDir,"koma-buffer.txt").writeText(text) }
+                        clipboard.setText(AnnotatedString(text))
+                        error="Буфер выгружен: files/koma-buffer.txt (и скопирован)"
+                    },shape=RoundedCornerShape(12.dp),modifier=Modifier.weight(1f)){Text("Выгрузить",fontSize=12.sp)}
+                }
+                TextButton(onClick={ KomaLineBuffer.clearBook(context,book.id); bufferTick++; error="Буфер книги очищен" }){Text("Очистить буфер книги",fontSize=11.sp)}
+            }
             "settings" -> Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal=24.dp).padding(bottom=28.dp)) {
                 Text("Как читать эту историю",fontSize=23.sp,fontWeight=FontWeight.Bold)
                 SectionLabel("ПОРЯДОК ЧТЕНИЯ")
