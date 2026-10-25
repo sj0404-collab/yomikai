@@ -910,7 +910,14 @@ object TtsSpeaker {
                     ) ?: VoiceHelper.pick(engine, kind, null, systemEnginePkg)
                 kind != null -> VoiceHelper.pick(engine, kind, null, systemEnginePkg)
                 else -> {
-                    val saved = p.voiceName().get().substringAfterLast("::")
+                    // Голос, пришедший из пресета читалки (слот ж1/ж2/м1/м2),
+                    // важнее глобального: именно его пользователь выбрал в
+                    // панели голосов. Раньше слот менял только тембр, и все
+                    // четыре голоса звучали одним и тем же голосом движка.
+                    val explicitSlotVoice = roleVoice
+                        ?.substringAfterLast("::")
+                        ?.takeIf { it.isNotBlank() }
+                    val saved = explicitSlotVoice ?: p.voiceName().get().substringAfterLast("::")
                     // Автоподбор как в overlay-translator: если голос не выбран
                     // или его нет в системе — берём лучший русский женский
                     // (Svetlana и др.), затем любой русский.

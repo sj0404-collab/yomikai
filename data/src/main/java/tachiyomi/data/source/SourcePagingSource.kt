@@ -47,10 +47,14 @@ abstract class BaseSourcePagingSource(
         val page = params.key ?: 1
 
         return try {
-            val mangasPage = withIOContext {
-                requestNextPage(page.toInt())
-                    .takeIf { it.mangas.isNotEmpty() }
-                    ?: throw NoResultsException()
+            val mangasPage = withIOContext { requestNextPage(page.toInt()) }
+
+            // Пустая выдача — это НЕ ошибка. Раньше здесь бросался
+            // NoResultsException, и «ничего не найдено» показывалось красным
+            // «ошибка», а ещё портило счётчик здоровья источника: пять пустых
+            // поисков помечали живой сайт сломанным.
+            if (mangasPage.mangas.isEmpty()) {
+                return LoadResult.Page(data = emptyList(), prevKey = null, nextKey = null)
             }
 
             val manga = mangasPage.mangas

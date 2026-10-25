@@ -90,6 +90,35 @@ abstract class SearchScreenModel(
             )
     }
 
+    /** Сколько включённых источников не попало в поиск из-за настроек языков. */
+    fun countHiddenByLanguage(): Int {
+        val all = sourceManager.getAll()
+            .filter { "${it.id}" !in disabledSources }
+        val visible = all.filter { it.lang in enabledLanguages }
+        return (all.size - visible.size).coerceAtLeast(0)
+    }
+
+    /** Повторить поиск только для одного источника (кнопка у ошибки). */
+    fun retrySource(source: Source) {
+        val query = state.value.searchQuery ?: return
+        if (query.isBlank()) return
+        updateItem(source, SearchItemResult.Loading)
+        searchJob = ioCoroutineScope.launch {
+            try {
+                val page = withContext(coroutineDispatcher) {
+                    source.getSearchManga(1, query, source.getFilterList())
+                }
+                val titles = page.mangas
+                    .map { it.toDomainManga(source.id) }
+                    .distinctBy { it.url }
+                    .let { networkToLocalManga(it) }
+                updateItem(source, SearchItemResult.Success(titles))
+            } catch (e: Exception) {
+                updateItem(source, SearchItemResult.Error(e))
+            }
+        }
+    }
+
     private fun getSelectedSources(): List<Source> {
         val enabledSources = getEnabledSources()
 
@@ -123,29 +152,34 @@ abstract class SearchScreenModel(
 
         if (query.isNullOrBlank()) return
 
-        val sameQuery = this.lastQuery == query
-        if (sameQuery && this.lastSourceFilter == sourceFilter) return
+        val sameQuery = this.lastQuery == query && this.lastSourceFilter == sourceFilter
 
         this.lastQuery = query
         this.lastSourceFilter = sourceFilter
+
+        // Показываем, сколько источников вообще не участвует из-за фильтра
+        // языков: иначе «поиск молчит» без единого объяснения на экране.
+        val hidden = countHiddenByLanguage()
+        if (hidden != state.value.hiddenByLanguage) {
+            mutableState.update { it.copy(hiddenByLanguage = hidden) }
+        }
 
         searchJob?.cancel()
 
         val sources = getSelectedSources()
 
-        // Reuse previous results if possible
-        if (sameQuery) {
-            val existingResults = state.value.items
-            updateItems(
-                sources
-                    .associateWith { existingResults[it] ?: SearchItemResult.Loading },
-            )
-        } else {
-            updateItems(
-                sources
-                    .associateWith { SearchItemResult.Loading },
-            )
-        }
+        // Раньше повторное нажатие «Искать» с тем же словом ничего не делало:
+        // после сетевого сбоя выдачу нельзя было переиграть, приходилось менять
+        // запрос. Теперь успешные источники переиспользуются, а ошибки и
+        // «пусто» запрашиваются заново.
+        val existingResults = state.value.items
+        updateItems(
+            sources.associateWith { source ->
+                existingResults[source]
+                    ?.takeIf { sameQuery && it is SearchItemResult.Success }
+                    ?: SearchItemResult.Loading
+            },
+        )
 
         searchJob = ioCoroutineScope.launch {
             sources.map { source ->
@@ -206,9 +240,11 @@ abstract class SearchScreenModel(
     data class State(
         val from: Manga? = null,
         val searchQuery: String? = null,
-        val sourceFilter: SourceFilter = SourceFilter.PinnedOnly,
+        val sourceFilter: SourceFilter = SourceFilter.All,
         val onlyShowHasResults: Boolean = false,
         val items: Map<Source, SearchItemResult> = mapOf(),
+        /** Сколько включённых источников скрыто фильтром языков (см. search()). */
+        val hiddenByLanguage: Int = 0,
         val dialog: Dialog? = null,
     ) {
         val progress: Int = items.count { it.value !is SearchItemResult.Loading }

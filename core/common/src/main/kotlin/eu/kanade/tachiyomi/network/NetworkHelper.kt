@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.network
 import android.content.Context
 import eu.kanade.tachiyomi.network.interceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.network.interceptor.DomainFallbackInterceptor
+import eu.kanade.tachiyomi.network.interceptor.HostRoutingInterceptor
 import eu.kanade.tachiyomi.network.interceptor.UncaughtExceptionInterceptor
 import eu.kanade.tachiyomi.network.interceptor.UserAgentInterceptor
 import okhttp3.Cache
@@ -37,8 +38,19 @@ class NetworkHelper(
             .addInterceptor(UncaughtExceptionInterceptor())
             .addInterceptor(UserAgentInterceptor(::defaultUserAgentProvider))
             .addInterceptor(DomainFallbackInterceptor())
+            // Переадресация доменов из настроек приложения: расширение может
+            // хранить мёртвый адрес, но запрос уйдёт на живой (см. HostRouter).
+            .addInterceptor(HostRoutingInterceptor())
 
-        if (preferences.enableProxy.get() && preferences.proxyHost.get().isNotBlank()) {
+        // Авто-прокси из списка: берём первый живой адрес, иначе работаем напрямую.
+        val poolEntry = if (preferences.autoProxy.get()) {
+            ProxyPool.pick(ProxyPool.parse(preferences.proxyPool.get()))
+        } else {
+            null
+        }
+        if (poolEntry != null) {
+            builder.proxy(ProxyPool.proxyOf(poolEntry, preferences.proxyPoolType.get() == 1))
+        } else if (preferences.enableProxy.get() && preferences.proxyHost.get().isNotBlank()) {
             try {
                 val type = if (preferences.proxyType.get() == 1) Proxy.Type.SOCKS else Proxy.Type.HTTP
                 val socketAddress = InetSocketAddress(

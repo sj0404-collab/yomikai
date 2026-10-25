@@ -48,6 +48,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import mihon.domain.ocr.model.OcrRegion
 import eu.kanade.tachiyomi.data.tts.SpeakerGenderService
+import eu.kanade.tachiyomi.data.tts.VoiceHelper
+import eu.kanade.tachiyomi.data.tts.VoiceKind
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import android.graphics.Bitmap
@@ -169,22 +171,50 @@ fun KomaReaderScreen(
     val ocrPrefs = remember { runCatching { Injekt.get<mihon.domain.ocr.service.OcrPreferences>() }.getOrNull() }
     // Пол, определённый по картинке (Gemini) — только если введён ключ.
     val genderByText = remember { mutableStateMapOf<String,String>() }
-    // ── Три голоса с ползунками тембра ───────────────────────────────────────
-    // Пользователь: «сделай пресеты по моим голосам, три голоса просто с
-    // ползунками от низкого до высокого тембра рядом возле посмотреть рамки, а
-    // не окно на пол страницы после каждой реплики». Голос по умолчанию НЕ
-    // меняется: пока не нажали 1/2/3, читает тот же системный голос.
+    // ── Четыре голоса: ж1 / ж2 / м1 / м2 ────────────────────────────────────
+    // Пользователь: «сделай пресеты по моим голосам… а также на каждый тембр
+    // 3 разных голоса, например f1, f2, m1 от Tera TTS, можно и 4 — m2».
+    // Слот — это настоящий голос движка + свой тембр, а не «просто питч».
+    // Голос по умолчанию НЕ меняется: пока не нажали слот, читает системный.
     var selectedSlot by remember { mutableIntStateOf(repo.prefs.getInt("voiceSlot",-1)) }
     // Раскрыта ли строка голосов в нижней панели.
     var voiceBar by remember { mutableStateOf(false) }
+    // Для какого слота сейчас выбирают голос (-1 — диалог закрыт).
+    var slotPickerFor by remember { mutableIntStateOf(-1) }
     val slotPitch = remember {
         androidx.compose.runtime.mutableStateListOf(
             KomaCasting.savedPitch(context,0),
             KomaCasting.savedPitch(context,1),
             KomaCasting.savedPitch(context,2),
+            KomaCasting.savedPitch(context,3),
         )
     }
-    fun slotVoiceOf(slot:Int): KomaVoice = KomaCasting.slotVoice(slot, slotPitch.getOrElse(slot){1f})
+    // Ручной выбор голоса для слота (null — автоподбор по полу слота).
+    val slotVoices = remember {
+        androidx.compose.runtime.mutableStateListOf(
+            KomaCasting.savedVoiceName(context,0),
+            KomaCasting.savedVoiceName(context,1),
+            KomaCasting.savedVoiceName(context,2),
+            KomaCasting.savedVoiceName(context,3),
+        )
+    }
+    // Список голосов движка грузим сразу: без него автоподбор ж/м не работает
+    // и «выбор голоса» показывал бы пустой список.
+    LaunchedEffect(Unit) {
+        if (voices.isEmpty()) runCatching { voices = tts.voices() }
+    }
+    fun autoVoiceName(slot:Int): String? {
+        val want = if (slot < 2) VoiceKind.FEMALE else VoiceKind.MALE
+        val pool = voices.filter { VoiceHelper.classify(it) == want }
+            .sortedBy { it.name }
+        val index = slot % 2
+        return (pool.getOrNull(index) ?: pool.firstOrNull())?.name
+    }
+    fun slotVoiceOf(slot:Int): KomaVoice = KomaCasting.slotVoice(
+        slot = slot,
+        pitch = slotPitch.getOrElse(slot){1f},
+        voiceName = slotVoices.getOrNull(slot) ?: autoVoiceName(slot),
+    )
     fun savedSlotFor(text:String): Int? =
         if(multiVoice) KomaCasting.savedSlot(context,book.id,text) else null
     // Перерисовка после изменения назначений (они лежат в prefs).
@@ -375,7 +405,7 @@ fun KomaReaderScreen(
             slotOf = { _, line ->
                 // Приоритет: выбранный сейчас голос (кнопки 1/2/3 внизу) →
                 // назначение реплики (если включены «Разные голоса»).
-                if (selectedSlot in 0..2) selectedSlot else savedSlotFor(line.text)
+                if (selectedSlot in 0 until KomaCasting.SLOT_COUNT) selectedSlot else savedSlotFor(line.text)
             },
             voiceForSlot = { slot -> slotVoiceOf(slot) },
             rememberSlot = { line, slot -> KomaCasting.saveSlot(context,book.id,line.text,slot) },
@@ -553,10 +583,11 @@ fun KomaReaderScreen(
                             label="об.", selected=selectedSlot<0,
                             onClick={ selectedSlot=-1;repo.prefs.edit().putInt("voiceSlot",-1).apply();KomaAutoRead.assignSlot(null) },
                         )
-                        for(slot in 0..2) {
+                        for(slot in 0 until KomaCasting.SLOT_COUNT) {
                             Spacer(Modifier.width(4.dp))
                             VoiceSlotChip(
-                                label="${slot+1}", selected=selectedSlot==slot,
+                                label=KomaCasting.SLOT_TITLES.getOrElse(slot){ "${slot+1}" },
+                                selected=selectedSlot==slot,
                                 onClick={
                                     selectedSlot=slot
                                     repo.prefs.edit().putInt("voiceSlot",slot).apply()
@@ -564,7 +595,7 @@ fun KomaReaderScreen(
                                 },
                             )
                         }
-                        if(selectedSlot in 0..2) {
+                        if(selectedSlot in 0 until KomaCasting.SLOT_COUNT) {
                             Spacer(Modifier.width(8.dp))
                             Text("низк.",fontSize=8.sp,color=Color(0xFF9EAB9A))
                             Slider(
@@ -578,6 +609,18 @@ fun KomaReaderScreen(
                                 colors=SliderDefaults.colors(thumbColor=Orange,activeTrackColor=Orange,inactiveTrackColor=Color(0xFF51594D)),
                             )
                             Text("выс.",fontSize=8.sp,color=Color(0xFF9EAB9A))
+                            // Выбор настоящего голоса движка для этого слота:
+                            // именно этого не хватало — слот раньше менял только тембр.
+                            TextButton(
+                                onClick={ slotPickerFor=selectedSlot },
+                                contentPadding=PaddingValues(horizontal=6.dp),
+                            ) {
+                                Text(
+                                    slotVoices.getOrNull(selectedSlot)?.substringAfterLast('/')?.take(10)
+                                        ?: "голос",
+                                    fontSize=9.sp,color=Orange,
+                                )
+                            }
                             IconButton(onClick={ scope.launch { runCatching {
                                 tts.speakVoiced(
                                     texts=listOf(bubbles?.firstOrNull()?.text?.let { KomaCasting.stripSpeaker(it) } ?: "Так будет звучать этот голос."),
@@ -882,6 +925,58 @@ fun KomaReaderScreen(
         } },
         confirmButton={},
     )
+    // Выбор голоса для слота: список голосов движка, разделённый по полу.
+    if(slotPickerFor in 0 until KomaCasting.SLOT_COUNT) {
+        val slot = slotPickerFor
+        AlertDialog(
+            onDismissRequest={ slotPickerFor=-1 },
+            title={Text("Голос "+KomaCasting.SLOT_TITLES.getOrElse(slot){"${slot+1}"})},
+            text={
+                Column(Modifier.heightIn(max=420.dp).verticalScroll(rememberScrollState())) {
+                    Text(
+                        "Это настоящие голоса движка TTS. Если в движке один голос, " +
+                            "оставьте «Авто» — слоты будут отличаться тембром.",
+                        fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(Modifier.fillMaxWidth().clickable {
+                        slotVoices[slot]=null
+                        KomaCasting.saveVoiceName(context,slot,null)
+                        slotPickerFor=-1
+                    }.padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically) {
+                        RadioButton(selected=slotVoices.getOrNull(slot)==null,onClick=null)
+                        Text("Авто (по полу слота)",fontSize=13.sp,modifier=Modifier.padding(start=8.dp))
+                    }
+                    val autoName = autoVoiceName(slot)
+                    if(autoName!=null) {
+                        Text("Авто сейчас: $autoName",fontSize=10.sp,color=Orange,modifier=Modifier.padding(bottom=6.dp))
+                    }
+                    voices.forEach { v ->
+                        val selected = slotVoices.getOrNull(slot)==v.name
+                        Row(Modifier.fillMaxWidth().clickable {
+                            slotVoices[slot]=v.name
+                            KomaCasting.saveVoiceName(context,slot,v.name)
+                            slotPickerFor=-1
+                        }.padding(vertical=6.dp),verticalAlignment=Alignment.CenterVertically) {
+                            RadioButton(selected=selected,onClick=null)
+                            Column(Modifier.padding(start=8.dp)) {
+                                Text(v.name,fontSize=12.sp)
+                                Text(
+                                    "${v.locale} · ${when(VoiceHelper.classify(v)){
+                                        VoiceKind.FEMALE->"жен."
+                                        VoiceKind.MALE->"муж."
+                                        VoiceKind.TEEN->"дет."
+                                        else->"?"
+                                    }}",
+                                    fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton={ TextButton(onClick={ slotPickerFor=-1 }){Text("Закрыть")} },
+        )
+    }
     if(voiceDialog) AlertDialog(
         onDismissRequest={voiceDialog=false},
         title={Text("Голос для озвучки")},

@@ -203,6 +203,7 @@ object SettingsAdvancedScreen : SearchableSettings {
     private fun getNetworkGroup(
         networkPreferences: NetworkPreferences,
     ): Preference.PreferenceGroup {
+        val sourcePrefs = remember { Injekt.get<eu.kanade.domain.source.service.SourcePreferences>() }
         val context = LocalContext.current
         val networkHelper = remember { Injekt.get<NetworkHelper>() }
 
@@ -285,6 +286,50 @@ object SettingsAdvancedScreen : SearchableSettings {
                 Preference.PreferenceItem.EditTextPreference(
                     preference = networkPreferences.proxyPassword,
                     title = stringResource(MR.strings.pref_proxy_password),
+                ),
+                // ── Авто-прокси ─────────────────────────────────────────────
+                // Один прокси ломается — и «источник молчит». Пул адресов решает
+                // это без ручной правки: при старте берётся первый живой.
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = networkPreferences.autoProxy,
+                    title = "Авто-прокси из списка",
+                    subtitle = "При запуске выбирается первый прокси, который отвечает. " +
+                        "Применяется после перезапуска.",
+                ),
+                Preference.PreferenceItem.ListPreference(
+                    preference = networkPreferences.proxyPoolType,
+                    entries = mapOf(
+                        0 to "HTTP",
+                        1 to "SOCKS5",
+                    ),
+                    title = "Тип прокси из списка",
+                ),
+                Preference.PreferenceItem.EditTextPreference(
+                    preference = networkPreferences.proxyPool,
+                    title = "Список прокси (host:port, по одному в строке)",
+                    subtitle = "Например: 127.0.0.1:9050 — если на телефоне есть Tor/Orbot " +
+                        "или свой прокси. Мёртвые адреса пропускаются автоматически.",
+                    onValueChanged = {
+                        context.toast(MR.strings.requires_app_restart)
+                        true
+                    },
+                ),
+                // ── Домены источников ───────────────────────────────────────
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = sourcePrefs.autoDomainSwitch,
+                    title = "Переключать домен источника автоматически",
+                    subtitle = "Если сайт переехал (mangalib.me → mangalib.org), запрос уйдёт " +
+                        "на живой домен, а не на мёртвый адрес из расширения.",
+                    onValueChanged = {
+                        eu.kanade.tachiyomi.network.HostRouter.enabled = it
+                        true
+                    },
+                ),
+                Preference.PreferenceItem.TextPreference(
+                    title = "Сменённые домены",
+                    subtitle = eu.kanade.tachiyomi.data.source.HostOverrides.list(sourcePrefs)
+                        .joinToString("\n") { (from, to) -> "$from → $to" }
+                        .ifBlank { "Пока пусто: переключений не было" },
                 ),
                 Preference.PreferenceItem.EditTextPreference(
                     preference = userAgentPref,

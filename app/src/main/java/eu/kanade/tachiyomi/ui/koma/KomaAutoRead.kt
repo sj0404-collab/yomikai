@@ -1026,7 +1026,7 @@ object KomaAutoRead {
         /** Назначенный голос реплики (слот 0..2) или null — голос по умолчанию. */
         slotOf: (index: Int, line: KomaReadingOrder.Line) -> Int? = { _, _ -> null },
         /** Голос слота: тот же системный голос, меняется только тембр. */
-        voiceForSlot: (slot: Int) -> KomaVoice = { KomaCasting.slotVoice(it, KomaCasting.DEFAULT_PITCH[it.coerceIn(0, 2)]) },
+        voiceForSlot: (slot: Int) -> KomaVoice = { KomaCasting.slotVoice(it, KomaCasting.DEFAULT_PITCH[it.coerceIn(0, KomaCasting.SLOT_COUNT - 1)]) },
         /** Экран запоминает выбор, чтобы та же реплика звучала так же. */
         rememberSlot: (KomaReadingOrder.Line, Int) -> Unit = { _, _ -> },
     ) {
