@@ -5,6 +5,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -20,6 +21,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -34,6 +36,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
@@ -101,6 +104,7 @@ data class BrowseSourceScreen(
 
         val screenModel = rememberScreenModel { BrowseSourceScreenModel(sourceId, listingQuery) }
         val state by screenModel.state.collectAsState()
+        val searchStats by screenModel.searchStats.collectAsState()
 
         val navigator = LocalNavigator.currentOrThrow
         val navigateUp: () -> Unit = {
@@ -244,6 +248,64 @@ data class BrowseSourceScreen(
                                 },
                             )
                         }
+                    }
+
+                    // ── Честная диагностика поиска ──────────────────────────
+                    // Часть расширений на запрос отдаёт своё «популярное»: «I am»
+                    // в источнике Desu приносил «How To Survive in Bed With The
+                    // Emperor». Это ограничение источника, и его надо назвать,
+                    // а не показывать чужую выдачу как результат поиска.
+                    val stats = searchStats
+                    if (stats != null && stats.ignoredQuery && !state.showAllResults) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.errorContainer)
+                                .padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "Источник не ищет по этому запросу",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                )
+                                Text(
+                                    "Отдал ${stats.returned} карточек, «${stats.query}» нет ни в " +
+                                        "одной. Это ограничение источника, а не приложения.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                )
+                            }
+                            TextButton(onClick = { screenModel.setShowAllResults(true) }) {
+                                Text("Показать всё")
+                            }
+                        }
+                    } else if (stats != null && state.showAllResults && stats.ignoredQuery) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "Показано всё, что отдал источник — совпадений нет",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(onClick = { screenModel.setShowAllResults(false) }) {
+                                Text("Скрыть")
+                            }
+                        }
+                    } else if (stats != null && stats.partial) {
+                        Text(
+                            "Из ${stats.returned} карточек источника запросу «${stats.query}» " +
+                                "соответствуют ${stats.matched}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                        )
                     }
 
                     // ── Алфавитный указатель источника ──────────────────────

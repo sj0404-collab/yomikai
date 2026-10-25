@@ -78,6 +78,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
@@ -1200,10 +1201,22 @@ data object BrowserTab : Tab {
                         Icon(Icons.Outlined.ArrowForward, contentDescription = "Вперёд")
                     }
                 }
+                // Пока пользователь не редактирует — показываем короткий адрес
+                // («mangabuff.ru/manga/operaciya»), иначе поле обрезалось до
+                // «https://n» и понять, где ты, было нельзя.
+                var addressEditing by remember { mutableStateOf(false) }
                 OutlinedTextField(
-                    value = urlBar,
-                    onValueChange = { urlBar = it },
-                    modifier = Modifier.weight(1f),
+                    value = if (addressEditing) urlBar else WebStore.prettyUrl(urlBar),
+                    onValueChange = {
+                        addressEditing = true
+                        urlBar = it
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .onFocusChanged { focusState ->
+                            // Ушли из поля — возвращаем короткий вид.
+                            if (!focusState.isFocused) addressEditing = false
+                        },
                     singleLine = true,
                     textStyle = MaterialTheme.typography.bodySmall,
                     placeholder = { Text("Адрес или поиск", maxLines = 1, overflow = TextOverflow.Ellipsis) },

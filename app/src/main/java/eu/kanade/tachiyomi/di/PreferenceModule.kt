@@ -18,6 +18,7 @@ import tachiyomi.core.common.storage.AndroidStorageFolderProvider
 import tachiyomi.domain.backup.service.BackupPreferences
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.library.service.LibraryPreferences
+import tachiyomi.domain.source.service.SourceSearchPreferences
 import tachiyomi.domain.storage.service.StoragePreferences
 import tachiyomi.domain.updates.service.UpdatesPreferences
 import uy.kohesive.injekt.api.InjektModule
@@ -39,6 +40,9 @@ class PreferenceModule(val app: Application) : InjektModule {
         }
         addSingletonFactory {
             SourcePreferences(get())
+        }
+        addSingletonFactory {
+            SourceSearchPreferences(get())
         }
         addSingletonFactory {
             SecurityPreferences(get())

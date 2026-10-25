@@ -5,7 +5,9 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import mihon.domain.manga.model.toDomainManga
+import tachiyomi.domain.source.service.SourceSearchPreferences
 import tachiyomi.core.common.util.lang.withIOContext
+import tachiyomi.domain.library.model.LibraryIndex
 import tachiyomi.domain.manga.interactor.NetworkToLocalManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.repository.SourcePagingSource
@@ -17,8 +19,59 @@ class SourceSearchPagingSource(
     private val query: String,
     private val filters: FilterList,
 ) : BaseSourcePagingSource(source) {
+
+    /**
+     * Поиск с проверкой релевантности.
+     *
+     * Часть расширений на запрос возвращает своё «популярное»: на устройстве
+     * запрос «I am» в источнике Desu отдал «How To Survive in Bed With The
+     * Emperor» и ещё два десятка тайтлов, где нет ни «i», ни «am». Пользователь
+     * видел это как результат поиска и решал, что сломан поиск в приложении.
+     *
+     * Поэтому карточки, в названии которых нет слов запроса, отбрасываются, а
+     * счётчики уходят в [SearchRelevance] — интерфейс показывает, что источник
+     * запрос проигнорировал. Если совпадений нет, пролистываем ещё до
+     * [MAX_EXTRA_PAGES] страниц: совпадение может быть не на первой.
+     */
     override suspend fun requestNextPage(currentPage: Int): MangasPage {
-        return source.getSearchManga(currentPage, query, filters)
+        val first = source.getSearchManga(currentPage, query, filters)
+        // Пользователь может вернуть «как отдаёт источник» — тогда ничего не
+        // фильтруем и не считаем.
+        if (query.isBlank() || !searchPreferences.relevanceFilter.get()) return first
+
+        var page = first
+        var pageNumber = currentPage
+        var fetchedPages = 0
+        var returned = page.mangas.size
+        var matched = page.mangas.count { LibraryIndex.matchesText(it.title, query) }
+
+        while (matched == 0 && page.hasNextPage && fetchedPages < MAX_EXTRA_PAGES) {
+            pageNumber++
+            page = source.getSearchManga(pageNumber, query, filters)
+            fetchedPages++
+            returned += page.mangas.size
+            matched += page.mangas.count { LibraryIndex.matchesText(it.title, query) }
+        }
+
+        SearchRelevance.report(
+            sourceId = source.id,
+            stat = SearchRelevance.Stat(
+                query = query,
+                returned = returned,
+                matched = matched,
+                pages = fetchedPages + 1,
+            ),
+        )
+
+        val relevant = page.mangas.filter { LibraryIndex.matchesText(it.title, query) }
+        return MangasPage(relevant, page.hasNextPage)
+    }
+
+    private val searchPreferences: SourceSearchPreferences by lazy { Injekt.get() }
+
+    private companion object {
+        /** Сколько дополнительных страниц листать, если на первой нет совпадений. */
+        const val MAX_EXTRA_PAGES = 2
     }
 }
 

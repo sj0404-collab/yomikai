@@ -29,6 +29,7 @@ import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.firstOrNull
@@ -43,6 +44,7 @@ import kotlinx.serialization.json.JsonArray
 import tachiyomi.core.common.preference.CheckboxState
 import tachiyomi.core.common.preference.mapAsCheckboxState
 import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.data.source.SearchRelevance
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.category.interactor.SetMangaCategories
 import tachiyomi.domain.category.model.Category
@@ -60,6 +62,7 @@ import tachiyomi.domain.source.interactor.GetSavedSearchBySourceId
 import tachiyomi.domain.source.interactor.InsertSavedSearch
 import tachiyomi.domain.source.model.SavedSearch
 import tachiyomi.domain.source.service.SourceManager
+import tachiyomi.domain.source.service.SourceSearchPreferences
 import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -73,6 +76,7 @@ class BrowseSourceScreenModel(
     sourceManager: SourceManager = Injekt.get(),
     sourcePreferences: SourcePreferences = Injekt.get(),
     private val libraryPreferences: LibraryPreferences = Injekt.get(),
+    private val searchPrefs: SourceSearchPreferences = Injekt.get(),
     private val coverCache: CoverCache = Injekt.get(),
     private val getRemoteManga: GetRemoteManga = Injekt.get(),
     private val getDuplicateLibraryManga: GetDuplicateLibraryManga = Injekt.get(),
@@ -86,7 +90,12 @@ class BrowseSourceScreenModel(
     private val getSavedSearchBySourceId: GetSavedSearchBySourceId = Injekt.get(),
     private val insertSavedSearch: InsertSavedSearch = Injekt.get(),
     private val deleteSavedSearchById: DeleteSavedSearchById = Injekt.get(),
-) : StateScreenModel<BrowseSourceScreenModel.State>(State(Listing.valueOf(listingQuery))) {
+) : StateScreenModel<BrowseSourceScreenModel.State>(
+    State(
+        listing = Listing.valueOf(listingQuery),
+        showAllResults = !searchPrefs.relevanceFilter.get(),
+    ),
+) {
 
     var displayMode by sourcePreferences.sourceDisplayMode.asState(screenModelScope)
 
@@ -131,9 +140,26 @@ class BrowseSourceScreenModel(
      * Flow of Pager flow tied to [State.listing]
      */
     private val hideInLibraryItems = sourcePreferences.hideInLibraryItems.get()
-    val mangaPagerFlowFlow = state.map { it.listing to it.letter }
+
+    /**
+     * Отчёт о совпадении выдачи с запросом.
+     *
+     * Считается в слое данных (SourceSearchPagingSource), потому что фильтрация
+     * выполняется там же: часть расширений на запрос отдаёт своё «популярное»
+     * (на устройстве: «I am» в Desu → «How To Survive in Bed With The Emperor»),
+     * и такие карточки нельзя показывать как найденное.
+     */
+    val searchStats: StateFlow<SearchRelevance.Stat?> =
+        SearchRelevance.stats
+            .map { it[sourceId] }
+            .stateIn(ioCoroutineScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    // showAllResults в ключе нужен, чтобы смена режима пересоздавала пейджер:
+    // фильтр живёт в слое данных и читает настройку при каждом запросе.
+    val mangaPagerFlowFlow = state.map { it.listing to it.letter to it.showAllResults }
         .distinctUntilChanged()
-        .map { (listing, letter) ->
+        .map { (listingAndLetter, _) ->
+            val (listing, letter) = listingAndLetter
             Pager(PagingConfig(pageSize = 25)) {
                 getRemoteManga(sourceId, listing.query ?: "", listing.filters)
             }.flow.map { pagingData ->
@@ -172,6 +198,12 @@ class BrowseSourceScreenModel(
 
     fun resetFilters() {
         mutableState.update { it.copy(filters = source.getFilterList()) }
+    }
+
+    /** «Показать всё, что отдал источник» — отключает фильтр релевантности. */
+    fun setShowAllResults(show: Boolean) {
+        searchPrefs.relevanceFilter.set(!show)
+        mutableState.update { it.copy(showAllResults = show) }
     }
 
     fun setListing(listing: Listing) {
@@ -530,6 +562,8 @@ class BrowseSourceScreenModel(
          * а показываем мы только названия, начинающиеся на эту букву.
          */
         val letter: String? = null,
+        /** Показывать всё, что отдал источник, даже если оно не по запросу. */
+        val showAllResults: Boolean = false,
         /** Раскрыта ли полоса букв. */
         val letterBarOpen: Boolean = false,
     ) {
