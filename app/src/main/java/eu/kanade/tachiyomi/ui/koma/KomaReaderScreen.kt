@@ -111,9 +111,20 @@ fun KomaReaderScreen(
     var viewportWidthPx by remember { mutableIntStateOf(0) }
     // Вертикальный скролл ВНУТРИ текущей страницы (режим «страница», длинный кадр).
     val pageScroll = remember(currentPage) { androidx.compose.foundation.ScrollState(0) }
+    // Идёт ли прокрутка прямо сейчас (палец или инерция). В полуручном режиме
+    // распознавать и читать можно только когда всё встало — жалоба «он не ждёт,
+    // пока я остановлюсь, а сразу начинает сканировать».
+    var scrollBusy by remember { mutableStateOf(false) }
     val pageSizes = remember { mutableStateMapOf<String,IntArray>() }
     LaunchedEffect(scroll) {
         snapshotFlow { scroll.layoutInfo.viewportSize.height }.collect { if(it>0) viewportPx=it }
+    }
+    // «Лента едет»: палец, инерция или программная прокрутка. Ждём, пока
+    // встанет, и только потом читаем/распознаём — иначе чтение уезжает вперёд
+    // того места, на котором человек остановился.
+    LaunchedEffect(scroll, pageScroll) {
+        snapshotFlow { scroll.isScrollInProgress to pageScroll.isScrollInProgress }
+            .collect { (a, b) -> scrollBusy = a || b }
     }
     // ── Полосы страницы ──────────────────────────────────────────────────────
     // Страница выше экрана в несколько раз (вебтун) читается полосами: видимая
@@ -307,7 +318,7 @@ fun KomaReaderScreen(
             } catch(e:CancellationException){throw e}catch(e:Throwable){error=e.localizedMessage ?: e::class.simpleName ?: "Распознавание не удалось"}finally{scanning=false;batchTotal=0}
         }
     }
-    LaunchedEffect(page,language,scanning,bandIndex) {
+    LaunchedEffect(page,language,scanning,bandIndex,scrollBusy) {
         save(book.copy(progress=page,mode=mode))
         // В вертикальной ленте ждём реальную высоту страницы: без неё нельзя
         // понять, где кончается экран, и распознавание пошло бы по всей
@@ -318,10 +329,14 @@ fun KomaReaderScreen(
         // совпадает со страницей, он и есть нужный).
         result=engine.cached(book.id,page,language,slot(band)) ?: engine.cached(book.id,page,language)
         val key="$page:$bandIndex:$language"
+        // В полуручном режиме не начинаем распознавание, пока лента едет:
+        // человек ещё выбирает, где остановиться.
+        if(semiManual && scrollBusy) return@LaunchedEffect
         if(repo.prefs.getBoolean("autoOcr",true) && result==null && !scanning && key !in autoRequested) { autoRequested.add(key);scan() }
     }
-    LaunchedEffect(page,bandIndex,viewportPx,viewportFraction,language) {
+    LaunchedEffect(page,bandIndex,viewportPx,viewportFraction,language,scrollBusy) {
         if(scanning) return@LaunchedEffect
+        if(semiManual && scrollBusy) return@LaunchedEffect
         if(engine.cached(book.id,page,language,slot(band))==null) ocrQueue.enqueue(page,band,urgent=true)
         ocrQueue.warmAhead(page,book.pages.lastIndex) { bandsOf(it) }
     }
@@ -780,9 +795,9 @@ fun KomaReaderScreen(
                                 pageScroll.animateScrollTo((pageScroll.value + step).coerceAtLeast(0))
                             }
                         }
-                        // Даём кадру доехать: читать начинаем то, что уже видно,
-                        // а не то, что было на экране до нажатия.
-                        delay(280)
+                        // Даём кадру доехать и встать: читаем то, что видно, и
+                        // только когда прокрутка закончилась.
+                        delay(280L + rules.semiManualSettleMs)
                         if(KomaAutoRead.continueFromScroll()) readTrigger++
                     }
                 },
@@ -795,10 +810,15 @@ fun KomaReaderScreen(
         }
     }
     // Ждём прокрутки → человек прокрутил сам → читаем то, что теперь видно.
-    LaunchedEffect(page, bandIndex, semiManual) {
-        if(!semiManual) return@LaunchedEffect
-        if(!autoReading) return@LaunchedEffect
-        if(autoState.waitingScroll && KomaAutoRead.continueFromScroll()) readTrigger++
+    LaunchedEffect(page, bandIndex, semiManual, scrollBusy) {
+        if(!semiManual || !autoReading) return@LaunchedEffect
+        if(autoState.waitingScroll != true) return@LaunchedEffect
+        // 1) ждём, пока прокрутка реально встанет;
+        if(scrollBusy) return@LaunchedEffect
+        // 2) и только потом даём человеку договорить/дочитать кадр глазами.
+        delay(rules.semiManualSettleMs.toLong())
+        if(scroll.isScrollInProgress || pageScroll.isScrollInProgress) return@LaunchedEffect
+        if(KomaAutoRead.continueFromScroll()) readTrigger++
     }
     // Попали обрезки (реплика разрезана краем полосы) — не читаем огрызок, а
     // сами подъезжаем на столько, чтобы реплика была видна целиком, и

@@ -96,6 +96,34 @@ data class KomaRules(
     @SerialName("wholeThreshold") val wholeThreshold: Float = 0.72f,
     /** Зазор (в долях высоты строки), в пределах которого фрагменты — одна реплика. */
     @SerialName("bubbleGap") val bubbleGap: Float = 0.45f,
+    /**
+     * Предел разницы высот, при котором строки ещё считаются одной репликой.
+     *
+     * Жалоба: рамка не совпадала с тем, что прочитано — крупное название
+     * («Небылица мачехи») склеивалось с мелким блоком титров в одну «реплику»,
+     * рамка рисовалась по объединению, а текст читался из двух разных шрифтов.
+     * Строки разной высоты — разные реплики.
+     */
+    @SerialName("mergeHeightRatio") val mergeHeightRatio: Float = 1.8f,
+
+    /**
+     * Правки слов: `{"Пвтор": "Автор", "Форирование": "Формирование"}`.
+     *
+     * Жалоба: «он слово “автор” ставит “п”, а в слове “формирование” вместо “м”
+     * ставит вторую “и”». Такие ошибки модель делает стабильно на одном шрифте,
+     * и словарь их не всегда ловит. Словарь правок правится файлом — без APK.
+     */
+    @SerialName("wordFixes") val wordFixes: Map<String, String> = emptyMap(),
+
+    /**
+     * Сколько миллисекунд ждать, пока прокрутка остановится, прежде чем
+     * начинать распознавать или читать.
+     *
+     * Жалоба: «он не ждёт, пока я остановлюсь, а сразу начинает сканировать» и
+     * «играет на опережение: я остановился на слове, а он уже читает другую
+     * часть страницы».
+     */
+    @SerialName("semiManualSettleMs") val semiManualSettleMs: Int = 700,
 
     // ── Сама читалка и авточтение ────────────────────────────────────────────
     /**
@@ -141,6 +169,8 @@ data class KomaRules(
         bubbleGap = bubbleGap.coerceIn(0.05f, 3f),
         inkTileRows = inkTileRows.coerceIn(1, 16),
         inkLevels = inkLevels.coerceIn(1, 2),
+        mergeHeightRatio = mergeHeightRatio.coerceIn(1.05f, 6f),
+        semiManualSettleMs = semiManualSettleMs.coerceIn(0, 5000),
         speechRate = speechRate.coerceIn(0f, 3f),
         autoScrollStep = autoScrollStep.coerceIn(0.05f, 0.9f),
     ).let { if (it.inkMax <= it.inkMin) it.copy(inkMax = (it.inkMin + 1).coerceAtMost(255)) else it }

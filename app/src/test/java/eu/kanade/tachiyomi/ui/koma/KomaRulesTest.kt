@@ -105,6 +105,36 @@ class KomaRulesTest {
     }
 
     @Test
+    fun `word fixes follow the file and keep the register`() {
+        val fixes = mapOf("Пвтор" to "Автор", "Форирование" to "Формирование")
+        KomaReadingOrder.applyWordFixes("Пвтор оригинала", fixes) shouldBe "Автор оригинала"
+        // Капс остаётся капсом, обычный регистр — обычным.
+        KomaReadingOrder.applyWordFixes("ПВТОР ОРИГИНАЛА", fixes) shouldBe "АВТОР ОРИГИНАЛА"
+        KomaReadingOrder.applyWordFixes("Форирование прочной основы", fixes) shouldBe "Формирование прочной основы"
+        // Слово не из словаря не трогаем.
+        KomaReadingOrder.applyWordFixes("мачехи", fixes) shouldBe "мачехи"
+    }
+
+    @Test
+    fun `word fixes work even without the frequency dictionary`() {
+        // Именно так «Пвтор» и дожил до озвучки: словарь не был загружен.
+        KomaReadingOrder.applyWordFixes("Пвтор", mapOf("пвтор" to "Автор")) shouldBe "Автор"
+    }
+
+    @Test
+    fun `semi manual waits for the scroll to settle`() {
+        KomaRules.DEFAULT.semiManualSettleMs shouldBe 700
+        KomaRules.fromJson("""{"semiManualSettleMs":-500}""")!!.semiManualSettleMs shouldBe 0
+        KomaRules.fromJson("""{"semiManualSettleMs":99999}""")!!.semiManualSettleMs shouldBe 5000
+    }
+
+    @Test
+    fun `lines of very different height are not merged into one bubble`() {
+        KomaRules.DEFAULT.mergeHeightRatio shouldBe 1.8f
+        KomaRules.fromJson("""{"mergeHeightRatio":0.1}""")!!.mergeHeightRatio shouldBe 1.05f
+    }
+
+    @Test
     fun `buffered line converts to a region with the same box`() {
         val line = BufferedLine(
             book = "b1", page = 3, band = 1, text = "УЖЕ ПОРА НА-",

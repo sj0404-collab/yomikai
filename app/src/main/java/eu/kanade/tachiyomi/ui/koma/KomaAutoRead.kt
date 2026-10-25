@@ -472,6 +472,29 @@ object KomaReadingOrder {
     /** Доля высоты полосы, в пределах которой низ реплики считается «на срезе». */
     private const val CUT_MARGIN = 0.06f
 
+    /**
+     * Правки слов из файла правил: `{"Пвтор": "Автор", "Форирование": "Формирование"}`.
+     *
+     * Сравнение без регистра, регистр результата повторяет исходный: реплика
+     * капсом остаётся капсом, обычная — обычной. Применяется ДО словаря, чтобы
+     * работать даже когда частотный список не загрузился (именно так «Пвтор»
+     * и «Форирование» дожили до озвучки).
+     */
+    fun applyWordFixes(text: String, fixes: Map<String, String>): String {
+        if (fixes.isEmpty() || text.isBlank()) return text
+        val lower = fixes.entries.associate { it.key.lowercase() to it.value }
+        return Regex("[\\p{L}\\p{N}]+").replace(text) { m ->
+            val word = m.value
+            val replacement = lower[word.lowercase()] ?: return@replace word
+            when {
+                word.all { !it.isLetter() || it.isUpperCase() } -> replacement.uppercase()
+                word.firstOrNull()?.isUpperCase() == true ->
+                    replacement.replaceFirstChar { it.uppercase() }
+                else -> replacement
+            }
+        }
+    }
+
     /** Порядок чтения: панель за панелью, внутри панели — строки сверху вниз. */
     fun order(
         regions: List<OcrRegion>,
@@ -519,9 +542,13 @@ object KomaReadingOrder {
         // почти весь текст (PANEL_TRUST); иначе — прежний разбор по облачкам,
         // который работает и на страницах без рамок.
         val ordered = if (panels.size >= 2 && KomaPanels.coverage(source, panels) >= PANEL_TRUST) {
-            KomaPanels.assign(source, panels).flatMap { panel -> bubblesOf(panel, rtl, rules.bubbleGap) }
+            KomaPanels.assign(source, panels).flatMap { panel ->
+                bubblesOf(panel, rtl, rules.bubbleGap, rules.mergeHeightRatio)
+            }
         } else {
-            splitPanels(source, rtl, depth = 0).flatMap { panel -> bubblesOf(panel, rtl, rules.bubbleGap) }
+            splitPanels(source, rtl, depth = 0).flatMap { panel ->
+                bubblesOf(panel, rtl, rules.bubbleGap, rules.mergeHeightRatio)
+            }
         }
         return ordered
             // Языковая починка — на СОБРАННОЙ реплике, а не на обрывке: модель
@@ -529,7 +556,7 @@ object KomaReadingOrder {
             // «ПОШЕВЕЛИТЬСЯ», «СЮОДА» → «СЮДА», «ТРУ» → «ТРИ»), возвращает
             // потерянные дефисы («ЧТОТО» → «ЧТО-ТО») и склеивает слово,
             // разорванное на две строки бокса («РАССЧИ ТВВАЮ»).
-            .map { it.copy(text = KomaWords.finish(it.text)) }
+            .map { it.copy(text = KomaWords.finish(applyWordFixes(it.text, rules.wordFixes))) }
             // Одна буква — не реплика: на стр. 16 в чтение попадала строка «ё»
             // (след звукового эффекта), и синтезатор читал её отдельной фразой.
             // Настоящие короткие реплики («Я», «Да», «Нет») остаются.
@@ -643,6 +670,8 @@ object KomaReadingOrder {
         rtl: Boolean,
         /** Зазор склейки фрагментов в долях высоты строки (KomaRules.bubbleGap). */
         bubbleGap: Float = KomaRules.DEFAULT.bubbleGap,
+        /** Предел разницы высот строк в одной реплике (KomaRules.mergeHeightRatio). */
+        mergeHeightRatio: Float = KomaRules.DEFAULT.mergeHeightRatio,
     ): List<Line> {
         if (group.isEmpty()) return emptyList()
 
@@ -665,6 +694,12 @@ object KomaReadingOrder {
                 // «строку» — рамка на странице не покрывала всю реплику.
                 val overlap = min(head.bottom, region.bottom) - max(head.top, region.top)
                 if (overlap <= lineHeight * 0.35f) continue
+                // Разная высота — разный шрифт и разная реплика. Крупное название
+                // и мелкий блок титров склеивались в одну «реплику»: рамка
+                // рисовалась по объединению и не совпадала с тем, что читалось.
+                val regionHeight = max(region.bottom - region.top, 0.01f)
+                val ratio = max(lineHeight, regionHeight) / min(lineHeight, regionHeight)
+                if (ratio > mergeHeightRatio) continue
                 val blockLeft = block.minOf { it.left }
                 val blockRight = block.maxOf { it.right }
                 // Расстояние берётся ПО МОДУЛЮ. Раньше для фрагмента слева от
