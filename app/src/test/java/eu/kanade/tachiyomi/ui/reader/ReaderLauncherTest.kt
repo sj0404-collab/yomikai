@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.ui.reader
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
+import io.kotest.matchers.string.shouldNotContain
 import org.junit.jupiter.api.Test
 
 /**
@@ -29,6 +30,15 @@ class ReaderLauncherTest {
         ReaderLauncher.STRIP.title shouldContain "Манхва"
         ReaderLauncher.STRIP.title shouldContain "лента"
         ReaderLauncher.STRIP.subtitle shouldContain "KOMA"
+    }
+
+    @Test
+    fun `both readers promise frames and voice`() {
+        // Жалоба владельца: «зачем мне рамки, а ты от них отказываешься».
+        // Рамки реплик есть в ОБЕИХ читалках, и подписи обязаны это говорить.
+        ReaderLauncher.PAGES.subtitle shouldContain "Рамки"
+        ReaderLauncher.STRIP.subtitle shouldContain "Рамки"
+        ReaderLauncher.PAGES.subtitle shouldNotContain "Без рамок"
     }
 
     @Test
