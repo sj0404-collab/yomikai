@@ -442,6 +442,8 @@ object KomaReadingOrder {
      * нет точки/вопроса/восклицания и он не заканчивается на закрывающую кавычку.
      */
     fun cutAtBandBottom(line: Line, band: KomaBand): Boolean {
+        // Полоса во всю страницу ничего не режет: продолжения ждать неоткуда.
+        if (band.whole) return false
         if (band.bottom <= line.bottom - 0.001f) return false
         val nearBottom = line.bottom >= band.bottom - CUT_MARGIN
         if (!nearBottom) return false
