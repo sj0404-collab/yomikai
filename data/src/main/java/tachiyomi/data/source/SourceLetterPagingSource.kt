@@ -70,7 +70,7 @@ class SourceLetterPagingSource(
 
     private suspend fun fetchPage(page: Int): MangasPage = when (baseQuery) {
         QUERY_POPULAR -> source.getPopularManga(page)
-        QUERY_LATEST -> source.getLatestManga(page)
+        QUERY_LATEST -> source.getLatestUpdates(page)
         else -> source.getSearchManga(page, baseQuery, filters)
     }
 
