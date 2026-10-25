@@ -76,6 +76,35 @@ class KomaRulesTest {
     }
 
     @Test
+    fun `multi-font defaults keep one-threshold behaviour until asked`() {
+        // inkTileRows > 1 уже включён (несколько шрифтов в одном боксе), а второй
+        // уровень «чернил» по умолчанию выключен: он добавляет и шум.
+        KomaRules.DEFAULT.inkTileRows shouldBe 4
+        KomaRules.DEFAULT.inkLevels shouldBe 1
+    }
+
+    @Test
+    fun `multi-font options survive the file and are clamped`() {
+        val parsed = KomaRules.fromJson("""{"inkTileRows":99,"inkLevels":7,"speechRate":9,"autoScrollStep":-1,"semiManual":true}""")
+        parsed shouldNotBe null
+        parsed!!.inkTileRows shouldBe 16
+        parsed.inkLevels shouldBe 2
+        near(parsed.speechRate, 3f)
+        near(parsed.autoScrollStep, 0.05f)
+        parsed.semiManual shouldBe true
+    }
+
+    @Test
+    fun `band rules come from the file`() {
+        val parsed = KomaRules.fromJson("""{"bandOverlap":0.30,"bandsMax":5,"wholeThreshold":0.9}""")!!
+        val bands = KomaBands.of(viewportFrac = 0.25f, rules = parsed)
+        near(parsed.bandOverlap, 0.3f)
+        bands.size shouldBe 5
+        // Страница, видимая на 95%, при пороге 0.9 читается целиком.
+        KomaBands.of(viewportFrac = 0.95f, rules = parsed).size shouldBe 1
+    }
+
+    @Test
     fun `buffered line converts to a region with the same box`() {
         val line = BufferedLine(
             book = "b1", page = 3, band = 1, text = "УЖЕ ПОРА НА-",

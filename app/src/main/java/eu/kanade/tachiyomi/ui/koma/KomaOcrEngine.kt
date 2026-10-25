@@ -674,12 +674,33 @@ class KomaOcrEngine(private val context: Context) {
         // целиком, ещё до распознавания.
         val dark=inkThreshold(luma)
         if(dark<0) return emptyList()
+        // Несколько шрифтов на одной странице: заголовок каллиграфией и реплика
+        // жирным могли попасть в ОДИН бокс, и один порог на двоих вставал по
+        // тёмному тексту — серый выпадал целиком. Теперь бокс режется на
+        // горизонтальные подблоки, у каждого свой порог (KomaRules.inkTileRows).
+        val tileRows=rules.inkTileRows.coerceIn(1,16)
+        val tileH=((h+tileRows-1)/tileRows).coerceAtLeast(1)
+        val tileThresholds=IntArray(tileRows) { ti ->
+            val y0=ti*tileH
+            val y1=min(h,y0+tileH)
+            if(y1<=y0) -1 else inkThreshold(luma.copyOfRange(y0*w,y1*w))
+        }
+        // Второй уровень «чернил» (KomaRules.inkLevels = 2): серый диапазон
+        // яркости тоже считается текстом. Опция, потому что добавляет
+        // найденного — вместе с шумом.
+        val grey=if(rules.inkLevels>=2) greyInkRange(luma) else null
+        fun thresholdAt(y:Int):Int = tileThresholds[(y/tileH).coerceIn(0,tileRows-1)]
+        fun isInk(y:Int,x:Int):Boolean {
+            val l=luma[y*w+x]
+            if(l<thresholdAt(y)) return true
+            return grey!=null && l in grey
+        }
         val runs=mutableListOf<IntArray>()
         var y=0
         while(y<h) {
-            if(!rowHasInk(luma,w,y,dark)) { y++;continue }
+            if(!rowHasInk(luma,w,y,thresholdAt(y),grey)) { y++;continue }
             var end=y
-            while(end<h && rowHasInk(luma,w,end,dark)) end++
+            while(end<h && rowHasInk(luma,w,end,thresholdAt(end),grey)) end++
             if(end>y) runs.add(intArrayOf(y,end))
             y=end.coerceAtLeast(y+1)
         }
@@ -701,7 +722,7 @@ class KomaOcrEngine(private val context: Context) {
             if(run[1]-run[0]<max(2,(median*0.4f).toInt())) continue
             var x0=w;var x1=-1
             for(yy in run[0] until run[1]) for(xx in 0 until w) {
-                if(luma[yy*w+xx]<dark) { if(xx<x0)x0=xx; if(xx>x1)x1=xx }
+                if(isInk(yy,xx)) { if(xx<x0)x0=xx; if(xx>x1)x1=xx }
             }
             if(x1<0) continue
             val px0=(left+x0/scale).toInt().coerceIn(left,right-1)
@@ -765,12 +786,54 @@ class KomaOcrEngine(private val context: Context) {
         out
     } catch(t:Throwable) { null }
 
-    private fun rowHasInk(luma:IntArray,width:Int,y:Int,dark:Int):Boolean {
+    private fun rowHasInk(luma:IntArray,width:Int,y:Int,dark:Int,grey:IntRange?=null):Boolean {
         val offset=y*width
         val need=max(1,width/60)
         var count=0
-        for(x in 0 until width) if(luma[offset+x]<dark) { count++;if(count>=need) return true }
+        for(x in 0 until width) {
+            val l=luma[offset+x]
+            if(l<dark || (grey!=null && l in grey)) { count++;if(count>=need) return true }
+        }
         return false
+    }
+
+    /**
+     * Диапазон яркости «серых чернил» — второго уровня текста на участке.
+     *
+     * Ищем горб гистограммы между буквами и фоном: три моды (фон, серый текст,
+     * тёмный текст) — обычное дело на обложке с каллиграфическим названием.
+     * Если среднего горба нет, возвращаем null и работаем как раньше: второй
+     * уровень не выдумываем, иначе на пустых полях полезет шум.
+     */
+    private fun greyInkRange(luma:IntArray):IntRange? {
+        if(luma.size<64) return null
+        val hist=IntArray(256)
+        for(v in luma) hist[v.coerceIn(0,255)]++
+        fun percentile(p:Float):Int {
+            val target=(luma.size*p).toInt().coerceAtLeast(1)
+            var acc=0
+            for(i in 0..255) { acc+=hist[i]; if(acc>=target) return i }
+            return 255
+        }
+        val low=percentile(rules.inkLowPercentile)
+        val high=percentile(rules.inkHighPercentile)
+        val spread=high-low
+        if(spread<24) return null
+        val from=low+spread*0.25f
+        val to=low+spread*0.80f
+        var bestBin=-1
+        var bestMass=0
+        // Сглаживание по трём соседним бинам: одиночный пиксель — не мода.
+        for(i in from.toInt().coerceAtLeast(0)..to.toInt().coerceAtMost(255)) {
+            val mass=hist[max(0,i-1)]+hist[i]+hist[min(255,i+1)]
+            if(mass>bestMass) { bestMass=mass; bestBin=i }
+        }
+        // Мода должна быть заметной: меньше 0.2 % пикселей — это не шрифт, а шум.
+        if(bestBin<0 || bestMass<max(3,luma.size/500)) return null
+        val lo=(bestBin-spread*0.10f).toInt().coerceAtLeast(low+1)
+        val hi=(bestBin+spread*0.18f).toInt().coerceAtMost(high-1)
+        if(hi<=lo) return null
+        return lo..hi
     }
 
     private fun components(map:Array<FloatArray>):List<Rect> {

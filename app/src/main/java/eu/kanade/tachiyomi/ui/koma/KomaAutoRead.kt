@@ -949,6 +949,11 @@ object KomaAutoRead {
         val awaiting: String? = null,
         /** Голос текущей реплики — для подписи в оверлее. */
         val currentVoice: String = "",
+        /**
+         * Полуручной режим: прочитано то, что видно, и проход ждёт, пока
+         * человек сам прокрутит дальше. Экран по этому флагу рисует стрелку.
+         */
+        val waitingScroll: Boolean = false,
     )
 
     private val _state = MutableStateFlow(State())
@@ -981,8 +986,36 @@ object KomaAutoRead {
     fun stop() {
         stopped = true
         paused = false
-        _state.value = _state.value.copy(running = false, paused = false, status = "Остановлено")
+        // Жалоба: «останавливаешь в читалке, а голос играет дальше». Флаги
+        // останавливали только цикл, а очередь синтезатора продолжала звучать —
+        // её надо рвать явно, как это делает пауза.
+        runCatching { activeTts?.stop() }
+        _state.value = _state.value.copy(
+            running = false,
+            paused = false,
+            waitingScroll = false,
+            status = "Остановлено",
+        )
         KomaAutoReadNotifier.cancel()
+    }
+
+    /**
+     * Человек прокрутил сам — читаем то, что теперь видно (полуручной режим).
+     *
+     * Возвращает true, если проход действительно ждал прокрутки: иначе экрану
+     * не нужно ничего запускать заново.
+     */
+    fun continueFromScroll(): Boolean {
+        if (!_state.value.waitingScroll) return false
+        paused = false
+        _state.value = _state.value.copy(
+            running = true,
+            paused = false,
+            waitingScroll = false,
+            status = "",
+        )
+        KomaAutoReadNotifier.update(_state.value)
+        return true
     }
 
     fun skip() {
@@ -1055,6 +1088,19 @@ object KomaAutoRead {
          * его целиком нельзя — голос уходил в текст, которого не видно.
          */
         bandsOf: (index: Int) -> List<KomaBand> = { KomaBands.whole },
+        /**
+         * Полуручной режим: прочитать видимую полосу, дождаться прокрутки.
+         *
+         * Экран передаёт действующее значение (настройка читалки главнее файла
+         * правил), поэтому параметр явный, а не читается только из правил.
+         */
+        semiManual: Boolean? = null,
+        /**
+         * С какой полосы начинать. В полуручном режиме это ТА полоса, которую
+         * человек видит: иначе чтение начиналось бы с верха длинной страницы и
+         * читало то, что уже пролистано.
+         */
+        fromBandIndex: Int = 0,
         /** Экран прокручивает ленту к читаемой полосе. */
         onBand: suspend (index: Int, band: KomaBand) -> Unit = { _, _ -> },
         onResult: (PageOcr?) -> Unit,
@@ -1109,8 +1155,13 @@ object KomaAutoRead {
             // Правила чтения (файл/плагин) читаются один раз на прогон: числа
             // меняются без пересборки APK, а порядок чтения остаётся прежним.
             val rules = KomaRulesStore.current(context)
+            // Скорость речи из правил применяется, только если задана (>0):
+            // ручной выбор в читалке не перебиваем молча.
+            if (rules.speechRate > 0f) runCatching { tts.setRate(rules.speechRate) }
+            val semi = semiManual ?: rules.semiManual
             for (band in bands) {
                 if (stopped) break
+                if (band.index < fromBandIndex) continue
                 onBand(index, band)
                 val result = recognize(index, band)
                 onResult(result)
@@ -1238,6 +1289,23 @@ object KomaAutoRead {
                 }
                 tts.stop()
                 if (stopped) break
+                // Полуручной режим: прочитали то, что видно, — и стоим.
+                // Дальше человек прокручивает сам, а экран позовёт
+                // continueFromScroll() и запустит чтение новой видимой части.
+                if (semi) {
+                    paused = true
+                    spokeOnPage = true
+                    _state.value = _state.value.copy(
+                        running = true,
+                        paused = true,
+                        waitingScroll = true,
+                        page = index,
+                        pageCount = pages.size,
+                        status = "Прокрутите дальше — прочитаю то, что видно",
+                    )
+                    KomaAutoReadNotifier.update(_state.value)
+                    break@readLoop
+                }
             }
             if (stopped) break@readLoop
             // Полоса без реплик на длинной странице — не повод останавливать

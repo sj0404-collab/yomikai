@@ -75,6 +75,15 @@ fun KomaReaderScreen(
     onOpenLegacy: (() -> Unit)? = null,
 ) {
     val context=LocalContext.current;val scope=rememberCoroutineScope()
+    // Действующие правила (файл/плагин) — объявлены ДО всего, что от них
+    // зависит: полосы, пороги распознавания, версия правил в буфере строк.
+    // rulesTick меняется кнопкой «Перезагрузить правила»: всё пересчитывается
+    // без пересборки APK и без нового OCR.
+    var rulesTick by remember { mutableIntStateOf(0) }
+    // Счётчик обновлений буфера: без него число строк в шторке «Правила»
+    // оставалось бы прежним, хотя распознавание уже дописало строки.
+    var bufferTick by remember { mutableIntStateOf(0) }
+    val rules = remember(rulesTick) { KomaRulesStore.current(context) }
     // Книга без страниц (пустой архив, удалённые файлы) раньше роняла экран на
     // coerceIn(0, -1) ещё до первой отрисовки — пользователь видел «вылет»
     // сразу после тапа по книге.
@@ -116,8 +125,8 @@ fun KomaReaderScreen(
     // «страница» — то же самое, если кадр длиннее экрана (вебтун в манге).
     val viewportFraction = if(currentHeight>0 && viewportPx>0)
         viewportPx.toFloat()/currentHeight else 1f
-    val bands = remember(currentPath,viewportFraction) {
-        KomaBands.of(viewportFraction)
+    val bands = remember(currentPath,viewportFraction,rules) {
+        KomaBands.of(viewportFraction, rules)
     }
     // Какая полоса сейчас на экране: центр видимой области.
     val offsetInPage = if(mode=="vertical")
@@ -133,14 +142,14 @@ fun KomaReaderScreen(
         val vp=viewportPx
         if(vp<=0) return KomaBands.whole
         val known=pageHeights[path]
-        if(known!=null && known>0) return KomaBands.of(vp.toFloat()/known)
+        if(known!=null && known>0) return KomaBands.of(vp.toFloat()/known, rules)
         val size=pageSizes[path] ?: engine.pageSize(path)?.let { intArrayOf(it.first,it.second) }?.also { pageSizes[path]=it }
-            ?: return KomaBands.of(viewportFraction)
-        if(size[0]<=0 || size[1]<=0) return KomaBands.of(viewportFraction)
+            ?: return KomaBands.of(viewportFraction, rules)
+        if(size[0]<=0 || size[1]<=0) return KomaBands.of(viewportFraction, rules)
         // Страница вписана по ширине экрана (так её и показывает читалка).
         val shownWidth = if(viewportWidthPx>0) viewportWidthPx.toFloat() else 1080f
         val shownHeight = shownWidth*size[1]/size[0]
-        return KomaBands.of(vp/shownHeight)
+        return KomaBands.of(vp/shownHeight, rules)
     }
     val autoRequested=remember{mutableSetOf<String>()}
     // Кириллица — по умолчанию: библиотека русская, и раньше каждый раз
@@ -166,6 +175,12 @@ fun KomaReaderScreen(
     LaunchedEffect(autoReading) { if(autoReading) barsVisible=false }
     var overflow by remember { mutableStateOf(false) }
     var autoScroll by remember { mutableStateOf(repo.prefs.getBoolean("autoScroll",true)) }
+    // Полуручной режим: прочитать видимое, остановиться, ждать прокрутки.
+    // Значение по умолчанию берётся из правил (файл/плагин), переключатель в
+    // настройках читалки главнее.
+    var semiManual by remember {
+        mutableStateOf(repo.prefs.getBoolean("semiManual", KomaRulesStore.current(context).semiManual))
+    }
 
     var voices by remember { mutableStateOf<List<android.speech.tts.Voice>>(emptyList()) }
     var selectedVoice by remember { mutableStateOf(tts.selectedVoiceName()) }
@@ -234,15 +249,6 @@ fun KomaReaderScreen(
     var askVoices by remember(book.id) {
         mutableStateOf(!repo.prefs.getBoolean("voiceAsk_${book.id}", false))
     }
-    // Действующие правила (файл/плагин): объявлены до scan(), потому что
-    // распознавание записывает версию правил в буфер строк.
-    // rulesTick меняется кнопкой «Перезагрузить правила» — всё, что от них
-    // зависит, пересчитывается без пересборки APK и без нового OCR.
-    var rulesTick by remember { mutableIntStateOf(0) }
-    // Счётчик обновлений буфера: без него число строк в шторке «Правила»
-    // оставалось бы прежним, хотя распознавание уже дописало строки.
-    var bufferTick by remember { mutableIntStateOf(0) }
-    val rules = remember(rulesTick) { KomaRulesStore.current(context) }
     var result by remember { mutableStateOf<PageOcr?>(null) }
     var scanJob by remember { mutableStateOf<Job?>(null) }
     var scrollJob by remember { mutableStateOf<Job?>(null) }
@@ -367,6 +373,9 @@ fun KomaReaderScreen(
             language = language,
             from = if(mode=="vertical")scroll.firstVisibleItemIndex else pager.currentPage,
             tts = tts,
+            semiManual = semiManual,
+            // Полуручной: начинаем с той полосы, которую видно.
+            fromBandIndex = if(semiManual) bandIndex else 0,
             recognize = { index, pageBand ->
                 // Полоса берётся из кэша, только если в ней ЕСТЬ текст.
                 //
@@ -506,7 +515,9 @@ fun KomaReaderScreen(
                     val visible = bubbleTop >= pageScroll.value &&
                         bubbleTop <= pageScroll.value + viewportPx * 0.75f
                     if (!visible) {
-                        val desired = (bubbleTop - viewportPx * 0.25f).toInt().coerceAtLeast(0)
+                        // Куда довести реплику: доля экрана из правил
+                        // (KomaRules.autoScrollStep), а не жёсткие 0.25.
+                        val desired = (bubbleTop - viewportPx * (1f - rules.autoScrollStep)).toInt().coerceAtLeast(0)
                         scrollJob?.cancel()
                         scrollJob = scope.launch { runCatching { pageScroll.animateScrollTo(desired) } }
                     }
@@ -745,6 +756,73 @@ fun KomaReaderScreen(
     // отвечала отдельная плавающая панель; здесь достаточно одной кнопки.
     // Плавающая панель живёт вместе с панелями: касание страницы убирает её,
     // чтобы экран оставался только под рисунок. Раньше она висела всегда.
+    // ── Полуручной режим ─────────────────────────────────────────────────────
+    // Стрелка в углу/сбоку: куда прокручивать, зависит от того, как читается
+    // история — вниз для ленты, влево для «справа налево», вправо для остальных.
+    // Тап по стрелке прокручивает один экран и запускает чтение новой части.
+    if(semiManual && autoState.waitingScroll) {
+        val align=when(mode){"vertical"->Alignment.BottomCenter;"rtl"->Alignment.CenterStart;else->Alignment.CenterEnd}
+        val icon=when(mode){"vertical"->Icons.Filled.KeyboardArrowDown;"rtl"->Icons.Filled.KeyboardArrowLeft;else->Icons.Filled.KeyboardArrowRight}
+        Box(Modifier.fillMaxSize().padding(bottom=110.dp,start=8.dp,end=8.dp),contentAlignment=align) {
+            Surface(
+                shape=RoundedCornerShape(28.dp),color=Color(0xE6232822),shadowElevation=6.dp,
+                onClick={
+                    val step=(viewportPx * 0.85f).toInt().coerceAtLeast(1)
+                    scrollJob?.cancel()
+                    scrollJob=scope.launch {
+                        runCatching {
+                            if(mode=="vertical") {
+                                scroll.animateScrollToItem(
+                                    scroll.firstVisibleItemIndex,
+                                    scroll.firstVisibleItemScrollOffset + step,
+                                )
+                            } else if(currentHeight>0) {
+                                pageScroll.animateScrollTo((pageScroll.value + step).coerceAtLeast(0))
+                            }
+                        }
+                        // Даём кадру доехать: читать начинаем то, что уже видно,
+                        // а не то, что было на экране до нажатия.
+                        delay(280)
+                        if(KomaAutoRead.continueFromScroll()) readTrigger++
+                    }
+                },
+            ) {
+                Row(Modifier.padding(horizontal=12.dp,vertical=8.dp),verticalAlignment=Alignment.CenterVertically) {
+                    Icon(icon,"Прокрутить дальше",tint=Orange)
+                    Text("Прокрутить",fontSize=11.sp,color=Color.White)
+                }
+            }
+        }
+    }
+    // Ждём прокрутки → человек прокрутил сам → читаем то, что теперь видно.
+    LaunchedEffect(page, bandIndex, semiManual) {
+        if(!semiManual) return@LaunchedEffect
+        if(!autoReading) return@LaunchedEffect
+        if(autoState.waitingScroll && KomaAutoRead.continueFromScroll()) readTrigger++
+    }
+    // Попали обрезки (реплика разрезана краем полосы) — не читаем огрызок, а
+    // сами подъезжаем на столько, чтобы реплика была видна целиком, и
+    // пересчитываем. Один добор на полосу, чтобы не ездить бесконечно.
+    val adjustedBands = remember(book.id) { mutableSetOf<String>() }
+    LaunchedEffect(result, bandIndex, semiManual) {
+        if(!semiManual) return@LaunchedEffect
+        val last=bubbles.orEmpty().lastOrNull() ?: return@LaunchedEffect
+        if(!KomaReadingOrder.cutAtBandBottom(last, band, rules.cutMargin)) return@LaunchedEffect
+        val key="$page:$bandIndex"
+        if(!adjustedBands.add(key)) return@LaunchedEffect
+        val h=currentHeight
+        if(h<=0) return@LaunchedEffect
+        val target=((last.top-rules.cutMargin)*h).toInt().coerceAtLeast(0)
+        scrollJob?.cancel()
+        scrollJob=scope.launch {
+            runCatching {
+                if(mode=="vertical") scroll.animateScrollToItem(page, target) else pageScroll.animateScrollTo(target)
+            }
+            delay(260)
+            // Пересчёт уже по новому положению кадра: реплика теперь целиком в нём.
+            if(!scanning) scan(force=true)
+        }
+    }
     if(autoReading && barsVisible) {
         Box(Modifier.fillMaxSize().padding(bottom=140.dp,end=16.dp),contentAlignment=Alignment.BottomEnd) {
             Surface(shape=RoundedCornerShape(28.dp),color=Color(0xE6232822),shadowElevation=8.dp) {
@@ -826,6 +904,18 @@ fun KomaReaderScreen(
                 Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
                     Column(Modifier.weight(1f)){Text("Читать страницы вслух",fontSize=13.sp);Text("Реплики в порядке чтения, дальше листает сам",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
                     Switch(checked=autoReading,onCheckedChange={ if(it)readTrigger++ else KomaAutoRead.stop() })
+                }
+                Row(Modifier.fillMaxWidth().padding(top=6.dp),verticalAlignment=Alignment.CenterVertically){
+                    Column(Modifier.weight(1f)) {
+                        Text("Полуручной режим",fontSize=13.sp)
+                        Text("Прочитает то, что видно, и остановится: дальше прокручиваете сами — стрелка в углу подскажет куда",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(checked=semiManual,onCheckedChange={
+                        semiManual=it
+                        repo.prefs.edit().putBoolean("semiManual",it).apply()
+                        if(it && autoReading) readTrigger++
+                        error=if(it)"Полуручной режим: чтение ждёт вашей прокрутки" else "Полуручной режим выключен"
+                    })
                 }
                 Row(Modifier.fillMaxWidth().padding(top=10.dp),verticalAlignment=Alignment.CenterVertically){
                     Text("Голос",fontSize=13.sp,modifier=Modifier.weight(1f))
