@@ -87,7 +87,6 @@ object SettingsAdvancedScreen : SearchableSettings {
 
         val basePreferences = remember { Injekt.get<BasePreferences>() }
         val networkPreferences = remember { Injekt.get<NetworkPreferences>() }
-        val sourcePrefs = remember { Injekt.get<eu.kanade.domain.source.service.SourcePreferences>() }
         val libraryPreferences = remember { Injekt.get<LibraryPreferences>() }
 
         return listOf(
@@ -204,6 +203,7 @@ object SettingsAdvancedScreen : SearchableSettings {
     private fun getNetworkGroup(
         networkPreferences: NetworkPreferences,
     ): Preference.PreferenceGroup {
+        val sourcePrefs = remember { Injekt.get<eu.kanade.domain.source.service.SourcePreferences>() }
         val context = LocalContext.current
         val networkHelper = remember { Injekt.get<NetworkHelper>() }
 
