@@ -24,4 +24,13 @@ interface SourceRepository {
     fun getPopular(sourceId: Long): SourcePagingSource
 
     fun getLatest(sourceId: Long): SourcePagingSource
+
+    /**
+     * Выдача источника по первой букве названия.
+     *
+     * [baseQuery] — раздел, который листаем (популярное, новинки или текущий
+     * запрос пользователя). Буква НЕ уходит в источник строкой поиска: часть
+     * сайтов по одной букве ничего не находит и отдаёт пустоту.
+     */
+    fun byLetter(sourceId: Long, letter: String, baseQuery: String, filterList: FilterList): SourcePagingSource
 }

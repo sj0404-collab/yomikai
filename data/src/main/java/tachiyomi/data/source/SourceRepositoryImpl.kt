@@ -87,6 +87,20 @@ class SourceRepositoryImpl(
         return SourceLatestPagingSource(sourceManager.getOrStub(sourceId))
     }
 
+    override fun byLetter(
+        sourceId: Long,
+        letter: String,
+        baseQuery: String,
+        filterList: FilterList,
+    ): SourcePagingSource {
+        return SourceLetterPagingSource(
+            source = sourceManager.getOrStub(sourceId),
+            letter = letter,
+            baseQuery = baseQuery,
+            filters = filterList,
+        )
+    }
+
     private fun mapSourceToDomainSource(source: Source): DomainSource = DomainSource(
         id = source.id,
         lang = source.lang,
