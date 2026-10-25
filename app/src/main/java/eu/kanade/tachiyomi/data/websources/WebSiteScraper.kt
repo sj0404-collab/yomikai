@@ -103,7 +103,7 @@ object WebSiteScraper {
 
             val href = anchor.absUrl("href")
             if (href.isBlank() || !href.startsWith("http")) continue
-            if (!seen.add(href)) continue
+            if (href in seen) continue
             val lower = href.lowercase()
             if ("/genre/" in lower || "/tag/" in lower || "?page=" in lower) continue
 
@@ -114,6 +114,9 @@ object WebSiteScraper {
                 else -> anchor.text()
             }.trim()
 
+            // Пустой текст — это ссылка-картинка без alt; такую пропускаем, но
+            // href НЕ помечаем использованным: рядом обычно есть вторая ссылка
+            // на тот же тайтл с нормальным названием.
             if (title.length !in 2..120) continue
 
             // Картинка рядом (внутри ссылки или в её родителе) — почти всегда карточка.
@@ -123,6 +126,7 @@ object WebSiteScraper {
             val looksLikeTitle = TITLE_PATH_HINTS.any { it in lower }
             if (!looksLikeTitle && cover == null) continue
 
+            seen += href
             items += WebItem(title, href, cover)
         }
 
@@ -130,13 +134,16 @@ object WebSiteScraper {
     }
 
     private fun imageUrl(img: Element): String? {
-        val raw = listOf("data-src", "data-original", "data-lazy-src", "src")
-            .map { img.attr(it) }
-            .firstOrNull { it.isNotBlank() }
-            ?: return null
-        if (raw.startsWith("http")) return raw
-        val absolute = img.absUrl("src")
-        return absolute.takeIf { it.startsWith("http") }
+        // Ленивые картинки держат адрес в data-src; относительный адрес
+        // разрешается от базового URL страницы, иначе обложки терялись.
+        for (attribute in listOf("data-src", "data-original", "data-lazy-src", "src")) {
+            val raw = img.attr(attribute)
+            if (raw.isBlank()) continue
+            if (raw.startsWith("http")) return raw
+            val absolute = img.absUrl(attribute)
+            if (absolute.startsWith("http")) return absolute
+        }
+        return null
     }
 
     private fun isNoise(anchor: Element): Boolean {
