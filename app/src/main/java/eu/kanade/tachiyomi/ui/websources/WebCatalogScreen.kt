@@ -182,6 +182,29 @@ class WebCatalogScreen(
                                     )
                                 }
                                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    // «Сетка» — разбор выдачи в родные карточки,
+                                    // «Сайт» — та же страница как есть, на случай
+                                    // если вёрстка изменилась.
+                                    TextButton(
+                                        onClick = {
+                                            if (query.isBlank()) {
+                                                navigator.push(
+                                                    eu.kanade.tachiyomi.ui.webview.WebViewScreen(
+                                                        WebSiteCatalog.homeUrl(site), site.name,
+                                                    ),
+                                                )
+                                            } else {
+                                                navigator.push(WebSiteSearchScreen(site.id, query))
+                                            }
+                                        },
+                                        enabled = enabled,
+                                    ) { Text(if (query.isBlank()) "Открыть" else "Сетка") }
+                                    TextButton(
+                                        onClick = {
+                                            navigator.push(WebSiteSearchScreen(site.id, "", mode = "latest"))
+                                        },
+                                        enabled = enabled,
+                                    ) { Text("Новинки") }
                                     TextButton(
                                         onClick = {
                                             val url = WebSiteCatalog.searchUrl(site, query)
@@ -191,18 +214,7 @@ class WebCatalogScreen(
                                             )
                                         },
                                         enabled = enabled,
-                                    ) { Text(if (query.isBlank()) "Открыть" else "Искать") }
-                                    TextButton(
-                                        onClick = {
-                                            navigator.push(
-                                                eu.kanade.tachiyomi.ui.webview.WebViewScreen(
-                                                    WebSiteCatalog.latestUrl(site) ?: WebSiteCatalog.homeUrl(site),
-                                                    "${site.name} · новинки",
-                                                ),
-                                            )
-                                        },
-                                        enabled = enabled,
-                                    ) { Text("Новинки") }
+                                    ) { Text("Сайт") }
                                     IconButton(onClick = { editing = site }) {
                                         Icon(Icons.Outlined.Edit, "Домен и шаблон поиска")
                                     }
@@ -233,15 +245,17 @@ class WebCatalogScreen(
             EditSiteDialog(
                 site = site,
                 onDismiss = { editing = null },
-                onSave = { host, searchTpl ->
+                onSave = { host, searchTpl, itemSel, titleSel, coverSel ->
                     WebSiteCatalog.setHost(prefs, site.id, host)
                     WebSiteCatalog.setTemplate(prefs, site.id, searchTpl, null)
+                    WebSiteCatalog.setSelectors(prefs, site.id, itemSel, titleSel, coverSel)
                     revision++
                     editing = null
                 },
                 onReset = {
                     WebSiteCatalog.clearHost(prefs, site.id)
                     WebSiteCatalog.clearTemplate(prefs, site.id)
+                    WebSiteCatalog.clearSelectors(prefs, site.id)
                     revision++
                     editing = null
                 },
@@ -265,11 +279,14 @@ class WebCatalogScreen(
 private fun EditSiteDialog(
     site: WebSite,
     onDismiss: () -> Unit,
-    onSave: (host: String, search: String) -> Unit,
+    onSave: (host: String, search: String, item: String, title: String, cover: String) -> Unit,
     onReset: () -> Unit,
 ) {
     var host by remember { mutableStateOf(site.hosts.first()) }
     var search by remember { mutableStateOf(site.search.orEmpty()) }
+    var itemSelector by remember { mutableStateOf(site.itemSelector.orEmpty()) }
+    var titleSelector by remember { mutableStateOf(site.titleSelector.orEmpty()) }
+    var coverSelector by remember { mutableStateOf(site.coverSelector.orEmpty()) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -292,6 +309,36 @@ private fun EditSiteDialog(
                     },
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 )
+                Text(
+                    "Разбор выдачи (CSS-селекторы). Пусто — работает эвристика " +
+                        "по ссылкам и картинкам.",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 12.dp),
+                )
+                OutlinedTextField(
+                    value = itemSelector,
+                    onValueChange = { itemSelector = it },
+                    label = { Text("Карточка") },
+                    placeholder = { Text(".media-manga, .media") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = titleSelector,
+                    onValueChange = { titleSelector = it },
+                    label = { Text("Название внутри карточки") },
+                    placeholder = { Text("h4.media-heading a[href]") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = coverSelector,
+                    onValueChange = { coverSelector = it },
+                    label = { Text("Обложка внутри карточки") },
+                    placeholder = { Text("img.manga-thumb") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
                 if (site.hosts.size > 1) {
                     Text(
                         "Зеркала: ${site.hosts.drop(1).joinToString(", ")}",
@@ -302,7 +349,9 @@ private fun EditSiteDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onSave(host, search) }) { Text("Сохранить") }
+            TextButton(onClick = {
+                onSave(host, search, itemSelector, titleSelector, coverSelector)
+            }) { Text("Сохранить") }
         },
         dismissButton = {
             Row {
