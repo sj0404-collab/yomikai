@@ -68,9 +68,11 @@ object WebStore {
             history.value = root.optJSONArray("history").jsonList { o ->
                 Hist(o.optString("url"), o.optString("title"), o.optLong("at"))
             }
+            // Чистим дубли, накопленные прежними версиями: две вкладки одного
+            // адреса бесполезны и только путают.
             tabs.value = root.optJSONArray("tabs").jsonList { o ->
                 TabItem(o.optString("id"), o.optString("url"), o.optString("title"))
-            }
+            }.distinctBy { normalizeUrl(it.url) }
             activeTabId.value = root.optString("activeTab").takeIf { it.isNotBlank() }
             marksSeeded = root.optBoolean("marksSeeded", false)
         }
@@ -215,14 +217,34 @@ object WebStore {
         save(context)
     }
 
+    /**
+     * Открыть вкладку.
+     *
+     * Если вкладка с этим адресом уже есть — переключаемся на неё, а не создаём
+     * вторую. Раньше на экране появлялись две вкладки одного и того же
+     * «Операция: Настоящая любовь…», и вторая была бесполезна.
+     */
     fun addTab(context: Context, url: String, title: String): TabItem {
         load(context)
+        val key = normalizeUrl(url)
+        val existing = tabs.value.firstOrNull { normalizeUrl(it.url) == key }
+        if (existing != null) {
+            activeTabId.value = existing.id
+            save(context)
+            return existing
+        }
         val t = TabItem(System.currentTimeMillis().toString(), url, title.ifBlank { url })
         tabs.value = (tabs.value + t).takeLast(20)
         activeTabId.value = t.id
         save(context)
         return t
     }
+
+    /** Сравнение адресов без схемы, «www.», хвостового слэша и регистра. */
+    fun normalizeUrl(url: String?): String = UrlDisplay.normalize(url)
+
+    /** Короткий вид адреса для строки навигации. */
+    fun prettyUrl(url: String?, maxLength: Int = 46): String = UrlDisplay.pretty(url, maxLength)
 
     fun closeTab(context: Context, id: String) {
         tabs.value = tabs.value.filterNot { it.id == id }
