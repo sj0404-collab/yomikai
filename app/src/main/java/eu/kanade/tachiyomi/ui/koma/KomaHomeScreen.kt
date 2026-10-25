@@ -58,7 +58,7 @@ fun KomaSection(onReaderOpen: (Boolean) -> Unit = {}) {
     androidx.activity.compose.BackHandler(enabled=selected==null && (tab!=0 || searching)) { if(searching){searching=false;query=""}else tab=0 }
     KomaTheme(darkTheme=dark) {
         if(selected!=null) {
-            KomaReaderScreen(selected!!,repo,engine,onClose={selected=null},onUpdate={b->update(books.map{if(it.id==b.id)b else it})},onDelete={b->repo.delete(b);update(books.filter{it.id!=b.id})})
+            KomaReaderScreen(initial=selected!!,repo=repo,engine=engine,onClose={selected=null},onUpdate={b->update(books.map{if(it.id==b.id)b else it})},onDelete={b->repo.delete(b);update(books.filter{it.id!=b.id})})
         } else Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal=16.dp,vertical=6.dp),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
                 listOf("Библиотека" to Icons.Outlined.AutoStories,"Каталог" to Icons.Outlined.Explore,"AI-студия" to Icons.Outlined.AutoAwesome,"Настройки" to Icons.Outlined.Tune).forEachIndexed { i,(title,icon) ->

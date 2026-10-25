@@ -58,6 +58,13 @@ import android.graphics.Bitmap
 @Composable
 fun KomaReaderScreen(
     initial: Book,
+    /**
+     * Id серии в библиотеке (Long), если он известен.
+     *
+     * У книги KOMA свой строковый id, а выбор читалки хранится по id серии,
+     * поэтому пункт «Спросить читалку заново» показывается только когда он есть.
+     */
+    mangaIdForChoice: Long? = null,
     repo: LibraryRepository,
     engine: KomaOcrEngine,
     onClose: () -> Unit,
@@ -563,7 +570,7 @@ fun KomaReaderScreen(
         if(!barsVisible) Unit else Column(Modifier.background(Color(0xF2171A17))) {
             Row(Modifier.statusBarsPadding().fillMaxWidth().padding(horizontal=6.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically) {
                 IconButton(onClick=onClose){Icon(Icons.Default.ArrowBack,"Назад",tint=Color.White)}
-                Column(Modifier.weight(1f).padding(start=4.dp)){Text(book.title,fontSize=15.sp,fontWeight=FontWeight.Bold,color=Color.White,maxLines=1,overflow=TextOverflow.Ellipsis);Text("${page+1} из ${book.pages.size} · ${book.category} · ${when(mode){"rtl"->"Справа налево";"vertical"->"Вертикально";else->"Слева направо"}}",fontSize=10.sp,color=Color(0xFFB2B8AD))}
+                Column(Modifier.weight(1f).padding(start=4.dp)){Text(book.title,fontSize=15.sp,fontWeight=FontWeight.Bold,color=Color.White,maxLines=1,overflow=TextOverflow.Ellipsis);Text("KOMA · лента · ${page+1} из ${book.pages.size} · ${book.category} · ${when(mode){"rtl"->"Справа налево";"vertical"->"Вертикально";else->"Слева направо"}}",fontSize=10.sp,color=Color(0xFFB2B8AD))}
                 IconButton(onClick={if(result==null && !scanning)scan();sheet="ocr"}){Icon(Icons.Outlined.DocumentScanner,"Распознать",tint=if(result!=null)Orange else Color.White)}
                 IconButton(onClick={sheet="settings"}){Icon(Icons.Outlined.RecordVoiceOver,"Голос и авточтение",tint=if(autoReading)Orange else Color.White)}
                 IconButton(onClick={barsVisible=false}){Icon(Icons.Outlined.Fullscreen,"Полный экран",tint=Color.White)}
@@ -578,7 +585,20 @@ fun KomaReaderScreen(
                         DropdownMenuItem(text={Text("Рамки текста")},onClick={showRegions=!showRegions;overflow=false})
                         DropdownMenuItem(text={Text(if(autoScroll)"Автопрокрутка: вкл" else "Автопрокрутка: выкл")},onClick={autoScroll=!autoScroll;repo.prefs.edit().putBoolean("autoScroll",autoScroll).apply();overflow=false})
                         DropdownMenuItem(text={Text("Экспорт распознанного")},onClick={overflow=false;export.launch("${book.title}_ocr.txt")})
-                        if(onOpenLegacy!=null) DropdownMenuItem(text={Text("Прежняя читалка (резерв)")},onClick={overflow=false;onOpenLegacy()})
+                        // Две читалки подписаны по-разному, и выбор можно
+                        // переиграть: «Как читать эту серию» возвращает вопрос.
+                        val choiceMangaId = mangaIdForChoice
+                        if(choiceMangaId!=null) DropdownMenuItem(
+                            text={Text("Спросить читалку заново")},
+                            onClick={
+                                overflow=false
+                                eu.kanade.tachiyomi.ui.reader.ReaderLauncher.forget(context, choiceMangaId)
+                                android.widget.Toast
+                                    .makeText(context,"При следующем открытии главы спросим: манга постранично или манхва лентой",android.widget.Toast.LENGTH_LONG)
+                                    .show()
+                            },
+                        )
+                        if(onOpenLegacy!=null) DropdownMenuItem(text={Text("Открыть в основной читалке · постранично")},onClick={overflow=false;onOpenLegacy()})
                         DropdownMenuItem(text={Text("Удалить из библиотеки")},onClick={overflow=false;deleteConfirm=true})
                     }
                 }

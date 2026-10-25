@@ -174,6 +174,24 @@ class MangaScreen(
         // Скан занят — кнопки у глав гасим, чтобы не запустить второй поверх.
         val scanRunning = autoReadState.running || autoReadState.openChapterId != null
 
+        // Глава, для которой спрашиваем читалку. Показываем диалог только когда
+        // для серии ещё не выбрали: иначе тап по главе каждый раз упирался бы в
+        // лишний вопрос.
+        var readerChoiceChapter by remember { mutableStateOf<Chapter?>(null) }
+
+        // Открытие главы с выбором читалки. Лямбда внутри Content — только здесь
+        // доступно состояние диалога; приватный метод экрана его не видит.
+        val openChapter: (Chapter) -> Unit = { chapter ->
+            val saved = eu.kanade.tachiyomi.ui.reader.ReaderLauncher
+                .savedMode(context, chapter.mangaId)
+            if (saved != null) {
+                eu.kanade.tachiyomi.ui.reader.ReaderLauncher
+                    .open(context, chapter.mangaId, chapter.id, saved)
+            } else {
+                readerChoiceChapter = chapter
+            }
+        }
+
 
         // Открытие читалки в режиме авточтения после фонового скана главы.
         LaunchedEffect(autoReadState.openChapterId) {
@@ -206,7 +224,7 @@ class MangaScreen(
             chapterSwipeStartAction = screenModel.chapterSwipeStartAction,
             chapterSwipeEndAction = screenModel.chapterSwipeEndAction,
             navigateUp = navigator::pop,
-            onChapterClicked = { openChapter(context, it) },
+            onChapterClicked = { openChapter(it) },
             onDownloadChapter = screenModel::runChapterDownloadActions.takeIf { !successState.source.isLocalOrStub() },
             onAddToLibraryClicked = {
                 screenModel.toggleFavorite()
@@ -243,7 +261,7 @@ class MangaScreen(
             onTagSearch = { scope.launch { performGenreSearch(navigator, it, screenModel.source!!) } },
             onFilterButtonClicked = screenModel::showSettingsDialog,
             onRefresh = screenModel::fetchAllFromSource,
-            onContinueReading = { continueReading(context, screenModel.getNextUnreadChapter()) },
+            onContinueReading = { screenModel.getNextUnreadChapter()?.let(openChapter) },
             // Вторая кнопка рядом с «Читать»: обложка с голосом = сканировать
             // главу онлайн-моделью, озвучить и открыть в авточтении. Показывает-
             // ся только когда скан ещё не идёт и глава не открыта.
@@ -615,19 +633,38 @@ class MangaScreen(
                 onConfirm = screenModel::setExcludedScanlators,
             )
         }
+
+        // Выбор читалки для первой открываемой главы этой серии.
+        readerChoiceChapter?.let { chapter ->
+            eu.kanade.tachiyomi.ui.reader.ReaderChoiceDialog(
+                mangaTitle = successState.manga.title,
+                onChoose = { mode, rememberForManga ->
+                    if (rememberForManga) {
+                        eu.kanade.tachiyomi.ui.reader.ReaderLauncher
+                            .remember(context, chapter.mangaId, mode)
+                    }
+                    readerChoiceChapter = null
+                    eu.kanade.tachiyomi.ui.reader.ReaderLauncher
+                        .open(context, chapter.mangaId, chapter.id, mode)
+                },
+                onDismissRequest = { readerChoiceChapter = null },
+            )
+        }
     }
 
-    private fun continueReading(context: Context, unreadChapter: Chapter?) {
-        if (unreadChapter != null) openChapter(context, unreadChapter)
-    }
-
-    private fun openChapter(context: Context, chapter: Chapter) {
-        context.startActivity(ReaderActivity.newIntent(context, chapter.mangaId, chapter.id))
-    }
-
-    /** Открыть главу сразу в режиме авточтения (после фонового скана). */
+    /**
+     * Открыть главу сразу в режиме авточтения (после фонового скана).
+     *
+     * Авточтение умеет только KOMA, поэтому выбор читалки здесь не спрашивается.
+     */
     private fun openChapterAutoRead(context: Context, chapter: Chapter) {
-        context.startActivity(ReaderActivity.newAutoReadIntent(context, chapter.mangaId, chapter.id))
+        eu.kanade.tachiyomi.ui.reader.ReaderLauncher.open(
+            context = context,
+            mangaId = chapter.mangaId,
+            chapterId = chapter.id,
+            mode = eu.kanade.tachiyomi.ui.reader.ReaderLauncher.MODE_STRIP,
+            autoRead = true,
+        )
     }
 
     private fun getMangaUrl(manga_: Manga?, source_: Source?): String? {
