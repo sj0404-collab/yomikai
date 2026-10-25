@@ -62,6 +62,7 @@ import tachiyomi.domain.source.interactor.GetSavedSearchBySourceId
 import tachiyomi.domain.source.interactor.InsertSavedSearch
 import tachiyomi.domain.source.model.SavedSearch
 import tachiyomi.domain.source.service.SourceManager
+import tachiyomi.domain.source.service.SourceSearchPreferences
 import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -75,6 +76,7 @@ class BrowseSourceScreenModel(
     sourceManager: SourceManager = Injekt.get(),
     sourcePreferences: SourcePreferences = Injekt.get(),
     private val libraryPreferences: LibraryPreferences = Injekt.get(),
+    private val searchPrefs: SourceSearchPreferences = Injekt.get(),
     private val coverCache: CoverCache = Injekt.get(),
     private val getRemoteManga: GetRemoteManga = Injekt.get(),
     private val getDuplicateLibraryManga: GetDuplicateLibraryManga = Injekt.get(),
@@ -91,7 +93,7 @@ class BrowseSourceScreenModel(
 ) : StateScreenModel<BrowseSourceScreenModel.State>(
     State(
         listing = Listing.valueOf(listingQuery),
-        showAllResults = sourcePreferences.sourceSearchNoFilter.get(),
+        showAllResults = !searchPrefs.relevanceFilter.get(),
     ),
 ) {
 
@@ -200,7 +202,7 @@ class BrowseSourceScreenModel(
 
     /** «Показать всё, что отдал источник» — отключает фильтр релевантности. */
     fun setShowAllResults(show: Boolean) {
-        sourcePreferences.sourceSearchNoFilter.set(show)
+        searchPrefs.relevanceFilter.set(!show)
         mutableState.update { it.copy(showAllResults = show) }
     }
 

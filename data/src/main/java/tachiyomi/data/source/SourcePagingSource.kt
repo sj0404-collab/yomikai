@@ -5,7 +5,7 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import mihon.domain.manga.model.toDomainManga
-import eu.kanade.domain.source.service.SourcePreferences
+import tachiyomi.domain.source.service.SourceSearchPreferences
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.domain.library.model.LibraryIndex
 import tachiyomi.domain.manga.interactor.NetworkToLocalManga
@@ -37,7 +37,7 @@ class SourceSearchPagingSource(
         val first = source.getSearchManga(currentPage, query, filters)
         // Пользователь может вернуть «как отдаёт источник» — тогда ничего не
         // фильтруем и не считаем.
-        if (query.isBlank() || sourcePreferences.sourceSearchNoFilter.get()) return first
+        if (query.isBlank() || !searchPreferences.relevanceFilter.get()) return first
 
         var page = first
         var pageNumber = currentPage
@@ -67,7 +67,7 @@ class SourceSearchPagingSource(
         return MangasPage(relevant, page.hasNextPage)
     }
 
-    private val sourcePreferences: SourcePreferences by lazy { Injekt.get() }
+    private val searchPreferences: SourceSearchPreferences by lazy { Injekt.get() }
 
     private companion object {
         /** Сколько дополнительных страниц листать, если на первой нет совпадений. */

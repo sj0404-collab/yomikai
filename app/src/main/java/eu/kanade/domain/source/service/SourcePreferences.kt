@@ -125,12 +125,4 @@ class SourcePreferences(
     val webCatalogTemplates: Preference<String> = preferenceStore.getString("web_catalog_templates", "{}")
     val webCatalogDisabled: Preference<String> = preferenceStore.getString("web_catalog_disabled", "[]")
     val webCatalogSelectors: Preference<String> = preferenceStore.getString("web_catalog_selectors", "{}")
-
-    /**
-     * Не фильтровать выдачу источника по релевантности запроса.
-     *
-     * По умолчанию фильтр включён: часть расширений на запрос отдаёт своё
-     * «популярное», и такие карточки нельзя выдавать за результат поиска.
-     */
-    val sourceSearchNoFilter: Preference<Boolean> = preferenceStore.getBoolean("source_search_no_filter", false)
 }
