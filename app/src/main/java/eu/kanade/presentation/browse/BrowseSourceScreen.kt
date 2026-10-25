@@ -8,6 +8,7 @@ import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
@@ -54,6 +55,12 @@ fun BrowseSourceContent(
     onLocalSourceHelpClick: () -> Unit,
     onMangaClick: (Manga) -> Unit,
     onMangaLongClick: (Manga) -> Unit,
+    // Указатель по буквам: пустая выдача по букве — не «ничего не найдено»
+    // вообще, а «в этом каталоге нет названий на эту букву». Формулировка и
+    // запасной путь (искать букву как запрос) задаются здесь.
+    activeLetter: String? = null,
+    onClearLetter: () -> Unit = {},
+    onSearchLetterAsQuery: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val storagePreferences = remember { Injekt.get<tachiyomi.domain.storage.service.StoragePreferences>() }
@@ -120,8 +127,11 @@ fun BrowseSourceContent(
         } else ""
         EmptyScreen(
             modifier = Modifier.padding(contentPadding),
-            message = when (errorState) {
-                is LoadState.Error -> getErrorMessage(errorState) + healthWarning
+            message = when {
+                errorState is LoadState.Error -> getErrorMessage(errorState as LoadState.Error) + healthWarning
+                activeLetter != null ->
+                    "Названий на «$activeLetter» в первых страницах каталога нет. " +
+                        "Можно поискать букву как запрос или вернуть весь каталог."
                 else -> stringResource(MR.strings.no_results_found)
             },
             actions = if (source is LocalSource) {
@@ -135,6 +145,26 @@ fun BrowseSourceContent(
                         stringRes = MR.strings.local_source_help_guide,
                         icon = Icons.AutoMirrored.Outlined.HelpOutline,
                         onClick = onLocalSourceHelpClick,
+                    ),
+                )
+            } else if (activeLetter != null) {
+                // По букве пусто — предлагаем то, что реально может дать результат:
+                // поиск буквы как строки (у части сайтов он работает) и сброс.
+                listOf(
+                    EmptyScreenAction(
+                        text = "Искать «$activeLetter» в источнике",
+                        icon = Icons.Outlined.Search,
+                        onClick = onSearchLetterAsQuery,
+                    ),
+                    EmptyScreenAction(
+                        text = "Показать весь каталог",
+                        icon = Icons.Outlined.Refresh,
+                        onClick = onClearLetter,
+                    ),
+                    EmptyScreenAction(
+                        stringRes = MR.strings.action_open_in_web_view,
+                        icon = Icons.Outlined.Public,
+                        onClick = onWebViewClick,
                     ),
                 )
             } else {

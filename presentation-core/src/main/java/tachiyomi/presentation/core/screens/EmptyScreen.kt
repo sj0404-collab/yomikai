@@ -28,10 +28,18 @@ import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.secondaryItemAlpha
 import kotlin.random.Random
 
+/**
+ * Кнопка пустого состояния.
+ *
+ * Кроме строкового ресурса можно передать готовый текст ([text]) — он нужен там,
+ * где подпись зависит от данных: «Искать «X» в источнике», «Показать весь
+ * каталог». Строковый ресурс с подстановкой такие случаи не покрывает.
+ */
 data class EmptyScreenAction(
-    val stringRes: StringResource,
+    val stringRes: StringResource? = null,
     val icon: ImageVector,
     val onClick: () -> Unit,
+    val text: String? = null,
 )
 
 @Composable
@@ -88,7 +96,7 @@ fun EmptyScreen(
                 actions.fastForEach {
                     ActionButton(
                         modifier = Modifier.weight(1f),
-                        title = stringResource(it.stringRes),
+                        title = it.text ?: it.stringRes?.let { res -> stringResource(res) }.orEmpty(),
                         icon = it.icon,
                         onClick = it.onClick,
                     )

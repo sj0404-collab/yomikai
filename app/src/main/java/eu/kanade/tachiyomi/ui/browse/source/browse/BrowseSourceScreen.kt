@@ -387,6 +387,9 @@ data class BrowseSourceScreen(
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     }
                 },
+                activeLetter = state.letter,
+                onClearLetter = screenModel::clearLetter,
+                onSearchLetterAsQuery = screenModel::searchLetterAsQuery,
             )
         }
 

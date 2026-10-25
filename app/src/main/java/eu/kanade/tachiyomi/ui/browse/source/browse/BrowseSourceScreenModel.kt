@@ -161,7 +161,9 @@ class BrowseSourceScreenModel(
         .map { (listingAndLetter, _) ->
             val (listing, letter) = listingAndLetter
             Pager(PagingConfig(pageSize = 25)) {
-                getRemoteManga(sourceId, listing.query ?: "", listing.filters)
+                // С буквой источник листается как каталог — буква НЕ уходит в него
+                // строкой поиска (по одной букве сайты часто не находят ничего).
+                getRemoteManga(sourceId, listing.query ?: "", listing.filters, letter)
             }.flow.map { pagingData ->
                 // Записываем успех при получении данных
                 SourceHealthManager.recordSuccess(sourcePreferences, sourceId)
@@ -220,9 +222,9 @@ class BrowseSourceScreenModel(
     /**
      * Выбрать букву указателя.
      *
-     * Буква уходит в поиск источника как обычный запрос (сайты ищут по одной
-     * букве нормально), а выдачу дополнительно фильтруем по первой букве
-     * названия — поэтому в списке не будет «середины слова».
+     * Раньше буква уходила в источник строкой поиска — и на устройстве выбор «X»
+     * давал «Нет результатов»: сайты по одной букве не ищут. Теперь источник
+     * листается как каталог, а буква проверяется на нашей стороне.
      */
     fun setLetter(key: String?) {
         if (key == null) {
@@ -230,12 +232,22 @@ class BrowseSourceScreenModel(
             return
         }
         mutableState.update { it.copy(letter = key, letterBarOpen = true) }
-        search(query = key, filters = state.value.filters)
     }
 
     fun clearLetter() {
         mutableState.update { it.copy(letter = null) }
-        setListing(Listing.Popular)
+    }
+
+    /**
+     * Запасной путь из пустого экрана по букве: послать букву как запрос.
+     *
+     * У части сайтов поиск по одной букве всё-таки работает — это дешевле, чем
+     * листать каталог, поэтому кнопка остаётся.
+     */
+    fun searchLetterAsQuery() {
+        val letter = state.value.letter ?: return
+        mutableState.update { it.copy(letter = null) }
+        search(query = letter, filters = state.value.filters)
     }
 
     fun setFilters(filters: FilterList) {

@@ -8,7 +8,14 @@ class GetRemoteManga(
     private val repository: SourceRepository,
 ) {
 
-    operator fun invoke(sourceId: Long, query: String, filterList: FilterList): SourcePagingSource {
+    operator fun invoke(
+        sourceId: Long,
+        query: String,
+        filterList: FilterList,
+        letter: String? = null,
+    ): SourcePagingSource {
+        // Указатель по букве: листаем раздел, а букву проверяем сами.
+        if (letter != null) return repository.byLetter(sourceId, letter, query, filterList)
         return when (query) {
             QUERY_POPULAR -> repository.getPopular(sourceId)
             QUERY_LATEST -> repository.getLatest(sourceId)
