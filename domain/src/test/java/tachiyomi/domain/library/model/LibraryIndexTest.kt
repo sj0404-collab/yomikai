@@ -118,7 +118,7 @@ class LibraryIndexTest {
     @Test
     fun `matchesText ignores word order`() {
         LibraryIndex.matchesText("Берсерк Максимус", "макс берс") shouldBe true
-        LibraryIndex.matchesText("Берсерк Максимус", "берс максима") shouldBe true
+        LibraryIndex.matchesText("Берсерк Максимус", "максим берс") shouldBe true
         LibraryIndex.matchesText("Берсерк Максимус", "макс акира") shouldBe false
     }
 

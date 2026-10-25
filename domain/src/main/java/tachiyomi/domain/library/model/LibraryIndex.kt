@@ -78,7 +78,17 @@ object LibraryIndex {
         // Обычный запрос: мягкий поиск — все слова в любом порядке, «ё» = «е».
         // Раньше требовалась ТОЧНАЯ подстрока, поэтому «берс» находило папку,
         // а «берс том» — уже нет.
-        if (key == null) return matchesText(name, query)
+        //
+        // Запрос из одних знаков («#») остаётся буквальным: он должен находить
+        // папку «#1 Special», а не совпадать со всем подряд.
+        if (key == null) {
+            val trimmed = query.trim()
+            return if (normalize(trimmed).isBlank() && trimmed.isNotEmpty()) {
+                name.contains(trimmed, ignoreCase = true)
+            } else {
+                matchesText(name, trimmed)
+            }
+        }
         val first = name.trim().firstOrNull()?.lowercaseChar() ?: return false
         return when (key) {
             DIGITS -> first.isDigit()
@@ -123,13 +133,16 @@ object LibraryIndex {
     }
 
     /**
-     * Мягкий поиск: каждое слово запроса должно найтись в тексте, порядок слов
-     * не важен, регистр и «ё/е» не важны. Пустой запрос совпадает со всем.
+     * Мягкий поиск: каждое слово запроса должно найтись в тексте (как подстрока
+     * любого слова), порядок слов не важен, регистр и «ё/е» не важны.
+     *
+     * Пустой запрос совпадает со всем — так же, как раньше вёл себя
+     * `name.contains("")`.
      */
     fun matchesText(haystack: String, query: String): Boolean {
         val q = normalize(query)
         if (q.isBlank()) return true
-        val text = normalize(haystack)
-        return q.split(' ').all { token -> text.contains(token) }
+        val words = normalize(haystack).split(' ')
+        return q.split(' ').all { token -> words.any { word -> word.contains(token) } }
     }
 }
