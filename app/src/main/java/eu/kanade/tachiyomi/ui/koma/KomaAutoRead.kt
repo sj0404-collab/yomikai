@@ -435,6 +435,36 @@ object KomaReadingOrder {
         return ru > 0 && ru * 2 >= all
     }
 
+    /**
+     * Реплика обрезана нижней границей полосы?
+     *
+     * Признаки: её низ почти совпал с концом полосы и текст не закончен —
+     * нет точки/вопроса/восклицания и он не заканчивается на закрывающую кавычку.
+     */
+    fun cutAtBandBottom(line: Line, band: KomaBand): Boolean {
+        if (band.bottom <= line.bottom - 0.001f) return false
+        val nearBottom = line.bottom >= band.bottom - CUT_MARGIN
+        if (!nearBottom) return false
+        val text = line.text.trimEnd()
+        if (text.isEmpty()) return false
+        val tail = text.last()
+        if (tail in ".!?…" || tail == '"' || tail == '»' || tail == ')') return false
+        // «НА-» — явный перенос: склеиваем без пробела.
+        return true
+    }
+
+    /** Склейка огрызка с продолжением: перенос через дефис — без пробела. */
+    fun joinCarry(head: String, tail: String): String {
+        val a = head.trim()
+        val b = tail.trim()
+        if (a.isEmpty()) return b
+        if (b.isEmpty()) return a
+        return if (a.endsWith("-") || a.endsWith("—")) a.dropLast(1) + b else "$a $b"
+    }
+
+    /** Доля высоты полосы, в пределах которой низ реплики считается «на срезе». */
+    private const val CUT_MARGIN = 0.06f
+
     /** Порядок чтения: панель за панелью, внутри панели — строки сверху вниз. */
     fun order(
         regions: List<OcrRegion>,
@@ -1054,6 +1084,11 @@ object KomaAutoRead {
             onPage(index)
             val bands = bandsOf(index).ifEmpty { KomaBands.whole }
             var spokeOnPage = false
+            // Реплика, обрезанная НИЗОМ полосы: не читаем огрызок отдельной
+            // фразой, а договариваем его вместе с началом следующей полосы.
+            // Жалоба: «он снова делит рамку на два текста» — облачко на стыке
+            // полос давало «УЖЕ ПОРА НА» и остаток как две разные реплики.
+            var carry: String? = null
             for (band in bands) {
                 if (stopped) break
                 onBand(index, band)
@@ -1072,10 +1107,25 @@ object KomaAutoRead {
                 // на 15%, и реплика со стыка попадает в обе. Иначе она читалась
                 // бы дважды.
                 ).filter { spokenKeys.add(KomaReadingOrder.key(it.text) + "@" + index) }
+                    .toMutableList()
+
+                val pending = carry
+                if (pending != null && lines.isNotEmpty()) {
+                    lines[0] = lines[0].copy(text = KomaReadingOrder.joinCarry(pending, lines[0].text))
+                    carry = null
+                }
+                // Переносим только с полосы, за которой есть следующая: на
+                // последней полосе страницы продолжения уже не будет.
+                if (lines.isNotEmpty() && !band.whole && band !== bands.last() &&
+                    KomaReadingOrder.cutAtBandBottom(lines.last(), band)
+                ) {
+                    carry = lines.removeAt(lines.lastIndex).text
+                }
 
                 // Кадр без реплик: это не «пусто», а рисунок или звуковой эффект
                 // («ЦАП!», «ПРРР»). Полоса проезжается плавно, место в главе не
                 // теряется.
+                if (lines.isEmpty() && carry != null) continue
                 if (lines.isEmpty()) {
                     _state.value = _state.value.copy(
                         running = true,

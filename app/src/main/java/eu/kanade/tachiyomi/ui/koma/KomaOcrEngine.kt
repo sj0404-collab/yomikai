@@ -3,6 +3,10 @@ package eu.kanade.tachiyomi.ui.koma
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.Paint
 import android.graphics.BitmapRegionDecoder
 import android.graphics.Matrix
 import android.graphics.Rect
@@ -270,7 +274,13 @@ class KomaOcrEngine(private val context: Context) {
                     // «4TO.» и выбрасывается фильтром языка. Второй проход
                     // возвращает только те куски, чьё место первый не прочитал.
                     val rescue=if(main.size<600) paddlePage(decoded,960f) else emptyList()
-                    val merged=main+rescued(main,rescue)
+                    // Третий проход — по кадру с растянутыми уровнями: бледный
+                    // текст (серое название на обложке) ни на одной из первых
+                    // двух попыток не находится.
+                    val boosted=if(main.size<600) contrastBoost(decoded) else null
+                    val faint=boosted?.let { runCatching { paddlePage(it,960f) }.getOrDefault(emptyList()) }.orEmpty()
+                    if(boosted!=null && boosted!==decoded && !boosted.isRecycled) boosted.recycle()
+                    val merged=main+rescued(main,rescue+faint)
                     merged.forEach { addRegion(regions,it) }
                 } else {
                     val tileHeight=if(image.height>2800)1800 else image.height
@@ -332,8 +342,14 @@ class KomaOcrEngine(private val context: Context) {
                 val main = paddlePage(image)
                 ensureActive()
                 val rescue = if (main.size < 600) paddlePage(source, 960f) else emptyList()
+                // Тот же третий проход, что в читалке: бледный текст находится
+                // только на кадре с растянутыми уровнями. Читалка и браузер
+                // должны вести себя одинаково.
+                val boosted = if (main.size < 600) contrastBoost(source) else null
+                val faint = boosted?.let { runCatching { paddlePage(it, 960f) }.getOrDefault(emptyList()) }.orEmpty()
+                if (boosted != null && boosted !== source && !boosted.isRecycled) boosted.recycle()
                 val regions = mutableListOf<OcrRegion>()
-                (main + rescued(main, rescue)).forEach { addRegion(regions, it) }
+                (main + rescued(main, rescue + faint)).forEach { addRegion(regions, it) }
                 val sorted = regions.sortedWith(
                     compareBy<OcrRegion> { (it.top * 80).toInt() }.thenByDescending { it.left },
                 )
@@ -628,7 +644,15 @@ class KomaOcrEngine(private val context: Context) {
             val p=pixels[i]
             luma[i]=(299*((p shr 16) and 255)+587*((p shr 8) and 255)+114*(p and 255))/1000
         }
-        val dark=150
+        // Порог «чернил» считается по самому участку, а не берётся числом 150.
+        //
+        // Жалоба владельца: «раньше он видел серый текст, а теперь пропускает
+        // даже при повторном сканировании». Светло-серое каллиграфическое
+        // название на белом (яркость букв ~150–170 при фоне 255) в жёсткий
+        // порог 150 не попадало — строки считались пустыми, и текст исчезал
+        // целиком, ещё до распознавания.
+        val dark=inkThreshold(luma)
+        if(dark<0) return emptyList()
         val runs=mutableListOf<IntArray>()
         var y=0
         while(y<h) {
@@ -667,6 +691,55 @@ class KomaOcrEngine(private val context: Context) {
         }
         return lines
     }
+
+    /**
+     * Порог яркости, ниже которого пиксель считается «чернилами».
+     *
+     * Берутся 2-й и 98-й процентили яркости участка: 2 % — цвет букв, 98 % —
+     * фон. Порог ставится между ними. Однородный участок (пустое поле, ровная
+     * заливка) даёт -1: там текста нет, и распознавать нечего.
+     */
+    private fun inkThreshold(luma:IntArray):Int {
+        if(luma.isEmpty()) return -1
+        val hist=IntArray(256)
+        for(v in luma) hist[v.coerceIn(0,255)]++
+        fun percentile(p:Float):Int {
+            val target=(luma.size*p).toInt().coerceAtLeast(1)
+            var acc=0
+            for(i in 0..255) { acc+=hist[i]; if(acc>=target) return i }
+            return 255
+        }
+        val low=percentile(0.02f)
+        val high=percentile(0.98f)
+        if(high-low<10) return -1
+        return (low+(high-low)*0.45f).toInt().coerceIn(40,235)
+    }
+
+    /**
+     * Копия кадра с растянутыми уровнями яркости.
+     *
+     * Нужна как страховочный проход: бледно-серый текст (название на обложке,
+     * тонкие волосяные линии) детектор на исходной яркости не находит, а после
+     * растяжки уровней — находит. Исходный битмап не меняется: он принадлежит
+     * кэшу страницы и рисуется на экране.
+     */
+    private fun contrastBoost(src:Bitmap):Bitmap? = try {
+        val out=Bitmap.createBitmap(src.width,src.height,Bitmap.Config.ARGB_8888)
+        val paint=Paint(Paint.FILTER_BITMAP_FLAG).apply {
+            colorFilter=ColorMatrixColorFilter(
+                ColorMatrix(
+                    floatArrayOf(
+                        2.2f,0f,0f,0f,-140f,
+                        0f,2.2f,0f,0f,-140f,
+                        0f,0f,2.2f,0f,-140f,
+                        0f,0f,0f,1f,0f,
+                    ),
+                ),
+            )
+        }
+        Canvas(out).drawBitmap(src,0f,0f,paint)
+        out
+    } catch(t:Throwable) { null }
 
     private fun rowHasInk(luma:IntArray,width:Int,y:Int,dark:Int):Boolean {
         val offset=y*width
@@ -732,10 +805,17 @@ class KomaOcrEngine(private val context: Context) {
         return try {
             val pixels=IntArray(w*h)
             src.getPixels(pixels,0,w,0,0,w,h)
+            val lumas=IntArray(w*h)
             for(i in pixels.indices) {
                 val pixel=pixels[i]
-                val luma=(((pixel shr 16) and 0xFF)*77+((pixel shr 8) and 0xFF)*151+(pixel and 0xFF)*28) shr 8
-                val dark=luma<110
+                lumas[i]=(((pixel shr 16) and 0xFF)*77+((pixel shr 8) and 0xFF)*151+(pixel and 0xFF)*28) shr 8
+            }
+            // Порог — по кропу, а не константа 110: иначе бледно-серые буквы
+            // бинаризация превращала в белое поле, и повтор не помогал.
+            val threshold=inkThreshold(lumas).let { if(it<0) 110 else it }
+            for(i in pixels.indices) {
+                val luma=lumas[i]
+                val dark=luma<threshold
                 val value=if(polarity==0) { if(dark) 0 else 255 } else { if(dark) 255 else 0 }
                 pixels[i]=(0xFF shl 24) or (value shl 16) or (value shl 8) or value
             }
