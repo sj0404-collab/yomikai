@@ -1,7 +1,7 @@
 package eu.kanade.tachiyomi.ui.koma
 
-import org.junit.Assert.assertEquals
-import org.junit.Test
+import io.kotest.matchers.shouldBe
+import org.junit.jupiter.api.Test
 
 /**
  * Починка букв, из-за которых реплика обрывалась.
@@ -16,20 +16,20 @@ class KomaTextFixesTest {
     @Test
     fun `латинские двойники ё и й возвращаются в кириллицу`() {
         // Хвост прилип к русской реплике — именно так он и приходит с листа.
-        assertEquals("СЛУШАЙТЕ ТЕ ЕЁ.", KomaText.fixLookalikes("СЛУШАЙТЕ TE EË."))
-        assertEquals("ЙОД", KomaText.fixLookalikes("ÎOД"))
+        KomaText.fixLookalikes("СЛУШАЙТЕ TE EË.") shouldBe "СЛУШАЙТЕ ТЕ ЕЁ."
+        KomaText.fixLookalikes("ÎOД") shouldBe "ЙОД"
     }
 
     @Test
     fun `буква вместо цифры в диапазоне`() {
-        assertEquals("2-3", KomaWords.fixDigits("2-З"))
-        assertEquals("3-4", KomaWords.fixDigits("З-4"))
-        assertEquals("100", KomaWords.fixDigits("1О0"))
+        KomaWords.fixDigits("2-З") shouldBe "2-3"
+        KomaWords.fixDigits("З-4") shouldBe "3-4"
+        KomaWords.fixDigits("1О0") shouldBe "100"
     }
 
     @Test
     fun `цифры в реплике не выбрасываются`() {
         // «ПОВТОРИТЕ 2-3 РАЗА» — цифры часть реплики, а не мусор.
-        assertEquals("ПОВТОРИТЕ 2-3 РАЗА", KomaWords.fixDigits("ПОВТОРИТЕ 2-З РАЗА"))
+        KomaWords.fixDigits("ПОВТОРИТЕ 2-З РАЗА") shouldBe "ПОВТОРИТЕ 2-3 РАЗА"
     }
 }

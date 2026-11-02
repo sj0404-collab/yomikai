@@ -1,8 +1,7 @@
 package eu.kanade.tachiyomi.ui.koma
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
-import org.junit.Test
+import io.kotest.matchers.shouldBe
+import org.junit.jupiter.api.Test
 
 /**
  * Склейка реплики: облачко из нескольких строк — ОДИН текст, порядок строк
@@ -28,7 +27,7 @@ class KomaBubblesTest {
             line("НАЧИНАТЬ ВСТРЕЧУ,", 0.14f),
             line("ТАК ЧТО ОНА", 0.18f),
         )
-        assertEquals(listOf("УЖЕ ПОРА НАЧИНАТЬ ВСТРЕЧУ, ТАК ЧТО ОНА"), texts(regions))
+        texts(regions) shouldBe listOf("УЖЕ ПОРА НАЧИНАТЬ ВСТРЕЧУ, ТАК ЧТО ОНА")
     }
 
     @Test
@@ -43,10 +42,7 @@ class KomaBubblesTest {
             line("КОГДА СЛУШАЕТЕ.", 0.22f),
             OcrRegion("е ой", 0.30f, 0.31f, 0.60f, 0.314f),
         )
-        assertEquals(
-            listOf("ПОВТОРИТЕ ЭТО ДВА-ТРИ РАЗА, КОГДА СЛУШАЕТЕ."),
-            texts(regions),
-        )
+        texts(regions) shouldBe listOf("ПОВТОРИТЕ ЭТО ДВА-ТРИ РАЗА, КОГДА СЛУШАЕТЕ.")
     }
 
     @Test
@@ -58,7 +54,7 @@ class KomaBubblesTest {
             line("СТРОКА НОМЕР ${index + 1} ИЗ КОЛОНКИ", 0.05f + index * 0.05f)
         }
         val result = texts(regions)
-        assertTrue("ожидалось несколько реплик, а не одна: $result", result.size > 1)
+        (result.size > 1) shouldBe true
     }
 
     @Test
@@ -69,7 +65,6 @@ class KomaBubblesTest {
             OcrRegion("ГРОМКИЙ ЗАГОЛОВОК", 0.10f, 0.10f, 0.90f, 0.15f),
             OcrRegion("мелкая подпись", 0.30f, 0.16f, 0.60f, 0.172f),
         )
-        val result = texts(regions)
-        assertEquals(2, result.size)
+        texts(regions).size shouldBe 2
     }
 }
