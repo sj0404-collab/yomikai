@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.github.junrar.Archive
 import eu.kanade.tachiyomi.data.ocr.OcrPageInput
+import eu.kanade.tachiyomi.data.ocr.decodeArchiveBitmapRegion
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -358,21 +359,11 @@ object KomaPageStore {
             OcrPageInput(
                 pageIndex = index,
                 openBitmap = { openEntryStream(file, name)?.use { BitmapFactory.decodeStream(it) } },
+                // Полосу режет уже существующий декодер архива: он читает байты
+                // записи и отдаёт только нужные строки, целая страница в память
+                // не поднимается.
                 openBitmapRegion = { rect ->
-                    val bytes = readEntry(file, name)
-                    if (bytes == null) {
-                        null
-                    } else {
-                        android.graphics.BitmapRegionDecoder.newInstance(bytes, 0, bytes.size).use { decoder ->
-                            runCatching {
-                                val left = rect.left.coerceIn(0, decoder.width - 1)
-                                val top = rect.top.coerceIn(0, decoder.height - 1)
-                                val right = rect.right.coerceIn(left + 1, decoder.width)
-                                val bottom = rect.bottom.coerceIn(top + 1, decoder.height)
-                                decoder.decodeRegion(android.graphics.Rect(left, top, right, bottom), null)
-                            }.getOrNull()
-                        }
-                    }
+                    openEntryStream(file, name)?.use { decodeArchiveBitmapRegion(it, rect) }
                 },
                 openStream = { openEntryStream(file, name) },
             )
