@@ -5,6 +5,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
@@ -14,6 +15,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -32,6 +34,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -54,6 +57,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import android.graphics.Bitmap
 import java.io.File
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -685,20 +689,10 @@ fun KomaReaderScreen(
                         DropdownMenuItem(text={Text("Правила и буфер строк")},onClick={sheet="rules";overflow=false})
                         DropdownMenuItem(text={Text(if(autoScroll)"Автопрокрутка: вкл" else "Автопрокрутка: выкл")},onClick={autoScroll=!autoScroll;repo.prefs.edit().putBoolean("autoScroll",autoScroll).apply();overflow=false})
                         DropdownMenuItem(text={Text("Экспорт распознанного")},onClick={overflow=false;export.launch("${book.title}_ocr.txt")})
-                        // Две читалки подписаны по-разному, и выбор можно
-                        // переиграть: «Как читать эту серию» возвращает вопрос.
-                        val choiceMangaId = mangaIdForChoice
-                        if(choiceMangaId!=null) DropdownMenuItem(
-                            text={Text("Спросить читалку заново")},
-                            onClick={
-                                overflow=false
-                                eu.kanade.tachiyomi.ui.reader.ReaderLauncher.forget(context, choiceMangaId)
-                                android.widget.Toast
-                                    .makeText(context,"При следующем открытии главы спросим: манга постранично или манхва лентой",android.widget.Toast.LENGTH_LONG)
-                                    .show()
-                            },
-                        )
-                        if(onOpenLegacy!=null) DropdownMenuItem(text={Text("Открыть в основной читалке · постранично")},onClick={overflow=false;onOpenLegacy()})
+                        // Пунктов «выбрать читалку» здесь больше нет: читалка
+                        // одна — эта. Прежняя (постраничная) открывается
+                        // плавающей кнопкой на экране, чтобы не было двух путей
+                        // к одной и той же главе и наложения экранов.
                         DropdownMenuItem(text={Text("Удалить из библиотеки")},onClick={overflow=false;deleteConfirm=true})
                     }
                 }
@@ -883,6 +877,32 @@ fun KomaReaderScreen(
             }
         }
     }
+    // ── Плавающая кнопка второй читалки ─────────────────────────────────────
+    // KOMA — основная читалка, но прежняя (постраничная) осталась доступной:
+    // нажал кнопку — она открывается ПОВЕРХ этой, назад — снова KOMA. Раньше
+    // обе открывались сами, и экраны ложились друг на друга. Кнопку можно
+    // перетащить: она не должна закрывать реплику.
+    if(onOpenLegacy!=null) {
+        var fab by remember { mutableStateOf(Offset.Zero) }
+        Box(Modifier.fillMaxSize(), contentAlignment=Alignment.BottomEnd) {
+            Box(
+                Modifier
+                    .padding(end=12.dp,bottom=150.dp)
+                    .offset { IntOffset(fab.x.roundToInt(),fab.y.roundToInt()) }
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xE62E342C))
+                    .pointerInput(Unit){ detectDragGestures { change,drag -> change.consume(); fab+=drag } }
+                    .clickable { onOpenLegacy() },
+                contentAlignment=Alignment.Center,
+            ) {
+                // «KOMA» — это подпись текущей читалки, поэтому на кнопке
+                // написано то, КУДА она ведёт: постраничная.
+                Icon(Icons.Filled.MenuBook,null,Modifier.size(21.dp),tint=Orange)
+            }
+        }
+    }
+
     if(sheet!=null) ModalBottomSheet(onDismissRequest={sheet=null},containerColor=MaterialTheme.colorScheme.background,sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true)) {
         when(sheet){
             // Правила чтения (файл/плагин) и буфер строк: и то и другое меняется

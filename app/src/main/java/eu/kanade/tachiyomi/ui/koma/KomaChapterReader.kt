@@ -96,14 +96,12 @@ class KomaReaderActivity : AppCompatActivity() {
                         // раньше открывала основную читалку с автостартом, а
                         // теперь главу показывает KOMA — автостарт передаём ей.
                         autoStart = intent.getBooleanExtra("autoread_start", false),
-                        // Резервная (прежняя) читалка — из меню KOMA, если
-                        // понадобится какой-то её режим.
+                        // Прежняя (постраничная) читалка — по плавающей кнопке
+                        // поверх KOMA. KOMA НЕ закрываем: «назад» из прежней
+                        // читалки должен возвращать в неё (from_koma).
                         onOpenLegacy = {
-                            startActivity(
-                                ReaderActivity.newIntent(context, mangaId, chapterId)
-                                    .putExtra("skipKoma", true),
-                            )
-                            finish()
+                            eu.kanade.tachiyomi.ui.reader.ReaderLauncher
+                                .openLegacy(context, mangaId, chapterId, fromKoma = true)
                         },
                     )
                 }

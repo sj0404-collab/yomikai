@@ -174,22 +174,13 @@ class MangaScreen(
         // Скан занят — кнопки у глав гасим, чтобы не запустить второй поверх.
         val scanRunning = autoReadState.running || autoReadState.openChapterId != null
 
-        // Глава, для которой спрашиваем читалку. Показываем диалог только когда
-        // для серии ещё не выбрали: иначе тап по главе каждый раз упирался бы в
-        // лишний вопрос.
-        var readerChoiceChapter by remember { mutableStateOf<Chapter?>(null) }
-
-        // Открытие главы с выбором читалки. Лямбда внутри Content — только здесь
-        // доступно состояние диалога; приватный метод экрана его не видит.
+        // Глава открывается СРАЗУ в KOMA — единственной читалке приложения.
+        // Диалога выбора больше нет: он и был источником «каши» (открывались
+        // обе читалки, а сверху ложились рамки с номерами). Прежняя читалка
+        // доступна плавающей кнопкой на экране KOMA.
         val openChapter: (Chapter) -> Unit = { chapter ->
-            val saved = eu.kanade.tachiyomi.ui.reader.ReaderLauncher
-                .savedMode(context, chapter.mangaId)
-            if (saved != null) {
-                eu.kanade.tachiyomi.ui.reader.ReaderLauncher
-                    .open(context, chapter.mangaId, chapter.id, saved)
-            } else {
-                readerChoiceChapter = chapter
-            }
+            eu.kanade.tachiyomi.ui.reader.ReaderLauncher
+                .open(context, chapter.mangaId, chapter.id)
         }
 
 
@@ -634,22 +625,6 @@ class MangaScreen(
             )
         }
 
-        // Выбор читалки для первой открываемой главы этой серии.
-        readerChoiceChapter?.let { chapter ->
-            eu.kanade.tachiyomi.ui.reader.ReaderChoiceDialog(
-                mangaTitle = successState.manga.title,
-                onChoose = { mode, rememberForManga ->
-                    if (rememberForManga) {
-                        eu.kanade.tachiyomi.ui.reader.ReaderLauncher
-                            .remember(context, chapter.mangaId, mode)
-                    }
-                    readerChoiceChapter = null
-                    eu.kanade.tachiyomi.ui.reader.ReaderLauncher
-                        .open(context, chapter.mangaId, chapter.id, mode)
-                },
-                onDismissRequest = { readerChoiceChapter = null },
-            )
-        }
     }
 
     /**
