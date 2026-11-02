@@ -145,7 +145,9 @@ fun LibraryScreen(books: List<Book>,query: String,category: String,onCategory: (
 fun BookCard(book: Book,modifier: Modifier=Modifier,onClick: ()->Unit) {
     Column(modifier.clip(RoundedCornerShape(14.dp)).clickable(onClick=onClick)) {
         Box(Modifier.fillMaxWidth().aspectRatio(.73f).clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
-            AsyncImage(model=book.cover,contentDescription=book.title,modifier=Modifier.fillMaxSize(),contentScale=ContentScale.Crop)
+            // Обложка книги из локальной библиотеки — первая страница архива;
+            // она читается напрямую из источника (KomaPageStore), копий нет.
+            KomaCover(book=book,contentDescription=book.title,modifier=Modifier.fillMaxSize(),contentScale=ContentScale.Crop)
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent,Color.Black.copy(.35f)),startY=230f)))
             Text(book.category.uppercase(),Modifier.align(Alignment.TopStart).padding(9.dp).background(Color(0xFFFBF7EA).copy(.94f),RoundedCornerShape(5.dp)).padding(horizontal=7.dp,vertical=4.dp),fontSize=8.sp,fontWeight=FontWeight.Bold,letterSpacing=.7.sp,color=Ink)
             Row(Modifier.align(Alignment.BottomStart).padding(10.dp),verticalAlignment=Alignment.CenterVertically) { Icon(Icons.Outlined.Description,null,Modifier.size(12.dp),tint=Color.White);Text(" ${book.pages.size} стр.",fontSize=10.sp,color=Color.White) }

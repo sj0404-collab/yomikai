@@ -72,56 +72,132 @@ class LibraryRepository(val context: Context) {
     }
     private fun seed(id: String,title: String,author: String,category: String,cover: Int,mode: String,sourceId: String) = Book(id,title,author,category,context.assets.list("koma/books/$id").orEmpty().sorted().map { "file:///android_asset/koma/books/$id/$it" },"https://archive.org/details/$sourceId",cover,mode=mode)
     fun save(books: List<Book>) { prefs.edit().putString("books",JSONArray().apply { books.forEach { put(it.json()) } }.toString()).apply() }
-    fun delete(book: Book) { if (!book.pages.firstOrNull().orEmpty().startsWith("file:///android_asset")) File(root,book.id).deleteRecursively() }
+    /**
+     * Удаление книги: убираем исходный файл и индекс. Копий страниц больше нет —
+     * удалять нечего, поэтому «удалить книгу» снова значит «освободить место».
+     */
+    fun delete(book: Book) {
+        if (book.pages.firstOrNull().orEmpty().startsWith("file:///android_asset")) return
+        val id = book.id.removePrefix("book/")
+        listOf("cbz", "zip", "cbr", "rar", "pdf").forEach { ext ->
+            File(root, "$id.$ext").delete()
+        }
+        File(root, id).deleteRecursively()
+        KomaPageStore.unregister(book.id)
+        runCatching {
+            File(KomaPageStore.indexDir(context), book.id.replace(Regex("[^\\w.-]"), "_") + ".json").delete()
+        }
+    }
+
+    /** Сколько места занимают исходники библиотеки (индекс — отдельно, он в КБ). */
+    fun sizeBytes(): Long = KomaPageStore.sizeOf(root)
     fun displayName(uri: Uri): String = context.contentResolver.query(uri,null,null,null,null)?.use { c -> if(c.moveToFirst()) c.getString(c.getColumnIndex(OpenableColumns.DISPLAY_NAME)) else null } ?: "Новая книга.cbz"
+    /**
+     * Импорт книги с устройства — БЕЗ распаковки.
+     *
+     * Раньше архив раскладывался постранично в `filesDir/library/<id>/`, то есть
+     * книга занимала место дважды (архив + все страницы). Для локальной
+     * библиотеки из десятка томов это и давало гигабайты при почти пустой
+     * библиотеке. Теперь в `library/` лежит ОДИН файл — сам архив, — а страницы
+     * читаются из него в момент показа (KomaPageStore). На диске дополнительно
+     * только индекс: `filesDir/koma-index/book.<id>.json` с числом страниц.
+     */
     suspend fun import(uri: Uri, category: String): Book = withContext(Dispatchers.IO) {
         val name = displayName(uri)
-        val temp = File(context.cacheDir,"import_${UUID.randomUUID()}.${name.substringAfterLast('.',"cbz")}")
-        try {
-            context.contentResolver.openInputStream(uri)?.use { input -> temp.outputStream().use { out -> copyBounded(input,out,300_000_000) } } ?: error("Не удалось открыть файл")
-            extract(temp,name.substringBeforeLast('.'),category)
-        } finally { temp.delete() }
-    }
-    private fun naturalKey(s: String): String = Regex("\\d+").replace(s.lowercase()) { it.value.padStart(10,'0') }
-    private fun extract(file: File, title: String, category: String, source: String = "Импорт с устройства"): Book {
-        val id = UUID.randomUUID().toString(); val dir = File(root,id).apply { mkdirs() }; val files = mutableListOf<Pair<String,String>>()
-        var bytes = 0L
-        fun putPage(name: String, write: (File)->Unit) {
-            if (name.startsWith("__MACOSX") || name.substringAfterLast('.').lowercase() !in listOf("jpg","jpeg","png","webp","gif","bmp")) return
-            require(files.size < 3000) { "В архиве более 3000 страниц" }
-            val target = File(dir,"${files.size}.${name.substringAfterLast('.').lowercase()}")
-            write(target); bytes += target.length(); require(bytes < 1_000_000_000L) { "Распакованный архив слишком большой (лимит 1 ГБ)" }
-            files.add(name to target.absolutePath)
+        val ext = name.substringAfterLast('.', "cbz").lowercase()
+        require(ext in setOf("cbz", "zip", "cbr", "rar", "pdf")) {
+            "Нужен CBZ, CBR или PDF. Файл «$name» не подходит."
         }
+        val temp = File(context.cacheDir, "import_${UUID.randomUUID()}.$ext")
         try {
-            val magic = file.inputStream().use { input -> ByteArray(4).also { input.read(it) } }
-            when {
-                magic[0] == 0x50.toByte() && magic[1] == 0x4B.toByte() -> ZipFile(file).use { zip ->
-                    zip.entries().asSequence().filter { !it.isDirectory }.forEach { e ->
-                        require(e.size <= 40_000_000L) { "Слишком большая страница" }
-                        putPage(e.name) { target -> zip.getInputStream(e).use { i -> target.outputStream().use { o -> copyBounded(i,o,40_000_000) } } }
-                    }
-                }
-                magic[0] == 0x52.toByte() && magic[1] == 0x61.toByte() -> Archive(file).use { rar ->
-                    rar.fileHeaders.filter { !it.isDirectory }.forEach { h ->
-                        require(h.fullUnpackSize <= 40_000_000L) { "Слишком большая страница" }
-                        putPage(h.fileName) { target -> target.outputStream().use { rar.extractFile(h,it) } }
-                    }
-                }
-                magic[0] == 0x25.toByte() -> ParcelFileDescriptor.open(file,ParcelFileDescriptor.MODE_READ_ONLY).use { fd -> PdfRenderer(fd).use { pdf ->
-                    require(pdf.pageCount <= 1000) { "В PDF более 1000 страниц" }
-                    repeat(pdf.pageCount) { n -> pdf.openPage(n).use { p ->
-                        val b = Bitmap.createBitmap(1400,(1400f*p.height/p.width).toInt(),Bitmap.Config.ARGB_8888)
-                        android.graphics.Canvas(b).drawColor(android.graphics.Color.WHITE); p.render(b,null,null,PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                        putPage("${n.toString().padStart(5,'0')}.jpg") { f -> f.outputStream().use { b.compress(Bitmap.CompressFormat.JPEG,88,it) } }; b.recycle()
-                    } }
-                } }
-                else -> error("Нужен CBZ, CBR (RAR4) или PDF без пароля")
-            }
-            require(files.isNotEmpty()) { "В архиве нет изображений. RAR5 и архивы с паролем не поддерживаются." }
-            return Book(id,title,"Локальный архив",category,files.sortedBy { naturalKey(it.first) }.map { it.second },source,mode=when(category){"Манга"->"rtl";"Манхва","Маньхуа"->"vertical";else->"ltr"})
-        } catch(e: Exception) { dir.deleteRecursively(); throw e }
+            val copied: Long = context.contentResolver.openInputStream(uri)?.use { input ->
+                temp.outputStream().use { out -> copyBounded(input, out, 1_500_000_000L) }
+            } ?: error("Не удалось открыть файл «$name»")
+            require(copied > 0) { "Файл «$name» пустой" }
+            adopt(temp, name.substringBeforeLast('.'), ext, category, "Импорт с устройства")
+        } finally {
+            temp.delete()
+        }
     }
+
+    /**
+     * Кладёт ОДИН файл в библиотеку и регистрирует его страницы.
+     *
+     * Общая точка для импорта с устройства и скачивания из каталога: копия
+     * архива — это максимум места, который занимает книга.
+     */
+    /** Естественный порядок: «2.jpg» раньше «10.jpg», а не наоборот. */
+    private fun naturalKey(s: String): String =
+        Regex("\\d+").replace(s.lowercase()) { it.value.padStart(10, '0') }
+
+    /** Расширение из имени или ссылки: только буквы и цифры, по умолчанию cbz. */
+    private fun extOf(name: String): String {
+        val raw = name.substringAfterLast('/', name).substringAfterLast('.', "cbz")
+            .filter { it.isLetterOrDigit() }.lowercase()
+        return if (raw.length in 2..4) raw else "cbz"
+    }
+
+    private fun adopt(temp: File, rawTitle: String, rawExt: String, category: String, source: String): Book {
+        val ext = if (rawExt.lowercase() in setOf("cbz", "zip", "cbr", "rar", "pdf")) {
+            rawExt.lowercase()
+        } else {
+            "cbz"
+        }
+        val title = rawTitle
+        val id = UUID.randomUUID().toString()
+        val key = "book/$id"
+        root.mkdirs()
+        val stored = File(root, "$id.$ext")
+        temp.copyTo(stored, overwrite = true)
+        try {
+            val mode = when (category) {
+                "Манга" -> "rtl"
+                "Манхва", "Маньхуа" -> "vertical"
+                else -> "ltr"
+            }
+            val pages: List<String> = when (ext) {
+                "pdf" -> {
+                    require(KomaPageStore.registerPdf(key, stored)) { "PDF не открылся или в нём нет страниц" }
+                    val count = KomaPageStore.count(key)
+                    KomaPageStore.saveIndex(
+                        context, key, count,
+                        file = stored.relativeTo(context.filesDir).path,
+                        kind = KomaPageStore.KIND_PDF,
+                    )
+                    (0 until count).map { KomaPageStore.pathOf(key, it) }
+                }
+                else -> {
+                    val names = KomaPageStore.archiveNames(stored)
+                    require(names.isNotEmpty()) {
+                        "В архиве нет изображений. RAR5 и архивы с паролем не поддерживаются."
+                    }
+                    require(names.size <= 3000) { "В архиве более 3000 страниц" }
+                    val sorted = names.sortedBy { naturalKey(it) }
+                    KomaPageStore.register(key, KomaPageStore.archivePages(stored, sorted))
+                    KomaPageStore.saveIndex(
+                        context, key, sorted.size,
+                        file = stored.relativeTo(context.filesDir).path,
+                        kind = KomaPageStore.KIND_ARCHIVE,
+                    )
+                    sorted.indices.map { KomaPageStore.pathOf(key, it) }
+                }
+            }
+            return Book(
+                id = key,
+                title = title.ifBlank { "Без названия" },
+                author = "Локальный архив",
+                category = category,
+                pages = pages,
+                source = source,
+                mode = mode,
+            )
+        } catch (e: Exception) {
+            stored.delete()
+            KomaPageStore.unregister(key)
+            throw e
+        }
+    }
+
     /**
      * Поиск по выбранному источнику.
      *
@@ -234,15 +310,15 @@ class LibraryRepository(val context: Context) {
         try {
             val conn = URL("https://archive.org/download/${item.id}/${URLEncoder.encode(name,"UTF-8").replace("+","%20")}").openConnection() as HttpURLConnection
             conn.connectTimeout=20000; conn.readTimeout=60000
-            try { conn.inputStream.use { i -> tmp.outputStream().use { o -> copyBounded(i,o,200_000_000) } } } finally { conn.disconnect() }
-            extract(tmp,item.title,item.category,"https://archive.org/details/${item.id}").copy(author=item.author)
+            try { conn.inputStream.use { i -> tmp.outputStream().use { o -> copyBounded(i,o,200_000_000L) } } } finally { conn.disconnect() }
+            adopt(tmp,item.title,extOf(name),item.category,"https://archive.org/details/${item.id}").copy(author=item.author)
         } finally { tmp.delete() }
     }
     suspend fun downloadUrl(url: String, category: String): Book = withContext(Dispatchers.IO) {
         require(url.startsWith("https://")) { "Используйте защищённую ссылку HTTPS" }
         val tmp=File(context.cacheDir,"direct_download")
         val conn=URL(url).openConnection() as HttpURLConnection; conn.connectTimeout=20000;conn.readTimeout=60000
-        try { conn.inputStream.use { i -> tmp.outputStream().use { o -> copyBounded(i,o,200_000_000) } }; extract(tmp,Uri.parse(url).lastPathSegment?.substringBeforeLast('.') ?: "Онлайн-книга",category,url) } finally { conn.disconnect();tmp.delete() }
+        try { conn.inputStream.use { i -> tmp.outputStream().use { o -> copyBounded(i,o,200_000_000L) } }; adopt(tmp,Uri.parse(url).lastPathSegment?.substringBeforeLast('.') ?: "Онлайн-книга",extOf(url),category,url) } finally { conn.disconnect();tmp.delete() }
     }
     /**
      * Скачивание по прямой ссылке в локальную библиотеку KOMA (свой формат
@@ -254,7 +330,7 @@ class LibraryRepository(val context: Context) {
         try {
             val conn = open(url)
             conn.inputStream.use { input -> tmp.outputStream().use { output -> copyBounded(input, output, 200_000_000) } }
-            return extract(tmp, fileName.substringBeforeLast('.'), category, source)
+            return adopt(tmp, fileName.substringBeforeLast('.'), extOf(fileName), category, source)
         } finally {
             tmp.delete()
         }
@@ -303,8 +379,9 @@ class LibraryRepository(val context: Context) {
             conn.disconnect()
         }
     }
-    private fun copyBounded(input: java.io.InputStream, output: java.io.OutputStream, limit: Int) {
+    private fun copyBounded(input: java.io.InputStream, output: java.io.OutputStream, limit: Long): Long {
         val buffer=ByteArray(8192);var total=0L
         while(true){val n=input.read(buffer);if(n<0)break;total+=n;require(total<=limit){"Файл превышает допустимый размер"};output.write(buffer,0,n)}
+        return total
     }
 }

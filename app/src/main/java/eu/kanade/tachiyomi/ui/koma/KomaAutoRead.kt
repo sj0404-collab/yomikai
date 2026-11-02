@@ -422,7 +422,26 @@ class KomaTts(private val context: Context) {
  */
 object KomaReadingOrder {
 
-    data class Line(val text: String, val left: Float, val top: Float, val right: Float, val bottom: Float)
+    data class Line(
+        val text: String,
+        val left: Float,
+        val top: Float,
+        val right: Float,
+        val bottom: Float,
+        /** Сколько текстовых СТРОК внутри облачка — для «типичной высоты» строки. */
+        val rows: Int = 1,
+        /**
+         * Средняя высота ОДНОЙ строки внутри облачка.
+         *
+         * Минимум из высот для этого не годился: одна случайно тонкая строка
+         * навсегда занижала «высоту строки», и следующая строка уже не
+         * приклеивалась — реплика рвалась на два текста.
+         */
+        val lh: Float = 0f,
+    ) {
+        /** Типичная высота строки: [lh], а если он не посчитан — высота рамки. */
+        val lineHeight: Float get() = if (lh > 0f) lh else bottom - top
+    }
 
     private val cyrillic = Regex("[а-яёА-ЯЁ]")
     private val letters = Regex("[\\p{L}]")
@@ -664,6 +683,24 @@ object KomaReadingOrder {
         return bands.map { it.items.toList() }
     }
 
+    /**
+     * Потолок высоты БЛОКА при склейке фрагментов одной строки: облачко не
+     * бывает выше 22 % страницы. Без этого проза (две колонки журнала)
+     * склеивалась в блок на полстраницы — «одна реплика» на 75 слов (замер 28.10).
+     */
+    private const val MAX_BLOCK = 0.22f
+
+    /**
+     * Потолок высоты РЕПЛИКИ при склейке строк облачка.
+     *
+     * Здесь он выше (34 %), потому что высокое узкое облачко из шести-семи
+     * строк — это одна реплика, а не абзац: с прежним потолком 22 % она
+     * разрезалась на два текста (эталонный кадр со «ХОТЕЛА ВЫ ЭТО ПОСМОТРЕТЬ
+     * МОЙ СОСЕД ТРОЛЛЬ», KomaReadingOrderTest). Абзац прозы на полстраницы
+     * по-прежнему разрезается: он выше 34 %.
+     */
+    private const val MAX_BUBBLE = 0.34f
+
     /** Реплики одной панели: фрагменты → строки → облачка, сверху вниз. */
     private fun bubblesOf(
         group: List<OcrRegion>,
@@ -675,9 +712,30 @@ object KomaReadingOrder {
     ): List<Line> {
         if (group.isEmpty()) return emptyList()
 
+        // 0. Тонкие полоски-обрывки убираем ДО склейки. Детектор иногда отдаёт
+        //    рамку высотой в два-три пикселя поперёк картинки: текст из неё —
+        //    мусор («е ой», «Тг. чв»), а её высота портила «типичную высоту
+        //    строки» в mergeBubbles — честная соседняя строка переставала
+        //    склеиваться, и ОДНА реплика выходила ДВУМЯ текстами. Порог мягкий
+        //    (0.35 медианной высоты) и работает ТОЛЬКО на настоящей странице
+        //    (>= 4 строк): иначе он съедал мелкие титры рядом с крупным
+        //    заголовком — их всего две строки, и медиана считала заголовок.
+        val real = if (group.size >= 4) {
+            val heights = group.map { max(it.bottom - it.top, 0f) }.sorted()
+            val median = heights[heights.size / 2]
+            val keep = if (median > 0f) {
+                group.filter { max(it.bottom - it.top, 0f) >= median * 0.35f }
+            } else {
+                group
+            }
+            keep.ifEmpty { group }
+        } else {
+            group
+        }
+
         // 1. Фрагменты одной строки — в один блок: совпадает вертикальная полоса
         //    и между ними нет большого горизонтального разрыва.
-        val sorted = group.sortedWith(compareBy({ it.top }, { it.left }))
+        val sorted = real.sortedWith(compareBy({ it.top }, { it.left }))
         val blocks = mutableListOf<MutableList<OcrRegion>>()
         for (region in sorted) {
             // Кандидат — блок, который лежит на той же высоте и стоит ВПЛОТНУЮ по
@@ -726,6 +784,12 @@ object KomaReadingOrder {
                 }
                 if (gap > gapLimit) continue
                 if (gap < -lineHeight * 0.9f) continue
+                // Потолок высоты: облачко не бывает выше 22 % страницы. Без этого
+                // проза (две колонки журнала) склеивалась в блок на полстраницы —
+                // «одна реплика» на 75 слов, замер 28.10.
+                val mergedTop = min(block.minOf { it.top }, region.top)
+                val mergedBottom = max(block.maxOf { it.bottom }, region.bottom)
+                if (mergedBottom - mergedTop > MAX_BLOCK) continue
                 if (gap < bestGap) {
                     bestGap = gap
                     target = block
@@ -734,9 +798,51 @@ object KomaReadingOrder {
             if (target != null) target += region else blocks += mutableListOf(region)
         }
 
-        // 2. Внутри блока — по направлению чтения, текст склеиваем с переносами.
-        val lines = blocks.map { block ->
-            val ordered = block.sortedBy { if (rtl) -it.left else it.left }
+        // 1b. Блок выше 22 % страницы — это не облачко, а АБЗАЦ или целая
+        //     колонка: так выглядит проза (журнал, книга). Режем по самому
+        //     большому вертикальному пробелу, пока кусок не влезет в потолок.
+        //     Для манги правило безвредно: облачко редко выше четверти страницы.
+        fun span(block: List<OcrRegion>): Float = block.maxOf { it.bottom } - block.minOf { it.top }
+
+        fun splitTall(block: List<OcrRegion>): List<List<OcrRegion>> {
+            if (block.size < 4 || span(block) <= MAX_BLOCK) return listOf(block)
+            val ordered = block.sortedBy { it.top }
+            var cut = -1
+            var bestInner = 0f
+            for (i in 1 until ordered.size) {
+                val gap = ordered[i].top - ordered[i - 1].bottom
+                if (gap > bestInner) {
+                    bestInner = gap
+                    cut = i
+                }
+            }
+            if (cut < 0) return listOf(block)
+            return splitTall(ordered.subList(0, cut).toList()) +
+                splitTall(ordered.subList(cut, ordered.size).toList())
+        }
+
+        // 2. Внутри блока — текстовые СТРОКИ сверху вниз, внутри строки — по
+        //    направлению чтения.
+        val lines = blocks.flatMap { splitTall(it) }.map { block ->
+            // Раньше все куски блока сортировались по X. В облачке из четырёх
+            // строк порядок получался «снизу вверх»: обрывки склеивались не с
+            // теми соседями, слова выходили корявыми, часть пропадала, а часть
+            // читалась дважды. Теперь сначала строки по высоте, а внутри одной
+            // строки (несколько кусков на одной высоте) — по RTL/LTR.
+            val rows = mutableListOf<MutableList<OcrRegion>>()
+            for (part in block.sortedBy { it.top }) {
+                val height = max(part.bottom - part.top, 1e-6f)
+                val row = rows.firstOrNull { candidate ->
+                    val rowTop = candidate.minOf { it.top }
+                    val rowBottom = candidate.maxOf { it.bottom }
+                    val rowHeight = max(rowBottom - rowTop, 1e-6f)
+                    min(rowBottom, part.bottom) - max(rowTop, part.top) > min(height, rowHeight) * 0.5f
+                }
+                if (row != null) row += part else rows += mutableListOf(part)
+            }
+            val ordered = rows.sortedBy { row -> row.minOf { it.top } }.flatMap { row ->
+                row.sortedBy { if (rtl) -it.left else it.left }
+            }
             val text = buildString {
                 ordered.forEachIndexed { index, part ->
                     if (index > 0) {
@@ -744,6 +850,11 @@ object KomaReadingOrder {
                         when {
                             // Перенос слова («ВЫСО-» + «ЧЕСТВО») — без пробела.
                             endsWithHyphen() -> setLength(length - 1)
+                            // OCR читает перенос «БУДЕ-» как «БУДЕ.»: склеиваем
+                            // без пробела, но только если вместе получается
+                            // слово из словаря — иначе «НО.» + «ОН» дало бы
+                            // «НООН».
+                            joinBrokenWord(this, part.text) -> setLength(length - 1)
                             // Обрывки в одну-две буквы — остатки слова, а не слова.
                             part.text.length <= 2 && previous.lastOrNull()?.isLetter() == true &&
                                 part.text.firstOrNull()?.isLetter() == true -> Unit
@@ -753,17 +864,22 @@ object KomaReadingOrder {
                     append(part.text)
                 }
             }
+            val boxRows = max(1, rows.size)
+            val top = ordered.minOf { it.top }
+            val bottom = ordered.maxOf { it.bottom }
             Line(
                 text = cleanSpeech(text),
                 left = ordered.minOf { it.left },
-                top = ordered.minOf { it.top },
+                top = top,
                 right = ordered.maxOf { it.right },
-                bottom = ordered.maxOf { it.bottom },
+                bottom = bottom,
+                rows = boxRows,
+                lh = (bottom - top) / boxRows,
             )
         }
 
-        // 3. Строки одного облачка — в ОДНУ реплику.
-        val bubbles = mergeBubbles(lines)
+        // 3. Строки одного облачка — в ОДНУ реплику, обрывки — в соседнюю.
+        val bubbles = absorbOrphans(mergeBubbles(lines, bubbleGap, mergeHeightRatio))
 
         // 4. Внутри панели — полосами сверху вниз, внутри полосы по RTL/LTR.
         return orderBubbles(bubbles, rtl)
@@ -778,7 +894,11 @@ object KomaReadingOrder {
      * заметно большим полем, поэтому не слипаются. Вертикальные колонки
      * (японский текст) не склеиваются: они высокие и узкие.
      */
-    private fun mergeBubbles(lines: List<Line>): List<Line> {
+    private fun mergeBubbles(
+        lines: List<Line>,
+        bubbleGap: Float = KomaRules.DEFAULT.bubbleGap,
+        mergeHeightRatio: Float = KomaRules.DEFAULT.mergeHeightRatio,
+    ): List<Line> {
         if (lines.size <= 1) return lines
         val sorted = lines.sortedWith(compareBy({ it.top }, { it.left }))
         val result = ArrayList<Line>(sorted.size)
@@ -793,7 +913,7 @@ object KomaReadingOrder {
             var bestGap = Float.MAX_VALUE
             for (index in result.indices) {
                 val bubble = result[index]
-                if (!sameBubble(bubble, line)) continue
+                if (!sameBubble(bubble, line, bubbleGap, mergeHeightRatio)) continue
                 val gap = line.top - bubble.bottom
                 if (gap < bestGap) {
                     bestGap = gap
@@ -802,15 +922,29 @@ object KomaReadingOrder {
             }
             if (bestIndex >= 0) {
                 val bubble = result[bestIndex]
+                val mergedRows = max(1, bubble.rows) + max(1, line.rows)
+                val top = min(bubble.top, line.top)
+                val bottom = max(bubble.bottom, line.bottom)
                 result[bestIndex] = Line(
                     text = joinBubbleText(bubble.text, line.text),
                     left = min(bubble.left, line.left),
-                    top = min(bubble.top, line.top),
+                    top = top,
                     right = max(bubble.right, line.right),
-                    bottom = max(bubble.bottom, line.bottom),
+                    bottom = bottom,
+                    rows = mergedRows,
+                    // Средняя высота ОДНОЙ строки внутри облачка — по ней решается,
+                    // можно ли приклеить следующую. Средняя, а не минимум:
+                    // минимум занижала любая случайно тонкая строка, и облачко
+                    // рвалось на части.
+                    lh = (bottom - top) / mergedRows,
                 )
             } else {
-                result += line
+                // Строка (или блок) попадает в результат с ТОЙ ЖЕ «типичной
+                // высотой», что и при склейке: span / rows. Раньше здесь lh была
+                // вся высота блока, и блок из двух строк уже не принимал третью
+                // (отношение высот > 1.8) — облачко рвалось на два текста.
+                val rows = max(1, line.rows)
+                result += line.copy(rows = rows, lh = (line.bottom - line.top) / rows)
             }
         }
         return absorbOrphans(result)
@@ -849,6 +983,14 @@ object KomaReadingOrder {
                 }
                 if (targetIndex < 0) continue
                 val bubble = alive[targetIndex]
+                // Разная высота — разные реплики: обрывок не втягиваем.
+                val orphanHeight = orphan.bottom - orphan.top
+                val bubbleHeight = bubble.bottom - bubble.top
+                if (orphanHeight > 0f && bubbleHeight > 0f &&
+                    max(orphanHeight, bubbleHeight) / min(orphanHeight, bubbleHeight) > 2.5f
+                ) {
+                    continue
+                }
                 val above = cy < (bubble.top + bubble.bottom) / 2f
                 val text = if (above) {
                     joinBubbleText(orphan.text, bubble.text)
@@ -898,7 +1040,12 @@ object KomaReadingOrder {
         return bands.flatMap { band -> band.sortedBy { if (rtl) -it.left else it.left } }
     }
 
-    private fun sameBubble(a: Line, b: Line): Boolean {
+    private fun sameBubble(
+        a: Line,
+        b: Line,
+        bubbleGap: Float = KomaRules.DEFAULT.bubbleGap,
+        mergeHeightRatio: Float = KomaRules.DEFAULT.mergeHeightRatio,
+    ): Boolean {
         val aWidth = a.right - a.left
         val bWidth = b.right - b.left
         val aHeight = a.bottom - a.top
@@ -913,10 +1060,63 @@ object KomaReadingOrder {
         val centerShift = abs((a.left + a.right) / 2f - (b.left + b.right) / 2f)
         if (centerShift > max(aWidth, bWidth) * 0.8f) return false
         val gap = b.top - a.bottom
-        if (gap < -aHeight * 0.6f || gap > max(aHeight, bHeight) * 1.2f) return false
+        if (gap < -aHeight * 0.6f || gap > max(aHeight, bHeight) * max(1.2f, bubbleGap)) return false
         // Высокие узкие блоки — вертикальные колонки, а не строки облачка.
         if (aHeight > aWidth * 3f || bHeight > bWidth * 3f) return false
+        // Крупное название и мелкие титры — РАЗНЫЕ реплики: иначе рамка рисуется
+        // по объединению двух шрифтов и не совпадает с тем, что читается.
+        // Сравниваем высоту СТРОКИ (lineHeight), а не всего облачка: у склеенного
+        // из двух-трёх строк облачка высота втрое больше одной строки, и
+        // проверка «по габаритам» отказывалась приклеить третью строку —
+        // облачко рвалось на части.
+        val aLine = a.lineHeight
+        val bLine = b.lineHeight
+        val heightOk = max(aLine, bLine) / min(aLine, bLine) <= mergeHeightRatio
+        if (!heightOk) {
+            // Высота рамки — плохой признак кегля: детектор обводит «ЯРАССЧИ-»
+            // по заглавным, а «ТbВАЮ» под ним — по строчным, и облачко рвалось
+            // на реплики. Сравниваем СРЕДНИЙ ШАГ БУКВЫ (ширина / число букв):
+            // он от рамки не зависит. Требование мягкое (до 1.35) и работает
+            // только когда кегль явно тот же, поэтому «крупный заголовок +
+            // мелкие титры» по-прежнему остаются РАЗНЫМИ репликами.
+            val aAdv = advanceOf(a)
+            val bAdv = advanceOf(b)
+            if (aAdv <= 0f || bAdv <= 0f) return false
+            if (max(aAdv, bAdv) / min(aAdv, bAdv) > 1.35f) return false
+            // И рамка не должна быть в разы меньше: тонкая полоска-мусор
+            // («е ой») отсеивается именно здесь — у неё шаг буквы втрое больше.
+            if (min(aHeight, bHeight) < max(aHeight, bHeight) * 0.3f) return false
+        }
+        // Потолок высоты реплики: иначе склейка снова собирала абзацы в блок
+        // на полстраницы. Он мягче блочного — см. [MAX_BUBBLE].
+        val mergedTop = min(a.top, b.top)
+        val mergedBottom = max(a.bottom, b.bottom)
+        if (mergedBottom - mergedTop > MAX_BUBBLE) return false
         return true
+    }
+
+    /** Средний шаг буквы: ширина рамки на число букв и цифр в тексте. */
+    private fun advanceOf(line: Line): Float {
+        val count = line.text.count { it.isLetterOrDigit() }
+        return (line.right - line.left) / max(1, count)
+    }
+
+    /**
+     * Перенос слова, который OCR прочитал точкой: «БУДЕ-» → «БУДЕ.», и вторая
+     * половина начинается с новой строки облачка. Склеиваем без пробела только
+     * тогда, когда вместе получается слово из словаря или правдоподобная
+     * словоформа: иначе «НО.» + «ОН» превратилось бы в «НООН».
+     */
+    private val brokenTail = Regex("([\\p{L}]{2,})[.\\-]$")
+
+    private fun joinBrokenWord(built: CharSequence, next: String): Boolean {
+        if (built.isEmpty()) return false
+        val match = brokenTail.find(built) ?: return false
+        val head = next.trim().split(Regex("\\s+")).firstOrNull().orEmpty()
+        if (head.isEmpty() || !head.first().isLetter()) return false
+        if (!KomaWords.isReady()) return false
+        val candidate = (match.groupValues[1] + head).lowercase()
+        return KomaWords.isKnown(candidate) || KomaWords.isPlausible(candidate)
     }
 
     /** Перенос слова в конце строки склеивается вплотную, иначе — пробел. */

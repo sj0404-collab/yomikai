@@ -25,9 +25,15 @@ import java.io.File
  */
 object KomaScreenshots {
 
-    /** Глава из идентификатора книги: "chapter-<id>" → <id>. */
-    private fun chapterIdOf(bookId: String): Long =
-        bookId.removePrefix("chapter-").toLongOrNull() ?: -1L
+    /**
+     * Глава из идентификатора книги: «chapter/<id>» (новый вид) или
+     * «chapter-<id>» (старый) → <id>. Книга локальной библиотеки — не глава.
+     */
+    private fun chapterIdOf(bookId: String): Long = when {
+        bookId.startsWith("chapter/") -> bookId.removePrefix("chapter/").toLongOrNull() ?: -1L
+        bookId.startsWith("chapter-") -> bookId.removePrefix("chapter-").toLongOrNull() ?: -1L
+        else -> -1L
+    }
 
     /**
      * Сохранить кадр страницы [pageIndex] с её репликами.
@@ -50,9 +56,9 @@ object KomaScreenshots {
                 // Размеры берём без декодирования — снимок не должен стоить
                 // памяти ещё на одну полную страницу.
                 val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                File(pagePath.removePrefix("file://")).inputStream().use {
-                    BitmapFactory.decodeStream(it, null, bounds)
-                }
+                // Страница может лежать в архиве/папке: путь koma:// читается
+                // через KomaPageStore, а не как файл.
+                openPageStream(pagePath)?.use { BitmapFactory.decodeStream(it, null, bounds) }
                 if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching
 
                 val jpeg = encodePreview(pagePath)
@@ -73,13 +79,20 @@ object KomaScreenshots {
     }
 
     /** Уменьшенная копия страницы: полная страница вебтуна в JPEG — это мегабайты. */
+    /** Поток страницы: обычный файл или запись архива (koma://). */
+    private fun openPageStream(path: String): java.io.InputStream? =
+        if (KomaPageStore.isVirtual(path)) {
+            KomaPageStore.openStream(path) ?: KomaPageStore.openBytes(path)?.inputStream()
+        } else {
+            File(path.removePrefix("file://")).inputStream()
+        }
+
     private fun encodePreview(path: String): ByteArray? = runCatching {
-        val file = File(path.removePrefix("file://"))
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        file.inputStream().use { BitmapFactory.decodeStream(it, null, bounds) }
+        openPageStream(path)?.use { BitmapFactory.decodeStream(it, null, bounds) }
         var sample = 1
         while (bounds.outWidth / sample > 1200 || bounds.outHeight / sample > 2400) sample *= 2
-        val bitmap: Bitmap = file.inputStream().use {
+        val bitmap: Bitmap = openPageStream(path)?.use {
             BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
         } ?: return null
         ByteArrayOutputStream().use { out ->

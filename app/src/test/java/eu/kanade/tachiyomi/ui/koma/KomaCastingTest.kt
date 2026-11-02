@@ -1,8 +1,8 @@
 package eu.kanade.tachiyomi.ui.koma
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Test
 
 /**
  * Разбор «кто говорит» из текста реплики.

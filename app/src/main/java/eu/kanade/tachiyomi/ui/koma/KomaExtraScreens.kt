@@ -161,12 +161,46 @@ private fun EngineRow(title:String,subtitle:String,icon:ImageVector){Row(Modifie
 @Composable
 fun SettingsScreenKoma(repo:LibraryRepository,engine:KomaOcrEngine,books:List<Book>,theme:String,onTheme:(String)->Unit,onMessage:(String)->Unit){
     val context=LocalContext.current;var awake by remember{mutableStateOf(repo.prefs.getBoolean("keepAwake",true))};var cache by remember{mutableIntStateOf(engine.cacheCount())};var about by remember{mutableStateOf(false)}
+    // Размеры считаются один раз при открытии экрана (не на каждом кадре).
+    var sourceBytes by remember{mutableStateOf(0L)}
+    var indexBytes by remember{mutableStateOf(0L)}
+    var legacyBytes by remember{mutableStateOf(0L)}
+    val placeScope=rememberCoroutineScope()
+    LaunchedEffect(Unit){
+        withContext(Dispatchers.IO){
+            sourceBytes=repo.sizeBytes()
+            indexBytes=KomaPageStore.indexBytes(context)
+            legacyBytes=KomaPageStore.legacyBytes(context)
+        }
+    }
     LazyColumn(contentPadding=PaddingValues(start=22.dp,end=22.dp,bottom=28.dp)) {
         item{Text("В своём ритме",fontSize=30.sp,fontWeight=FontWeight.Bold,letterSpacing=(-.8).sp);Text("Маленькие детали большого чтения",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=7.dp,bottom=14.dp))}
         item{SectionLabel("ВНЕШНИЙ ВИД");Row(horizontalArrangement=Arrangement.spacedBy(8.dp),modifier=Modifier.fillMaxWidth()){listOf("light" to "Бумага","dark" to "Ночь","system" to "Система").forEach{(value,title)->Column(Modifier.weight(1f).clip(RoundedCornerShape(16.dp)).border(if(theme==value)2.dp else 1.dp,if(theme==value)Orange else MaterialTheme.colorScheme.outlineVariant,RoundedCornerShape(16.dp)).clickable{onTheme(value)}.padding(vertical=18.dp),horizontalAlignment=Alignment.CenterHorizontally){Icon(when(value){"light"->Icons.Outlined.LightMode;"dark"->Icons.Outlined.DarkMode;else->Icons.Outlined.BrightnessAuto},null,tint=if(theme==value)Orange else MaterialTheme.colorScheme.onSurfaceVariant);Text(title,fontSize=11.sp,modifier=Modifier.padding(top=8.dp))}}}}
         item{SectionLabel("ЧИТАЛКА");SettingsSwitch(Icons.Outlined.WbSunny,"Не гасить экран","Пока открыта книга",awake){awake=it;repo.prefs.edit().putBoolean("keepAwake",it).apply()}}
         item{SectionLabel("НА УСТРОЙСТВЕ");Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant,RoundedCornerShape(16.dp)).padding(18.dp),horizontalArrangement=Arrangement.SpaceBetween){Stat("${books.size}","книги");Stat("${books.sumOf{it.pages.size}}","страниц");Stat("$cache","OCR-страниц")}}
         item{ActionRow(Icons.Outlined.CleaningServices,"Очистить кэш OCR","Книги и исходные страницы останутся"){engine.clear();cache=0;onMessage("Кэш распознавания очищен")}}
+        // ── Место на устройстве: исходники против старых постраничных копий ──
+        // Раньше каждая глава и каждый архив раскладывались постранично в
+        // filesDir, и библиотека занимала гигабайты при пустом списке книг.
+        // Теперь страницы читаются напрямую, а копии остались только от прежних
+        // версий — их и убирает кнопка ниже.
+        item{SectionLabel("МЕСТО НА УСТРОЙСТВЕ")
+            Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant,RoundedCornerShape(16.dp)).padding(18.dp),horizontalArrangement=Arrangement.SpaceBetween){
+                Stat(humanSize(sourceBytes),"исходники")
+                Stat(humanSize(indexBytes),"индекс")
+                Stat(humanSize(legacyBytes),"старые копии")
+            }
+            Text("Страницы читаются прямо из папки, архива или PDF: на диске лежит один файл книги и список страниц. Копий страниц приложение больше не делает.",fontSize=10.sp,lineHeight=15.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=10.dp))
+        }
+        item{ActionRow(Icons.Outlined.DeleteSweep,"Убрать старые копии страниц",if(legacyBytes>0L) "Освободит ${humanSize(legacyBytes)}" else "Копий нет — всё уже читается напрямую"){
+            placeScope.launch{
+                val freed=withContext(Dispatchers.IO){runCatching{KomaPageStore.cleanupLegacy(context)}.getOrDefault(0L)}
+                legacyBytes=KomaPageStore.legacyBytes(context)
+                sourceBytes=repo.sizeBytes()
+                indexBytes=KomaPageStore.indexBytes(context)
+                onMessage(if(freed>0L) "Освобождено ${humanSize(freed)}" else "Старых копий нет")
+            }
+        }}
         item{SectionLabel("О ПРИЛОЖЕНИИ");ActionRow(Icons.Outlined.Info,"KOMA · версия 1.0","Читалка без лишнего шума"){about=true};ActionRow(Icons.Outlined.Code,"Исходники и APK","Проект Kotlin + Compose · GoFile"){runCatching{context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://gofile.io/d/7M33MUei")))}};ActionRow(Icons.Outlined.Language,"Открыть Internet Archive","Источники и права на архивные книги"){runCatching{context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse("https://archive.org")))}}}
         item{Column(Modifier.fillMaxWidth().padding(top=26.dp),horizontalAlignment=Alignment.CenterHorizontally){Text("KOMA",fontSize=25.sp,letterSpacing=4.sp,fontWeight=FontWeight.Black,color=MaterialTheme.colorScheme.onSurfaceVariant.copy(.5f));Text("Твоя история. Твой ритм.",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=6.dp))}}
     }
@@ -177,5 +211,16 @@ fun SettingsScreenKoma(repo:LibraryRepository,engine:KomaOcrEngine,books:List<Bo
 fun SettingsSwitch(icon:ImageVector,title:String,description:String,value:Boolean,onChange:(Boolean)->Unit){Row(Modifier.fillMaxWidth().padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically){Icon(icon,null,Modifier.size(21.dp),tint=MaterialTheme.colorScheme.secondary);Column(Modifier.weight(1f).padding(horizontal=13.dp)){Text(title,fontSize=12.sp,fontWeight=FontWeight.SemiBold);Text(description,fontSize=10.sp,lineHeight=15.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=4.dp))};Switch(value,onCheckedChange=onChange)}}
 @Composable
 private fun ActionRow(icon:ImageVector,title:String,description:String,onClick:()->Unit){Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(onClick=onClick).padding(vertical=16.dp),verticalAlignment=Alignment.CenterVertically){Icon(icon,null,Modifier.size(21.dp),tint=MaterialTheme.colorScheme.secondary);Column(Modifier.weight(1f).padding(horizontal=13.dp)){Text(title,fontSize=13.sp,fontWeight=FontWeight.SemiBold);Text(description,fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=4.dp))};Icon(Icons.Default.ChevronRight,null,tint=MaterialTheme.colorScheme.onSurfaceVariant)}}
+/** Байты в человекочитаемый вид: «1,8 ГБ», «240 МБ», «12 КБ». */
+private fun humanSize(bytes:Long):String{
+    if(bytes<=0L)return "0"
+    val units=listOf("Б" to 1L,"КБ" to 1024L,"МБ" to 1024L*1024,"ГБ" to 1024L*1024*1024)
+    var value=bytes.toDouble();var unit=units.first()
+    for(u in units){if(bytes>=u.second)unit=u}
+    value=bytes.toDouble()/unit.second
+    val text=if(value>=10||unit.second==1L) String.format("%.0f",value) else String.format("%.1f",value)
+    return "$text ${unit.first}"
+}
+
 @Composable
 private fun Stat(value:String,label:String){Column(horizontalAlignment=Alignment.CenterHorizontally){Text(value,fontSize=23.sp,fontWeight=FontWeight.Bold);Text(label,fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}}
