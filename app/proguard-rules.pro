@@ -120,3 +120,26 @@
     *;
 }
 -dontwarn ai.onnxruntime.**
+
+# Второй слой той же защиты (падение 2026-10-22, mid == null в
+# convertToTensorInfo): классы значений ORT должны остаться не только с
+# прежними ИМЕНАМИ, но и с прежней ИЕРАРХИЕЙ. R8 в full-mode умеет сливать
+# (`-allowaccessmodification`, vertical class merging) классы, у которых
+# «одно поведение», и после слияния GetMethodID по описанию класса возвращает
+# null уже при живом имени.
+-keepnames class ai.onnxruntime.** { *; }
+-keep class ai.onnxruntime.OnnxValue { *; }
+-keep class ai.onnxruntime.OnnxTensor { *; }
+-keep class ai.onnxruntime.OnnxSequence { *; }
+-keep class ai.onnxruntime.OnnxMap { *; }
+-keep class ai.onnxruntime.OnnxJavaType { *; }
+-keep class ai.onnxruntime.TensorInfo { *; }
+# JNI ищет методы по имени: нативные объявления и их владельцы должны выжить.
+-keepclasseswithmembernames,includedescriptorclasses class * {
+    native <methods>;
+}
+# Движки KOMA зовутся из нативного слоя ORT и из ассетов по именам файлов
+# моделей; их классы и константы не трогаем — иначе падение JNI снова будет
+# «необъяснимым».
+-keep class mihon.data.ocr.** { *; }
+-keepclassmembers class eu.kanade.tachiyomi.ui.koma.KomaOcrEngine { *; }

@@ -70,14 +70,20 @@ object KomaPageStore {
 
     /** Регистрирует открытую книгу. Возвращает виртуальные пути страниц. */
     fun register(id: String, pages: List<OcrPageInput>, close: () -> Unit = {}): List<String> {
-        containers[id]?.let { runCatching { it.close() } }
+        // Прежнюю книгу с тем же id закрываем только когда её страницы уже
+        // никто не читает — иначе декодер остаётся с закрытым источником.
+        awaitIdle()
+        containers.remove(id)?.let { runCatching { it.close() } }
+        broken.clear()
         containers[id] = Container(pages, close)
         return pages.indices.map { pathOf(id, it) }
     }
 
     fun unregister(id: String) {
+        awaitIdle()
         containers.remove(id)?.let { runCatching { it.close() } }
         bitmaps.evictAll()
+        broken.clear()
     }
 
     /** Оставляет в памяти только перечисленные книги (остальные закрываем). */
@@ -89,17 +95,107 @@ object KomaPageStore {
 
     fun hasPages(id: String): Boolean = (containers[id]?.pages?.size ?: 0) > 0
 
-    fun pageSize(path: String): Pair<Int, Int>? {
+    // ── Декодирование: только байты, по одному декоду, без гонки с закрытием ──
+    //
+    // Падение 2026-11-03 (SIGSEGV, SEGV_ACCERR) пришло из нативного Skia:
+    //   JavaInputStreamAdaptor::doRead ← SkCodec::MakeFromStream ←
+    //   BitmapFactory.decodeStream ← KomaPageStore.decode
+    // Поток страницы отдавался прямо в нативный декодер, а сам поток жил в
+    // архиве/источнике, который мог быть закрыт другим потоком: экран
+    // закрывается, `keepOnly`/`unregister` освобождает книгу — и декодер читал
+    // уже освобождённую память. Такое падение нельзя поймать ни try/catch, ни
+    // обработчиком исключений: процесс убивает ART.
+    //
+    // Отсюда три правила, которые держатся кодом ниже:
+    //  1. страница сначала читается в БАЙТЫ, и нативный декодер получает массив
+    //     (`decodeByteArray`) — кадр `decodeStream` в пути декода больше не
+    //     участвует вообще;
+    //  2. нативный декод идёт строго по одному (`decodeGate`): два параллельных
+    //     декода тяжёлых страниц на слабом устройстве — это и пик памяти, и
+    //     недокументированная гонка внутри BitmapFactory;
+    //  3. пока чтение/декод в полёте, книга не закрывается (`inFlight` +
+    //     `awaitIdle`).
+    //
+    // Страницу, которая не открылась, помним как битую: иначе экран повторял бы
+    // декод в цикле при каждой перерисовке.
+
+    private val inFlight = java.util.concurrent.atomic.AtomicInteger()
+    private val decodeGate = java.util.concurrent.locks.ReentrantLock()
+    private val idleGate = java.util.concurrent.locks.ReentrantLock()
+    private val idleSignal = idleGate.newCondition()
+    private val broken: MutableSet<String> = java.util.Collections.newSetFromMap(
+        java.util.concurrent.ConcurrentHashMap<String, Boolean>(),
+    )
+
+    /** Помечает «идёт чтение страницы»: закрытие книги ждёт такие операции. */
+    private inline fun <T> reading(block: () -> T): T {
+        inFlight.incrementAndGet()
+        try {
+            return block()
+        } finally {
+            if (inFlight.decrementAndGet() == 0) {
+                // Будим тех, кто закрывает книгу. Сигнал под тем же замком, что
+                // и ожидание, — иначе сигнал мог потеряться между проверкой и
+                // wait, и закрытие висело бы до тайм-аута.
+                idleGate.lock()
+                try {
+                    idleSignal.signalAll()
+                } finally {
+                    idleGate.unlock()
+                }
+            }
+        }
+    }
+
+    /**
+     * Ждёт завершения начатых чтений перед освобождением книги. Возвращает
+     * false, если за [timeoutMs] не дождались: закрываем всё равно — подвисшее
+     * чтение лучше, чем утёкший архив.
+     */
+    private fun awaitIdle(timeoutMs: Long = 900): Boolean {
+        if (inFlight.get() == 0) return true
+        val deadline = System.nanoTime() + timeoutMs * 1_000_000L
+        idleGate.lock()
+        try {
+            while (inFlight.get() > 0) {
+                val left = deadline - System.nanoTime()
+                if (left <= 0L) return false
+                // await вернёт управление и по тайм-ауту, и по сигналу: цикл
+                // перепроверит счётчик. Прерывание потока не выпускаем наружу:
+                // закрытие книги не должно падать из-за него.
+                runCatching { idleSignal.awaitNanos(left) }
+            }
+        } finally {
+            idleGate.unlock()
+        }
+        return true
+    }
+
+    private inline fun <T> gated(block: () -> T): T {
+        decodeGate.lock()
+        try {
+            return block()
+        } finally {
+            decodeGate.unlock()
+        }
+    }
+
+    fun pageSize(path: String): Pair<Int, Int>? = reading {
+        val bytes = openBytes(path) ?: return@reading null
+        if (!KomaImageBytes.looksLikeImage(bytes)) return@reading null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        val stream = openStream(path) ?: return null
-        stream.use { BitmapFactory.decodeStream(it, null, bounds) }
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-        return bounds.outWidth to bounds.outHeight
+        gated { runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds) } }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@reading null
+        bounds.outWidth to bounds.outHeight
     }
 
     /**
      * Поток страницы. Для папки это файл, для архива — запись внутри него.
      * Ничего не копируется: байты идут из исходника.
+     *
+     * Поток отдаётся наружу только тем, кто читает его целиком и сразу
+     * (сохранение кадра), — декодирование страниц идёт через [openBytes], иначе
+     * нативный декодер держал бы поток, который может быть закрыт.
      */
     fun openStream(path: String): InputStream? {
         val input = inputOf(path) ?: return null
@@ -107,7 +203,7 @@ object KomaPageStore {
     }
 
     /** Байты страницы: нужны, когда декодеру нужен весь файл (полоса страницы). */
-    fun openBytes(path: String): ByteArray? =
+    fun openBytes(path: String): ByteArray? = reading {
         openStream(path)?.use { stream ->
             runCatching {
                 ByteArrayOutputStream().use { out ->
@@ -116,10 +212,31 @@ object KomaPageStore {
                 }
             }.getOrNull()
         }
+    }
+
+    /**
+     * Страница битая по сути (это не картинка), а не «не хватило памяти»:
+     * только такие страницы запоминаются как неоткрываемые.
+     */
+    private class BrokenPage(message: String) : IllegalStateException(message)
 
     fun bitmap(path: String): Bitmap? {
         bitmaps.get(path)?.takeIf { !it.isRecycled }?.let { return it }
-        val decoded = runCatching { decode(path) }.getOrNull() ?: return null
+        if (path in broken) return null
+        val decoded = reading {
+            try {
+                decode(path)
+            } catch (e: BrokenPage) {
+                // Повторять декод такой страницы бессмысленно: экран только
+                // «мигал» бы пустотой при каждой перерисовке.
+                broken.add(path)
+                null
+            } catch (t: Throwable) {
+                // Память, гонка, временная ошибка источника — не приговор:
+                // страница перечитается по кнопке «Повторить».
+                null
+            }
+        } ?: return null
         bitmaps.put(path, decoded)
         return decoded
     }
@@ -128,16 +245,17 @@ object KomaPageStore {
      * Обложка: уменьшенная первая страница. В кэш страниц не кладётся — иначе
      * обложки книг вытесняли бы из памяти ту страницу, которую сейчас читают.
      */
-    fun cover(path: String, maxSide: Int = 480): Bitmap? {
-        if (!isVirtual(path)) return null
+    fun cover(path: String, maxSide: Int = 480): Bitmap? = reading {
+        if (!isVirtual(path)) return@reading null
+        val bytes = openBytes(path) ?: return@reading null
+        if (!KomaImageBytes.looksLikeImage(bytes)) return@reading null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        openStream(path)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        gated { runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds) } }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@reading null
         var sample = 1
         while (max(bounds.outWidth, bounds.outHeight) / sample > maxSide) sample *= 2
-        return openStream(path)?.use {
-            BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
-        }
+        val options = BitmapFactory.Options().apply { inSampleSize = sample }
+        gated { runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options) }.getOrNull() }
     }
 
     private fun decode(path: String): Bitmap? {
@@ -145,21 +263,41 @@ object KomaPageStore {
         // Источники, у которых нет потока (PDF и подобные), умеют отдать
         // готовый растр — это дешевле, чем уговаривать их на байты.
         if (input.openStream == null) {
-            return runCatching { runBlocking { input.openBitmap() } }.getOrNull()
+            return gated { runCatching { runBlocking { input.openBitmap() } }.getOrNull() }
         }
+        val bytes = openBytes(path) ?: return null
+        // Проверка формата ДО нативного декодера: мусор (оглавление архива,
+        // HTML-страница ошибки) не доходит до Skia вовсе.
+        if (!KomaImageBytes.looksLikeImage(bytes)) {
+            throw BrokenPage("В файле нет изображения: $path")
+        }
+        return decodePageBytes(bytes) {
+            throw BrokenPage("Размер страницы не прочитался: $path")
+        }
+    }
+
+    /**
+     * Декод уже прочитанных байтов страницы — единственный путь к нативному
+     * декодеру. Ни потоков, ни повторного чтения: байты в памяти, размер
+     * проверен, уменьшение посчитано, вызов один и под [decodeGate].
+     */
+    private inline fun decodePageBytes(bytes: ByteArray, onBoundsFail: () -> Unit = {}): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        openStream(path)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-        var sample = 1
-        while (
-            bounds.outWidth.toLong() * bounds.outHeight / (sample.toLong() * sample) > 16_000_000L ||
-            bounds.outWidth / sample > 2600
-        ) {
-            sample *= 2
+        gated { runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds) } }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            onBoundsFail()
+            return null
         }
-        val options = BitmapFactory.Options().apply { inSampleSize = sample }
-        if (bounds.outWidth / sample > 1400) options.inPreferredConfig = Bitmap.Config.RGB_565
-        return openStream(path)?.use { BitmapFactory.decodeStream(it, null, options) }
+        val sample = KomaImageBytes.sampleFor(bounds.outWidth, bounds.outHeight)
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = sample
+            if (KomaImageBytes.prefer565(bounds.outWidth / sample)) {
+                inPreferredConfig = Bitmap.Config.RGB_565
+            }
+        }
+        return gated {
+            runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options) }.getOrNull()
+        }?.takeIf { !it.isRecycled }
     }
 
     private fun inputOf(path: String): OcrPageInput? {
@@ -358,14 +496,21 @@ object KomaPageStore {
         names.mapIndexed { index, name ->
             OcrPageInput(
                 pageIndex = index,
-                openBitmap = { openEntryStream(file, name)?.use { BitmapFactory.decodeStream(it) } },
+                // Каждое чтение страницы помечено как «в полёте»: пока оно идёт,
+                // книга не закрывается (см. reading/awaitIdle выше). Без этого
+                // закрытие читалки на бегу рвало поток прямо под декодером.
+                openBitmap = {
+                    reading { openEntryStream(file, name)?.use { decodePageBytes(it.readBytes()) } }
+                },
                 // Полосу режет уже существующий декодер архива: он читает байты
                 // записи и отдаёт только нужные строки, целая страница в память
                 // не поднимается.
                 openBitmapRegion = { rect ->
-                    openEntryStream(file, name)?.use { decodeArchiveBitmapRegion(it, rect) }
+                    reading {
+                        openEntryStream(file, name)?.use { decodeArchiveBitmapRegion(it, rect) }
+                    }
                 },
-                openStream = { openEntryStream(file, name) },
+                openStream = { reading { openEntryStream(file, name) } },
             )
         }
 

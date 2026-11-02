@@ -128,6 +128,32 @@ class KomaTts(private val context: Context) {
     /** Русские голоса системы: сюда попадают Google, RHVoice и голоса прошивки. */
     fun voices(): List<Voice> = runCatching { VoiceHelper.russianVoices(tts) }.getOrDefault(emptyList())
 
+    /**
+     * Голос существует только пока есть интернет: его звук синтезирует сервер,
+     * а не сам телефон. Именно такие голоса в списке ещё не доделаны — их
+     * подбирают внешние модели (онлайн-ИИ), а офлайн они молчат.
+     */
+    fun needsNetwork(voice: Voice): Boolean =
+        runCatching { voice.isNetworkConnectionRequired }.getOrDefault(false)
+
+    /**
+     * Пометка готовности голоса — прямо в списке, а не в документации.
+     *
+     * Просьба была простой: не выдавать недоработанное за рабочее. Поэтому у
+     * каждого голоса написано, чем он живёт: телефонным движком (работает
+     * всегда, в том числе в метро) или сетью (пока не доведён, нужен интернет).
+     */
+    fun readiness(voice: Voice): String =
+        if (needsNetwork(voice)) "только онлайн · ещё не доделан" else "офлайн · работает"
+
+    /** Есть ли сейчас сеть: без неё онлайн-голос не зазвучит. */
+    @Suppress("DEPRECATION")
+    private fun hasNetwork(): Boolean = runCatching {
+        val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE)
+            as? android.net.ConnectivityManager
+        manager?.activeNetworkInfo?.isConnected == true
+    }.getOrDefault(false)
+
     /** Как голос показать в списке: RHVoice отдаёт имена, Google — коды. */
     fun label(voice: Voice): String {
         val kind = runCatching { VoiceHelper.classify(voice) }.getOrNull()
@@ -137,19 +163,28 @@ class KomaTts(private val context: Context) {
             "TEEN" -> "дет."
             else -> ""
         }
-        val net = if (voice.isNetworkConnectionRequired) " · сеть" else ""
         val quality = if (voice.quality >= Voice.QUALITY_HIGH) " · hi-q" else ""
-        return listOfNotNull(voice.name, gender.ifBlank { null }, (net + quality).trim().ifBlank { null })
+        return listOfNotNull(voice.name, gender.ifBlank { null }, quality.trim().ifBlank { null })
             .joinToString(" ")
     }
 
     fun selectedVoiceName(): String? = prefs.getString(KEY_VOICE, null)
 
-    fun selectVoice(name: String) {
+    /**
+     * Выбор голоса. Возвращает false, если голос сейчас заведомо не зазвучит
+     * (онлайн-голос без сети), — экран скажет об этом словами, а не упадёт и не
+     * сделает вид, что голос выбран.
+     *
+     * Раньше выбор был молчаливым `Unit`: сохранялось имя, `tts.voice` не
+     * ставился (голоса нет в списке движка), и читалка дальше читала прежним
+     * голосом — «выбрал, а не звучит».
+     */
+    fun selectVoice(name: String): Boolean {
+        val voice = runCatching { voices().firstOrNull { it.name == name } }.getOrNull()
+        if (voice != null && needsNetwork(voice) && !hasNetwork()) return false
         prefs.edit().putString(KEY_VOICE, name).apply()
-        runCatching {
-            voices().firstOrNull { it.name == name }?.let { tts.voice = it }
-        }
+        runCatching { voice?.let { tts.voice = it } }
+        return true
     }
 
     fun rate(): Float = prefs.getFloat(KEY_RATE, 1f)

@@ -281,6 +281,15 @@ class KomaOcrEngine(private val context: Context) {
         else -> listOfNotNull(t::class.simpleName, t.message).joinToString(": ").ifBlank { "неизвестная ошибка" }
     }
 
+    /**
+     * Запоминает сбой вывода модели строкой. Раньше такой сбой уходил
+     * исключением наружу или терялся, и страница выглядела просто пустой —
+     * «читалка не видит текст» вместо «модель не ответила, вот почему».
+     */
+    private fun noteOcrFailure(t:Throwable) {
+        lastError = describe(t)
+    }
+
     suspend fun recognize(book:Book,page:Int,language:String,force:Boolean=false,band:KomaBand=KomaBand.Whole):PageOcr = withContext(Dispatchers.Default) {
         mutex.withLock {
             lastError=null
@@ -642,11 +651,20 @@ class KomaOcrEngine(private val context: Context) {
                 val channel=((pixels[i] shr (c*8)) and 255)/255f
                 data[c*w*h+i]=if(normalize)(channel-mean[c])/std[c] else channel
             }
-            return OnnxTensor.createTensor(env,FloatBuffer.wrap(data),longArrayOf(1,3,h.toLong(),w.toLong())).use { tensor ->
-                det!!.run(mapOf(det!!.inputNames.first() to tensor)).use { result ->
-                    val map=(result[0].value as Array<Array<Array<FloatArray>>>)[0][0]
-                    components(map)
+            // Ошибку ONNX Runtime (в том числе несовпадение типов входа)
+            // возвращаем как «на этом тайле текста нет», а не как исключение:
+            // раньше она вылетала из распознавания целой страницы, и читалка
+            // показывала пустоту вместо текста.
+            return runCatching {
+                OnnxTensor.createTensor(env,FloatBuffer.wrap(data),longArrayOf(1,3,h.toLong(),w.toLong())).use { tensor ->
+                    det!!.run(mapOf(det!!.inputNames.first() to tensor)).use { result ->
+                        val map=(result[0].value as Array<Array<Array<FloatArray>>>)[0][0]
+                        components(map)
+                    }
                 }
+            }.getOrElse { e ->
+                noteOcrFailure(e)
+                emptyList()
             }
         }
         var boxes=run(false)
