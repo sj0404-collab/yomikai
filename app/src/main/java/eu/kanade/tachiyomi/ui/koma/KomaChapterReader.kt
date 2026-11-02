@@ -196,52 +196,25 @@ internal class KomaChapterLoader(private val context: Context) {
         val manga = getManga.await(mangaId) ?: return null
         val chapter = getChapter.await(chapterId) ?: return null
 
-        val id = "chapter-$chapterId"
-        val dir = KomaChapterCache.dir(context, id)
-        // ── Быстрый путь ─────────────────────────────────────────────────────
-        // Глава уже разложена на диск в прошлый раз: источник не трогаем вообще.
-        // Раньше здесь каждый раз заново создавались копии в cacheDir, поэтому
-        // ЛОКАЛЬНАЯ глава открывалась как сетевая.
-        val knownCount = runCatching { java.io.File(dir, ".count").readText().trim().toInt() }.getOrNull()
-        if (knownCount != null && knownCount > 0) {
-            val fastPaths = KomaChapterCache.paths(context, id, knownCount)
-            if (fastPaths.all { KomaChapterCache.ready(it) }) {
-                return buildBook(manga, chapter, id, fastPaths)
-            }
-        }
-
-        val resolved = withIOContext { resolver.resolve(manga, chapter) }
-        val count = resolved.pages.size
-        if (count == 0) {
-            runCatching { resolved.close() }
-            return null
-        }
-        val paths = KomaChapterCache.paths(context, id, count)
-        val progress = KomaChapterProgress.load(context, id).coerceIn(0, count - 1)
-        // Копирование идёт в фоне: страница, которая нужна сейчас, — первой.
-        // Читалка открывается сразу, а страница, которую ещё копируют, ждёт
-        // своего файла (KomaOcrEngine → KomaChapterCache.awaitFile).
-        val job = KomaChapterCache.prefetch(
-            context = context,
-            bookId = id,
-            pages = resolved.pages,
-            paths = paths,
-            priority = listOf(progress, progress + 1, 0),
-        )
-        if (job == null) {
-            runCatching { resolved.close() }
-        } else {
-            // Архив/PDF-дескриптор закрываем только после последней страницы,
-            // иначе источник закроется под руками у фонового копирования.
-            job.invokeOnCompletion {
-                runCatching {
-                    if (paths.all { KomaChapterCache.ready(it) }) {
-                        java.io.File(dir, ".count").writeText(count.toString())
-                    }
-                }
+        val id = "chapter/$chapterId"
+        // Глава уже открыта в этой сессии — берём её страницы без похода в
+        // источник. Копий на диске больше нет: страницы читаются напрямую из
+        // папки/архива/источника в момент показа (KomaPageStore).
+        if (!KomaPageStore.hasPages(id)) {
+            val resolved = withIOContext { resolver.resolve(manga, chapter) }
+            val count = resolved.pages.size
+            if (count == 0) {
                 runCatching { resolved.close() }
+                return null
             }
+            // Индекс главы: сколько страниц и когда открывали. Это килобайты,
+            // а не копии страниц (раньше здесь лежали гигабайты).
+            KomaPageStore.saveIndex(context, id, count)
+            KomaPageStore.register(id, resolved.pages) { runCatching { resolved.close() } }
         }
+        val count = KomaPageStore.count(id)
+        val paths = (0 until count).map { KomaPageStore.pathOf(id, it) }
+        val progress = KomaChapterProgress.load(context, id).coerceIn(0, paths.lastIndex.coerceAtLeast(0))
         return buildBook(manga, chapter, id, paths, progress)
     }
 

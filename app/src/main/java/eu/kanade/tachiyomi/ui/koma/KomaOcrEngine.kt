@@ -143,9 +143,13 @@ class KomaOcrEngine(private val context: Context) {
     }
 
     private fun decode(path:String):Bitmap {
-        // Страница могла ещё копироваться на диск (см. KomaChapterCache):
-        // ждём её файл, а не показываем ошибку.
-        KomaChapterCache.awaitFile(path)
+        // Виртуальный путь koma:// — страница читается напрямую из источника
+        // (папка/архив/сеть) через KomaPageStore, копий на диске нет.
+        if(KomaPageStore.isVirtual(path)) {
+            KomaPageStore.ensure(context,KomaPageStore.keyOf(path))
+            return KomaPageStore.bitmap(path)
+                ?: throw IllegalStateException("Не удалось открыть страницу: $path")
+        }
         fun stream()=if(path.startsWith("file:///android_asset/")) context.assets.open(path.removePrefix("file:///android_asset/")) else File(path.removePrefix("file://")).inputStream()
         val bounds=BitmapFactory.Options().apply { inJustDecodeBounds=true }
         stream().use{BitmapFactory.decodeStream(it,null,bounds)}
@@ -195,7 +199,26 @@ class KomaOcrEngine(private val context: Context) {
      * модели попадает полная ширина (а не 600 px после общего даунскейла).
      */
     private fun region(path:String,band:KomaBand):Bitmap {
-        KomaChapterCache.awaitFile(path)
+        // Виртуальный путь: байты страницы приходят из KomaPageStore, а полосу
+        // режет BitmapRegionDecoder — целая страница в память не поднимается.
+        if(KomaPageStore.isVirtual(path)) {
+            KomaPageStore.ensure(context,KomaPageStore.keyOf(path))
+            val bytes=KomaPageStore.openBytes(path) ?: return bitmap(path)
+            val decoder=runCatching{android.graphics.BitmapRegionDecoder.newInstance(bytes,0,bytes.size)}.getOrNull()
+                ?: return bitmap(path)
+            return try {
+                val core=decoder.width/2400
+                var sample=1
+                while(sample*2<=core.coerceAtLeast(1)) sample*=2
+                val top=(band.top*decoder.height).toInt().coerceIn(0,decoder.height-1)
+                val bottom=(band.bottom*decoder.height).toInt().coerceIn(top+1,decoder.height)
+                val options=BitmapFactory.Options().apply {
+                    inSampleSize=sample
+                    if(decoder.width/sample>1400) inPreferredConfig=Bitmap.Config.RGB_565
+                }
+                decoder.decodeRegion(android.graphics.Rect(0,top,decoder.width,bottom),options) ?: bitmap(path)
+            } catch(t:Throwable) { bitmap(path) } finally { runCatching{decoder.recycle()} }
+        }
         val plain=path.removePrefix("file://")
         val decoder=try {
             when {
@@ -231,9 +254,10 @@ class KomaOcrEngine(private val context: Context) {
 
     /** Размер страницы в пикселях без декодирования картинки. */
     fun pageSize(path:String, waitMs:Long=0):Pair<Int,Int>? {
-        // Ждать файл на главном потоке нельзя: экран спрашивает размер для
-        // прогрева. Ждём только когда явно попросили.
-        if(waitMs>0) KomaChapterCache.awaitFile(path,waitMs)
+        if(KomaPageStore.isVirtual(path)) {
+            KomaPageStore.ensure(context,KomaPageStore.keyOf(path))
+            return KomaPageStore.pageSize(path)
+        }
         val bounds=BitmapFactory.Options().apply { inJustDecodeBounds=true }
         val read=runCatching {
             if(path.startsWith("file:///android_asset/")) {

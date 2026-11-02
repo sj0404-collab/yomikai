@@ -197,6 +197,35 @@ fun KomaReaderScreen(
     var selectedVoice by remember { mutableStateOf(tts.selectedVoiceName()) }
     // Контекст приложения нужен уведомлению, которое рисует контроллер.
     LaunchedEffect(Unit) { AppContextHolder.context = context.applicationContext }
+    // Сообщение об ошибке — объявлено здесь, потому что его выставляет и
+    // открытие книги (см. ниже).
+    var error by remember { mutableStateOf<String?>(null) }
+    // ── Источник страниц: читается напрямую, копий на диске нет ──────────────
+    // В памяти держим ТОЛЬКО открытую книгу: иначе десятки открытых архивов и
+    // декодированных страниц занимали бы память всей библиотеки.
+    LaunchedEffect(book.id) {
+        KomaPageStore.keepOnly(setOf(book.id))
+        if (book.pages.any { KomaPageStore.isVirtual(it) } && !KomaPageStore.hasPages(book.id)) {
+            // Книга открыта после перезапуска приложения: собираем её из
+            // исходного файла по индексу (распаковки нет).
+            val opened = withContext(Dispatchers.IO) {
+                runCatching { KomaPageStore.ensure(context, book.id) }.getOrDefault(false)
+            }
+            if (!opened) {
+                error = if (book.id.startsWith("chapter/")) {
+                    "Глава не открылась после перезапуска — вернитесь к списку глав и откройте её снова."
+                } else {
+                    "Исходный файл книги не найден. Возможно, он удалён — импортируйте его заново."
+                }
+            }
+        }
+    }
+    DisposableEffect(book.id) {
+        onDispose {
+            // Вышли из книги — освобождаем её архив и страницы.
+            KomaPageStore.keepOnly(emptySet())
+        }
+    }
     // ── Голоса персонажей ────────────────────────────────────────────────────
     // «Разные голоса» и «полуручной режим» живут настройками, чтобы обычное
     // чтение одним голосом оставалось доступным.
@@ -271,7 +300,6 @@ fun KomaReaderScreen(
     var batchTotal by remember { mutableIntStateOf(0) }
     var sheet by remember { mutableStateOf<String?>(null) }
     var showRegions by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
     var deleteConfirm by remember { mutableStateOf(false) }
     val clipboard=LocalClipboardManager.current
     fun save(b: Book) {book=b;onUpdate(b)}

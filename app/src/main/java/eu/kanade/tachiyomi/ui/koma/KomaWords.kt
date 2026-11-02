@@ -100,8 +100,145 @@ object KomaWords {
         }
     }
 
+    /** Падежные окончания: по ним словоформа узнаётся, даже если её нет в словаре. */
+    private val ENDINGS = listOf(
+        "ами", "ями", "ого", "его", "ому", "ему", "ыми", "ими", "ах", "ях", "ов", "ев",
+        "ой", "ей", "ий", "ый", "ая", "ое", "ые", "ие", "ом", "ем", "ам", "ям", "мь", "ью",
+        "ы", "и", "а", "е", "о", "у", "ю", "ь", "я", "й", "м",
+    )
+
+    /**
+     * Латинские, греческие и цифровые двойники кириллицы.
+     *
+     * «cecmpoй mиpaнa» — это «сестрой тирана»: шрифт рисует «т» как латинскую
+     * «m», «а», «е», «с», «о», «й» — тоже похоже. Замена делается только тогда,
+     * когда получившееся слово есть в словаре, поэтому настоящая латиница
+     * (звуки «BANG», имена) не трогается. «Ë» в манга-шрифте — это «Ё»: без неё
+     * строка «TE EË.» («ТЕ ЕЁ.») не опознавалась и выбрасывалась целиком —
+     * из-за этого реплика обрывалась на «КОГДА СЛУША» (скриншот 21:20).
+     */
+    private val HOMOGLYPH = mapOf(
+        'a' to 'а', 'b' to 'в', 'c' to 'с', 'e' to 'е', 'h' to 'н', 'k' to 'к',
+        'm' to 'т', 'n' to 'п', 'o' to 'о', 'p' to 'р', 't' to 'т', 'x' to 'х',
+        'y' to 'у', 'u' to 'и', 'i' to 'и', 'j' to 'ј', 'r' to 'г',
+        'A' to 'А', 'B' to 'В', 'C' to 'С', 'E' to 'Е', 'H' to 'Н', 'K' to 'К',
+        'M' to 'М', 'O' to 'О', 'P' to 'Р', 'T' to 'Т', 'X' to 'Х', 'Y' to 'У',
+        'R' to 'Г', 'I' to 'І', 'J' to 'Ј',
+        'Ë' to 'Ё', 'ë' to 'ё', 'Î' to 'Й', 'î' to 'й', 'Ä' to 'Д', 'ä' to 'д',
+    )
+
+    private fun isLatin(ch: Char) = ch in 'a'..'z' || ch in 'A'..'Z'
+
+    /** Слово есть в частотном словаре (регистр и «ё» не важны). */
+    fun isKnown(word: String): Boolean {
+        if (!ready.get()) return false
+        return inDict(word.trim().lowercase())
+    }
+
+    /**
+     * Слово выглядит настоящим: есть в словаре ИЛИ это его словоформа
+     * (ВЫСОЧЕСТВОМ → ВЫСОЧЕСТВ + ОМ). Без этой проверки «правка» превращала
+     * нормальное слово во что-то другое, а склейка переноса — в мусор.
+     */
+    fun isPlausible(word: String): Boolean {
+        if (!ready.get()) return true
+        val low = word.trim().lowercase().replace('ё', 'е')
+        if (inDict(low)) return true
+        if (low.length < 5) return false
+        for (end in ENDINGS) {
+            if (!low.endsWith(end)) continue
+            val stem = low.dropLast(end.length)
+            if (stem.length < 4) continue
+            val rank = dict[stem] ?: continue
+            if (rank <= COMMON_RANK) return true
+        }
+        return false
+    }
+
+    private fun inDict(low: String): Boolean {
+        val key = low.replace('ё', 'е')
+        return key.isNotEmpty() && dict.containsKey(key)
+    }
+
+    /**
+     * Одно слово: латиница/смесь → кириллица, но только когда это даёт слово из
+     * словаря. «cecmpoй» → «сестрой», «mиpaнa» → «тирана»; «BANG!!» остаётся.
+     */
+    fun fixAlphabet(word: String): String {
+        if (!ready.get() || word.none { isLatin(it) }) return word
+        val start = word.indexOfFirst { it.isLetter() }
+        val end = word.indexOfLast { it.isLetter() }
+        if (start < 0 || end < start) return word
+        val core = word.substring(start, end + 1)
+        val cyr = buildString { for (ch in core) append(HOMOGLYPH[ch] ?: ch) }
+        if (!cyr.equals(core, ignoreCase = true) && inDict(cyr.lowercase())) {
+            return word.replaceFirst(core, cyr)
+        }
+        // Латинский кусок перед кириллицей: «TE EË.» («ТЕ ЕЁ.»), «mиpaнa».
+        val pre = Regex("^([A-Za-zËë]+)([А-Яа-яЁё]+)").find(core)
+        if (pre != null) {
+            val fixed = buildString { for (ch in pre.groupValues[1]) append(HOMOGLYPH[ch] ?: ch) } +
+                pre.groupValues[2]
+            if (inDict(fixed.lowercase())) return word.replaceFirst(core, fixed)
+        }
+        // Короткое слово целиком на латинице: «TE», «EË» — тоже буквы алфавита,
+        // если после замены получается слово из словаря.
+        if (core.length <= 3 && core.all { isLatin(it) }) {
+            if (!cyr.equals(core, ignoreCase = true) && inDict(cyr.lowercase())) {
+                return word.replaceFirst(core, cyr)
+            }
+        }
+        // Кириллица с прилипшим латинским хвостом («СЛУШАЙТЕЕУ.owb»): кириллицу
+        // оставляем, хвост выбрасываем, лишние буквы на стыке снимаем.
+        val mix = Regex("([А-Яа-яЁё]{4,})[^А-Яа-яЁёA-Za-z0-9]*([A-Za-z]{2,})").find(word)
+        if (mix != null) {
+            val head = mix.groupValues[1]
+            val base = head.lowercase()
+            if (inDict(base)) return head
+            for (cut in 1..2) {
+                if (base.length - cut < 4) break
+                if (inDict(base.dropLast(cut))) return head.dropLast(cut)
+            }
+        }
+        return word
+    }
+
+    /**
+     * Буква вместо цифры: «2-З РАЗА» → «2-3 РАЗА». Правило узкое и проверяемое:
+     * буква стоит ВПЛОТНУЮ к цифре (в том же слове через дефис или точку).
+     */
+    fun fixDigits(word: String): String {
+        if (word.none { it in '0'..'9' } || word.none { it in "ЗзОо" }) return word
+        return word
+            .replace(Regex("(\\d)\\s*[-\u2013\u2014]\\s*[Зз]"), "$1-3")
+            .replace(Regex("[Зз]\\s*[-\u2013\u2014]\\s*(\\d)"), "3-$1")
+            .replace(Regex("(\\d)[Оо]"), "$10")
+            .replace(Regex("[Оо](\\d)"), "0$1")
+    }
+
     /** Готовая реплика: починка слов, дефисы, кавычки и регистр строки. */
-    fun finish(text: String): String = normalizeCase(correctLine(text))
+    fun finish(text: String): String {
+        var t = text
+        if (ready.get()) {
+            // Латиница, которая на самом деле кириллица: «cecmpoй mиpaнa» →
+            // «сестрой тирана». Делается ДО словарной правки, иначе слово не
+            // находится в словаре и уходит в мусор.
+            t = t.split(' ').joinToString(" ") { fixAlphabet(it) }
+            // Латинский шум чтеца внутри русской реплики («КОГДА СЛУШАЕТЕ
+            // ЕЁ.owb»). Убираем слово целиком на латинице, только если в реплике
+            // есть кириллица — иначе пропали бы настоящие английские звуки.
+            if (t.any { KomaText.isRussianLetter(it) }) {
+                t = t.split(' ').filter { word ->
+                    if (word.none { isLatin(it) }) return@filter true
+                    if (word.any { KomaText.isRussianLetter(it) }) return@filter true
+                    word.count { it.isLetter() } < 3
+                }.joinToString(" ")
+            }
+            // Буква вместо цифры: «2-З РАЗА» → «2-3 РАЗА».
+            t = t.split(' ').joinToString(" ") { fixDigits(it) }
+        }
+        return normalizeCase(correctLine(t))
+    }
 
     fun correctLine(text: String): String {
         val fixed = WORD.replace(text) { correctWord(it.value) }
@@ -149,6 +286,14 @@ object KomaWords {
     fun correctWord(word: String): String {
         if (!ready.get() || word.length < 3) return word
         val low = word.lowercase().replace('ё', 'е')
+        // «ЬЫТЬ» со скриншота 21:20: мягкий знак прочитан вместо «Б». Ни одно
+        // настоящее слово не начинается с «ь»/«ъ», поэтому замена проверяемая.
+        if (low.startsWith('ь') || low.startsWith('ъ')) {
+            val withB = "б" + low.drop(1)
+            if (withB in dict) return matchCase(word, withB)
+            val withV = "в" + low.drop(1)
+            if (withV in dict) return matchCase(word, withV)
+        }
         if (low in known) return word
         val base = plausibility(low)
         // Кандидат сравнивается парой (ранг, выигрыш): берём самое частое слово
