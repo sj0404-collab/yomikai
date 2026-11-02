@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.ui.koma
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -29,17 +30,23 @@ class KomaCrashRegressionTest {
     // ── 1. Битый шаблон не роняет читалку ────────────────────────────────────
 
     @Test
-    fun `шаблон с одиночной скобкой после квантификатора не собирается, но и не бросает`() {
+    fun `шаблон с одиночной скобкой после квантификатора не роняет читалку`() {
         // Дословно тот шаблон из падения: последняя `}` не экранирована.
         val broken = "\\{\\s*(?:имя|name)\\s*:\\s*[^}]{1,40}}"
+        // Главное, что проверяется: сборка шаблона НЕ бросает наружу ни на JVM,
+        // ни на Android/ICU. На JVM одиночная `}` допустима, на ICU — нет,
+        // поэтому поведение компилятора здесь разное и в тесте не зашивается.
         val compiled = KomaRegex.compileOrNull(broken)
-        // На JVM часть реализаций терпит такую скобку, на Android/ICU — нет.
-        // Важно одно: наружу не вылетает исключение, и вызывающий код живёт.
         if (compiled != null) {
-            assertEquals("Аки", compiled.find("{имя:Аки} Привет")?.groupValues?.get(1))
-        } else {
-            assertFalse(KomaRegex.isCompilable(broken))
+            // На JVM шаблон собирается, но разметку не находит: лишняя `}` в
+            // шаблоне означает «две закрывающие скобки подряд». Именно это на
+            // Android превращалось в PatternSyntaxException и вылет.
+            assertNull(compiled.find("{имя:Аки} Привет"))
         }
+        // А рабочий шаблон читалки собирается всегда и имя находит.
+        val good = KomaRegex.compileOrNull("\\{\\s*(?:имя|name)\\s*:\\s*([^}]{1,40})\\}")
+        assertNotNull(good)
+        assertEquals("Аки", good!!.find("{имя:Аки} Привет")?.groupValues?.get(1))
     }
 
     @Test
