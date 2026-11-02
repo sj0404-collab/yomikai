@@ -495,6 +495,7 @@ object KomaPageStore {
     fun archivePages(file: File, names: List<String>): List<OcrPageInput> =
         names.mapIndexed { index, name ->
             OcrPageInput(
+                pageIndex = index,
                 // Каждое чтение страницы помечено как «в полёте»: пока оно идёт,
                 // книга не закрывается (см. reading/awaitIdle выше). Без этого
                 // закрытие читалки на бегу рвало поток прямо под декодером.
