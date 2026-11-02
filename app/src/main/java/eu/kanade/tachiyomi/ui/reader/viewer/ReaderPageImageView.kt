@@ -118,12 +118,6 @@ open class ReaderPageImageView @JvmOverloads constructor(
             color = OCR_MARK_COLOR
             style = Paint.Style.FILL
         }
-    private val ocrMarksNumberPaint =
-        TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.BLACK
-            textAlign = Paint.Align.LEFT
-        }
-    private val ocrMarksNumberBackgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     private val ocrOverlayBackgroundPaint =
         Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -890,22 +884,26 @@ open class ReaderPageImageView @JvmOverloads constructor(
         strokePaint.strokeWidth = strokeWidth
         fillPaint.color = accent
 
-        bubbles.forEachIndexed { index, bubble ->
+        // Номера реплик больше не рисуются: на странице от них была «каша» из
+        // кружков с цифрами (скриншот 23:44 — восемь номеров поверх арта), а
+        // порядок чтения и так виден по подсветке текущей реплики. Рамки — те
+        // же, что в читалке KOMA: оранжевый контур со скруглением 8.
+        bubbles.forEach { bubble ->
             val fileRect = RectF(
                 bubble.left * entry.sourceWidth,
                 bubble.top * entry.sourceHeight,
                 bubble.right * entry.sourceWidth,
                 bubble.bottom * entry.sourceHeight,
             )
-            val viewRect = pageView.fileToViewRect(fileRect, fileCropRect) ?: return@forEachIndexed
-            if (viewRect.width() <= 0f || viewRect.height() <= 0f) return@forEachIndexed
+            val viewRect = pageView.fileToViewRect(fileRect, fileCropRect) ?: return@forEach
+            if (viewRect.width() <= 0f || viewRect.height() <= 0f) return@forEach
             // Рамка во весь лист — след «распознать страницу целиком»: у такой
             // записи геометрии по репликам нет, и контур поверх всего арта
             // только мешает.
             if (viewRect.width() >= viewWidth * 0.9f && viewRect.height() >= viewHeight * 0.9f) {
-                return@forEachIndexed
+                return@forEach
             }
-            if (!RectF(viewRect).intersect(0f, 0f, viewWidth, viewHeight)) return@forEachIndexed
+            if (!RectF(viewRect).intersect(0f, 0f, viewWidth, viewHeight)) return@forEach
 
             val isCurrent = OcrCurrentBubble.matches(bubble.text)
             val radius = density * 8f
@@ -919,10 +917,6 @@ open class ReaderPageImageView @JvmOverloads constructor(
                 strokePaint.alpha = 190
             }
             canvas.drawRoundRect(viewRect, radius, radius, strokePaint)
-
-            // Один номер на РЕПЛИКУ: номер ставится у её рамки, а не у каждой
-            // строки, из которых она склеена.
-            drawOcrMarkNumber(canvas, viewRect, index + 1, accent)
         }
     }
 
@@ -993,30 +987,6 @@ open class ReaderPageImageView @JvmOverloads constructor(
         } else {
             "$aT $bT"
         }
-    }
-
-    /** Кружок с номером порядка чтения в левом верхнем углу рамки региона. */
-    private fun drawOcrMarkNumber(
-        canvas: Canvas,
-        regionRect: RectF,
-        order: Int,
-        color: Int,
-    ) {
-        val density = resources.displayMetrics.density
-        val radius = density * 9f
-        val centerX = regionRect.left + radius
-        val centerY = regionRect.top + radius
-        val label = order.toString()
-        val textPaint = ocrMarksNumberPaint
-        val labelBackgroundPaint = ocrMarksNumberBackgroundPaint
-        labelBackgroundPaint.color = color
-        canvas.drawCircle(centerX, centerY, radius, labelBackgroundPaint)
-        canvas.drawText(
-            label,
-            centerX - textPaint.measureText(label) / 2f,
-            centerY - (textPaint.ascent() + textPaint.descent()) / 2f,
-            textPaint,
-        )
     }
 
     /**

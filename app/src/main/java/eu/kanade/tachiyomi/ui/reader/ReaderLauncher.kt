@@ -84,40 +84,45 @@ object ReaderLauncher {
     private fun key(mangaId: Long) = "mode_$mangaId"
 
     /**
-     * Открыть главу в выбранной читалке.
+     * Открыть главу. Читалка теперь ОДНА — KOMA.
      *
-     * [autoRead] — авточтение (после скана главы): его умеет только KOMA,
-     * поэтому при нём выбор игнорируется.
+     * Прежняя (постраничная) читалка больше не выбирается и не запоминается:
+     * два пути к одной и той же главе давали «кашу» — открывались обе, а сверху
+     * ложились ещё и рамки с номерами. Прежняя читалка живёт как плавающая
+     * кнопка на экране KOMA (см. [openLegacy]).
      */
     fun open(
         context: Context,
         mangaId: Long,
         chapterId: Long,
-        mode: String,
+        mode: String = MODE_STRIP,
         autoRead: Boolean = false,
     ) {
-        if (mode == MODE_STRIP || autoRead) {
-            val opened = runCatching {
-                context.startActivity(
-                    KomaReaderActivity.newIntent(context, mangaId, chapterId)
-                        .putExtra("autoread_start", autoRead)
-                        .addFlags(if (context !is android.app.Activity) Intent.FLAG_ACTIVITY_NEW_TASK else 0),
-                )
-            }.isSuccess
-            if (opened) return
-        }
-        // Постранично — основная читалка. skipKoma обязателен: без него прежняя
-        // логика снова увела бы главу в KOMA.
-        // Короткая подпись при входе: в этой читалке нет шапки KOMA, и без
-        // подписи две читалки снова не отличить друг от друга.
         runCatching {
-            android.widget.Toast
-                .makeText(context, "Основная читалка · постранично", android.widget.Toast.LENGTH_SHORT)
-                .show()
+            context.startActivity(
+                KomaReaderActivity.newIntent(context, mangaId, chapterId)
+                    .putExtra("autoread_start", autoRead)
+                    .addFlags(if (context !is android.app.Activity) Intent.FLAG_ACTIVITY_NEW_TASK else 0),
+            )
         }
+    }
+
+    /**
+     * Прежняя читалка — только по плавающей кнопке.
+     *
+     * [fromKoma] = true, когда её открыли из KOMA: тогда «назад» возвращает в
+     * KOMA (она осталась под низом), а не в библиотеку.
+     */
+    fun openLegacy(
+        context: Context,
+        mangaId: Long,
+        chapterId: Long,
+        fromKoma: Boolean,
+    ) {
         context.startActivity(
             ReaderActivity.newIntent(context, mangaId, chapterId)
                 .putExtra("skipKoma", true)
+                .putExtra("from_koma", fromKoma)
                 .addFlags(if (context !is android.app.Activity) Intent.FLAG_ACTIVITY_NEW_TASK else 0),
         )
     }

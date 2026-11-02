@@ -28,11 +28,17 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.animateFloat
@@ -53,6 +59,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.core.content.getSystemService
@@ -157,6 +164,7 @@ import java.io.ByteArrayOutputStream
 import kotlin.coroutines.coroutineContext
 
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.time.Duration.Companion.seconds
@@ -550,25 +558,13 @@ class ReaderActivity : BaseActivity() {
             NotificationReceiver.dismissNotification(this, manga.hashCode(), Notifications.ID_NEW_CHAPTERS)
 
             lifecycleScope.launchNonCancellable {
-                // Две читалки, и выбор запоминается для серии (ReaderLauncher):
-                // «Манга · постранично» — этот экран, «Манхва · вертикальная
-                // лента» — KOMA с рамками по репликам и озвучкой.
-                //
-                // Раньше решала одна настройка на всё приложение, и глава,
-                // открытая из истории или уведомления, уходила в KOMA даже
-                // когда для серии уже выбрали постраничное чтение — отсюда
-                // «читает неправильный вариант, а правильный не читает».
-                val savedReader = eu.kanade.tachiyomi.ui.reader.ReaderLauncher.savedMode(this@ReaderActivity, manga)
-                val komaFirst = when {
-                    intent.extras?.getBoolean("skipKoma") == true -> false
-                    savedReader == eu.kanade.tachiyomi.ui.reader.ReaderLauncher.MODE_PAGES -> false
-                    savedReader == eu.kanade.tachiyomi.ui.reader.ReaderLauncher.MODE_STRIP -> true
-                    else -> runCatching {
-                        uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
-                            .komaReaderFirst().get()
-                    }.getOrDefault(true)
-                }
-                if (komaFirst) {
+                // Читалка одна — KOMA. Сюда (в постраничную) попадают только по
+                // плавающей кнопке из KOMA: она передаёт skipKoma=true. Любой
+                // другой вход — история, уведомление, закладка, старый интент —
+                // уводим в KOMA, иначе открывались ОБЕ читалки и получалась
+                // «каша» из двух экранов и рамок с номерами.
+                val fromKoma = intent.extras?.getBoolean("skipKoma") == true
+                if (!fromKoma) {
                     runCatching {
                         startActivity(
                             eu.kanade.tachiyomi.ui.koma.KomaReaderActivity.newIntent(
@@ -686,6 +682,26 @@ class ReaderActivity : BaseActivity() {
             .launchIn(lifecycleScope)
     }
 
+    /**
+     * Назад в KOMA. Если постраничную читалку открыли плавающей кнопкой из KOMA,
+     * она осталась под низом — достаточно закрыть эту. Иначе открываем KOMA
+     * заново на той же главе.
+     */
+    private fun backToKoma() {
+        if (intent.getBooleanExtra("from_koma", false)) {
+            finish()
+            return
+        }
+        val manga = intent.extras?.getLong("manga", -1L) ?: -1L
+        val chapter = intent.extras?.getLong("chapter", -1L) ?: -1L
+        if (manga > 0 && chapter > 0) {
+            runCatching {
+                startActivity(eu.kanade.tachiyomi.ui.koma.KomaReaderActivity.newIntent(this, manga, chapter))
+            }
+        }
+        finish()
+    }
+
     private fun ReaderActivityBinding.setComposeOverlay(): Unit = composeOverlay.setComposeContent {
         val state by viewModel.state.collectAsState()
         val showPageNumber by readerPreferences.showPageNumber.collectAsState()
@@ -764,6 +780,45 @@ class ReaderActivity : BaseActivity() {
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding(),
                 )
+            }
+
+            // ── Плавающая кнопка возврата в KOMA ────────────────────────────
+            // Постраничная читалка теперь открывается ТОЛЬКО этой дорогой —
+            // плавающей кнопкой из KOMA, поверх неё. Кнопка возвращает назад
+            // (если KOMA осталась под низом — просто закрываем эту читалку) и
+            // перетаскивается, чтобы не закрывать рисунок.
+            run {
+                val mangaId = intent.extras?.getLong("manga", -1L) ?: -1L
+                val chapterId = intent.extras?.getLong("chapter", -1L) ?: -1L
+                if (mangaId > 0 && chapterId > 0) {
+                    var komaFab by remember { mutableStateOf(Offset(0f, 0f)) }
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .padding(end = 10.dp)
+                            .offset {
+                                IntOffset(komaFab.x.roundToInt(), komaFab.y.roundToInt())
+                            }
+                            .size(46.dp)
+                            .clip(CircleShape)
+                            .background(androidx.compose.ui.graphics.Color(0xE62E342C))
+                            .pointerInput(Unit) {
+                                detectDragGestures { change, drag ->
+                                    change.consume()
+                                    komaFab += drag
+                                }
+                            }
+                            .clickable { backToKoma() },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "KOMA",
+                            color = androidx.compose.ui.graphics.Color(0xFFF3A03A),
+                            fontSize = 10.sp,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        )
+                    }
+                }
             }
 
             // ===== Индикатор скриншота в правом верхнем углу =====
