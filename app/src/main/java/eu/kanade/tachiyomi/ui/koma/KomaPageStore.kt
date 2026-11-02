@@ -379,34 +379,42 @@ object KomaPageStore {
         }
 
     /** Поток записи архива: закрытие потока закрывает и архив. */
-    private fun openEntryStream(file: File, name: String): InputStream? = runCatching {
-        when {
-            isZip(file) -> {
-                val zip = ZipFile(file)
-                val entry = zip.getEntry(name)
-                if (entry == null) {
-                    zip.close()
-                    null
-                } else {
-                    ZipEntryStream(zip, zip.getInputStream(entry))
-                }
-            }
-            isRar(file) -> {
-                val rar = Archive(file)
-                val header = rar.fileHeaders.firstOrNull { it.fileName == name }
-                if (header == null) {
-                    rar.close()
-                    null
-                } else {
-                    val out = ByteArrayOutputStream()
-                    rar.extractFile(header, out)
-                    rar.close()
-                    out.toByteArray().inputStream()
-                }
-            }
-            else -> null
+    private fun openEntryStream(file: File, name: String): InputStream? = runCatching<InputStream?> {
+        if (isZip(file)) {
+            return@runCatching openZipEntry(file, name)
         }
+        if (isRar(file)) {
+            return@runCatching openRarEntry(file, name)
+        }
+        null
     }.getOrNull()
+
+    private fun openZipEntry(file: File, name: String): InputStream? {
+        val zip = ZipFile(file)
+        val entry = zip.getEntry(name)
+        if (entry == null) {
+            zip.close()
+            return null
+        }
+        return ZipEntryStream(zip, zip.getInputStream(entry))
+    }
+
+    /** RAR4: junrar не умеет отдавать поток записи, поэтому читаем в память. */
+    private fun openRarEntry(file: File, name: String): InputStream? {
+        val rar = Archive(file)
+        val header = rar.fileHeaders.firstOrNull { it.fileName == name }
+        if (header == null) {
+            rar.close()
+            return null
+        }
+        return try {
+            val out = ByteArrayOutputStream()
+            rar.extractFile(header, out)
+            out.toByteArray().inputStream()
+        } finally {
+            rar.close()
+        }
+    }
 
     private fun readEntry(file: File, name: String): ByteArray? =
         openEntryStream(file, name)?.use { it.readBytes() }

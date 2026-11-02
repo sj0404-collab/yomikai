@@ -126,6 +126,10 @@ class LibraryRepository(val context: Context) {
      * Общая точка для импорта с устройства и скачивания из каталога: копия
      * архива — это максимум места, который занимает книга.
      */
+    /** Естественный порядок: «2.jpg» раньше «10.jpg», а не наоборот. */
+    private fun naturalKey(s: String): String =
+        Regex("\\d+").replace(s.lowercase()) { it.value.padStart(10, '0') }
+
     /** Расширение из имени или ссылки: только буквы и цифры, по умолчанию cbz. */
     private fun extOf(name: String): String {
         val raw = name.substringAfterLast('/', name).substringAfterLast('.', "cbz")
