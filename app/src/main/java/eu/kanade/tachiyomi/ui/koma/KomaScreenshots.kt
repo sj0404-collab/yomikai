@@ -55,10 +55,14 @@ object KomaScreenshots {
             runCatching {
                 // Размеры берём без декодирования — снимок не должен стоить
                 // памяти ещё на одну полную страницу.
-                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 // Страница может лежать в архиве/папке: путь koma:// читается
                 // через KomaPageStore, а не как файл.
-                openPageStream(pagePath)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+                val bytes = pageBytes(pagePath) ?: return@runCatching
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                // Размеры берём из БАЙТОВ, а не из потока: поток архива,
+                // закрытый другим потоком под нативным декодером, — это
+                // SIGSEGV (падение 2026-11-03), а не исключение.
+                runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds) }
                 if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching
 
                 val jpeg = encodePreview(pagePath)
@@ -78,23 +82,32 @@ object KomaScreenshots {
         }
     }
 
-    /** Уменьшенная копия страницы: полная страница вебтуна в JPEG — это мегабайты. */
-    /** Поток страницы: обычный файл или запись архива (koma://). */
-    private fun openPageStream(path: String): java.io.InputStream? =
+    /**
+     * Байты страницы: файл читается целиком, страница архива — через
+     * [KomaPageStore.openBytes]. Поток наружу не отдаётся — см. ниже.
+     */
+    private fun pageBytes(path: String): ByteArray? =
         if (KomaPageStore.isVirtual(path)) {
-            KomaPageStore.openStream(path) ?: KomaPageStore.openBytes(path)?.inputStream()
+            KomaPageStore.openBytes(path)
         } else {
-            File(path.removePrefix("file://")).inputStream()
+            runCatching { File(path.removePrefix("file://")).readBytes() }.getOrNull()
         }
 
+    /** Уменьшенная копия страницы: полная страница вебтуна в JPEG — это мегабайты. */
     private fun encodePreview(path: String): ByteArray? = runCatching {
+        val bytes = pageBytes(path) ?: return null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        openPageStream(path)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds) }
         var sample = 1
         while (bounds.outWidth / sample > 1200 || bounds.outHeight / sample > 2400) sample *= 2
-        val bitmap: Bitmap = openPageStream(path)?.use {
-            BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
-        } ?: return null
+        val bitmap: Bitmap = runCatching {
+            BitmapFactory.decodeByteArray(
+                bytes,
+                0,
+                bytes.size,
+                BitmapFactory.Options().apply { inSampleSize = sample },
+            )
+        }.getOrNull() ?: return null
         ByteArrayOutputStream().use { out ->
             bitmap.compress(Bitmap.CompressFormat.JPEG, 78, out)
             if (!bitmap.isRecycled) bitmap.recycle()

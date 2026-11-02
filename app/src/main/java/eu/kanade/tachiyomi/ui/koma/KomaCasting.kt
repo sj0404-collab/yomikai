@@ -180,16 +180,16 @@ object KomaCasting {
      * собираются безопасно: сбой компиляции превращается в null, а не в краш.
      */
     private val markedRegex: Regex? by lazy {
-        runCatching { Regex("\\{\\s*(?:имя|name)\\s*:\\s*([^}]{1,40})\\}", RegexOption.IGNORE_CASE) }.getOrNull()
+        KomaRegex.compileOrNull("\\{\\s*(?:имя|name)\\s*:\\s*([^}]{1,40})\\}", RegexOption.IGNORE_CASE)
     }
     private val speakerPrefix: Regex? by lazy {
-        runCatching { Regex("^\\s*([\\p{Lu}][\\p{L}]{1,20})\\s*:\\s+") }.getOrNull()
+        KomaRegex.compileOrNull("^\\s*([\\p{Lu}][\\p{L}]{1,20})\\s*:\\s+")
     }
     private val speakerDash: Regex? by lazy {
-        runCatching { Regex("^\\s*([\\p{Lu}][\\p{L}]{1,20})\\s*[—-]\\s+") }.getOrNull()
+        KomaRegex.compileOrNull("^\\s*([\\p{Lu}][\\p{L}]{1,20})\\s*[—-]\\s+")
     }
     private val markedStrip: Regex? by lazy {
-        runCatching { Regex("\\{\\s*(?:имя|name)\\s*:\\s*[^}]{1,40}\\}", RegexOption.IGNORE_CASE) }.getOrNull()
+        KomaRegex.compileOrNull("\\{\\s*(?:имя|name)\\s*:\\s*[^}]{1,40}\\}", RegexOption.IGNORE_CASE)
     }
 
     fun speakerName(text: String): String? {

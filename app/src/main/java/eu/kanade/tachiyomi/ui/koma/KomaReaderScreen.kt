@@ -1271,14 +1271,36 @@ fun KomaReaderScreen(
         onDismissRequest={voiceDialog=false},
         title={Text("Голос для озвучки")},
         text={
-            Column(Modifier.heightIn(max=420.dp).verticalScroll(rememberScrollState())) {
+            Column(Modifier.heightIn(max=440.dp).verticalScroll(rememberScrollState())) {
+                // Список честный: у каждого голоса написано, чем он живёт.
+                // Голоса, которым нужен сервер, пока дорабатываются — они
+                // помечены и не выдают себя за рабочие. Выбор такого голоса без
+                // сети объясняется словами, а не вылетом.
+                Text(
+                    "Офлайн-голоса читают без интернета. Голоса «только онлайн» ещё не доделаны: их звук приходит с сервера, и без сети они молчат.",
+                    fontSize=11.sp,color=Color(0xFFB2B8AD),
+                )
+                Spacer(Modifier.height(8.dp))
                 if(voices.isEmpty()) Text("Система не отдала список голосов. Установите русский голос в настройках синтеза речи Android.",fontSize=12.sp)
-                voices.forEach { v ->
+                // Офлайн-голоса сверху: сначала то, что точно зазвучит.
+                voices.sortedBy { if(tts.needsNetwork(it)) 1 else 0 }.forEach { v ->
+                    val online = tts.needsNetwork(v)
                     Row(Modifier.fillMaxWidth().clickable {
-                        tts.selectVoice(v.name); selectedVoice=v.name; voiceDialog=false
+                        if(tts.selectVoice(v.name)) {
+                            selectedVoice=v.name; voiceDialog=false
+                        } else {
+                            error="«${tts.label(v)}» — голос только онлайн и ещё не доделан: ему нужен интернет. Сейчас сети нет, поэтому он молчал бы. Выберите голос с пометкой «офлайн» — он читает всегда."
+                        }
                     }.padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically) {
                         RadioButton(selected=selectedVoice==v.name,onClick=null)
-                        Text(tts.label(v),fontSize=12.sp,modifier=Modifier.padding(start=10.dp))
+                        Column(Modifier.weight(1f).padding(start=10.dp)) {
+                            Text(tts.label(v),fontSize=12.sp)
+                            Text(
+                                tts.readiness(v),
+                                fontSize=10.sp,
+                                color=if(online) Color(0xFFE0A44A) else Color(0xFF7FBF7F),
+                            )
+                        }
                     }
                 }
             }
