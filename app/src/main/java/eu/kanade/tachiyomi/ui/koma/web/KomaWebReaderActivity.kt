@@ -156,7 +156,7 @@ class KomaWebReaderActivity : ComponentActivity() {
                 }
                 else -> data.data?.let { arrayOf(it) }
             }
-            callback?.onReceiveResult(if (resultCode == Activity.RESULT_OK) uris else null)
+            callback?.onReceiveValue(if (resultCode == Activity.RESULT_OK) uris else null)
             callback = null
             return
         }
@@ -230,14 +230,38 @@ class KomaWebReaderActivity : ComponentActivity() {
         @Volatile
         private var note: String? = null
 
-        private val tts: TextToSpeech = TextToSpeech(activity.applicationContext) { status ->
+        /**
+         * Синтезатор создаётся через [build], потому что движок можно задать
+         * только при создании: сеттера `engine` у TextToSpeech нет.
+         *
+         * Колбэк инициализации приходит С ТОЙ ЖЕ ссылкой на синтезатор: поле
+         * [tts] к этому моменту может быть ещё не присвоено (обратный вызов
+         * приходит асинхронно, но полагаться на это нельзя).
+         */
+        @Volatile
+        private var tts: TextToSpeech = build(null)
+
+        private fun build(engineName: String?): TextToSpeech {
+            val holder = arrayOfNulls<TextToSpeech>(1)
+            val listener = TextToSpeech.OnInitListener { status -> onInit(status, holder[0]) }
+            val made = if (engineName == null) {
+                TextToSpeech(activity.applicationContext, listener)
+            } else {
+                TextToSpeech(activity.applicationContext, listener, engineName)
+            }
+            holder[0] = made
+            return made
+        }
+
+        private fun onInit(status: Int, engine: TextToSpeech?) {
+            if (engine == null) return
             if (status == TextToSpeech.SUCCESS) {
                 runCatching {
-                    val result = tts.setLanguage(Locale("ru", "RU"))
+                    val result = engine.setLanguage(Locale("ru", "RU"))
                     ready = result != TextToSpeech.LANG_MISSING_DATA &&
                         result != TextToSpeech.LANG_NOT_SUPPORTED
                     if (!ready) note = "Русский голос не установлен в системе"
-                    tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                         override fun onStart(utteranceId: String?) {
                             utteranceId?.let { onEvent(SpeechEvent(it, "start", "")) }
                         }
@@ -269,30 +293,42 @@ class KomaWebReaderActivity : ComponentActivity() {
 
         @JavascriptInterface
         fun engines(): String {
+            val engine = tts
             val engines = runCatching {
-                tts.engines.map { it.label.replace("\"", "'") }
+                engine.engines.map { it.label.replace("\"", "'") }
             }.getOrDefault(emptyList())
             return engines.joinToString(prefix = "[", postfix = "]") { quote(it) }
         }
 
-        /** Сменить движок TTS по имени. false — такого движка нет. */
+        /**
+         * Сменить движок TTS по имени. false — такого движка нет.
+         *
+         * Движок задаётся только при создании синтезатора, поэтому меняем его
+         * пересозданием: сначала гасим старый, чтобы не звучали два голоса.
+         */
         @JavascriptInterface
         fun useEngine(name: String): Boolean = runCatching {
-            val target = tts.engines.firstOrNull { it.label == name } ?: return false
-            tts.engine = target.name
+            val current = tts
+            val target = current.engines.firstOrNull { it.label == name } ?: return false
+            val previous = current
+            ready = false
+            runCatching { previous.stop() }
+            runCatching { previous.shutdown() }
+            tts = build(target.name)
             true
         }.getOrDefault(false)
 
         @JavascriptInterface
         fun voices(): String {
+            val engine = tts
             val list = runCatching {
-                tts.voices.orEmpty()
+                engine.voices.orEmpty()
                     .filter { it.locale.language == "ru" }
                     .map { v -> "{\"name\":${quote(v.name)},\"lang\":${quote(v.locale.toLanguageTag())}}" }
             }.getOrDefault(emptyList())
             val all = if (list.isEmpty()) {
                 runCatching {
-                    tts.voices.orEmpty().map { v ->
+                    engine.voices.orEmpty().map { v ->
                         "{\"name\":${quote(v.name)},\"lang\":${quote(v.locale.toLanguageTag())}}"
                     }
                 }.getOrDefault(emptyList())
@@ -308,16 +344,17 @@ class KomaWebReaderActivity : ComponentActivity() {
                 onEvent(SpeechEvent(id, "error", note ?: "tts not ready"))
                 return
             }
+            val engine = tts
             runCatching {
-                runCatching { tts.setSpeechRate(rate.toFloatOrNull()?.coerceIn(0.4f, 2.5f) ?: 1f) }
-                runCatching { tts.setPitch(1f) }
+                runCatching { engine.setSpeechRate(rate.toFloatOrNull()?.coerceIn(0.4f, 2.5f) ?: 1f) }
+                runCatching { engine.setPitch(1f) }
                 if (voice.isNotBlank()) {
-                    runCatching { tts.voices?.firstOrNull { it.name == voice }?.let { tts.voice = it } }
+                    runCatching { engine.voices?.firstOrNull { it.name == voice }?.let { engine.voice = it } }
                 }
                 if (lang.isNotBlank() && !lang.startsWith("ru")) {
-                    runCatching { tts.setLanguage(Locale.forLanguageTag(lang)) }
+                    runCatching { engine.setLanguage(Locale.forLanguageTag(lang)) }
                 }
-                val queued = tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
+                val queued = engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
                 if (queued != TextToSpeech.SUCCESS) onEvent(SpeechEvent(id, "error", "queue"))
             }.onFailure { onEvent(SpeechEvent(id, "error", it.message ?: "tts")) }
         }
@@ -328,8 +365,9 @@ class KomaWebReaderActivity : ComponentActivity() {
         }
 
         fun shutdown() {
-            runCatching { tts.stop() }
-            runCatching { tts.shutdown() }
+            val engine = tts
+            runCatching { engine.stop() }
+            runCatching { engine.shutdown() }
         }
     }
 
