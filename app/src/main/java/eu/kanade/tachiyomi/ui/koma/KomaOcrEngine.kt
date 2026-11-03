@@ -65,6 +65,12 @@ data class PageOcr(
 const val ENGINE_NAME="PaddleOCR · кириллица"
 /** Версия разбора страницы: меняется вместе с логикой порядка чтения. */
 const val READ_ORDER_VERSION="11"
+/**
+ * Ниже скольких найденных областей включается проход по кадру с растянутыми
+ * уровнями (бледный, «прозрачный» текст). Порог маленький намеренно: третий
+ * полный проход стоит секунд, и платить за него каждую страницу незачем.
+ */
+const val TRANSLUCENT_PASS_BELOW=3
 
 class KomaOcrEngine(private val context: Context) {
 
@@ -327,7 +333,12 @@ class KomaOcrEngine(private val context: Context) {
                     // Третий проход — по кадру с растянутыми уровнями: бледный
                     // текст (серое название на обложке) ни на одной из первых
                     // двух попыток не находится.
-                    val boosted=if(main.size<rules.rescueMinRegions) contrastBoost(decoded) else null
+                    // Третий проход — только когда страница почти пуста. Порог
+                    // rescueMinRegions (600 областей) означал «всегда», и на
+                    // каждый кадр уходило три полных прохода модели подряд.
+                    // Бледный текст (серое название на обложке) — это как раз
+                    // случай «первый проход не нашёл ничего».
+                    val boosted=if(main.size<TRANSLUCENT_PASS_BELOW) contrastBoost(decoded) else null
                     val faint=boosted?.let { runCatching { paddlePage(it,rules.rescueSide) }.getOrDefault(emptyList()) }.orEmpty()
                     if(boosted!=null && boosted!==decoded && !boosted.isRecycled) boosted.recycle()
                     val merged=main+rescued(main,rescue+faint)
@@ -506,6 +517,34 @@ class KomaOcrEngine(private val context: Context) {
     private fun appVersionCode():Long {
         val info=context.packageManager.getPackageInfo(context.packageName,0)
         return if(android.os.Build.VERSION.SDK_INT>=28)info.longVersionCode else info.versionCode.toLong()
+    }
+
+    /**
+     * Прогрев моделей в фоне: читалка открывается — движок сразу готовит обе
+     * сессии (детектор и распознаватель).
+     *
+     * Раньше первая страница платила за всё: копию моделей из APK в filesDir и
+     * инициализацию ONNX. В журнале устройства это и есть «последний кадр
+     * 10491 мс» — время ПЕРВОГО кадра, а не каждой страницы. Прогрев делает эту
+     * работу до нажатия «Распознать».
+     */
+    fun warmUp() {
+        if (det != null && rec != null) return
+        thread(isDaemon = true, name = "koma-warmup") {
+            runCatching { if (det == null) det = session("detection.onnx") }
+                .onFailure { note = describe(it) }
+            runCatching { if (rec == null) rec = session("cyrillic.onnx") }
+                .onFailure { note = describe(it) }
+        }
+    }
+
+    /** Кадр страницы так, как его увидит распознавание: полоса вебтуна или лист. */
+    fun imageFor(book: Book, page: Int, band: KomaBand): Bitmap? {
+        val path = book.pages.getOrNull(page) ?: return null
+        return runCatching {
+            val decoded = if (band.whole) bitmap(path) else region(path, band)
+            upscaleForOcr(decoded)
+        }.onFailure { lastError = describe(it) }.getOrNull()
     }
 
     /** Освобождение моделей: вызывается при выходе из читалки. */

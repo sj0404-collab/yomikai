@@ -176,6 +176,10 @@ fun KomaReaderScreen(
     val languageNow by rememberUpdatedState(language)
     val bookNow by rememberUpdatedState(book)
     val ocrQueue = remember(book.id) {
+        // Прогрев наперёд — только у встроенного движка (см. проверку ниже, в
+        // LaunchedEffect): плагин из настроек читает по одной странице, и
+        // «тёплый» локальный результат потом выдавался бы за его — так и
+        // выглядело «движок не сменился».
         KomaOcrQueue(scope) { p, b -> engine.recognize(bookNow, p, languageNow, false, b) }
     }
     DisposableEffect(book.id) { onDispose { ocrQueue.cancel() } }
@@ -306,6 +310,13 @@ fun KomaReaderScreen(
     var showRegions by remember { mutableStateOf(false) }
     var deleteConfirm by remember { mutableStateOf(false) }
     val clipboard=LocalClipboardManager.current
+    val engineOptions = remember {
+        KomaEngineChoice.options(KomaEngineAvailability.availableIds(context))
+    }
+    var engineId by remember { mutableStateOf(KomaEngineChoice.resolveId(repo.prefs.getString(KomaEngineChoice.PREF_KEY, KomaEngineChoice.LOCAL_ID))) }
+    // Сообщение о том, что выбранный движок не отдал текст: страница прочитана
+    // локально, и об этом сказано словами, а не пустым экраном.
+    var engineNote by remember { mutableStateOf<String?>(null) }
     fun save(b: Book) {book=b;onUpdate(b)}
     fun scan(all:Boolean=false,force:Boolean=false) {
         scanJob?.cancel()
@@ -329,7 +340,28 @@ fun KomaReaderScreen(
                     // вебтуна это видимая часть, а не вся страница целиком.
                     val current=page
                     val currentBand=band
-                    val r=engine.recognize(book,current,language,force,currentBand)
+                    // Выбранный движок: встроенный KOMA или плагин из настроек
+                    // (ML Kit, Google Lens, Gemini, OpenRouter, OwOCR, …).
+                    val chosenModel=KomaEngineChoice.modelOf(engineId)
+                    var bridged:PageOcr?=null
+                    if(chosenModel!=null) {
+                        val frame=withContext(Dispatchers.IO) { engine.imageFor(book,current,currentBand) }
+                        if(frame!=null) {
+                            bridged=KomaEngineBridge.read(
+                                context=context.applicationContext,
+                                image=frame,
+                                model=chosenModel,
+                                bookId=book.id,
+                                pageIndex=current,
+                            )
+                        }
+                        engineNote=if(bridged==null)
+                            "«${engineOptions.firstOrNull{it.id==engineId}?.title ?: engineId}» не дал текста этой странице. Прочитано встроенным KOMA (офлайн) — результат не потерян, но движок другой."
+                        else null
+                    } else {
+                        engineNote=null
+                    }
+                    val r=bridged ?: engine.recognize(book,current,language,force,currentBand)
                     if(current==currentPage && currentBand.index==band.index)result=r
                     // Буфер строк: то, что распознавание вернуло, ложится на диск.
                     // Дальше правку правил можно проверять без нового OCR —
@@ -369,9 +401,20 @@ fun KomaReaderScreen(
     LaunchedEffect(page,bandIndex,viewportPx,viewportFraction,language,scrollBusy) {
         if(scanning) return@LaunchedEffect
         if(semiManual && scrollBusy) return@LaunchedEffect
-        if(engine.cached(book.id,page,language,slot(band))==null) ocrQueue.enqueue(page,band,urgent=true)
-        ocrQueue.warmAhead(page,book.pages.lastIndex) { bandsOf(it) }
+        // Прогрев локальным движком — только когда читает он сам.
+        if(KomaEngineChoice.modelOf(engineId)==null) {
+            if(engine.cached(book.id,page,language,slot(band))==null) ocrQueue.enqueue(page,band,urgent=true)
+            ocrQueue.warmAhead(page,book.pages.lastIndex) { bandsOf(it) }
+        }
     }
+    // ── Движок распознавания ────────────────────────────────────────────────
+    // Пока читалка знала только встроенный PP-OCR, список движков из настроек
+    // на неё не влиял: «в основной читалке мгновенно, а в KOMA — нет, и движок
+    // не сменился». Здесь выбор читалки, и он честный: у каждого пункта
+    // написано, офлайн он или через сеть.
+    // Модели греются в фоне сразу: первый кадр не должен платить за
+    // инициализацию ONNX (в журнале это «последний кадр 10491 мс»).
+    LaunchedEffect(book.id) { runCatching { engine.warmUp() } }
     DisposableEffect(Unit){
         val window=(context as? android.app.Activity)?.window
         if(repo.prefs.getBoolean("keepAwake",true))window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -1003,9 +1046,56 @@ fun KomaReaderScreen(
                 TextButton(onClick={deleteConfirm=true}){Icon(Icons.Outlined.DeleteOutline,null,Modifier.size(18.dp));Text("  Удалить из библиотеки")}
             }
             "ocr" -> Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).imePadding().padding(horizontal=24.dp).padding(bottom=22.dp)) {
-                Row(verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(if(bands.size>1 && !band.whole) "Текст страницы ${page+1} · экран ${band.index+1}/${bands.size}" else "Текст страницы ${page+1}",fontSize=23.sp,fontWeight=FontWeight.Bold);Text(result?.engine ?: "$ENGINE_NAME · офлайн",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=5.dp))};Icon(Icons.Outlined.VerifiedUser,null,tint=MaterialTheme.colorScheme.secondary)}
+                Row(verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(if(bands.size>1 && !band.whole) "Текст страницы ${page+1} · экран ${band.index+1}/${bands.size}" else "Текст страницы ${page+1}",fontSize=23.sp,fontWeight=FontWeight.Bold);Text(result?.engine ?: (engineOptions.firstOrNull{it.id==engineId}?.let { "${it.title} · ${if(it.online) "онлайн" else "офлайн"}" } ?: "$ENGINE_NAME · офлайн"),fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=5.dp))};Icon(Icons.Outlined.VerifiedUser,null,tint=MaterialTheme.colorScheme.secondary)}
                 Spacer(Modifier.height(12.dp))
                 LanguageChooser(language){language=it}
+                // ── Каким движком читать ────────────────────────────────────
+                // Список тот же, что в «Настройках → Распознавание», и это
+                // главное: раньше выбор там на читалку не влиял вообще.
+                Text("ДВИЖОК РАСПОЗНАВАНИЯ",fontSize=10.sp,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=14.dp))
+                engineOptions.forEach { option ->
+                    val selected = option.id == engineId
+                    Row(
+                        Modifier.fillMaxWidth().clickable {
+                            engineId = option.id
+                            repo.prefs.edit().putString(KomaEngineChoice.PREF_KEY, option.id).apply()
+                            engineNote = null
+                            // Кэш распознавания принадлежит прежнему движку:
+                            // оставлять его — значит показывать старый текст
+                            // под новым названием движка.
+                            runCatching { engine.clear() }
+                            // Движок сменился — прежний результат к нему не
+                            // относится: страница читается заново.
+                            if(result!=null) scan(force=true)
+                        }.padding(vertical=6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected=selected,onClick=null)
+                        Column(Modifier.weight(1f).padding(start=10.dp)) {
+                            Text(option.title,fontSize=12.sp)
+                            Text(
+                                buildString {
+                                    append(option.readiness)
+                                    if (option.requirement != "офлайн") append(" · ").append(option.requirement)
+                                    if (!option.available) append(" · сейчас недоступен")
+                                },
+                                fontSize=10.sp,
+                                color=when {
+                                    !option.available -> MaterialTheme.colorScheme.error
+                                    option.online -> Color(0xFFE0A44A)
+                                    else -> Color(0xFF7FBF7F)
+                                },
+                            )
+                        }
+                    }
+                }
+                engineNote?.let { note ->
+                    Text(note,fontSize=11.sp,color=Color(0xFFE0A44A),modifier=Modifier.padding(top=4.dp,bottom=4.dp))
+                }
+                Text(
+                    "«Всю книгу» читает встроенным KOMA (офлайн): это быстро и без трафика. Онлайн-движки читают по одной странице.",
+                    fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(bottom=8.dp),
+                )
                 if(scanning){LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical=16.dp));Text(if(batchTotal>0)"Обработано $batchProgress из $batchTotal страниц" else "Нейросеть читает изображение…",fontSize=12.sp)}
                 // Текст по порядку чтения — то же, что слышно в озвучке. Сырые
                 // области детектора остаются на случай разбора: их видно, если

@@ -73,7 +73,8 @@ fun KomaReaderSettingsSheet(
         Text("Как читать эту историю", fontSize = 23.sp)
         Spacer(Modifier.height(4.dp))
         Text(
-            "Распознавание — движок KOMA (PP-OCRv4 + CTC), модели в APK",
+            "Язык распознавания. Движок (KOMA, ML Kit, Lens, Gemini, OpenRouter…) " +
+                "выбирается в «Текст страницы» → «Движок распознавания».",
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
