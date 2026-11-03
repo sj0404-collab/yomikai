@@ -247,6 +247,15 @@
             android:configChanges="uiMode|orientation|screenSize|screenLayout|keyboardHidden"
             android:theme="@style/Theme.Tachiyomi" />
 
+        <!-- Проверенная HTML-читалка: та же страница, что тестировалась в браузере.
+             WebView + нативные мосты голоса (KomaSpeech) и OCR (KomaLens). -->
+        <activity
+            android:name=".ui.koma.web.KomaWebReaderActivity"
+            android:exported="false"
+            android:configChanges="uiMode|orientation|screenSize|screenLayout|keyboardHidden"
+            android:hardwareAccelerated="true"
+            android:theme="@style/Theme.Tachiyomi" />
+
         <!-- Кнопки уведомления авточтения: пауза, пропуск реплики, стоп. -->
         <receiver
             android:name=".ui.koma.KomaAutoReadReceiver"

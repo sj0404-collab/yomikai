@@ -70,6 +70,10 @@ fun KomaSection(onReaderOpen: (Boolean) -> Unit = {}) {
                 Text("KOMA",Modifier.padding(start=10.dp).weight(1f),fontSize=24.sp,fontWeight=FontWeight.Black,letterSpacing=2.sp)
                 IconButton(onClick={searching=!searching;tab=0},modifier=Modifier.size(40.dp).border(1.dp,MaterialTheme.colorScheme.outlineVariant,CircleShape)) { Icon(Icons.Outlined.Search,"Поиск",Modifier.size(21.dp)) }
                 Spacer(Modifier.width(10.dp))
+                // Проверенная HTML-читалка: открывается сразу, без выбора книги.
+                // Её библиотека своя (IndexedDB), файлы добавляются её же кнопкой.
+                IconButton(onClick={ runCatching { context.startActivity(eu.kanade.tachiyomi.ui.koma.web.KomaWebReaderActivity.newIntent(context)) } },modifier=Modifier.size(40.dp).border(1.dp,MaterialTheme.colorScheme.outlineVariant,CircleShape)) { Icon(Icons.Outlined.Language,"HTML-читалка",Modifier.size(20.dp)) }
+                Spacer(Modifier.width(10.dp))
                 FilledIconButton(onClick={picker.launch(arrayOf("*/*"))},modifier=Modifier.size(40.dp),shape=RoundedCornerShape(13.dp),colors=IconButtonDefaults.filledIconButtonColors(containerColor=Orange)) { Icon(Icons.Default.Add,"Добавить архив") }
             }
             if(searching) OutlinedTextField(query,{query=it},placeholder={Text("Найти на своей полке")},leadingIcon={Icon(Icons.Outlined.Search,null)},singleLine=true,modifier=Modifier.fillMaxWidth().padding(horizontal=22.dp),shape=RoundedCornerShape(16.dp))

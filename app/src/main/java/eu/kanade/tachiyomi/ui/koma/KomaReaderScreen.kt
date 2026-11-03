@@ -735,6 +735,16 @@ fun KomaReaderScreen(
                         DropdownMenuItem(text={Text("Как читать эту историю")},onClick={sheet="settings";overflow=false})
                         DropdownMenuItem(text={Text("Как читается")},onClick={sheet="speech";overflow=false})
                         DropdownMenuItem(text={Text("Голоса персонажей")},onClick={sheet="voices";overflow=false})
+                        // Проверенная HTML-читалка: та же страница, что прошла
+                        // сквозные тесты. Открывается отдельным экраном, потому
+                        // что у неё своя библиотека (IndexedDB) и свой разбор.
+                        DropdownMenuItem(
+                            text={Text("HTML-читалка (проверенная)")},
+                            onClick={
+                                overflow=false
+                                runCatching { context.startActivity(eu.kanade.tachiyomi.ui.koma.web.KomaWebReaderActivity.newIntent(context)) }
+                            },
+                        )
                         DropdownMenuItem(text={Text("Все страницы")},onClick={sheet="pages";overflow=false})
                         DropdownMenuItem(text={Text("Рамки текста")},onClick={showRegions=!showRegions;overflow=false})
                         DropdownMenuItem(text={Text("Правила и буфер строк")},onClick={sheet="rules";overflow=false})
