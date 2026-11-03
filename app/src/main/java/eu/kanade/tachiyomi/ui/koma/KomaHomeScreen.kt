@@ -78,7 +78,7 @@ fun KomaSection(onReaderOpen: (Boolean) -> Unit = {}) {
             }
             if(searching) OutlinedTextField(query,{query=it},placeholder={Text("Найти на своей полке")},leadingIcon={Icon(Icons.Outlined.Search,null)},singleLine=true,modifier=Modifier.fillMaxWidth().padding(horizontal=22.dp),shape=RoundedCornerShape(16.dp))
             when(tab) {
-                0 -> LibraryScreen(books,query,category,{category=it},{selected=it},{tab=1},{tab=2},{picker.launch(arrayOf("*/*"))})
+                0 -> LibraryScreen(books,query,category,{category=it},{ book -> runCatching { context.startActivity(eu.kanade.tachiyomi.ui.koma.web.KomaWebReaderActivity.newIntent(context,book.id)) } },{tab=1},{tab=2},{picker.launch(arrayOf("*/*"))},{selected=it})
                 1 -> CatalogScreen(repo,books,onAdded={b->update(listOf(b)+books)},onMessage={message=it})
                 2 -> AiStudioScreen(repo,engine){message=it}
                 3 -> SettingsScreenKoma(repo,engine,books,theme,onTheme={value->theme=value;repo.prefs.edit().putString("theme",value).apply()},onMessage={message=it})
@@ -90,7 +90,7 @@ fun KomaSection(onReaderOpen: (Boolean) -> Unit = {}) {
 }
 
 @Composable
-fun LibraryScreen(books: List<Book>,query: String,category: String,onCategory: (String)->Unit,onBook: (Book)->Unit,onCatalog: ()->Unit,onAi: ()->Unit,onImport: ()->Unit) {
+fun LibraryScreen(books: List<Book>,query: String,category: String,onCategory: (String)->Unit,onBook: (Book)->Unit,onCatalog: ()->Unit,onAi: ()->Unit,onImport: ()->Unit,onBookLong: ((Book)->Unit)? = null) {
     var reversed by remember { mutableStateOf(false) }
     var favorites by remember { mutableStateOf(false) }
     val filtered=books.filter { (category=="Все" || it.category==category) && it.title.contains(query,true) && (!favorites || it.favorite) }.let { if(reversed)it.reversed() else it }
@@ -137,7 +137,7 @@ fun LibraryScreen(books: List<Book>,query: String,category: String,onCategory: (
         if(filtered.isEmpty()) item { Column(Modifier.fillMaxWidth().padding(28.dp),horizontalAlignment=Alignment.CenterHorizontally) { Icon(Icons.Outlined.MenuBook,null,Modifier.size(36.dp),tint=Orange);Spacer(Modifier.height(12.dp));Text("Здесь начнётся новая история",fontWeight=FontWeight.SemiBold);Text("Добавьте CBZ, CBR или PDF",fontSize=12.sp,color=MaterialTheme.colorScheme.onSurfaceVariant);TextButton(onClick=onImport){Text("Добавить книгу")}} }
         items(filtered.chunked(2)) { row ->
             Row(Modifier.padding(horizontal=22.dp).padding(bottom=20.dp),horizontalArrangement=Arrangement.spacedBy(14.dp)) {
-                row.forEach { book -> BookCard(book,Modifier.weight(1f)){onBook(book)} }
+                row.forEach { book -> BookCard(book,Modifier.weight(1f),onClick={onBook(book)},onLongClick=onBookLong?.let{ long -> { long(book) } }) }
                 if(row.size==1) Spacer(Modifier.weight(1f))
             }
         }
@@ -146,8 +146,12 @@ fun LibraryScreen(books: List<Book>,query: String,category: String,onCategory: (
 }
 
 @Composable
-fun BookCard(book: Book,modifier: Modifier=Modifier,onClick: ()->Unit) {
-    Column(modifier.clip(RoundedCornerShape(14.dp)).clickable(onClick=onClick)) {
+@OptIn(ExperimentalFoundationApi::class)
+fun BookCard(book: Book,modifier: Modifier=Modifier,onClick: ()->Unit,onLongClick: (()->Unit)?=null) {
+    // Обычное нажатие открывает проверенную HTML-читалку (видимая область,
+    // страница за страницей). Долгое — прежнюю Compose-читалку: она остаётся,
+    // но по умолчанию больше не открывается, чтобы не подменять проверенную.
+    Column(modifier.clip(RoundedCornerShape(14.dp)).combinedClickable(onClick=onClick,onLongClick=onLongClick)) {
         Box(Modifier.fillMaxWidth().aspectRatio(.73f).clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
             // Обложка книги из локальной библиотеки — первая страница архива;
             // она читается напрямую из источника (KomaPageStore), копий нет.

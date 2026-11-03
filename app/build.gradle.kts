@@ -29,6 +29,13 @@ val keystorePropertiesFile = rootProject.file("keystore.properties")
 android {
     namespace = "eu.kanade.tachiyomi"
 
+    // Читалка — один файл koma-web.html на 11 МБ внутри assets. Его нельзя
+    // сжимать: Android тогда отдаёт файл только потоком через AssetManager, а
+    // нам нужен обычный файл на диске. Без сжатия упаковка предсказуема.
+    androidResources {
+        noCompress += listOf("html", "onnx")
+    }
+
     defaultConfig {
         applicationId = "app.yomikai"
 
