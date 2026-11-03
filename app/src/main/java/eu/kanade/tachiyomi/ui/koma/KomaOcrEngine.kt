@@ -123,9 +123,43 @@ class KomaOcrEngine(private val context: Context) {
     // Полоса страницы — отдельная единица распознавания (см. KomaBands): у
     // длинного вебтуна каждая полоса кэшируется сама по себе, иначе кэш одного
     // экрана затирал бы другой.
-    private fun cacheFile(id:String,page:Int,language:String,band:Int=0)=File(root,"${id}_${page}_${language}_b$band"+"_$READ_ORDER_VERSION.json")
-    fun cached(id:String,page:Int,language:String,band:Int=0):PageOcr? = runCatching { PageOcr.from(JSONObject(cacheFile(id,page,language,band).readText())) }.getOrNull()
-    fun store(id:String,page:Int,language:String,result:PageOcr,band:Int=0){cacheFile(id,page,language,band).writeText(result.json().toString())}
+    /**
+     * Имя файла кэша.
+     *
+     * Идентификатор книги бывает ПУТЁМ: у глав это `chapter/66`. Подставлять его
+     * в имя файла нельзя — получался `files/ocr/chapter/66_5_….json`, а папки
+     * `chapter` не существует. Отсюда падало `FileNotFoundException: ENOENT` —
+     * и, что хуже, падало ПОСЛЕ успешного распознавания: 30 прочитанных реплик
+     * выбрасывались вместе с записью в кэш, а на экране было «Текст не найден».
+     * Теперь путь и всё недопустимое в имени заменяется на `_`.
+     */
+    private fun cacheName(id:String,page:Int,language:String,band:Int):String =
+        id.replace(Regex("[^\\p{L}\\p{N}._-]"), "_") +
+            "_${page}_${language.replace(Regex("[^\\p{L}\\p{N}._-]"), "_")}_b${band}" +
+            "_$READ_ORDER_VERSION.json"
+
+    private fun cacheFile(id:String,page:Int,language:String,band:Int=0)=File(root,cacheName(id,page,language,band))
+
+    fun cached(id:String,page:Int,language:String,band:Int=0):PageOcr? =
+        runCatching { PageOcr.from(JSONObject(cacheFile(id,page,language,band).readText())) }.getOrNull()
+
+    /**
+     * Запись в кэш НИКОГДА не бросает исключение.
+     *
+     * Кэш — удобство, а не данные: если он не записался (нет места, занятое
+     * имя, гонка), результат распознавания всё равно должен дойти до экрана.
+     */
+    fun store(id:String,page:Int,language:String,result:PageOcr,band:Int=0) {
+        runCatching {
+            root.mkdirs()
+            val file=cacheFile(id,page,language,band)
+            file.parentFile?.mkdirs()
+            file.writeText(result.json().toString())
+        }.onFailure { debugNote("кэш не записался: ${it.message}") }
+    }
+
+    /** Заметка для диагностики: не ошибка чтения, но полезно видеть. */
+    private fun debugNote(text:String) { diagLine(text) }
     /** Есть ли готовый разбор хотя бы одной полосы страницы. */
     fun cachedAny(id:String,page:Int,language:String):PageOcr? =
         cached(id,page,language) ?: (1..MAX_BANDS).firstNotNullOfOrNull { cached(id,page,language,it) }
@@ -382,14 +416,20 @@ class KomaOcrEngine(private val context: Context) {
                 val sorted=if(book.mode=="rtl" && script=="Японский") regions.sortedWith(compareByDescending<OcrRegion> { (it.left*40).toInt() }.thenBy { it.top }) else regions.sortedWith(compareBy<OcrRegion> { (it.top*80).toInt() }.thenBy { if(book.mode=="rtl")-it.left else it.left })
                 // Панели ищутся по тому же изображению, что ушло в распознавание:
                 // порядок чтения потом идёт по кадрам (KomaReadingOrder).
-                val rawPanels=if(script=="Кириллица") panelsOf(image) else emptyList()
+                // Панели — вспомогательная разметка: их сбой не должен уносить
+                // уже прочитанный текст (именно так «0 областей» появлялось
+                // после удачного распознавания).
+                val rawPanels=if(script=="Кириллица") runCatching { panelsOf(image) }.getOrElse { e -> noteOcrFailure(e); emptyList() } else emptyList()
                 // Координаты полосы переводим в координаты СТРАНИЦЫ: экран, рамки
                 // и подсветка работают с одним и тем же масштабом.
                 val onPage=if(band.whole) sorted else sorted.map { it.copy(top=band.mapY(it.top),bottom=band.mapY(it.bottom)) }
                 val panels=if(band.whole) rawPanels else rawPanels.map { KomaPanels.Box(it.left,band.mapY(it.top),it.right,band.mapY(it.bottom)) }
                 diagLine("итого областей: ${onPage.size}, движок: ${if(script=="Кириллица") ENGINE_NAME else "ML Kit · $script"}")
+                val pageOcr=PageOcr(onPage,if(script=="Кириллица")ENGINE_NAME else "ML Kit · $script",System.currentTimeMillis()-start,panels=panels)
                 lastDiagnostics=diag.toString().trim().ifBlank { null }
-                PageOcr(onPage,if(script=="Кириллица")ENGINE_NAME else "ML Kit · $script",System.currentTimeMillis()-start,panels=panels).also { store(book.id,page,language,it,slot) }
+                // Результат уже собран — сначала до экрана, потом кэш.
+                store(book.id,page,language,pageOcr,slot)
+                pageOcr
             } catch(t:Throwable) {
                 if(t is kotlinx.coroutines.CancellationException) throw t
                 // Битая страница, нехватка памяти, сбой нативного ONNX — всё
