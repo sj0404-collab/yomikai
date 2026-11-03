@@ -532,9 +532,9 @@ class KomaOcrEngine(private val context: Context) {
         if (det != null && rec != null) return
         thread(isDaemon = true, name = "koma-warmup") {
             runCatching { if (det == null) det = session("detection.onnx") }
-                .onFailure { note = describe(it) }
+                .onFailure { lastError = describe(it) }
             runCatching { if (rec == null) rec = session("cyrillic.onnx") }
-                .onFailure { note = describe(it) }
+                .onFailure { lastError = describe(it) }
         }
     }
 
