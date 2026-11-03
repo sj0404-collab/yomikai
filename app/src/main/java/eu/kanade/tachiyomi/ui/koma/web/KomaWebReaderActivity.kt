@@ -55,6 +55,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import mihon.domain.ocr.model.OcrImage
+import mihon.domain.ocr.model.OcrModel
+import mihon.domain.ocr.repository.OcrRepository
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.io.File
 import java.io.InputStream
 import java.util.Locale
@@ -692,16 +697,12 @@ class KomaWebReaderActivity : ComponentActivity() {
                         val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                             ?: error("кадр не декодировался")
                         val text = runCatching {
-                            val repository = uy.kohesive.injekt.Injekt.get<
-                                mihon.domain.ocr.repository.OcrRepository>()
+                            val repository = Injekt.get<OcrRepository>()
                             val width = bitmap.width
                             val height = bitmap.height
                             val pixels = IntArray(width * height)
                             bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
-                            repository.recognizeText(
-                                mihon.domain.ocr.model.OcrImage(width, height, pixels),
-                                mihon.domain.ocr.model.OcrModel.GLENS,
-                            )
+                            repository.recognizeText(OcrImage(width, height, pixels), OcrModel.GLENS)
                         }.getOrElse { e -> error(e.message ?: "Lens недоступен") }
                         if (bitmap.isRecycled.not()) bitmap.recycle()
                         val lines = text.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
