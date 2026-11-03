@@ -298,6 +298,10 @@ fun KomaReaderScreen(
         mutableStateOf(!repo.prefs.getBoolean("voiceAsk_${book.id}", false))
     }
     var result by remember { mutableStateOf<PageOcr?>(null) }
+    // Что увидел движок на этом кадре (см. KomaOcrEngine.lastDiagnostics).
+    // Показывается в «Тексте страницы»: «0 областей» без подробностей ничего не
+    // объясняет, а именно на это и была жалоба «по-прежнему молчит».
+    var diagText by remember { mutableStateOf<String?>(null) }
     var scanJob by remember { mutableStateOf<Job?>(null) }
     var scrollJob by remember { mutableStateOf<Job?>(null) }
     // Прогрев идёт через KomaOcrQueue (см. ниже): одна текущая полоса и две
@@ -334,6 +338,7 @@ fun KomaReaderScreen(
                         batchProgress=n+1
                     }
                     engine.lastError?.let { error=it }
+                    diagText=engine.lastDiagnostics
                     if(failed>0) error=(error?.plus("\n\n") ?: "")+"Не удалось обработать страниц: $failed"
                 } else {
                     // Распознаём ТУ полосу, которая на экране: у длинного
@@ -355,8 +360,10 @@ fun KomaReaderScreen(
                                 pageIndex=current,
                             )
                         }
+                        val hint=if(chosenModel==mihon.domain.ocr.model.OcrModel.MLKIT && language!="Латиница")
+                            " ML Kit читает только латиницу — для русского он не подходит, выберите KOMA или языковую модель." else ""
                         engineNote=if(bridged==null)
-                            "«${engineOptions.firstOrNull{it.id==engineId}?.title ?: engineId}» не дал текста этой странице. Прочитано встроенным KOMA (офлайн) — результат не потерян, но движок другой."
+                            "«${engineOptions.firstOrNull{it.id==engineId}?.title ?: engineId}» не дал текста этой странице.$hint Прочитано встроенным KOMA (офлайн) — результат не потерян, но движок другой."
                         else null
                     } else {
                         engineNote=null
@@ -378,6 +385,7 @@ fun KomaReaderScreen(
                         )
                     }
                     engine.lastError?.let { error=it }
+                    diagText=if(bridged==null) engine.lastDiagnostics else null
                 }
             } catch(e:CancellationException){throw e}catch(e:Throwable){error=e.localizedMessage ?: e::class.simpleName ?: "Распознавание не удалось"}finally{scanning=false;batchTotal=0}
         }
@@ -1091,6 +1099,19 @@ fun KomaReaderScreen(
                 }
                 engineNote?.let { note ->
                     Text(note,fontSize=11.sp,color=Color(0xFFE0A44A),modifier=Modifier.padding(top=4.dp,bottom=4.dp))
+                }
+                // Диагностика кадра: видно, на каком шаге кончился текст.
+                // Без неё «0 областей» — это просто тишина без причины.
+                diagText?.let { text ->
+                    Text("ЧТО УВИДЕЛ ДВИЖОК",fontSize=10.sp,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=10.dp))
+                    Text(
+                        text,
+                        fontSize=10.sp,
+                        lineHeight=14.sp,
+                        fontFamily=FontFamily.Monospace,
+                        color=MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier=Modifier.fillMaxWidth().padding(vertical=4.dp),
+                    )
                 }
                 Text(
                     "«Всю книгу» читает встроенным KOMA (офлайн): это быстро и без трафика. Онлайн-движки читают по одной странице.",

@@ -281,6 +281,24 @@ class KomaOcrEngine(private val context: Context) {
     var lastError:String?=null
         private set
 
+    /**
+     * Диагностика последнего кадра: размер кадра, сколько рамок дал детектор,
+     * сколько строк разрезано и прочитано, сколько отсеял фильтр.
+     *
+     * Нужна, потому что «0 областей» без подробностей ничего не объясняет:
+     * молчит детектор, молчит распознаватель или бракует фильтр — это три
+     * разные поломки и три разных лечения.
+     */
+    var lastDiagnostics:String?=null
+        private set
+
+    private val diag = StringBuilder()
+
+    private fun diagLine(text:String) {
+        if(diag.length>4000) return
+        diag.append(text).append('\n')
+    }
+
     private fun describe(t:Throwable):String = when(t) {
         is OutOfMemoryError -> "Не хватило памяти на страницу. Закройте другие приложения и повторите."
         is UnsatisfiedLinkError -> "Не загрузилось ядро ONNX для этого телефона: ${t.message}"
@@ -299,6 +317,7 @@ class KomaOcrEngine(private val context: Context) {
     suspend fun recognize(book:Book,page:Int,language:String,force:Boolean=false,band:KomaBand=KomaBand.Whole):PageOcr = withContext(Dispatchers.Default) {
         mutex.withLock {
             lastError=null
+            diag.setLength(0)
             val start=System.currentTimeMillis()
             // Ключ кэша: 0 — страница целиком, 1..N — полосы. Иначе кэш одного
             // экрана длинного вебтуна затирал бы соседние.
@@ -313,6 +332,7 @@ class KomaOcrEngine(private val context: Context) {
             // пропадала целая реплика. Предел — 12 Мпкс, чтобы не ловить OOM.
             refreshRules()
             val image=upscaleForOcr(decoded)
+            diagLine("страница: ${decoded.width}×${decoded.height}, в распознавание: ${image.width}×${image.height}")
             try {
                 val script=if(language=="Авто")if(book.category=="Комиксы")"Латиница" else "Японский" else language
                 val regions=mutableListOf<OcrRegion>()
@@ -367,12 +387,16 @@ class KomaOcrEngine(private val context: Context) {
                 // и подсветка работают с одним и тем же масштабом.
                 val onPage=if(band.whole) sorted else sorted.map { it.copy(top=band.mapY(it.top),bottom=band.mapY(it.bottom)) }
                 val panels=if(band.whole) rawPanels else rawPanels.map { KomaPanels.Box(it.left,band.mapY(it.top),it.right,band.mapY(it.bottom)) }
+                diagLine("итого областей: ${onPage.size}, движок: ${if(script=="Кириллица") ENGINE_NAME else "ML Kit · $script"}")
+                lastDiagnostics=diag.toString().trim().ifBlank { null }
                 PageOcr(onPage,if(script=="Кириллица")ENGINE_NAME else "ML Kit · $script",System.currentTimeMillis()-start,panels=panels).also { store(book.id,page,language,it,slot) }
             } catch(t:Throwable) {
                 if(t is kotlinx.coroutines.CancellationException) throw t
                 // Битая страница, нехватка памяти, сбой нативного ONNX — всё
                 // остаётся сообщением на экране, а приложение продолжает жить.
                 lastError=describe(t)
+                diagLine("сбой: ${describe(t)}")
+                lastDiagnostics=diag.toString().trim().ifBlank { null }
                 PageOcr(emptyList(),ENGINE_NAME,System.currentTimeMillis()-start)
             } finally {
                 // Кэшированный битмап не освобождаем: он принадлежит экрану,
@@ -575,29 +599,71 @@ class KomaOcrEngine(private val context: Context) {
         // Сторона детектора: явный аргумент (страховочные проходы) главнее
         // значения из правил.
         val side = if (requestedSide > 0f) requestedSide else rules.pageSide
+        val pass = if (requestedSide > 0f) "страховочный" else "основной"
         if(det==null)det=session("detection.onnx")
         if(rec==null)rec=session("cyrillic.onnx")
         val out=mutableListOf<OcrRegion>()
-        for(box in detectPage(image,side).take(400)) {
-            for(line in textLines(image,box)) {
-                var crop=Bitmap.createBitmap(image,line.left,line.top,line.width(),line.height())
-                if(crop.height>crop.width*1.8f) {
-                    val rotated=Bitmap.createBitmap(crop,0,0,crop.width,crop.height,Matrix().apply { postRotate(90f) },true)
-                    if(!crop.isRecycled)crop.recycle()
-                    crop=rotated
+        // Строки, которые распознаватель ПРОЧИТАЛ, но фильтр забраковал. Раньше
+        // они выбрасывались молча: если брак получался на всей странице,
+        // читалка показывала «Текст не найден» и выглядела сломанной. Теперь они
+        // идут в дело, если ничего лучше нет, — и это видно в диагностике.
+        val spare=mutableListOf<OcrRegion>()
+        val boxes = runCatching { detectPage(image,side) }.getOrElse { e -> noteOcrFailure(e); emptyList() }
+        diagLine("$pass: кадр ${image.width}×${image.height}, рамок от детектора: ${boxes.size}")
+        // ДЕТЕКТОР МОЛЧИТ — СТРАНИЦА ВСЁ РАВНО ЧИТАЕТСЯ.
+        // Раньше единственным источником рамок был детектор: не ответил он — и
+        // весь кадр оставался без текста. Теперь строки режутся по чернилам
+        // (тот же профиль тёмных пикселей, что и внутри рамки), без модели.
+        val lines: List<Rect> = if (boxes.isNotEmpty()) {
+            boxes.take(400).flatMap { box -> runCatching { textLines(image,box) }.getOrDefault(emptyList()) }
+        } else {
+            val byInk = runCatching { textLines(image, Rect(0,0,image.width,image.height)) }.getOrDefault(emptyList())
+            diagLine("$pass: детектор не дал рамок → режу по чернилам, строк: ${byInk.size}")
+            byInk
+        }
+        var recognized=0
+        var blank=0
+        var lowConfidence=0
+        for(line in lines) {
+            val crop=runCatching {
+                var c=Bitmap.createBitmap(image,line.left,line.top,line.width(),line.height())
+                if(c.height>c.width*1.8f) {
+                    val rotated=Bitmap.createBitmap(c,0,0,c.width,c.height,Matrix().apply { postRotate(90f) },true)
+                    if(!c.isRecycled)c.recycle()
+                    c=rotated
                 }
-                val recognition=decodeBetter(crop)
-                if(!crop.isRecycled)crop.recycle()
-                if(recognition.first.isNotBlank() && recognition.second>rules.minConfidence) {
-                    out.add(OcrRegion(
-                        recognition.first,
-                        line.left.toFloat()/image.width,
-                        line.top.toFloat()/image.height,
-                        line.right.toFloat()/image.width,
-                        line.bottom.toFloat()/image.height,
-                        recognition.second,
-                    ))
-                }
+                c
+            }.getOrNull() ?: continue
+            val recognition=runCatching { decodeBetter(crop) }.getOrNull()
+            if(!crop.isRecycled)crop.recycle()
+            if(recognition==null) { diagLine("$pass: строка не распознана (сбой модели)"); continue }
+            if(recognition.first.isBlank()) { blank++; continue }
+            recognized++
+            val region=OcrRegion(
+                recognition.first,
+                line.left.toFloat()/image.width,
+                line.top.toFloat()/image.height,
+                line.right.toFloat()/image.width,
+                line.bottom.toFloat()/image.height,
+                recognition.second,
+            )
+            if(recognition.second>rules.minConfidence) out.add(region) else { lowConfidence++; spare.add(region) }
+        }
+        diagLine("$pass: прочитано строк $recognized (пустых $blank, ниже порога $lowConfidence)")
+        if(out.isEmpty() && spare.isNotEmpty()) {
+            diagLine("$pass: уверенных строк нет — беру $lowConfidence строк без фильтра")
+            out+=spare
+        }
+        if(out.isEmpty()) {
+            // Последняя попытка: вся страница одной строкой. Даже если детектор
+            // и разрез по чернилам не дали ничего, распознаватель может вытащить
+            // текст целиком — молчание вместо текста недопустимо.
+            val whole=runCatching { decodeBetter(image) }.getOrNull()
+            if(whole!=null && whole.first.isNotBlank()) {
+                diagLine("$pass: текст взят целиком, символов ${whole.first.length}")
+                out+=OcrRegion(whole.first,0f,0f,1f,1f,whole.second)
+            } else {
+                diagLine("$pass: распознаватель не вернул ни одного символа")
             }
         }
         return out
