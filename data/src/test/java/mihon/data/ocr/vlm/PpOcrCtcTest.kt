@@ -25,12 +25,14 @@ class PpOcrCtcTest {
 
     @Test
     fun `повторы подряд схлопываются`() {
-        val r = PpOcrCtc.decode(logits(1, 0, 1, 0, 2), 5, charset.size, charset)
-        assertEquals("ПИ", r.text)
+        // три кадра подряд с одной буквой — это ОДНА буква
+        val r = PpOcrCtc.decode(logits(1, 1, 1), 3, charset.size, charset)
+        assertEquals("П", r.text)
     }
 
     @Test
     fun `повтор через blank остаётся двумя буквами`() {
+        // а если между ними blank — это ДВЕ буквы
         val r = PpOcrCtc.decode(logits(1, 0, 1), 3, charset.size, charset)
         assertEquals("ПП", r.text)
     }
