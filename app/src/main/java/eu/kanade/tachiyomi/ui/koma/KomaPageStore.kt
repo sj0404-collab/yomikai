@@ -50,10 +50,15 @@ object KomaPageStore {
 
     fun isVirtual(path: String): Boolean = path.startsWith(SCHEME)
 
-    fun pathOf(id: String, index: Int): String = "$SCHEME$id/$index"
+    /**
+     * FIX 6: OcrPageSourceResolver virtual path handling in KomaPageStore
+     * Resolves virtual path for KOMA pages (e.g. /koma/chapter/page)
+     * Aligns with OcrPageSourceResolver.kt virtual path resolution
+     */
+    fun pathOf(id: String, index: Int, virtualPrefix: String = "koma"): String = "$SCHEME$virtualPrefix/$id/$index"
 
-    /** Ключ книги из виртуального пути: `koma://book/x/3` → `book/x`. */
-    fun keyOf(path: String): String = path.removePrefix(SCHEME).substringBeforeLast('/')
+    /** Ключ книги из виртуального пути: `koma://koma/book/x/3` → `book/x`. */
+    fun keyOf(path: String): String = path.removePrefix(SCHEME).substringAfter("/").substringBeforeLast('/')
 
     private fun indexOf(path: String): Int = path.substringAfterLast('/').toIntOrNull() ?: -1
 
