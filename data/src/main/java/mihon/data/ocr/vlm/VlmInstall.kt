@@ -25,13 +25,33 @@ internal object VlmInstall {
         "config.json", "vocab.json", "merges.txt",
     )
 
+    /**
+     * Варианты одной и той же модели: репозиторий PP-OCRv5-LiteRT держит детектор
+     * и распознаватель в fp16, fp32 и fp32-webgpu. Без выбора качается 93 МБ
+     * вместо 27 МБ (проверено на живом списке файлов).
+     * Правило: fp16 предпочтительнее, webgpu-вариант не нужен вне браузера.
+     */
+    private fun preferVariants(files: List<HfModelHub.Blob>): List<HfModelHub.Blob> {
+        val tflite = files.filter { it.name.lowercase().endsWith(".tflite") }
+        if (tflite.size <= 1) return files
+        val keep = tflite.filter { !it.name.lowercase().contains("webgpu") }
+            .groupBy { it.name.substringAfterLast('/').replace(Regex("_?fp(16|32).*"), "") }
+            .mapValues { (_, group) ->
+                group.firstOrNull { it.name.lowercase().contains("fp16") } ?: group.first()
+            }
+            .values.toMutableSet()
+        return files.filter { b -> !b.name.lowercase().endsWith(".tflite") || b in keep || tflite.size <= 1 }
+    }
+
     fun pickFiles(folder: String, files: List<HfModelHub.Blob>): List<HfModelHub.Blob> {
         val prefix = if (folder.isEmpty()) "" else folder.trimEnd('/') + "/"
-        return files.filter { b ->
+        return preferVariants(files).filter { b ->
             val inFolder = prefix.isEmpty() || b.name.startsWith(prefix)
             if (!inFolder) return@filter false
             val leaf = b.name.substringAfterLast('/').lowercase()
             if (KEEP_ALWAYS.any { it == leaf }) return@filter true
+            // Словарь распознавателя (ppocrv5_dict.txt) — часть модели, без него CTC не расшифровать.
+            if (leaf.contains("dict") && leaf.endsWith(".txt")) return@filter true
             JUNK.none { leaf.endsWith(it) }
         }.sortedBy { it.name }
     }
