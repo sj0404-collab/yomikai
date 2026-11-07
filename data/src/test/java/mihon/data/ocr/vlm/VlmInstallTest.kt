@@ -73,10 +73,8 @@ class VlmInstallTest {
     }
 
     @Test
-    fun `формат GGUF без mmproj не считается видящим`() {
-        val files = listOf(blob("smolvlm-500m-q4.gguf", 400))
-        val text = VlmInstall.describe(VlmModelCatalog.SMOLVLM_500M_GGUF, files)
-        assertTrue(text.contains("GGUF"), text)
-        assertTrue(text.contains("только текст"), text)
+    fun `в каталоге только замеренные или уже собранные пути`() {
+        // GGUF/MNN/LiteRT-LM/Phi убраны: по ним нет ни замера, ни готового рантайма.
+        assertEquals(listOf("ppocr5-litert", "rec-int8"), VlmModelCatalog.ALL.map { it.id })
     }
 }
