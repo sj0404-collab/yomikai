@@ -2210,7 +2210,7 @@ private suspend fun komaFrameResult(
     frame: android.graphics.Bitmap,
     pageIndex: Int,
 ): mihon.domain.ocr.model.OcrPageResult? = runCatching {
-    val page = engine.recognizeImage(frame)
+    val page = engine.recognize(frame)
     val lines = KomaReadingOrder.order(
         regions = page.regions,
         rtl = true,
@@ -2257,7 +2257,7 @@ private suspend fun ocrWithKoma(
     engine: KomaOcrEngine,
     src: android.graphics.Bitmap,
 ): Pair<String, List<Pair<mihon.domain.ocr.model.OcrBoundingBox, String>>> = try {
-    val page = engine.recognizeImage(src)
+    val page = engine.recognize(src)
     val lines = KomaReadingOrder.order(
         regions = page.regions,
         rtl = true,
