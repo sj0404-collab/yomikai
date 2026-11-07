@@ -50,6 +50,10 @@ internal enum class VlmFormat(
          */
         fun looksVisibility(files: List<String>): Boolean {
             val n = files.map { it.lowercase() }
+            // Однофайловые сборки (.litertlm, .task) несут зрение ВНУТРИ бандла —
+            // по именам файлов этого не видно. Проверка на живом репозитории
+            // litert-community/Xiaomi-OCR-0: один .litertlm, а модель видящая.
+            if (n.any { it.endsWith(".litertlm") || it.endsWith(".task") }) return true
             return n.any {
                 it.contains("mmproj") || it.contains("visual") || it.contains("vision") ||
                     it.contains("image_") || it.contains("processor_config") ||

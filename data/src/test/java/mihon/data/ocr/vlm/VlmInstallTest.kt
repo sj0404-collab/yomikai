@@ -53,6 +53,26 @@ class VlmInstallTest {
     }
 
     @Test
+    fun `из вариантов tflite остаётся fp16 и не качается webgpu`() {
+        val files = listOf(
+            blob("ppocr_det_fp16.tflite", 10),
+            blob("ppocr_rec_fp16.tflite", 17),
+            blob("ppocr_rec_fp32.tflite", 33),
+            blob("ppocr_rec_fp32_webgpu.tflite", 33),
+            blob("ppocrv5_dict.txt", 1),
+        )
+        val names = VlmInstall.pickFiles("", files).map { it.name }
+        assertEquals(listOf("ppocr_det_fp16.tflite", "ppocr_rec_fp16.tflite", "ppocrv5_dict.txt"), names)
+    }
+
+    @Test
+    fun `однофайловый litertlm считается видящим`() {
+        val files = listOf(blob("Xiaomi-OCR-0_int8.litertlm", 1314))
+        val text = VlmInstall.describe(VlmModelCatalog.XIAOMI_OCR_LITERT, files)
+        assertTrue(text.contains("видящая"), text)
+    }
+
+    @Test
     fun `формат GGUF без mmproj не считается видящим`() {
         val files = listOf(blob("smolvlm-500m-q4.gguf", 400))
         val text = VlmInstall.describe(VlmModelCatalog.SMOLVLM_500M_GGUF, files)
