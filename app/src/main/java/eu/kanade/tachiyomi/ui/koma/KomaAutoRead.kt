@@ -1,4 +1,5 @@
 package eu.kanade.tachiyomi.ui.koma
+import mihon.domain.ocr.model.OcrRegion
 
 import android.app.NotificationChannel
 import android.app.NotificationManager

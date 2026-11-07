@@ -26,7 +26,7 @@ import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.ui.category.CategoryScreen
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
-import eu.kanade.tachiyomi.ui.reader.ReaderActivity
+import eu.kanade.tachiyomi.ui.koma.OneReaderActivity
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -153,7 +153,7 @@ data object HistoryTab : Tab {
 
     private suspend fun openChapter(context: Context, chapter: Chapter?) {
         if (chapter != null) {
-            val intent = ReaderActivity.newIntent(context, chapter.mangaId, chapter.id)
+            val intent = OneReaderActivity.newIntent(context, chapter.mangaId, chapter.id)
             context.startActivity(intent)
         } else {
             snackbarHostState.showSnackbar(context.stringResource(MR.strings.no_next_chapter))

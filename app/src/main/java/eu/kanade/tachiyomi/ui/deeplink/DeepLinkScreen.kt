@@ -13,7 +13,7 @@ import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
-import eu.kanade.tachiyomi.ui.reader.ReaderActivity
+import eu.kanade.tachiyomi.ui.koma.OneReaderActivity
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
@@ -59,7 +59,7 @@ class DeepLinkScreen(
                         )
                     } else {
                         navigator.pop()
-                        ReaderActivity.newIntent(
+                        OneReaderActivity.newIntent(
                             context,
                             resultState.manga.id,
                             resultState.chapterId,
