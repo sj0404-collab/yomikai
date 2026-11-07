@@ -33,6 +33,39 @@ class LayoutPolicyTest {
     }
 
     @Test
+    fun `ComicInfo Manga=YesAndRightToLeft означает мангу даже у вытянутой страницы`() {
+        assertEquals(
+            ContentKind.MANGA,
+            LayoutPolicy.kindOf(comicInfoManga = "YesAndRightToLeft", isLongStrip = true, averageAspect = 5f),
+        )
+    }
+
+    @Test
+    fun `ComicInfo Manga=No это тоже постраничная книга`() {
+        assertEquals(
+            ContentKind.MANGA,
+            LayoutPolicy.kindOf(comicInfoManga = "No", isLongStrip = false, averageAspect = 1.4f),
+        )
+    }
+
+    @Test
+    fun `без ComicInfo вебтун определяется по пропорции`() {
+        assertEquals(
+            ContentKind.WEBTOON,
+            LayoutPolicy.kindOf(comicInfoManga = null, isLongStrip = false, averageAspect = 4.5f),
+        )
+        assertEquals(
+            ContentKind.MANGA,
+            LayoutPolicy.kindOf(comicInfoManga = "Unknown", isLongStrip = false, averageAspect = 1.5f),
+        )
+    }
+
+    @Test
+    fun `вебтун по ComicInfo поля нет, поэтому пропорция решает`() {
+        assertEquals(ReaderMode.STRIP, LayoutPolicy.modeFor(LayoutPolicy.kindOf(null, false, 6f), null))
+    }
+
+    @Test
     fun `список допустимых режимов не даёт переключить мангу в ленту`() {
         assertFalse(ReaderMode.STRIP in LayoutPolicy.allowedModes(ContentKind.MANGA))
         assertFalse(ReaderMode.PAGED in LayoutPolicy.allowedModes(ContentKind.WEBTOON))
