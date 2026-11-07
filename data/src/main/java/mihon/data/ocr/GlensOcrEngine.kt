@@ -454,8 +454,41 @@ internal class GlensOcrEngine(
             .filter { !it.isVertical }
             .sortedBy { it.centerY }
 
-        return mergeBubbleGroup(verticalLines, isVertical = true) +
+        // Склейка идёт двумя независимыми проходами (вертикальные, горизонтальные),
+        // и раньше результат просто СКЛАДЫВАЛСЯ: сначала все вертикальные реплики,
+        // потом все горизонтальные. На странице с обоими типами это давало прыжки
+        // через полстраницы — текст верный, а порядок рваный.
+        // Теперь объединяем и раскладываем тем же правилом, что и локальный движок:
+        // сверху вниз полосами, внутри полосы — слева направо.
+        val merged = mergeBubbleGroup(verticalLines, isVertical = true) +
             mergeBubbleGroup(horizontalLines, isVertical = false)
+        return readingOrder(merged)
+    }
+
+    /**
+     * Порядок чтения: полосы по вертикали, внутри полосы слева направо.
+     * Полоса — рамки, у которых верх отличается не больше чем на 0,6 средней
+     * высоты строки. Ровно так же сортирует локальный движок, поэтому Glens и
+     * локальный читают страницу в одном порядке.
+     */
+    private fun readingOrder(lines: List<ParsedLine>): List<ParsedLine> {
+        if (lines.isEmpty()) return emptyList()
+        val avgH = lines.sumOf { it.height.toDouble() }.toFloat() / lines.size
+        val tol = maxOf(1f, avgH * 0.6f)
+        val bands = ArrayList<MutableList<ParsedLine>>()
+        var bandTop = Float.NaN
+        lines.sortedBy { it.centerY - it.height / 2f }.forEach { line ->
+            val top = line.centerY - line.height / 2f
+            if (bands.isEmpty() || top - bandTop > tol) {
+                bands.add(mutableListOf(line))
+                bandTop = top
+            } else {
+                bands.last().add(line)
+            }
+        }
+        return bands.flatMap { band ->
+            band.sortedBy { it.centerX - it.width / 2f }
+        }
     }
 
     /** Groups a pre-sorted list of same-orientation lines into bubble clusters. */
