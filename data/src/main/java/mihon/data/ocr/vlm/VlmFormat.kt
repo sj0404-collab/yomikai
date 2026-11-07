@@ -48,7 +48,7 @@ internal enum class VlmFormat(
          * Видящая ли это модель. GGUF/MNN/ONNX-сборки бывают текстовыми:
          * у видящих рядом с весами лежит отдельная «глазная» часть.
          */
-        fun looksVision(files: List<String>): Boolean {
+        fun looksVisibility(files: List<String>): Boolean {
             val n = files.map { it.lowercase() }
             return n.any {
                 it.contains("mmproj") || it.contains("visual") || it.contains("vision") ||
