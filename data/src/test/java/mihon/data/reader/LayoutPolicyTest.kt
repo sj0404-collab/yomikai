@@ -2,14 +2,17 @@ package mihon.data.reader
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class LayoutPolicyTest {
 
     @Test
-    fun `манга читается постранично даже если выбрана лента`() {
-        assertEquals(ReaderMode.PAGED, LayoutPolicy.modeFor(ContentKind.MANGA, ReaderMode.STRIP))
+    fun `манга по умолчанию постранично, но ручная лента уважается`() {
         assertEquals(ReaderMode.PAGED, LayoutPolicy.modeFor(ContentKind.MANGA, null))
+        assertEquals(ReaderMode.PAGED, LayoutPolicy.modeFor(ContentKind.MANGA, ReaderMode.PAGED))
+        // человек сам включил ленту — читаем лентой, порядок реплик при этом сохраняется
+        assertEquals(ReaderMode.STRIP, LayoutPolicy.modeFor(ContentKind.MANGA, ReaderMode.STRIP))
     }
 
     @Test
@@ -66,8 +69,8 @@ class LayoutPolicyTest {
     }
 
     @Test
-    fun `список допустимых режимов не даёт переключить мангу в ленту`() {
-        assertFalse(ReaderMode.STRIP in LayoutPolicy.allowedModes(ContentKind.MANGA))
+    fun `у вебтуна страницы запрещены, у манги лента разрешена`() {
+        assertTrue(ReaderMode.STRIP in LayoutPolicy.allowedModes(ContentKind.MANGA))
         assertFalse(ReaderMode.PAGED in LayoutPolicy.allowedModes(ContentKind.WEBTOON))
     }
 }

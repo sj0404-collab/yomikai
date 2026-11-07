@@ -18,7 +18,10 @@ enum class ReaderMode { PAGED, STRIP }
 object LayoutPolicy {
 
     fun modeFor(kind: ContentKind, manual: ReaderMode?): ReaderMode = when (kind) {
-        ContentKind.MANGA -> ReaderMode.PAGED
+        // Манга: по умолчанию постранично, но РУЧНОЙ выбор ленты уважаем —
+        // человек вправе открыть мангу лентой, и тогда читаем её лентой,
+        // сохраняя порядок реплик.
+        ContentKind.MANGA -> manual ?: ReaderMode.PAGED
         ContentKind.WEBTOON -> ReaderMode.STRIP
         ContentKind.UNKNOWN -> manual ?: ReaderMode.PAGED
     }
@@ -50,7 +53,7 @@ object LayoutPolicy {
 
     /** Ручной выбор не должен пережить смену типа книги. */
     fun allowedModes(kind: ContentKind): Set<ReaderMode> = when (kind) {
-        ContentKind.MANGA -> setOf(ReaderMode.PAGED)
+        ContentKind.MANGA -> setOf(ReaderMode.PAGED, ReaderMode.STRIP)
         ContentKind.WEBTOON -> setOf(ReaderMode.STRIP)
         ContentKind.UNKNOWN -> setOf(ReaderMode.PAGED, ReaderMode.STRIP)
     }
