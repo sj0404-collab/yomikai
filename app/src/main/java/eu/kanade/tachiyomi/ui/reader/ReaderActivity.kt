@@ -24,6 +24,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -72,6 +73,7 @@ import eu.kanade.presentation.reader.OrientationSelectDialog
 import eu.kanade.presentation.reader.ReaderContentOverlay
 import eu.kanade.presentation.reader.ReaderPageActionsDialog
 import eu.kanade.presentation.reader.ReaderPageIndicator
+import eu.kanade.presentation.reader.ReaderPageSlider
 import eu.kanade.presentation.reader.ReadingModeSelectDialog
 import eu.kanade.presentation.reader.appbars.ReaderAppBars
 import eu.kanade.presentation.reader.components.ChapterNavigatorType
@@ -489,13 +491,24 @@ class ReaderActivity : BaseActivity() {
 
         Box(modifier = Modifier.fillMaxSize()) {
             if (!state.menuVisible && showPageNumber) {
-                ReaderPageIndicator(
-                    currentPage = state.currentPage,
-                    totalPages = state.totalPages,
+                // Koma-стиль: номер страницы и тонкий ползунок под ним —
+                // быстрый переход по главе без открытия меню читалки.
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding(),
-                )
+                ) {
+                    ReaderPageIndicator(
+                        currentPage = state.currentPage,
+                        totalPages = state.totalPages,
+                    )
+                    ReaderPageSlider(
+                        currentPage = state.currentPage,
+                        totalPages = state.totalPages,
+                        onSeek = ::moveToPageIndex,
+                    )
+                }
             }
 
             ContentOverlay(state = state)
@@ -723,7 +736,6 @@ class ReaderActivity : BaseActivity() {
             ReaderPreferences.ColorFilterMode.getOrNull(colorOverlayMode)?.second
         }
 
-        binding.composeOverlay.setComposeContent {
             val state by viewModel.state.collectAsState()
             val dimOcrBackground by dictionaryPreferences.ocrResultDimBackground().collectAsState()
             val ocrResultPresentation by dictionaryPreferences.ocrResultPresentation().collectAsState()
@@ -771,7 +783,7 @@ class ReaderActivity : BaseActivity() {
             }
 
             if (!ifSourcesLoaded()) {
-                return@setComposeContent
+                return
             }
 
             Box(modifier = Modifier.fillMaxSize()) {
@@ -844,8 +856,7 @@ class ReaderActivity : BaseActivity() {
                     mihon.data.ocr.ReaderContextBus.set(
                         mangaId = state.manga?.id,
                         rtl = readingMode == ReadingMode.RIGHT_TO_LEFT,
-                        webtoon = readingMode == ReadingMode.WEBTOON ||
-                            readingMode == ReadingMode.CONTINUOUS_VERTICAL,
+                        webtoon = readingMode == ReadingMode.WEBTOON,
                         vertical = readingMode == ReadingMode.VERTICAL,
                     )
                 }
@@ -1038,59 +1049,6 @@ class ReaderActivity : BaseActivity() {
                 val onDismissRequest = viewModel::closeDialog
                 val onDismissOcrResult = ::dismissActiveOcrOverlaySession
                 when (val dialog = state.dialog) {
-                    is ReaderViewModel.Dialog.Loading -> {
-                        AlertDialog(
-                            onDismissRequest = {},
-                            confirmButton = {},
-                            text = {
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    CircularProgressIndicator()
-                                    Text(stringResource(MR.strings.loading))
-                                }
-                            },
-                        )
-                    }
-                    is ReaderViewModel.Dialog.Settings -> {
-                        ReaderSettingsDialog(
-                            onDismissRequest = onDismissRequest,
-                            onShowMenus = { setMenuVisibility(true) },
-                            onHideMenus = { setMenuVisibility(false) },
-                            screenModel = settingsScreenModel,
-                        )
-                    }
-                    is ReaderViewModel.Dialog.ReadingModeSelect -> {
-                        ReadingModeSelectDialog(
-                            onDismissRequest = onDismissRequest,
-                            screenModel = settingsScreenModel,
-                            onChange = { stringRes ->
-                                menuToggleToast?.cancel()
-                                if (!readerPreferences.showReadingMode.get()) {
-                                    menuToggleToast = toast(stringRes)
-                                }
-                            },
-                        )
-                    }
-                    is ReaderViewModel.Dialog.OrientationModeSelect -> {
-                        OrientationSelectDialog(
-                            onDismissRequest = onDismissRequest,
-                            screenModel = settingsScreenModel,
-                            onChange = { stringRes ->
-                                menuToggleToast?.cancel()
-                                menuToggleToast = toast(stringRes)
-                            },
-                        )
-                    }
-                    is ReaderViewModel.Dialog.PageActions -> {
-                        ReaderPageActionsDialog(
-                            onDismissRequest = onDismissRequest,
-                            onSetAsCover = viewModel::setAsCover,
-                            onShare = viewModel::shareImage,
-                            onSave = viewModel::saveImage,
-                        )
-                    }
                     is ReaderViewModel.Dialog.OcrResult -> {
                         val searchState by dictionarySearchScreenModel.state.collectAsState()
                         LaunchedEffect(activeOcrOverlaySession?.selection, searchState.results?.highlightRange) {
@@ -1173,10 +1131,9 @@ class ReaderActivity : BaseActivity() {
                             )
                         }
                     }
-                    null -> {}
+                    else -> {}
                 }
             }
-        }
 
         val toolbarColor = ColorUtils.setAlphaComponent(
             SurfaceColors.SURFACE_2.getColor(this),

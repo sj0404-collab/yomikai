@@ -60,7 +60,24 @@ enum class ReadingMode(
     companion object {
         const val MASK = 0x00000007
 
-        fun fromPreference(preference: Int?): ReadingMode = entries.find { it.flagValue == preference } ?: DEFAULT
+        /**
+         * Режимы, которые видит пользователь в выборе.
+         *
+         * [CONTINUOUS_VERTICAL] — устаревший алиас [WEBTOON]: это тот же
+         * `WebtoonViewer` с `isContinuous = false`, отдельный пункт только
+         * путал и заставлял код склеивать два значения обратно в одно.
+         * Константа оставлена, чтобы уже сохранённые манги (flagValue = 5)
+         * открывались в вебтуне, а не сбрасывались на DEFAULT.
+         */
+        val selectable: List<ReadingMode> = entries.filter {
+            it != DEFAULT && it != CONTINUOUS_VERTICAL
+        }
+
+        fun fromPreference(preference: Int?): ReadingMode = when (preference) {
+            // Старое значение CONTINUOUS_VERTICAL читаем как WEBTOON.
+            CONTINUOUS_VERTICAL.flagValue -> WEBTOON
+            else -> entries.find { it.flagValue == preference } ?: DEFAULT
+        }
 
         /**
          * Режим чтения, который предписывает пресет типа контента OCR.

@@ -75,7 +75,7 @@ internal fun ColumnScope.GeneralPage(screenModel: ReaderSettingsScreenModel) {
     val verticalNavigatorModes by screenModel.preferences.verticalNavigator.collectAsState()
 
     SettingsChipRow(MR.strings.pref_vertical_navigator) {
-        ReadingMode.entries.filter { it != ReadingMode.DEFAULT }.forEach { mode ->
+        ReadingMode.selectable.forEach { mode ->
             FilterChip(
                 selected = verticalNavigatorModes.contains(mode),
                 onClick = {

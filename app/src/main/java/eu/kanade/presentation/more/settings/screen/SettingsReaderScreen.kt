@@ -31,7 +31,7 @@ object SettingsReaderScreen : SearchableSettings {
         return listOf(
             Preference.PreferenceItem.ListPreference(
                 preference = readerPref.defaultReadingMode,
-                entries = ReadingMode.entries.drop(1)
+                entries = ReadingMode.selectable
                     .associate { it.flagValue to stringResource(it.stringRes) },
                 title = stringResource(MR.strings.pref_viewer_type),
             ),
@@ -401,7 +401,7 @@ object SettingsReaderScreen : SearchableSettings {
                 ),
                 Preference.PreferenceItem.MultiSelectListPreference(
                     preference = readerPreferences.verticalNavigator,
-                    entries = ReadingMode.entries.filter { it != ReadingMode.DEFAULT }
+                    entries = ReadingMode.selectable
                         .associate { it to stringResource(it.stringRes) },
                     title = stringResource(MR.strings.pref_vertical_navigator),
                 ),

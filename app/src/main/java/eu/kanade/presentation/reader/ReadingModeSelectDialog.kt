@@ -26,7 +26,7 @@ import tachiyomi.presentation.core.components.SettingsIconGrid
 import tachiyomi.presentation.core.components.material.IconToggleButton
 import tachiyomi.presentation.core.i18n.stringResource
 
-private val ReadingModesWithoutDefault = ReadingMode.entries - ReadingMode.DEFAULT
+private val ReadingModesWithoutDefault = ReadingMode.selectable
 
 @Composable
 fun ReadingModeSelectDialog(
