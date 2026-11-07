@@ -144,7 +144,7 @@ class KomaTts(private val context: Context) {
      * всегда, в том числе в метро) или сетью (пока не доведён, нужен интернет).
      */
     fun readiness(voice: Voice): String =
-        if (needsNetwork(voice)) "только онлайн · ещё не доделан" else "офлайн · работает"
+        if (needsNetwork(voice)) "онлайн · нужен интернет" else "офлайн · работает"
 
     /** Есть ли сейчас сеть: без неё онлайн-голос не зазвучит. */
     @Suppress("DEPRECATION")
