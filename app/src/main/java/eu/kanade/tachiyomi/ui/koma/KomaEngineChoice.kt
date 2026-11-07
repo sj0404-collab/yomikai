@@ -32,7 +32,11 @@ data class KomaEngineOption(
 ) {
     /** Пометка в списке: рабочее не выдаётся за недоработанное и наоборот. */
     val readiness: String
-        get() = if (online) "только онлайн · ещё не доделан" else "офлайн · работает"
+        get() = when {
+            online && available -> "онлайн · готов"
+            online -> "онлайн · нужен ключ или сеть"
+            else -> "офлайн · работает"
+        }
 }
 
 object KomaEngineChoice {
