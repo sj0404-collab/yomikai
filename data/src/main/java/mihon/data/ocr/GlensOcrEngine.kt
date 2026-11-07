@@ -759,7 +759,9 @@ internal class GlensOcrEngine(
         val left = (centerX - width / 2f).coerceIn(0f, 1f)
         val top = (centerY - height / 2f).coerceIn(0f, 1f)
         val right = (centerX + width / 2f).coerceIn(0f, 1f)
-        val bottom = (centerY + height / 2f).coerceIn(0f, 1f)
+        val rawBottom = (centerY + height / 2f).coerceIn(0f, 1f)
+        // Потолок высоты: склеенная реплика с пустым полем даёт бокс на полстраницы → пауза и прыжок.
+        val (top, bottom) = RegionCaps.capHeight(top, rawBottom)
         val box = OcrBoundingBox(
             left = left,
             top = top,
