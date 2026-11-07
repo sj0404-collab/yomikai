@@ -831,13 +831,13 @@ internal class GlensOcrEngine(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
         private const val DEFAULT_CLIENT_LANGUAGE = "ja"
         private const val DEFAULT_CLIENT_REGION = "Asia/Tokyo"
-        private const val MAX_IMAGE_DIMENSION = 1200
+        private const val MAX_IMAGE_DIMENSION = 2400
 
 /** Минимальная короткая сторона кадра: мельче — текст теряется. */
 private const val MIN_SHORT_SIDE = 1000
 
-/** Запас при увеличении: 1000 -> ~1400 px по короткой стороне. */
-private const val UPSCALE_HEADROOM = 1.4f
+/** Целевая короткая сторона: страница 760x1896 -> ~962x2400 вместо исходной. */
+private const val UPSCALE_HEADROOM = 1.0f
 
         /**
          * Минимальное отношение размеров глифов двух строк, чтобы их можно было
