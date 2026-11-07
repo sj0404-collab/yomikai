@@ -71,10 +71,26 @@ internal class GlensOcrEngine(
 
     override fun close() = Unit
 
+    /**
+     * Приводит кадр к постоянному масштабу перед отправкой.
+     *
+     * Раньше страница уходила как есть, и в журнале было то 760x1896, то 1520x2988:
+     * мелкий стилизованный шрифт в маленьком кадре терялся (0 строк при двух рамках).
+     * Теперь короткая сторона поднимается минимум до [MIN_SHORT_SIDE], а длинная
+     * не превышает [MAX_IMAGE_DIMENSION] — масштаб одинаковый от страницы к странице.
+     */
     private fun prepareImage(image: Bitmap): PreparedImage {
         val maxDim = maxOf(image.width, image.height)
-        val resized = if (maxDim > MAX_IMAGE_DIMENSION) {
-            val scaleFactor = MAX_IMAGE_DIMENSION.toFloat() / maxDim.toFloat()
+        val shortSide = minOf(image.width, image.height).coerceAtLeast(1)
+        val scaleFactor = when {
+            shortSide < MIN_SHORT_SIDE -> (MIN_SHORT_SIDE.toFloat() * UPSCALE_HEADROOM) / shortSide
+            maxDim > MAX_IMAGE_DIMENSION -> MAX_IMAGE_DIMENSION.toFloat() / maxDim
+            else -> 1f
+        }.let { factor ->
+            // Увеличенный кадр не должен вылезти за верхнюю границу.
+            if (maxDim * factor > MAX_IMAGE_DIMENSION) MAX_IMAGE_DIMENSION.toFloat() / maxDim else factor
+        }
+        val resized = if (scaleFactor > 1.02f) {
             val targetWidth = (image.width * scaleFactor).toInt().coerceAtLeast(1)
             val targetHeight = (image.height * scaleFactor).toInt().coerceAtLeast(1)
             image.scale(targetWidth, targetHeight, filter = true)
@@ -816,6 +832,12 @@ internal class GlensOcrEngine(
         private const val DEFAULT_CLIENT_LANGUAGE = "ja"
         private const val DEFAULT_CLIENT_REGION = "Asia/Tokyo"
         private const val MAX_IMAGE_DIMENSION = 1200
+
+/** Минимальная короткая сторона кадра: мельче — текст теряется. */
+private const val MIN_SHORT_SIDE = 1000
+
+/** Запас при увеличении: 1000 -> ~1400 px по короткой стороне. */
+private const val UPSCALE_HEADROOM = 1.4f
 
         /**
          * Минимальное отношение размеров глифов двух строк, чтобы их можно было
