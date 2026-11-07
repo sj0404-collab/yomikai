@@ -1,4 +1,4 @@
-package eu.kanade.tachiyomi.ui.koma
+package eu.kanade.tachiyomi.ui.reader
 
 import android.content.Context
 import android.graphics.Bitmap
