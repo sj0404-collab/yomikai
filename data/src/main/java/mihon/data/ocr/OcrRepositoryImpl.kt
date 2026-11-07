@@ -331,7 +331,11 @@ class OcrRepositoryImpl(
         val chain = when (preset) {
             "single" -> emptyList()
             "online" -> online
-            "offline" -> offlineEngines
+            // Выбранный руками онлайн-движок (Glens и другие) не подменяется
+            // локальным только потому, что в настройках стоит «офлайн»: человек
+            // выбрал — он и работает, пока не сменит. Если движок недоступен,
+            // причина уходит в журнал (onlineEngineReady), а не тихая подмена.
+            "offline" -> if (primary.isOnlineEngine()) listOf(primary) else offlineEngines
             else -> { // auto
                 if (isNetworkAvailable()) online + offlineEngines else offlineEngines
             }
@@ -350,6 +354,14 @@ class OcrRepositoryImpl(
 
     private fun localOcrAvailable(): Boolean {
         return environmentResult.isSuccess
+    }
+
+    /** Онлайн-движки, чей выбор не должен молча подменяться локальным. */
+    private fun EngineType.isOnlineEngine(): Boolean = when (this) {
+        EngineType.GLENS, EngineType.OWOCR, EngineType.OPENROUTER,
+        EngineType.GOOGLE, EngineType.ZEN_FREE,
+        -> true
+        else -> false
     }
 
     private fun engineFor(type: EngineType): OcrEngine {
