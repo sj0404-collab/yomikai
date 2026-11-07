@@ -70,6 +70,20 @@ internal object PpOcrDb {
         if (boxes.isEmpty()) return emptyList()
         val avgH = boxes.sumOf { it.height }.toFloat() / boxes.size
         val tol = maxOf(1f, avgH * rowTolerance)
-        return boxes.sortedWith(compareBy({ (it.top / tol).toInt() }, { it.left }))
+        // Полосы собираем последовательно: рамка попадает в текущую полосу, если
+        // её верх не ниже начала полосы больше чем на tol. Целочисленное деление
+        // (top / tol) для этого не годится — соседние рамки с верхом 5 и 6 px
+        // уезжали в разные полосы, и правая читалась раньше левой.
+        val bands = ArrayList<MutableList<Box>>()
+        var bandTop = Float.NaN
+        boxes.sortedBy { it.top }.forEach { b ->
+            if (bands.isEmpty() || b.top - bandTop > tol) {
+                bands.add(mutableListOf(b))
+                bandTop = b.top.toFloat()
+            } else {
+                bands.last().add(b)
+            }
+        }
+        return bands.flatMap { band -> band.sortedBy { it.left } }
     }
 }

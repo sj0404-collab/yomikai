@@ -40,7 +40,7 @@ class PpOcrCtcTest {
     @Test
     fun `пробел последним классом попадает в текст`() {
         val r = PpOcrCtc.decode(logits(1, 6, 2), 3, charset.size, charset)
-        assertEquals("П И", r.text)
+        assertEquals("П Р", r.text)
     }
 
     @Test
@@ -48,11 +48,11 @@ class PpOcrCtcTest {
         val classes = charset.size
         val lg = FloatArray(4 * classes)
         lg[0 * classes + 1] = 0.9f      // П уверенно
-        lg[1 * classes + 2] = 0.2f      // И слабо — должно быть отброшено
-        lg[2 * classes + 3] = 0.8f      // Ц уверенно
-        lg[3 * classes + 4] = 0.85f     // Й уверенно
+        lg[1 * classes + 2] = 0.2f      // Р слабо — должно быть отброшено
+        lg[2 * classes + 3] = 0.8f      // И уверенно
+        lg[3 * classes + 5] = 0.85f     // Й уверенно
         val r = PpOcrCtc.decode(lg, 4, classes, charset, minScore = 0.5f)
-        assertEquals("ПЦЙ", r.text)
+        assertEquals("ПИЙ", r.text)
     }
 
     @Test
