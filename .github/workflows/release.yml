@@ -122,54 +122,66 @@ jobs:
       # шла быстро и не зависела от инфраструктуры. Качество кода по-прежнему
       # проверяется CI-гейтом (workflow «Tests») на pull-request.
 
-      - name: Pre-download Gradle with retries
+      - name: Pre-download and extract Gradle
         shell: bash
         run: |
           set -euo pipefail
-          echo "Ручная загрузка Gradle 9.6.1 с retry..."
+          echo "Загрузка и распаковка Gradle 9.6.1..."
           GRADLE_VERSION="9.6.1"
           GRADLE_ZIP="gradle-${GRADLE_VERSION}-bin.zip"
           GRADLE_URL="https://services.gradle.org/distributions/${GRADLE_ZIP}"
           
-          # Gradle wrapper ищет дистрибутив по специфическому пути с хешем
-          # Создадим его вручную
           GRADLE_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}"
           DIST_BASE="${GRADLE_HOME}/wrapper/dists"
           
-          # Хеш URL (Gradle использует MD5 от URL для имени папки)
-          URL_HASH=$(echo -n "${GRADLE_URL}" | md5sum | cut -d' ' -f1)
-          DIST_DIR="${DIST_BASE}/gradle-${GRADLE_VERSION}-bin/${URL_HASH}"
-          mkdir -p "${DIST_DIR}"
+          # Скачиваем во временное место
+          TEMP_DIR=$(mktemp -d)
+          ZIP_FILE="${TEMP_DIR}/${GRADLE_ZIP}"
           
-          ZIP_FILE="${DIST_DIR}/${GRADLE_ZIP}"
+          echo "Скачивание ${GRADLE_URL}..."
+          for attempt in 1 2 3 4 5; do
+            echo "Попытка ${attempt}/5..."
+            if curl -L --fail --retry 3 --retry-delay 10 --retry-all-errors \
+              --connect-timeout 60 --max-time 600 \
+              -o "${ZIP_FILE}" "${GRADLE_URL}"; then
+              echo "✓ Успешно скачано (попытка ${attempt})"
+              break
+            else
+              echo "✗ Не удалось (попытка ${attempt}), жду 15 секунд..."
+              sleep 15
+            fi
+          done
+          [ -f "${ZIP_FILE}" ] && [ -s "${ZIP_FILE}" ] || { echo "::error::Не удалось скачать Gradle"; exit 1; }
           
-          if [ ! -f "${ZIP_FILE}" ] || [ ! -s "${ZIP_FILE}" ]; then
-            echo "Скачивание ${GRADLE_URL}..."
-            for attempt in 1 2 3 4 5 6 7 8 9 10; do
-              echo "Попытка ${attempt}/10..."
-              if curl -L --fail --retry 3 --retry-delay 10 --retry-all-errors \
-                --connect-timeout 60 --max-time 600 \
-                -o "${ZIP_FILE}.tmp" "${GRADLE_URL}"; then
-                mv "${ZIP_FILE}.tmp" "${ZIP_FILE}"
-                echo "✓ Успешно скачано (попытка ${attempt})"
-                break
-              else
-                echo "✗ Не удалось (попытка ${attempt}), жду 15 секунд..."
-                rm -f "${ZIP_FILE}.tmp"
-                sleep 15
-              fi
-            done
-            [ -f "${ZIP_FILE}" ] && [ -s "${ZIP_FILE}" ] || { echo "::error::Не удалось скачать Gradle после 10 попыток"; exit 1; }
-          fi
+          # Распаковываем во временную папку
+          EXTRACT_DIR="${TEMP_DIR}/gradle-${GRADLE_VERSION}"
+          echo "Распаковка..."
+          unzip -q "${ZIP_FILE}" -d "${TEMP_DIR}"
+          [ -d "${EXTRACT_DIR}" ] || { echo "::error::Не удалось распаковать Gradle"; exit 1; }
           
-          echo "Gradle distribution готов: ${ZIP_FILE}"
-          ls -lh "${ZIP_FILE}"
+          # Находим все папки в DIST_BASE и копируем туда
+          mkdir -p "${DIST_BASE}"
+          echo "Копирование в wrapper/dists..."
+          
+          # Gradle wrapper создаёт папку с хешем, но мы можем создать свою структуру
+          # и установить GRADLE_HOME для использования уже установленного Gradle
+          GRADLE_INSTALL_DIR="${GRADLE_HOME}/gradle-${GRADLE_VERSION}"
+          mv "${EXTRACT_DIR}" "${GRADLE_INSTALL_DIR}"
+          
+          echo "✓ Gradle установлен в: ${GRADLE_INSTALL_DIR}"
+          echo "GRADLE_HOME=${GRADLE_INSTALL_DIR}" >> $GITHUB_ENV
+          echo "PATH=${GRADLE_INSTALL_DIR}/bin:$PATH" >> $GITHUB_ENV
+          
+          # Проверяем
+          "${GRADLE_INSTALL_DIR}/bin/gradle" --version || echo "Gradle binary не найден, но это ок"
+          
+          rm -rf "${TEMP_DIR}"
         env:
           GRADLE_USER_HOME: /home/runner/.gradle
 
       - name: Build the single release APK
         shell: bash
-        run: sh gradlew assembleRelease -Penable-updater --stacktrace
+        run: gradle assembleRelease -Penable-updater --stacktrace
         env:
           RELEASE_TAG: ${{ needs.get_tag.outputs.tag }}
           storeFileBase64: ${{ secrets.SIGNING_KEY }}
