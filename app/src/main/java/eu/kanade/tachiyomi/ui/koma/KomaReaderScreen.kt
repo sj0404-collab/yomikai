@@ -1447,6 +1447,17 @@ fun KomaReaderScreen(
             onExportAnki = { /* TODO: реализовать экспорт в Anki */ }
         )
     }
+    // Диалог выбора OCR движка
+    if (showEngineSelector) {
+        KomaEngineSelector(
+            selectedEngineId = "koma_onnx", // TODO: получить текущий движок
+            onEngineSelected = { engineId ->
+                // TODO: реализовать переключение движка
+                showEngineSelector = false
+            },
+            onDismiss = { showEngineSelector = false }
+        )
+    }
 }
 
 @Composable
@@ -1505,17 +1516,6 @@ private fun PageImage(
             LaunchedEffect(height,density){ runCatching { onHeight(with(density){ height.roundToPx() }) } }
             PageBody(b,boxes,currentLine,path,onTap,Modifier.size(width,height),spokenKeys)
         }
-    }
-    // Диалог выбора OCR движка
-    if (showEngineSelector) {
-        KomaEngineSelector(
-            selectedEngineId = "koma_onnx", // TODO: получить текущий движок
-            onEngineSelected = { engineId ->
-                // TODO: реализовать переключение движка
-                showEngineSelector = false
-            },
-            onDismiss = { showEngineSelector = false }
-        )
     }
     // Оверлей с функциями из ReaderActivity
 }
