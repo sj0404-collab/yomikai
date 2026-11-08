@@ -189,6 +189,7 @@ fun KomaReaderScreen(
     var voiceDialog by remember { mutableStateOf(false) }
     var showOverlay by remember { mutableStateOf(false) }
     var showEngineSelector by remember { mutableStateOf(false) }
+    var selectedEngineId by remember { mutableStateOf(repo.prefs.getString("komaOcrEngine", "koma_onnx") ?: "koma_onnx") }
     // Панели прячутся, когда идёт авточтение: экран остаётся только под текст.
     // Касание страницы возвращает их.
     var barsVisible by remember { mutableStateOf(true) }
@@ -1450,9 +1451,11 @@ fun KomaReaderScreen(
     // Диалог выбора OCR движка
     if (showEngineSelector) {
         KomaEngineSelector(
-            selectedEngineId = "koma_onnx", // TODO: получить текущий движок
+            selectedEngineId = selectedEngineId,
             onEngineSelected = { engineId ->
-                // TODO: реализовать переключение движка
+                // Сохраняем выбранный движок
+                repo.prefs.edit().putString("komaOcrEngine", engineId).apply()
+                selectedEngineId = engineId
                 showEngineSelector = false
             },
             onDismiss = { showEngineSelector = false }
