@@ -1,0 +1,145 @@
+-dontobfuscate
+
+-keep,allowoptimization class eu.kanade.**
+-keep,allowoptimization class tachiyomi.**
+-keep,allowoptimization class mihon.**
+
+# Keep common dependencies used in extensions
+-keep,allowoptimization class androidx.preference.** { public protected *; }
+-keep,allowoptimization class kotlin.** { public protected *; }
+-keep,allowoptimization class kotlinx.coroutines.** { public protected *; }
+-keep,allowoptimization class kotlinx.serialization.** { public protected *; }
+-keep,allowoptimization class kotlin.time.** { public protected *; }
+-keep,allowoptimization class okhttp3.** { public protected *; }
+-keep,allowoptimization class okio.** { public protected *; }
+-keep,allowoptimization class org.jsoup.** { public protected *; }
+-keep,allowoptimization class rx.** { public protected *; }
+-keep,allowoptimization class app.cash.quickjs.** { public protected *; }
+-keep,allowoptimization class uy.kohesive.injekt.** { public protected *; }
+-keep,allowoptimization class com.squareup.zstd.** { public protected *; }
+
+# From extensions-lib
+-keep,allowoptimization class eu.kanade.tachiyomi.network.interceptor.RateLimitInterceptorKt { public protected *; }
+-keep,allowoptimization class eu.kanade.tachiyomi.network.interceptor.SpecificHostRateLimitInterceptorKt { public protected *; }
+-keep,allowoptimization class eu.kanade.tachiyomi.network.NetworkHelper { public protected *; }
+-keep,allowoptimization class eu.kanade.tachiyomi.network.OkHttpExtensionsKt { public protected *; }
+-keep,allowoptimization class eu.kanade.tachiyomi.network.RequestsKt { public protected *; }
+-keep,allowoptimization class eu.kanade.tachiyomi.AppInfo { public protected *; }
+
+-keepclassmembers class * implements java.io.Serializable {
+    java.lang.Object writeReplace();
+    java.lang.Object readResolve();
+}
+
+##---------------Begin: proguard configuration for RxJava 1.x  ----------
+-dontwarn sun.misc.**
+
+-keepclassmembers class rx.internal.util.unsafe.*ArrayQueue*Field* {
+   long producerIndex;
+   long consumerIndex;
+}
+
+-keepclassmembers class rx.internal.util.unsafe.BaseLinkedQueueProducerNodeRef {
+    rx.internal.util.atomic.LinkedQueueNode producerNode;
+}
+
+-keepclassmembers class rx.internal.util.unsafe.BaseLinkedQueueConsumerNodeRef {
+    rx.internal.util.atomic.LinkedQueueNode consumerNode;
+}
+
+-dontnote rx.internal.util.PlatformDependent
+##---------------End: proguard configuration for RxJava 1.x  ----------
+
+##---------------Begin: proguard configuration for okhttp  ----------
+-keepclasseswithmembers class okhttp3.MultipartBody$Builder { *; }
+##---------------End: proguard configuration for okhttp  ----------
+
+##---------------Begin: proguard configuration for kotlinx.serialization  ----------
+-keepattributes *Annotation*, InnerClasses
+-dontnote kotlinx.serialization.** # core serialization annotations
+
+# kotlinx-serialization-json specific. Add this if you have java.lang.NoClassDefFoundError kotlinx.serialization.json.JsonObjectSerializer
+-keepclassmembers class kotlinx.serialization.json.** {
+    *** Companion;
+}
+-keepclasseswithmembers class kotlinx.serialization.json.** {
+    kotlinx.serialization.KSerializer serializer(...);
+}
+
+-keep,includedescriptorclasses class eu.kanade.**$$serializer { *; }
+-keepclassmembers class eu.kanade.** {
+    *** Companion;
+}
+-keepclasseswithmembers class eu.kanade.** {
+    kotlinx.serialization.KSerializer serializer(...);
+}
+
+-keep class kotlinx.serialization.**
+-keepclassmembers class kotlinx.serialization.** {
+    <methods>;
+}
+##---------------End: proguard configuration for kotlinx.serialization  ----------
+
+# XmlUtil
+-keep public enum nl.adaptivity.xmlutil.EventType { *; }
+
+# Firebase
+-keep class com.google.firebase.installations.** { *; }
+-keep interface com.google.firebase.installations.** { *; }
+
+# --- WebView JavaScript bridge (PWA mode) ---
+# R8 must keep all @JavascriptInterface methods, otherwise the PWA WebView
+# sees an empty YomihonBridge object in release builds.
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
+-keep class eu.kanade.tachiyomi.ui.reader.html.YomihonWebBridge { public *; }
+
+# sherpa-onnx (ONNX-голоса) вызывается из OnnxTts ТОЛЬКО через рефлексию
+# (Class.forName("com.k2fsa.sherpa.onnx.…")). Без этого правила R8 в release
+# вырезает классы как «неиспользуемые», и на устройстве синтез падает с
+# ClassNotFoundException/NoClassDefFoundError OfflineTtsVitsModelConfig —
+# причина подтверждена логом logs/tts.log с устройства (v1.9.16/17).
+-keep class com.k2fsa.sherpa.onnx.** { *; }
+-dontwarn com.k2fsa.sherpa.onnx.**
+
+# ONNX Runtime: JNI-слой ищет классы и конструкторы ПО ИМЕНИ.
+# Нативный код (convertToTensorInfo) делает NewObject для ai.onnxruntime.*,
+# получая jmethodID через GetMethodID. Если R8 переименует или вырежет эти
+# классы, GetMethodID вернёт null и ART убьёт процесс:
+#   JNI DETECTED ERROR IN APPLICATION: mid == null
+#   in call to NewObject
+#   from ai.onnxruntime.OrtSession.run(...)
+# Это SIGABRT в нативном коде: ни try/catch, ни обработчик исключений его не
+# ловят — приложение просто исчезает. Отсюда и картина: сессии открывались, а
+# падало на ПЕРВОМ ВЫВОДЕ моделей; KOMA (debug-сборка без минификации) на том
+# же устройстве работала исправно.
+-keep class ai.onnxruntime.** { *; }
+-keepclassmembers class ai.onnxruntime.** {
+    <init>(...);
+    *;
+}
+-dontwarn ai.onnxruntime.**
+
+# Второй слой той же защиты (падение 2026-10-22, mid == null в
+# convertToTensorInfo): классы значений ORT должны остаться не только с
+# прежними ИМЕНАМИ, но и с прежней ИЕРАРХИЕЙ. R8 в full-mode умеет сливать
+# (`-allowaccessmodification`, vertical class merging) классы, у которых
+# «одно поведение», и после слияния GetMethodID по описанию класса возвращает
+# null уже при живом имени.
+-keepnames class ai.onnxruntime.** { *; }
+-keep class ai.onnxruntime.OnnxValue { *; }
+-keep class ai.onnxruntime.OnnxTensor { *; }
+-keep class ai.onnxruntime.OnnxSequence { *; }
+-keep class ai.onnxruntime.OnnxMap { *; }
+-keep class ai.onnxruntime.OnnxJavaType { *; }
+-keep class ai.onnxruntime.TensorInfo { *; }
+# JNI ищет методы по имени: нативные объявления и их владельцы должны выжить.
+-keepclasseswithmembernames,includedescriptorclasses class * {
+    native <methods>;
+}
+# Движки KOMA зовутся из нативного слоя ORT и из ассетов по именам файлов
+# моделей; их классы и константы не трогаем — иначе падение JNI снова будет
+# «необъяснимым».
+-keep class mihon.data.ocr.** { *; }
+-keepclassmembers class eu.kanade.tachiyomi.ui.koma.KomaOcrEngine { *; }

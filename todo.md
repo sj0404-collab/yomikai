@@ -1,0 +1,521 @@
+# Local OCR repair
+
+- [x] Trace the local OCR engine, language configuration, image preprocessing, and result post-processing.
+- [x] Reproduce the supplied Russian comic-panel failures: merged words, Latin/Cyrillic substitutions, UI-text capture, and false gibberish.
+- [ ] Add a safe Russian-oriented comic-text preprocessing and recognition path without weakening other configured languages.
+- [ ] Add regression coverage for representative Russian text-panel crops and reject low-confidence garbage.
+- [ ] Build, test, and manually validate OCR results on the supplied screenshots.
+- [x] Configure and trigger the Android APK build only through the repository's GitHub Actions runner; do not assemble APK locally.
+- [ ] Commit and push the verified local OCR fix directly to `sj0404-collab/yomihon-custom` on `main`.
+- [ ] Download the verified GitHub Actions release artifact and upload the APK to GoFile with the user's explicit authorization.
+
+## Caption OCR correction after device validation
+
+- [ ] Reproduce and fix dropped initials and vowel substitutions: `ОН БЫЛ ЛОЖНО ОБВИНЁН В СГОВОРЕ С ДЕМОНОМ` must not become `н был лжн вбинен в сговоре с демоном`.
+- [ ] Reproduce and fix word-boundary and Cyrillic substitutions: `«ОХОТНИЧИЙ ПЁС» ДОМА БАСКЕРВИЛЕЙ.` must not become `ххтничий лес и дма фаскервилаей`.
+- [ ] Preserve explicit spaces in `ВИКИР ВАН БАСКЕРВИЛЬ.` instead of fusing the name.
+- [ ] Build the corrected APK exclusively through GitHub Actions and validate it against these supplied panels before a new external upload.
+
+## Device validation after build 9d19650
+
+- [ ] Reproduce and correct dropped or absent caption results, including the white caption `ПО СЛОВАМ «ОХОТНИЧЬЕГО ПСА», КОТОРЫЙ ПОСВЯТИЛ СЕБЯ ОТЦУ И СЕМЬЕ,` that currently returns no result.
+- [ ] Correct erroneous hyphenation that splits intact words across OCR lines, for example `МНЕ ХО-РОШО`, `НЕУПРАВ-ЛЯЕМЫЙ`, `БЕС-ПОЛЕЗНЫЙ`, and `БЕР-ДИУМА`.
+- [ ] Correct missed letters and word-boundary errors in clean captions, including `МНЕ ХОРОШО ЗНАКОМО ЭТО ИМЯ.`, `«ОХОТНИЧИЙ ПЁС» ДОМА БАСКЕРВИЛЕЙ.`, and `И СХОЖУ ТАМ С УМА.`
+- [ ] Improve coverage for outlined Cyrillic dialogue and narration that currently returns no OCR result.
+- [ ] Add targeted regression tests for the reported hyphen, missing-result, and word-boundary cases without fabricating text from non-Russian artwork.
+
+## Release documentation
+
+- [x] Create a versioned Markdown release report for every future GitHub Actions APK candidate, documenting source commit, build link, improvements, known limitations, test evidence, and unresolved device-validation examples.
+- [x] Validate candidate `9a8e4f8` remotely in GitHub Actions run `33007959697`: focused Cyrillic OCR tests, complete unit tests, signed arm64 APK assembly, and quality-report artifact all succeeded.
+- [x] Upload candidate `9a8e4f8` from GitHub Actions run `33007959697` to GoFile for device testing: `https://gofile.io/d/s7HstrXp`.
+- [ ] Install and device-test candidate `9a8e4f8` against the reported false line-wrap hyphens and missing-result captions before treating the fix as accepted.
+
+## Standalone local OCR overlay APK
+
+- [ ] Inspect the requested Overlay Translator repository and confirm a compatible Android source baseline.
+- [ ] Create a separate Android overlay APK instead of modifying the reader UI: the user explicitly launches it over another app.
+- [ ] Request Android screen-capture and draw-over-other-apps permissions only after an explicit user action, and explain their purpose in-app.
+- [ ] Let the user place and resize one capture frame over the actual page content; crop to that frame before local OCR so status bars, overlay controls, and content outside the frame are excluded.
+- [ ] Run local Russian/Cyrillic OCR on the selected screen crop, render editable text in the overlay, and add optional Russian text-to-speech controls.
+- [ ] Add a Markdown quality report for every overlay APK candidate and build the APK only through GitHub Actions.
+
+## New quality gate: Russian text fidelity
+
+- [ ] Enforce UTF-8 end-to-end and add a regression that rejects mojibake and non-Cyrillic lookalike output when the source text is Russian.
+- [ ] Prevent hallucinated pseudo-words such as `разiiiнение`, `сахар-самаар`, and `мама-нама`; retain the raw OCR or return a clearly low-confidence/no-result state instead of inventing a correction.
+- [ ] Preserve whole detected sentences and large speech bubbles instead of returning a partial word result or `Нет результатов` when usable text exists.
+- [ ] Preserve short valid utterances such as `а`, `а-а-а`, `а!`, and `а...`; do not reject them solely because they are short.
+- [ ] Keep hyphens only for real orthographic hyphens or visual line-wraps that can be safely joined; never introduce a hyphen between recognized Cyrillic words.
+- [x] Decide explicitly whether preprocessing plugins are safe: rejected. Preprocessing stays local, deterministic and UTF-8 aware (high-contrast retry inside `recognizeCrop`), and no third-party preprocessing plugin is enabled; a candidate that lowers ranking in `candidateQuality` simply loses to the unprocessed crop.
+- [ ] Add a release report with positive and negative device examples before uploading the next APK candidate.
+
+## Final one-build gate
+
+- [x] Cancel the in-progress intermediate GitHub Actions run before any further APK build: `Tests` (build.yml) no longer assembles an APK at all, so intermediate builds cannot compete with the single release build.
+- [x] Complete all requested OCR logic, safety filters, full-bubble rescue, short-utterance handling, hyphen handling, and plugin decision before triggering a release workflow.
+- [ ] Finish the complete regression suite and inspect its results before the final build; no APK is to be built from an unverified commit.
+- [ ] Trigger exactly one final GitHub Actions APK build after all tests and the release Markdown report are complete.
+- [ ] Upload only that final APK to GoFile and clearly report its single final commit, run, SHA-256, positive results, and remaining limitations.
+
+## CTC coverage and line salvage
+
+- [x] Count blank steps inside the recognized span and expose them as `coverage` so dropped initials and vowels stop passing as a good result.
+- [x] Normalize the blank class probability with softmax so confidence thresholds mean what they claim; keep the raw mean as a scale-invariant score.
+- [x] Salvage a caption line token by token instead of erasing the whole line when one garbage token appears.
+- [x] Never partially salvage a line that still contains a mixed-script token; return it unchanged.
+- [x] Return a line without any Cyrillic letter unchanged so Latin signs and sound effects are not lost.
+- [x] Add `CtcScoringTest` and `filterGarbageTokens` regressions next to the existing `OcrTextCleanerTest`.
+
+## Single release build gate
+
+- [x] Stop `build.yml` from assembling APKs: it is a test gate for pull requests and manual dispatch only.
+- [x] Make `release.yml` the only place that produces an APK, and run the full regression suite there before `assembleRelease`.
+- [x] Check out with `fetch-depth: 0` so `getLatestCommitCount`/`getLatestCommitSha`/commit-time build stamps are real and the tag version is baked into the APK.
+- [x] Fail the build unless exactly one release APK exists, its `versionName` matches the tag, `versionCode` is not below the 10907 floor and arm64-v8a native code is present.
+- [x] Publish SHA-256 and size in the release body and in the rendered quality report; the release is no longer a draft.
+
+## Модульные плагины OCR/голосов и пресеты областей
+
+- [x] Описать OCR-движки декларативно (`OcrPlugins`): id, модель, требования (сеть, пак моделей, LiteRT, ключ, адрес сервера), порядок во fallback-цепочке, поддержка областей. Реестр не создаёт движки и не трогает мьютексы `OcrEngineLocks`, поэтому кэш моделей и блокировки остались прежними.
+- [x] Перенести семантику пресетов `pref_fallback_preset` (auto/online/offline/single) из зашитых списков `OcrRepositoryImpl` в данные реестра и покрыть их тестами.
+- [x] Зафиксировать миграционные значения enum (`LEGACY`, `FAST`, `TESSERACT`) как алиасы локального кириллического плагина.
+- [x] Описать голосовые движки декларативно (`VoicePlugins`): системный TTS, Google Web, ElevenLabs, ONNX (sherpa-onnx/Piper) с требованиями и признаком доступности; голоса ONNX берутся из реального `OnnxTts.CATALOG` и помечаются по факту установки модели.
+- [x] Вынести числовые параметры детектора и признания результата из констант `CyrillicOcrEngine` в `OcrTuning` и добавить пресеты типа контента: манга, манхва/вебтун, комикс, сбалансированный.
+- [x] Гарантировать, что пресет `BALANCED` побайтово повторяет прежние константы (отдельный тест), поэтому без явного выбора пресета поведение приложения не меняется.
+- [x] Добавить точные переопределения пресета (`OcrTuningOverrides`) с клампингом диапазонов: сохранённая старой версией настройка не может сломать распознавание.
+- [x] Подключить профиль к движку через провайдер `() -> OcrTuning`, чтобы смена пресета применялась без пересоздания движка и без повторной загрузки моделей.
+- [x] Экран настроек с деревом разделов: `SettingsOcrScreen` (пресет типа контента, область, порядок чтения, точная подстройка, движки и цепочка фолбэков) и `SettingsVoicePluginsScreen` (реестр голосовых движков + выбор движка и голоса), вложенный `SettingsOcrPluginsScreen` с требованиями и доступностью каждого OCR-плагина. Все три экрана зарегистрированы в `SettingsMainScreen` и в поиске по настройкам, добавлено 52 ключа в базовый `strings.xml`.
+- [ ] Пресеты областей в UI читалки: быстрый выбор манга/манхва/комикс и отображение зон страницы.
+- [x] Подключение AI-чата к модульной системе: реестр бэкендов `AiBackends` (online / local / runner) с единой проверкой готовности, раздел настроек «AI-ассистент» и переход на вкладку AI из настроек. Агент получил инструменты `reader_status`, `ocr_preset` и `plugins_list` — они читают те же реестры и настройки, что и экраны, поэтому ответ агента не расходится с настройками пользователя. Правила области и точной подстройки вынесены в `OcrRegionRules` (один источник истины для движка, настроек и агента), проверка сети — в `isNetworkAvailable` (core/common). Имена инструментов защищены от перехвата самодельными плагинами: `AiPlugins.RESERVED_TOOL_NAMES`.
+
+## Unified Yomihon APK: OCR and floating voice controls
+
+- [x] Port only the working local OCR changes from the overlay branch into `yomihon-custom` without copying its standalone APK shell or cloud paths.
+- [x] Add Yomihon-native floating `Голос` and `Выбрать голос` controls outside the OCR result card, with the existing copy and close actions preserved.
+- [x] Connect the voice picker to installed Russian system TTS voices and persist the selected voice locally through the existing `TtsSettingsDialog` and `OcrPreferences.voiceName()` path.
+- [x] Keep UTF-8/Cyrillic fidelity, full-bubble rescue, short utterances, safe line-wrap joining, and no pseudo-word hallucination as one shared quality gate.
+- [x] Run the complete regression suite before triggering exactly one signed release APK build in GitHub Actions: `release.yml` now runs migrations, the focused Cyrillic OCR tests, the CTC scoring tests and the full unit-test suite before `assembleRelease`, so an unverified commit cannot produce an APK. Local sandbox compilation stays blocked because Android SDK is unavailable; the GitHub runner remains the authoritative build/test environment.
+- [ ] Upload only the verified Yomihon release APK and its Markdown quality report to GoFile.
+
+## v1.9.91: единый бейдж, OCR всей области, мгновенные скрины, полный кеш главы
+
+- [x] Единый бейдж 🔊 при озвучке реплики: `OcrBubbleVoiceOverlay` рисует ровно один значок у текущего бабла (`isSpeaking = readingActive` в `ReaderActivity`); вне озвучки остаётся только перетаскиваемый значок.
+- [x] Все OCR-модели распознают всю видимую область целиком: `AutoReadEngine.readFrame` для полностраничных (AI) движков больше не режет кадр на баблы и не распознаёт кропы по отдельности — результат всей области сразу делится на реплики; YOLO-баллоны остались запасным путём для пустого результата.
+- [x] Фоновый скрин в минимально читаемом разрешении: `downscaleForScan` (длинная сторона 1600px) в `readFrame` и `captureInstantScreenshot` — «часики» сканирования быстрые, текст не теряется (детектор и так жмёт до 736px).
+- [x] Все слова распознаются: лимит баблов на кадр поднят с 14 до 40, основной путь возвращает все слова видимой области.
+- [x] Читалка открывает и кеширует ВСЕ страницы: `HttpPageLoader` префетчит оставшиеся страницы всей главы (не только 4), текущая страница приоритетнее фоновых; `ChapterCache` поднят с 100 МБ до 1 ГБ.
+- [x] Автоочистка кеша после прочтения: `ReaderActivity.pruneReadPagesFromCache` + `ChapterCache.removeImageFromCache` — прочитанные позади страницы освобождаются (кроме одной ближайшей).
+- [x] Локальная проверка: `:app:compileDebugKotlin`, `:app:testDebugUnitTest` (вкл. `AutoReadEngineCleanTest`), `:data:testDebugUnitTest`, `verifySqlDelightMigration` — все зелёные.
+- [x] Отчёт качества `docs/ocr-releases/2026-09-24-v1.9.91.md` и `CURRENT.md`.
+- [x] Push на `main` и тег `v1.9.91` → единственная подписанная сборка в GitHub Actions `release.yml`; SHA-256 APK подтверждён, релиз опубликован.
+- [ ] (по явному запросу) залить `yomikai-v1.9.91.apk` и отчёт на GoFile для проверки на устройстве.
+
+## v1.9.92: скриншоты с картинкой, добор текста при онлайн-OCR, быстрый скан
+
+- [x] Настоящие скриншоты: `OcrScreenshotBuffer`/`OcrScreenshotEntry` сохраняют JPEG-кадр (`filesDir/screenshots_images/<id>.jpg`); файлы удаляются при вытеснении, очистке и очистке главы; `diskSizeBytes()` учитывает картинки.
+- [x] Кто реально распознал: `engineUsed` в записи берётся из `result.ocrModel` (включая сработавший фолбэк), а не из настройки.
+- [x] Добор текста при онлайн-OCR: если онлайн-движок вернул <3 осмысленных строк (ватермарка вместо реплики), кадр дочитывается локально (YOLO + Cyrillic OCR) и результат доклеивается; дубли режутся историей.
+- [x] Таймаут кадра снижен 45→25 с; `ReaderViewModel.autoScanAndSpeak` получил тот же таймаут (раньше был бесконечный) — «висение» онлайн-движка больше не блокирует авточтение.
+- [x] UI: миниатюры JPEG в карточках вкладки «Скриншоты»; на детальном экране реальный кадр с оверлеем регионов (coil3), сетка-заглушка для старых записей.
+- [x] Локальная проверка: `:app:compileDebugKotlin`, `:app:testDebugUnitTest` (вкл. `AutoReadEngineCleanTest`, `OcrRegionTapTest`), `:data:testDebugUnitTest`, `verifySqlDelightMigration` — все зелёные.
+- [x] Отчёт качества `docs/ocr-releases/2026-09-24-v1.9.92.md` и `CURRENT.md`.
+- [x] Push на `main` и тег `v1.9.92` → единственная подписанная сборка в GitHub Actions `release.yml`; SHA-256 APK подтверждён, релиз опубликован.
+- [ ] (по явному запросу) залить `yomikai-v1.9.92.apk` и отчёт на GoFile для проверки на устройстве.
+
+## v1.9.93: быстрее локальный и онлайн OCR, ML Kit перестаёт выдавать «крякозябры»
+
+- [x] Локальный OCR быстрее: тайлы детектора 2×2 запускаются только когда основной проход нашёл меньше `tilingMinTextBoxes` боксов (пресеты: BALANCED 8, MANGA 6, MANHWA 12, MANHUA 8, COMIC 10) — вместо 5 проходов на кадр.
+- [x] Локальный OCR быстрее: верификатор PP-OCRv5 пропускается (`verifierSkipConfidence` 0.82) при уверенной v3 И чистой кириллице после правки омоглифов — устройство-защита от «уверенного мусора» сохраняется через `isAcceptableCyrillicOcrText`.
+- [x] ML Kit: строки чистятся конвейером кириллического движка (`OcrTextCleaner.cleanMlKitLine`) — правка омоглифов, отсев mojibake/диакритики и мусорных токенов, чистые кириллица/ASCII сохраняются; движок остаётся в фолбэке.
+- [x] Онлайн OCR быстрее: GLens 1500→1200 px/JPEG 78, ZenFree 2048→1080/78, Google AI и OpenRouter 1500→1080/78; OwOCR (self-hosted) не трогали.
+- [x] Новые тесты: `cleanMlKitLine` ×6 и `tile gating follows content density` в `OcrTextCleanerTest`/`OcrPluginsTest`.
+- [x] Локальная проверка: `:data:compileDebugKotlin`, `:data:testDebugUnitTest` (`--rerun-tasks`), `:app:compileDebugKotlin`, `:app:testDebugUnitTest`, `verifySqlDelightMigration` — все зелёные.
+- [x] Отчёт качества `docs/ocr-releases/2026-09-24-v1.9.93.md` и `CURRENT.md`.
+- [x] Push на `main` (`97d62e3`) и тег `v1.9.93` → единственная подписанная сборка в GitHub Actions `release.yml` (run 36004992680); SHA-256 `6eb75b511715b023df5c04f8ae59153894d47fbeccbd88ec8c6ea488b2f39775`, размер 54027792 байт, релиз опубликован.
+- [ ] (по явному запросу) залить `yomikai-v1.9.93.apk` и отчёт на GoFile для проверки на устройстве.
+
+## Книжная AI-сессия: веб- и ручное обучение, выбор моделей
+
+- [ ] При первом запуске AI или авточтения в книге автоматически создавать и открывать отдельную книжную сессию AI-чата, связанную с `bookId`; сессия должна возобновляться при следующем открытии книги и не смешиваться с глобальным чатом.
+- [ ] Дать книжной сессии два источника знаний: самостоятельный поиск/чтение сайта через разрешённый web-инструмент и ручную отправку пользователем URL или текста с инструкцией.
+- [ ] После чтения источника сохранять в `BookKnowledge` дату, источник и извлечённые правила: порядок чтения, рамки и области страницы, баблы/облачка, расшифровку текста, роли персонажей и подходящие голоса.
+- [ ] Применять сохранённые правила к последующим OCR-кадрам, авточтению, переводу и озвучке; показывать пользователю, какие правила применены.
+- [ ] Разделить и сохранять выбор моделей для OCR, AI-чата и оркестратора; показывать фактически выбранную модель для каждой операции и запрещать молчаливую подмену модели.
+- [ ] В режиме простого общения или вспомогательного ассистента в чате позволять выбрать любую модель оркестратора независимо от модели OCR и авточтения.
+- [ ] Добавить тесты на создание/восстановление книжной сессии, импорт веб- и ручного знания, применение правил к авточтению и маршрутизацию моделей.
+- [ ] Санитизировать внешние страницы и ручной текст перед сохранением, чтобы они не могли подменять системный промпт или инструкции безопасности.
+- [ ] Собирать и тестировать изменения только через GitHub Actions.
+
+## Состояние на 2026-09-25: читалка, модели, оверлей (v1.9.99 — v1.9.102)
+
+### Реализовано и проверено в CI
+
+- [x] Крэш при открытии главы: `resolveSelectionCaptures` бросал
+      `IllegalStateException` из корутины, фоновый авто-поиск издания обёрнут в
+      `runCatching`. Подтверждено по логу устройства (Itel, Android 13).
+- [x] Остановка авточтения: ожидание запуска фразы сокращено с полного таймаута
+      (мин. 8 с) до 1,2 с; `started` стал `MutableStateFlow` (была гонка).
+- [x] Разбор ремарок `SpeechCue`: `(*шёпотом*)` больше не даёт куски «(» и «)»,
+      `*Ааа!*` и `[Ааа!]` озвучиваются, `*Привет* мир` не теряет слово.
+- [x] Регулярки и ICU-движок Android: неэкранированная `}` в классах символов
+      роняла приложение в `<clinit>` на Android 13+ (три места, аудит пуст).
+- [x] Модели Zen: эндпоинт по семейству (`/chat/completions`, `/responses`,
+      `/messages`, путь Gemini), разбор всех форм ответа, актуальный список
+      бесплатных моделей вместо устаревших.
+- [x] «Размышляют null»: размышления читаются у всех семейств (Claude — блок
+      `thinking`, Responses — отдельный `output`, Gemini — флаг `thought`),
+      литерал `"null"` отсекается. Подтверждено скрином с устройства.
+- [x] 403 Zen отбрасывает модель, а не весь чат: ротация доходит до рабочей
+      `space-bunny-free`. Именно это открыло чат в v1.9.100.
+- [x] Отчёт о возможностях не обещает лишнего: доступность Zen выводится из
+      фактического ответа, а не из наличия сети.
+- [x] Читалка: кнопка «Стоп» в чате (гасит ход агента, озвучку и авточтение),
+      очередь сообщений при занятом агенте, очистка поля после отправки.
+- [x] Инструменты агента: `turn_page` (next/prev/first/last) и `auto_read`
+      (on/off/status) — раньше агент физически не мог листать и просил скриншоты.
+- [x] Мусор `@tool` в «Размышлениях» (незакрытый `@tool page_text {`) больше не
+      показывается читателю.
+- [x] Расход токенов: `web_search` ограничен тремя вызовами на ход (на скрине
+      было 8 вызовов и 33 775 токенов на фразу «продолжить постранично»).
+- [x] Ядро моста озвучки: `TtsPluginBridge` решает, что уходит в плагин, а что
+      остаётся на голосе; состояния «выключен / скачан / включён» и перебор
+      вариантов по кругу. Разметка звуков отличает звук от междометия.
+- [x] Все сборки — только через GitHub Actions (правило 8 `MANIFEST.md`).
+
+### Не сделано, осознанно
+
+- [ ] Плагин озвучки не воспроизводит звук: есть только решение моста и его
+      тесты. Сами звуки требуют либо файлов от владельца, либо работающего
+      провайдера — выдумывать их и URL нельзя.
+- [ ] Модели не проверялись вживую: нет устройства и ключей читателя. Проверка
+      на устройстве — за пользователем.
+- [ ] Glens не продублирован в списке моделей ИИ: это protobuf-движок
+      распознавания, он не умеет отвечать на вопросы о картинке, поэтому как
+      чат-модель не заработает.
+
+### В работе: вкладка лаунчера (сделано, в CI)
+
+- [x] Вкладка «Приложения» рядом с «Распознавание» и «Голоса»: список
+      запускаемых приложений телефона, тап открывает приложение и поднимает
+      оверлей поверх него, плюс кнопка «Запустить оверлей без приложения».
+- [x] Список берётся по MAIN + LAUNCHER, `<intent>` добавлен в манифест.
+      `QUERY_ALL_PACKAGES` не используется: на Android 11+ видно только
+      явно запрошенное, а широкое разрешение в Google Play не проходит.
+- [x] Ошибка чтения списка показывается текстом, а не пустым экраном.
+- [x] Иконка приложения конвертируется из Drawable в Bitmap: `Icon()` умеет
+      только ImageVector, из-за чего вкладка не компилировалась.
+
+### Уже реализовано, но не проверено читателем
+
+- [x] `GameSttManager` — ровно тот сценарий, ради которого затевался оверлей:
+      игра с английской озвучкой и без текста → STT → перевод → русские
+      голоса. Partial-результаты идут в пузырь сразу, финальный переводится
+      через `MangaTranslatorService` и озвучивается тем же движком, что в
+      читалке. Слушает непрерывно, перезапускаясь после конца фразы.
+      Подключён в `OcrOverlayService`, требует разрешения на микрофон.
+- [ ] Проверить на устройстве: вкладка «Приложения» и игровой STT.
+
+### В работе: оверлей читалки
+
+Порядок обязательный — сначала новый оверлей, потом удаление старого, иначе
+читатель останется без оверлея вообще.
+
+- [x] Захват экрана через `MediaProjection` в оверлее — `OverlayCaptureEngine`
+      (v1.9.112). Разрешение добывает прозрачная `OcrCaptureActivity`: из
+      сервиса системный диалог не поднять.
+- [x] Чтение рамки + листание своим жестом — `OverlayAutoReader` и
+      `OverlayGestureService` (v1.9.112). Жест проверяется по ответу системы,
+      при отказе — повтор и запасной свайп. Требует включённой Службы
+      доступности, она ничего не читает и ничего не выполняет.
+- [ ] Показ страницы книги в рамке оверлея (само изображение кадра в окне —
+      сделано только распознавание и озвучка, картинку читатель не видит).
+- [ ] ИИ-чат внутри оверлея с видением текущей страницы: агент сейчас умеет
+      видеть страницу только из `ReaderActivity`; сервису нужен свой источник
+      картинки.
+- [ ] Вкладка лаунчера со списком приложений телефона; тап по приложению —
+      окно захвата экрана и оверлей.
+- [ ] Удалить старые оверлеи: `OcrOverlayService` и отдельное приложение
+      `overlay-reader` (2886 строк, свой `settings.gradle`, вне сборки).
+
+### В работе: баги и фичи из скринов
+
+- [x] Файлы, созданные агентом, нельзя открыть — вкладка «Файлы» с «Открыть»
+      и копированием в «Загрузки» через MediaStore.
+- [x] Авточтение озвучивает первую реплику и замолкает (v1.9.112): цикл
+      останавливался на первом отказе жеста, а `dispatchGesture` не различает
+      «жест отправлен» и «жест сработал».
+- [x] «Скриншот сохранён» → падение без ошибки (v1.9.112): фоновая задача
+      получала битмап, который вызывающий переиспользовал сразу.
+- [x] «Field 'pages' is required» на экране манги (v1.9.112): неполный ответ
+      трекера ронял разбор всего DTO.
+- [x] HTTP 500 → «0 глав» без повтора (v1.9.112).
+- [ ] Авточтение зависает на нечитаемом тексте; там, где текста нет, должна
+      озвучиваться сцена голосом.
+- [ ] Аудио по настроению сцены (мрачный → позитивный → меланхолия → ужасы) с
+      пресетами и возможностью создать свой — продолжение работы над плагином
+      озвучки.
+
+## Авточтение: разбор конвейера и непочиненные баги (2026-10-03)
+
+Конвейер разобран целиком: `ReaderActivity.readCurrentPage` →
+`AutoReadEngine.readFrame` (кадр → OCR двумя путями сразу: `async` ждёт полный
+результат, `Channel` отдаёт регионы по мере появления) → чистка и отсев дублей →
+сортировка по порядку чтения → пол голосов (локально, по словарю, фоновым Vision)
+→ озвучка по реплике (`SpeechMarkup` → `TtsSpeaker.speakAs`, ожидание `onStart`
+с запасом 1,2 с и `onDone`) → `onPageFinished` и рекурсивный следующий кадр.
+Состояние: `_isReading`/`_currentRegion`/`_frameRegions` — `StateFlow`,
+`generation` — `@Volatile` и инвалидирует колбэки отменённых кадров,
+`spokenLines` — множество озвученного.
+
+### Починено в c65668c
+
+- [x] Перевод, пол и «произносить ли» брались по позиции в `speakable`, а
+      заполнялись по `ordered` — а это подпоследовательность. После потокового
+      прохода пятая реплика получала перевод и пол первой, а
+      `prep.speak = false` первой выкидывал пятую целиком.
+- [x] `finally` кадра стирал общее состояние без проверки поколения: повторное
+      «Прочитать страницу» гасило значки, возвращало кнопку «Стоп» в состояние
+      «старт» и обнуляло нумерацию реплик.
+- [x] Ключ кэша детектора баллонов был «глава + страница» без положения кадра:
+      на вебтуне после первого шага автоскролла рамки брались из прошлого окна.
+- [x] То же, что уже чинили с `aiRefine`, но в `TtsSpeaker`: тело задачи читало
+      поле `currentJob` до присваивания и могло оборвать озвучку на первой
+      проверке. Задевало сетевые движки.
+
+### Починено в 7febe62
+
+- [x] **Вебтун + «Плавно пофразно» → авточтение не листает вообще.**
+
+      `AutoReadEngine.kt:535-547` и `:1266-1317`: потоковый проход озвучивает все
+      свежие регионы, но `onLineSpoken` не зовёт, а `speakable` после него пуст,
+      поэтому основной цикл не выполняется ни разу. В `onPageFinished`
+      `webtoonFraction == 0f`, скролла нет, и читается один экран по кругу.
+      Чинить: передавать `onLineSpoken` в потоковый проход либо запрещать
+      стриминг при `scrollSpeed == "phrase"`.
+- [x] **Тап по значку 🔊 во время чтения молча убивает автозапуск.**
+
+      `AutoReadEngine.kt:1208-1226`: `speakSingle` переиспользует то же поле `job`
+      и увеличивает `generation`, поэтому отменённый `readFrame` не вызывает
+      `onPageFinished` (`:934`), а `ReaderActivity.autoReadActive` остаётся
+      `true`. Чинить: отдельное поле для ручной озвучки и перезапуск цикла, а не
+      отмена кадра.
+- [x] **Упавший или пустой OCR листает главу без единого слова.**
+
+      `OcrRepositoryImpl.kt:622-658` глотает ошибку и отдаёт пустой результат,
+      `AutoReadEngine.kt:895-908` считает отказы только от TTS, поэтому пустой
+      кадр приводит к листанию. Чинить: различать «OCR не дал результата» и
+      «OCR не смог» и останавливать авточтение с сообщением.
+- [x] **Голос персонажа выдаётся по 3-граммам текста, а не по персонажу.**
+
+      `AutoReadEngine.kt:171-202`, `TtsSpeaker.kt:790-796`,
+      `VoiceHelper.kt:338-364`: слот определяется именем из подписи реплики либо
+      сходством 3-грамм (порог 0.45), реплики короче `MIN_FINGERPRINT` не
+      продолжают персонажа. В сцене без подписей голоса идут по кругу — ровно
+      тот дефект, который KDoc `:133-141` объявляет исправленным.
+- [x] **Первый TTS после старта процесса работает на главном потоке.**
+
+      `TtsSpeaker.kt:148-208`: `TextToSpeech.OnInitListener` приходит на
+      главном, а тело `speakSystem` читает `voice_rules.json` с `/sdcard`,
+      разбирает JSON и ходит в binder за списком голосов. Чинить: спускать
+      `onReady` на `Dispatchers.Default`.
+- [x] **Рамки кадра трактуются как рамки страницы.**
+      `AutoReadEngine.kt:268-282`: `highlightZone` в читалке не выставляется,
+      `mapToViewport` не вызывается нигде, а `FrameRegion.box` нормализован к
+      кадру. Значки 🔊 на вебтуне висят не над своей репликой.
+- [x] **Шесть настроек в UI не делают ничего:** «Фоновая музыка (авточтение)»
+
+      (`AutoReadMusic.kt` в репозитории нет), «Листать после последней реплики»,
+      «Сканировать и озвучивать страницу целиком» (`ReaderViewModel.autoScanAndSpeak`
+      не вызывается нигде), три параметра подсветки (композабл ничего не рисует),
+      «Показывать номера реплик» (`marks` не отображаются), уведомление
+      «Читается страница».
+- [x] **Реплика «пошла, но не кончилась» держит страницу до ~52 с молча**
+      (`AutoReadEngine.kt:1934-1937`): таймаут фазы 2 считается от длины текста,
+      сообщения нет, а в историю попадает «озвучено».
+- [x] **Каждая реплика переписывает весь журнал истории** (`OcrHistoryStore.kt`):
+      полная сериализация до 500 записей на каждое распознавание пола и на каждую
+      озвучку. Чинить: буфер с дебайном.
+- [x] **Авточтение пишет в кэш OCR окна, а не страницы**
+
+      (`OcrRepositoryImpl.kt:574`, `AutoReadEngine.kt:507-512`): рамки сохраняются
+      нормализованными к кадру, потом оверлей подсвечивает не там. Нужен флаг
+      «не кэшировать» для авточтения. В веб-авточтении вдобавок
+      `chapterId = -1` на каждую позицию скролла, и `clearChapter` их не убирает.
+
+## ИИ-атрибуция, голоса и сюжет (2026-10-03, после fbecacf)
+
+### Закрыто
+
+- [x] **Настройка «Листать после последней реплики кадра» ничего не делала.**
+      `autoReadAutoAdvance` читался только в браузере (`BrowserTab.kt:758`),
+      читалка листала всегда. Выключено — останавливаемся после кадра с тостом,
+      как в браузере.
+- [x] **Вебтун + «Плавно пофразно» не листал вообще.** Реплики прокручивали себя
+      сами, поэтому шаг кадра был `0f` и после последней реплики не было
+      движения — цикл перечитывал один экран. Добавлен `PHRASE_FINAL_STEP`.
+- [x] **Упавший или пустой OCR листал главу без единого слова.** Ошибка и пустой
+      результат выглядели одинаково. Серия неудачных кадров
+      (`OCR_FAILED_STOP_AFTER`) останавливает авточтение с `OCR_FAILED_MESSAGE`;
+      одиночный таймаут (холодная модель) пропускается.
+- [x] **Голос выдавался по 3-граммам текста, а не по персонажу.** Каждая реплика
+      без подписи создавала нового персонажа — на шесть баблов шесть голосов.
+      Теперь `continueSpeakerIndex`: смена пола возвращает прежнего
+      собеседника, две длинные реплики одного пола чередуются, короткие держат
+      голос.
+- [x] **Первый TTS работал на главном потоке.** `onInit` приходил на главном,
+      а тело `speakSystem` читало `voice_rules.json` с `/sdcard` и ходило в
+      binder. Готовность движка спускается на рабочий поток.
+- [x] **Реплика «пошла, но не кончилась» считалась озвученной.** Новый исход
+      `STALLED` идёт в счётчик отказов, а не в «озвучено».
+- [x] **Кадры авточтения писались в кэш страницы.** Кадр вебтуна — окно, а не
+      страница; рамки нормализованы к кадру. Добавлен `cacheResult = false`.
+- [x] **Значки 🔊 висели не над своей репликой.** `frameBoxToPage` возвращает
+      рамки на страницу (координаты пофразного скролла не тронуты).
+- [x] **Три настройки подсветки и номера реплик не делали ничего.**
+      `AutoReadHighlight` с v1.9.44 не рисовал вообще ничего.
+- [x] **Уведомление «Читается страница»** показывалось только из
+      неиспользуемого пути; теперь показывается на кадре.
+- [x] **«Сканировать и озвучивать страницу целиком»** не вызывалось нигде;
+      текст кадра озвучивается одной фразой.
+- [x] **Ритм листания.** Фиксированные 350 + 900 мс заменены на паузу по концу
+      фразы (`pauseAfterLineMs`): `…`/`—` 620 мс, `?` 480, `.` 340, `!` 160,
+      с учётом длины и темпа, потолок 120..800 мс.
+- [x] **Авточтение читало одну страницу и само выключалось, не листая.**
+      `ReaderActivity.readCurrentPage`: цепочка «кадр → onPageFinished →
+      листание → заново» жила в колбэке движка и не была связана с задачей
+      цикла, поэтому любой выход — страница ещё не отрисовалась после
+      `setCurrentItem` (`cropCurrentSelectionFrame` → null), кадр упал, движок
+      остановил себя — рвал её молча, а `autoReadActive` оставался `true`:
+      кнопка показывала «чтение идёт», звука и листания не было. Теперь цикл
+      один (`runAutoReadChapter`), у кадра есть исход
+      (`READ/BLOCKED/NOT_READY/FAILED`), захват повторяется, пока вьювер не
+      покажет страницу, а конец главы распознаётся и проговаривается
+      («Глава прочитана — страниц N»).
+- [x] **Конец главы не распознавался.** `PagerViewer.moveToNext()` и
+      `WebtoonViewer.scrollDownByFraction()` на краю главы просто ничего не
+      делали, и авточтение читало последний экран по кругу. Оба теперь
+      возвращают `false` на своём краю (`canScrollDown()` у ленты).
+- [x] **Тап по значку 🔊 во время чтения убивал автолистание.**
+      `AutoReadEngine.speakSingle` переиспользовал поле `job` и увеличивал
+      `generation` — то есть прямо запрещал `onPageFinished`. У ручной
+      озвучки своя задача (`manualJob`), а движок синтеза защищён `Mutex`.
+- [x] **«⏹ Остановить» в шторке не останавливала чтение** — только глушила
+      синтез, а цикл листал главу дальше в тишину. Запрос доходит до цикла
+      через `TtsReadingNotifier.consumeStopRequest()`.
+- [x] **Скан главы → авточтение гоняло движок по каждой странице заново.**
+      `AutoReadEngine.readFrame(cachedResult = …)`: кадр пейджера — это ровно
+      страница, поэтому текст берётся из кэша скана (и пропускается копия
+      пикселей). Для окна вебтуна кэш не берётся никогда.
+- [x] **Автозапуск чтения поднимался заново на последней странице.**
+      `LaunchedEffect(chapter, viewer)` с проверкой `!autoReadActive` срабатывал
+      каждый раз при пересоздании вьювера, и глава «прочитана» повторялась по
+      кругу. Теперь один раз на главу (`autoReadStartedChapters`).
+- [x] **Диалог скана главы зависал.** Строка прогресса обновлялась только при
+      включённой ИИ-проверке (иначе «Подготовка…» все минуты), а ветки сканера
+      без `onComplete`/`onError` оставляли `running = true` навсегда.
+- [x] **Верхний бабл страницы не читался, а подсветка замерзала после остановки**
+      (скриншот с устройства, 2026-10-04). Нечёткая история считала тождеством
+      включение («Я не знаю» глушило «Я не знаю, что делать»), причём и по
+      включению, и по 3-граммам — вложенный фрагмент даёт 100% совпадения.
+      Сверка длины теперь первая. Очистка подсветки проверяла `generation`,
+      который растёт и при остановке по существу, — добавлен `frameCounter`.
+      7 регрессионных тестов на правило тождества реплики.
+- [x] **Главу нельзя было прочитать из читалки.** Кнопка «Читать главу» в
+      плавающем меню читалки рядом с «Прочитать страницу» (`r_autoread_chapter`).
+- [x] **Скан и озвучка — по любой главе и пачкой.** Кнопка у каждой главы плюс
+      «Сканировать и озвучить» в мультивыборе для скачанных; список движков —
+      весь реестр `OcrPlugins`, а не два зашитых.
+- [x] **Негде было видеть, что делает ИИ** (скриншот с устройства). Журнал
+      запросов к модели жил в настройках озвучки и только при `aiGenderVoices`,
+      ход агента писался внутрь ответа чата, история OCR была отдельным экраном.
+      Добавлена `AiConsole` — один живой список: раунды, вызовы модели с
+      аргументами, инструменты с временем и итогом, стадии распознавания.
+      Экран `AiConsoleDialog` (меню читалки `r_aiconsole` + AI-чат).
+- [x] **«Стоп» не отменял пересказ «Сюжета».** У агента был только флаг
+      `requesting`, запрос шёл своим путём и дописывался после остановки.
+      Добавлен `ReadingPlotAgent.cancel()`, вызывается из кнопки «Стоп».
+- [x] **`origin/master` не компилировался**: `frameCounter` объявлен и
+      сравнивался с `myFrame`, но `myFrame` нигде не заводился.
+- [x] **«Читать главу» роняла приложение** (лог с itel, Android 13,
+      сборка 1.9.124): `InjektionException: No registered instance for
+      android.content.Context` в `ReadingPlotAgentHolder.getAgent` из
+      `startAutoReadLoop`. В `AppModule` был только `addSingleton(app)`, то есть
+      `Application`, а просили `Context`. Зарегистрирован `Context`; сброс
+      пересказа обёрнут — он не должен валить чтение.
+- [x] **Консоль ИИ была в меню читалки**, то есть в обычном чтении занимала
+      пол-экрана. Перенесена на экран манги (третья кнопка в ряду с «Начать»)
+      и в диалог скана; из AI-чата оставлена.
+- [x] **Книга ходила в сеть за своим текстом** (`BookOcr` звал общий конвейер с
+      движком из настройки манги). Новый `OcrRepository.recognizeLocalText` с
+      локальным движком и запретом онлайн-фолбэка.
+- [x] **Прогресс PDF считался по пустым главам** (0 предложений → одна единица
+      на книгу). `BookProgress.percent` считает постраничные главы в страницах.
+- [x] **OCR страниц книги выбирался жёстко.** Кириллический PP-OCR требует пакет
+      моделей и LiteRT; без них страница молчала. Теперь локальный движок
+      выбирается по готовности: кириллический, если пакет есть, иначе встроенный
+      ML Kit (латиница, без загрузки). Для EPUB/FB2/TXT/DOCX/HTML OCR не нужен.
+- [x] **Список движков в диалоге скана нельзя было прокрутить.** Он лежал в
+      непрокручиваемом `Column`, и всё после первых строк обрезалось — выглядело
+      так, будто движок один. Сеть в том же списке кэшировалась навсегда, онлайн-
+      движки оставались серыми до перезапуска процесса.
+- [x] **Кнопка скана висела отдельным FAB** над списком глав. Теперь вторая
+      кнопка в ряду с «Читать»; офлайн-движок убран (на главе идёт минутами).
+- [x] **Голоса были одни на все книги.** Книжный словарь `voiceRolesByBook`
+      поверх глобального; перезапись книги не трогает остальные.
+- [x] **ИИ писал голоса, которых движок не умеет.** `planAiVoice`: сетевой —
+      свободно; системный — только если голос установлен, иначе в сеть; без
+      сети — системный по полу. 8 веток покрыты.
+- [x] **Vision-проверка страницы** (`PageRoleVerifier`): атрибуция по хвостикам
+      облачков, мысли, пропуски, жанро-нейтральный промпт, запрет выдумывать
+      текст, `dropped` вместо молчаливого удаления, отказ вместо частичного
+      результата.
+- [x] **Проверка попадает в кэш страницы.** Правки текста и отсев не-реплик;
+      неизменившиеся страницы не переписываются.
+- [x] **ИИ затирал голоса, назначенные руками** (`fbecacf`). `mergeRoles()`
+      сохраняет любую роль с голосом; модель добавляет только новые имена.
+      Найдено тестом на собственное ложное утверждение.
+- [x] **Суб-агент «Сюжет»**: копит услышанное, пишет пересказ от первого лица с
+      эмоциями, вкладка в AI-панели, пересказ сохраняется по книге на диск.
+
+### Не закрыто — по убыванию вреда
+
+- [ ] **Голоса от ИИ не назначаются.** Пишутся имена и пол-«auto». Назначить
+      голос вслепую нельзя: системный TTS не создаёт голоса, движок молча уйдёт
+      на другой. Нужен список реально установленных голосов — запрос к живому
+      `TextToSpeech` (`VoiceHelper.voicesFor(tts, …)`). Правило и 8 тестов
+      готовы, не соединены с местом записи. **Риск:** голос назначенный вслепую
+      звучит не тем, что настроили.
+- [ ] **Реплики, пропущенные OCR, не добавляются.** У строк от модели нет рамки,
+      а выдуманная рамка = подсветка и тап в пустоте. Нужен второй проход OCR по
+      найденным облачкам (YOLO даёт рамки). **Риск:** сейчас часть реплик главы
+      не озвучивается, и это не видно — страница просто короче.
+- [ ] **Роли не доезжают в озвучку полем.** Работают через книжный словарь
+      имён; для сцены без подписей хватает, но явную метку «это Аки» модель не
+      передаёт. Нужно поле в `OcrRegion` + миграция кэша.
+- [ ] **Качество пересказа упирается в распознавание.** Агент получает ровно
+      произнесённое: `ХО-РОШО` в тексте даст `ХО-РОШО` в пересказе. Сглаживать
+      нельзя — это значило бы, что приложение додумывает реплики.
+
+### Требует проверки на устройстве
+
+- [ ] Авточтение ГЛАВЫ: листает ли постранично до конца и говорит ли
+      «Глава прочитана — страниц N» вместо остановки на первой странице.
+- [ ] «⏹ Остановить» в шторке — останавливает ли авточтение, а не только звук.
+- [ ] Скан главы → авточтение: не гоняет ли движок повторно ( должно быть
+      видно по скорости: текст берётся из кэша скана).
+- [ ] Вебтун + «Плавно пофразно» — листает ли вообще и останавливается ли на
+      конце полосы.
+- [ ] Тумблер «Листать после последней реплики кадра» — останавливает ли чтение.
+- [ ] Пустой/упавший OCR — не листает ли молча.
+- [ ] Уведомление «Читается глава · Страница N из M» — верно ли считает.
+- [ ] Голоса в сцене без подписей — чередуются ли два, а не идут по кругу.
+- [ ] Ритм пауз и значки 🔊 на своих репликах.
+- [ ] ИИ-скан главы: имена персонажей в словаре книги, ручные голоса целы.
+- [ ] Вкладка «Сюжет»: текст от модели, сохранение при возврате.
+
+### Сборки
+
+- [ ] `v1.9.121` (run `37143634462`) — без сохранения сюжета и без фикса
+      ручных голосов; финальные два коммита в APK не попали.
+

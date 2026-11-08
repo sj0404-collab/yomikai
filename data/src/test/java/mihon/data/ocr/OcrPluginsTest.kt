@@ -1,0 +1,293 @@
+package mihon.data.ocr
+
+import io.kotest.matchers.collections.shouldContainExactly
+import io.kotest.matchers.collections.shouldContain
+import io.kotest.matchers.collections.shouldContain
+import io.kotest.matchers.collections.shouldContain
+import io.kotest.matchers.collections.shouldContainExactly
+import io.kotest.matchers.shouldBe
+import mihon.domain.ocr.model.OcrModel
+import mihon.domain.ocr.service.ScanRegion
+import org.junit.jupiter.api.Test
+
+/**
+ * Реестр OCR-плагинов и пресеты типа контента.
+ *
+ * Обе сущности — чистые данные, поэтому проверяются без Android и без
+ * загрузки моделей. Значения BALANCED зафиксированы как актуальные умолчания
+ * движка: пользователь, не выбиравший пресет, получает поведение v1.9.76
+ * (фильтр водяных знаков по доле чернил, более высокие пороги уверенности).
+ */
+class OcrPluginsTest {
+
+    @Test
+    fun `balanced preset repeats the engine defaults`() {
+        val balanced = OcrTuning.preset(OcrContentType.BALANCED)
+        balanced.detectorThreshold shouldBe 0.20f
+        balanced.minComponentArea shouldBe 24
+        balanced.maxTextBoxes shouldBe 96
+        balanced.tilingMinTextBoxes shouldBe 8
+        balanced.mergeOverlapYFactor shouldBe 0.55f
+        balanced.mergeGapXFactor shouldBe 0.55f
+        balanced.splitMinWidthPx shouldBe 32
+        balanced.wordGapFactor shouldBe 1.7f
+        balanced.minWordGapPx shouldBe 5
+        balanced.contrastRetryConfidence shouldBe 0.90f
+        balanced.verifierSkipConfidence shouldBe 0.82f
+        balanced.minAcceptConfidence shouldBe 0.32f
+        balanced.shortTextMinConfidence shouldBe 0.18f
+        balanced.minCoverage shouldBe 0.12f
+        balanced.minCropInkRatio shouldBe 0.03f
+        balanced.contrastSkipInkThreshold shouldBe 0.02f
+        balanced.verifierCyrillicBonus shouldBe 0.20f
+        balanced.wholeLineBoundaryBonus shouldBe 0.08f
+        balanced.rescueMaxLines shouldBe 6
+        balanced.readingOrder shouldBe "rtl"
+        balanced.scanRegion shouldBe ScanRegion.FULL_PAGE
+    }
+
+    @Test
+    fun `single profile repeats the engine defaults`() {
+        // Пресетов типа контента больше нет, поэтому тайлинг, фильтры чернил и
+        // пороги одинаковы для всех книг — и проверяются на DEFAULT.
+        OcrTuning.preset(OcrContentType.BALANCED).tilingMinTextBoxes shouldBe
+            OcrTuning.DEFAULT.tilingMinTextBoxes
+        OcrTuning.preset(OcrContentType.BALANCED).verifierSkipConfidence shouldBe
+            OcrTuning.DEFAULT.verifierSkipConfidence
+        OcrTuning.preset(OcrContentType.BALANCED).minCropInkRatio shouldBe
+            OcrTuning.DEFAULT.minCropInkRatio
+        OcrTuning.preset(OcrContentType.BALANCED).minComponentArea shouldBe
+            OcrTuning.DEFAULT.minComponentArea
+    }
+
+    @Test
+    fun `overrides replace only the fields the user filled in`() {
+        val base = OcrTuning.preset(OcrContentType.BALANCED)
+        val tuned = OcrTuningOverrides(detectorThreshold = 0.31f, rescueMaxLines = 3).applyTo(base)
+        tuned.detectorThreshold shouldBe 0.31f
+        tuned.rescueMaxLines shouldBe 3
+        // Остальные поля не тронуты.
+        tuned.minComponentArea shouldBe base.minComponentArea
+        tuned.wordGapFactor shouldBe base.wordGapFactor
+        tuned.minAcceptConfidence shouldBe base.minAcceptConfidence
+    }
+
+    @Test
+    fun `out-of-range overrides are clamped instead of breaking the detector`() {
+        val base = OcrTuning.DEFAULT
+        val tuned = OcrTuningOverrides(
+            detectorThreshold = 9f,
+            minComponentArea = -5,
+            maxTextBoxes = 0,
+            wordGapFactor = 99f,
+            minCoverage = 3f,
+            rescueMaxLines = -1,
+        ).applyTo(base)
+        tuned.detectorThreshold shouldBe 0.99f
+        tuned.minComponentArea shouldBe 1
+        tuned.maxTextBoxes shouldBe 1
+        tuned.wordGapFactor shouldBe 6.0f
+        tuned.minCoverage shouldBe 0.9f
+        tuned.rescueMaxLines shouldBe 0
+    }
+
+    @Test
+    fun `empty overrides keep the preset untouched`() {
+        val base = OcrTuning.preset(OcrContentType.BALANCED)
+        OcrTuningOverrides().isEmpty shouldBe true
+        OcrTuningOverrides().applyTo(base) shouldBe base
+    }
+
+    @Test
+    fun `region profile composes preset and overrides`() {
+        val profile = OcrRegionProfile(
+            contentType = OcrContentType.BALANCED,
+            scanRegion = ScanRegion.BOTTOM_HALF,
+            overrides = OcrTuningOverrides(minAcceptConfidence = 0.4f),
+        )
+        val tuning = profile.tuning()
+        tuning.scanRegion shouldBe ScanRegion.BOTTOM_HALF
+        tuning.minAcceptConfidence shouldBe 0.4f
+        // Не переопределённое поле осталось прежним.
+        tuning.wordGapFactor shouldBe OcrTuning.DEFAULT.wordGapFactor
+    }
+
+    @Test
+    fun `unknown content type falls back to balanced`() {
+        // Прежние значения пресетов у пользователей остаются в настройках:
+        // они обязаны разбираться и сводиться к единственному профилю.
+        listOf("manhwa", "комикс", "manga", "manhua", "comic")
+            .forEach { OcrContentType.fromId(it) shouldBe OcrContentType.BALANCED }
+        OcrContentType.fromId(null) shouldBe OcrContentType.BALANCED
+        OcrContentType.fromId("") shouldBe OcrContentType.BALANCED
+    }
+
+    @Test
+    fun `every selectable plugin has a unique id and engine type`() {
+        OcrPlugins.ALL.map { it.id }.distinct().size shouldBe OcrPlugins.ALL.size
+        OcrPlugins.ALL.map { it.engineType }.distinct().size shouldBe OcrPlugins.ALL.size
+        OcrPlugins.ALL.forEach { plugin ->
+            OcrPlugins.byId(plugin.id) shouldBe plugin
+            OcrPlugins.byEngineType(plugin.engineType) shouldBe plugin
+            OcrPlugins.byModel(plugin.model) shouldBe plugin
+        }
+    }
+
+    @Test
+    fun `legacy engine selections migrate to the cyrillic plugin`() {
+        // Tesseract здесь НЕ мигрирует: с v1.10.18 это самостоятельный плагин,
+        // а не алиас кириллического (см. следующий тест).
+        OcrPlugins.byModel(OcrModel.LEGACY) shouldBe OcrPlugins.CYRILLIC
+        OcrPlugins.byModel(OcrModel.FAST) shouldBe OcrPlugins.CYRILLIC
+        OcrPlugins.LEGACY_ALIASES.map { it.second }.toSet() shouldContainExactly setOf(OcrPlugins.CYRILLIC.id)
+    }
+
+    @Test
+    fun `tesseract is a real plugin, not a cyrillic alias`() {
+        // v1.10.18: пункт «Tesseract» был фикцией — он молча уходил в PP-OCR,
+        // а дескриптора в реестре не было, и движок пропадал из всех списков.
+        OcrPlugins.byModel(OcrModel.TESSERACT) shouldBe OcrPlugins.TESSERACT
+        OcrPlugins.TESSERACT.id shouldBe "tesseract"
+        OcrPlugins.TESSERACT.online shouldBe false
+    }
+
+    @Test
+    fun `tesseract is listed among selectable plugins`() {
+        // Списки в UI строятся из ALL, а не из enum: без записи тут движок
+        // выбирался в настройках и тут же исчезал из остальных мест.
+        OcrPlugins.ALL shouldContain OcrPlugins.TESSERACT
+        OcrPlugins.byId("tesseract") shouldBe OcrPlugins.TESSERACT
+    }
+
+    @Test
+    fun `tesseract needs downloaded models`() {
+        // Нативная библиотека в APK, а буквы в .traineddata — без пакета
+        // движок молча отдаёт пустоту, и это должно быть видно в UI.
+        OcrPlugins.TESSERACT.requirements shouldContain OcrPluginRequirement.MODEL_PACK
+    }
+
+    @Test
+    fun `availability follows the declared requirements`() {
+        val offlineOnly = OcrPlugins.available(
+            networkAvailable = false,
+            modelsInstalled = true,
+            litertAvailable = true,
+        )
+        // Офлайн-движки с выполненными требованиями: PP-OCR (пак + LiteRT),
+        // Tesseract (пакет языковых данных) и ML Kit (вкомпилирован, без требований).
+        offlineOnly shouldContainExactly listOf(
+            OcrPlugins.CYRILLIC,
+            OcrPlugins.TESSERACT,
+            OcrPlugins.MLKIT,
+        )
+
+        // ML Kit не требует ни сети, ни пакета моделей, поэтому доступен всегда.
+        val nothing = OcrPlugins.available(
+            networkAvailable = false,
+            modelsInstalled = false,
+            litertAvailable = false,
+        )
+        // Без скачанных пакетов доступен только вкомпилированный ML Kit.
+        nothing shouldContainExactly listOf(OcrPlugins.MLKIT)
+
+        val withKeys = OcrPlugins.available(
+            networkAvailable = true,
+            modelsInstalled = true,
+            litertAvailable = true,
+            hasApiKey = { true },
+            hasServerAddress = { true },
+        )
+        withKeys.size shouldBe OcrPlugins.ALL.size
+    }
+
+    @Test
+    fun `fallback chain keeps the semantics of the old presets`() {
+        val primary = OcrPlugins.CYRILLIC
+
+        OcrPlugins.fallbackChain(primary, "single", networkAvailable = true) shouldBe emptyList()
+
+        // offline: остаются локальные движки после основного — Tesseract
+        // (второй русский) и ML Kit (латиница).
+        OcrPlugins.fallbackChain(primary, "offline", networkAvailable = true)
+            .map { it.id } shouldContainExactly listOf("tesseract", "mlkit")
+
+        OcrPlugins.fallbackChain(primary, "online", networkAvailable = true).map { it.id } shouldContainExactly
+            listOf("google_lens", "zen_free", "google_ai", "openrouter", "owocr")
+
+        // auto без сети не пробует онлайн-движки вовсе: локальные по приоритету.
+        OcrPlugins.fallbackChain(OcrPlugins.GLENS, "auto", networkAvailable = false).map { it.id } shouldContainExactly
+            listOf("cyrillic_ppocr", "tesseract", "mlkit")
+
+        // auto с сетью: сначала онлайн по приоритету, потом локальный.
+        OcrPlugins.fallbackChain(OcrPlugins.GLENS, "auto", networkAvailable = true).map { it.id } shouldContainExactly
+            listOf("zen_free", "google_ai", "openrouter", "owocr", "cyrillic_ppocr", "tesseract", "mlkit")
+
+        // Неизвестный пресет читается как auto: при отсутствии сети первичный
+        // Cyrillic исключён, остаётся ML Kit.
+        OcrPlugins.fallbackChain(primary, "что-то-новое", networkAvailable = false)
+            .map { it.id } shouldContainExactly listOf("tesseract", "mlkit")
+    }
+
+    @Test
+    fun `region-capable plugins expose their capability`() {
+        OcrPlugins.ALL.filter { it.supportsRegions }.map { it.id } shouldContainExactly
+            listOf(OcrPlugins.CYRILLIC.id, OcrPlugins.MLKIT.id, OcrPlugins.ZEN_FREE.id)
+    }
+
+    @Test
+    fun `space bunny free parses ordered regions and coordinates`() {
+        val regions = parseZenOcrRegions(
+            """{"regions":[{"text":"Первая","box":[100,200,900,260],"orientation":"horizontal"},{"text":"Вторая","box":[0.1,0.3,0.8,0.4],"orientation":"vertical"}]}""",
+        )
+
+        regions.map { it.text } shouldContainExactly listOf("Первая", "Вторая")
+        regions.map { it.order } shouldContainExactly listOf(0, 1)
+        regions[0].boundingBox shouldBe mihon.domain.ocr.model.OcrBoundingBox(0.1f, 0.2f, 0.9f, 0.26f)
+        regions[1].boundingBox shouldBe mihon.domain.ocr.model.OcrBoundingBox(0.1f, 0.3f, 0.8f, 0.4f)
+        regions[1].textOrientation shouldBe mihon.domain.ocr.model.OcrTextOrientation.Vertical
+        ZenFreeOcrEngine.MODEL shouldBe "space-bunny-free"
+    }
+
+    @Test
+    fun `space bunny free keeps plain text and drops invalid regions`() {
+        val plain = parseZenOcrRegions("Просто видимая реплика")
+        plain.single().text shouldBe "Просто видимая реплика"
+        plain.single().boundingBox shouldBe mihon.domain.ocr.model.OcrBoundingBox(0f, 0f, 1f, 1f)
+
+        val filtered = parseZenOcrResultsWithInvalidRegion()
+        filtered.map { it.text } shouldContainExactly listOf("Правильная")
+    }
+
+    private fun parseZenOcrResultsWithInvalidRegion() = parseZenOcrRegions(
+        """{"regions":[{"text":"Неверная","box":[900,200,100,260]},{"text":"Правильная","box":[100,200,900,260]}]}""",
+    )
+
+    @Test
+    fun `online flags match the fallback pools`() {
+        OcrPlugins.ALL.filter { it.online }.map { it.id } shouldContainExactly
+            listOf("google_lens", "zen_free", "google_ai", "openrouter", "owocr")
+        // Офлайн-пул: PP-OCR, Tesseract (второй русский движок) и ML Kit.
+        OcrPlugins.ALL.filterNot { it.online }.map { it.id } shouldContainExactly
+            listOf("cyrillic_ppocr", "tesseract", "mlkit")
+    }
+
+    @Test
+    fun `keyless online plugins are the only ones the runtime chain may try`() {
+        val withoutKeys = OcrPlugins.available(
+            networkAvailable = true,
+            modelsInstalled = true,
+            litertAvailable = true,
+        )
+        withoutKeys.filter { it.online }.map { it.id } shouldContainExactly
+            listOf("google_lens", "zen_free")
+
+        val withGoogleKey = OcrPlugins.available(
+            networkAvailable = true,
+            modelsInstalled = true,
+            litertAvailable = true,
+            hasApiKey = { it == OcrPlugins.GOOGLE_AI },
+        )
+        withGoogleKey.filter { it.online }.map { it.id } shouldContainExactly
+            listOf("google_lens", "zen_free", "google_ai")
+    }
+}

@@ -1,0 +1,103 @@
+package eu.kanade.tachiyomi.ui.koma
+
+/**
+ * Починка распознанного текста — общая для чтения и для движка распознавания.
+ *
+ * Модель регулярно пишет русские буквы латиницей, греческими заглавными и
+ * цифрами: «HETΛOXO», «BECEΛO», «3ВУ4ИТ», «MECTO». Без починки такая строка не
+ * проходит фильтр языка и пропадает из реплики целиком — в лаборатории из-за
+ * этого терялись целые слова и целые реплики.
+ */
+object KomaText {
+    private val lookalikes = mapOf(
+        'a' to 'а', 'e' to 'е', 'o' to 'о', 'c' to 'с', 'p' to 'р', 'x' to 'х',
+        'y' to 'у', 'k' to 'к', 'm' to 'м', 't' to 'т', 'b' to 'в', 'h' to 'н',
+        'u' to 'и', 'n' to 'п',
+        'A' to 'А', 'E' to 'Е', 'O' to 'О', 'C' to 'С', 'P' to 'Р', 'X' to 'Х',
+        'Y' to 'У', 'K' to 'К', 'M' to 'М', 'T' to 'Т', 'B' to 'В', 'H' to 'Н',
+        'U' to 'И',
+        // Греческие заглавные.
+        'Λ' to 'Л', 'Δ' to 'Д', 'Α' to 'А', 'Β' to 'В', 'Ε' to 'Е', 'Ζ' to 'З',
+        'Η' to 'Н', 'Ι' to 'И', 'Κ' to 'К', 'Μ' to 'М', 'Ν' to 'Н', 'Ο' to 'О',
+        'Ρ' to 'Р', 'Τ' to 'Т', 'Υ' to 'У', 'Χ' to 'Х',
+        // Цифры-двойники: «3ВУ4ИТ» вместо «ЗВУЧИТ».
+        '3' to 'з', '4' to 'ч', '0' to 'о', '6' to 'б', '8' to 'в',
+        // Строчные греческие: модель отдаёт «Δ» и «α» вперемешку с русскими:
+        // «PAΔA» вместо «РАДА», «СЮΔА» вместо «СЮДА», «YПΑΛΑ» вместо «УПАЛА».
+        'α' to 'а', 'β' to 'в', 'γ' to 'г', 'δ' to 'д', 'ε' to 'е', 'ζ' to 'з',
+        'η' to 'н', 'ι' to 'и', 'κ' to 'к', 'μ' to 'м', 'ν' to 'п', 'ο' to 'о',
+        'π' to 'п', 'ρ' to 'р', 'σ' to 'с', 'τ' to 'т', 'υ' to 'у', 'χ' to 'х',
+        // Латиница, которой модель пишет русские буквы: «MHE TAK» → «МНЕ ТАК»,
+        // «4YBC» → «ЧУВС». Без них строка не проходила фильтр языка и пропадала
+        // из реплик целиком, а рамка оставалась на пустом месте.
+        'l' to 'л', 'd' to 'д', 'g' to 'г', 'f' to 'ф', 'r' to 'г', 's' to 'с',
+        'v' to 'в', 'w' to 'ш', 'z' to 'з', 'j' to 'й', 'i' to 'и',
+        // «q» в манге почти не встречается, а «я» модель пишет ею регулярно.
+        'q' to 'я',
+        // «Ë» — латинская E с точками; в манга-шрифте так рисуют «Ё». Без неё
+        // строка «TE EË.» («ТЕ ЕЁ.») не опознавалась и выбрасывалась целиком —
+        // реплика обрывалась на «КОГДА СЛУША» (скриншот 21:20).
+        'Ë' to 'Ё', 'ë' to 'ё', 'Î' to 'Й', 'î' to 'й', 'Ä' to 'Д', 'ä' to 'д',
+    )
+
+    private val greek = setOf('Λ', 'Δ', 'Α', 'Β', 'Ε', 'Ζ', 'Η', 'Ι', 'Κ', 'Μ', 'Ν', 'Ο', 'Ρ', 'Τ', 'Υ', 'Χ')
+
+    fun isRussianLetter(ch: Char) = ch in 'а'..'я' || ch in 'А'..'Я' || ch == 'ё' || ch == 'Ё'
+
+    /** Строка считается русской, если русских букв не меньше половины. */
+    fun isRussianLine(text: String): Boolean {
+        val letters = text.filter { it.isLetter() }
+        if (letters.isEmpty()) return false
+        val russian = text.count { isRussianLetter(it) }
+        return russian > 0 && russian * 2 >= letters.length
+    }
+
+    fun fixLookalikes(raw: String): String {
+        // Решение по СТРОКЕ, а не по слову: если в строке есть русские буквы или
+        // греческие двойники, то и слова из одних латинских/греческих символов
+        // переводятся в кириллицу.
+        val lineIsRussian = raw.any { isRussianLetter(it) || it in greek }
+        return raw.split(' ').joinToString(" ") { word ->
+            val letters = word.filter { it.isLetterOrDigit() }
+            val convertible = letters.isNotEmpty() && letters.all { it in lookalikes }
+            val wordHasRussian = word.any { isRussianLetter(it) }
+            if (lineIsRussian && (wordHasRussian || convertible)) {
+                word.map { lookalikes[it] ?: it }.joinToString("")
+            } else {
+                word
+            }
+        }
+    }
+
+    /**
+     * Строка состоит ТОЛЬКО из символов-двойников: «OHO», «4YBC», «PA3A».
+     *
+     * Такие строки модель выдаёт целиком латиницей/цифрами, и прежнее правило
+     * «переводим, если в строке есть хоть одна русская буква» их не трогало.
+     * Дальше фильтр языка выбрасывал их как нерусские — на странице 16 из
+     * реплик пропадали «ОНО», «ЧУВС-» и «РАЗА», хотя в распознанном тексте они
+     * были. Теперь такая строка переводится принудительно.
+     */
+    fun isLookalikeOnly(text: String): Boolean {
+        val letters = text.filter { it.isLetterOrDigit() }
+        return letters.isNotEmpty() && letters.all { it in lookalikes }
+    }
+
+    /** Переводит строку целиком, даже если русских букв в ней нет. */
+    fun fixLookalikesForced(raw: String): String = raw.map { lookalikes[it] ?: it }.joinToString("")
+
+    fun cleanSpeech(raw: String): String {
+        var text = raw
+            .replace(Regex("(?<=\\p{L})\\s*-\\s*(?=\\p{L})"), "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        text = fixLookalikes(text)
+        // Склеиваем цепочки одиночных букв: «в д а ль» → «вдаль».
+        repeat(3) {
+            text = text.replace(Regex("(?<!\\p{L})\\p{L}(\\s+\\p{L}){1,4}(?!\\p{L})")) { match ->
+                match.value.replace(" ", "")
+            }
+        }
+        return text.trim()
+    }
+}

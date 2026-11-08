@@ -1,0 +1,456 @@
+package eu.kanade.tachiyomi.ui.screenshots
+
+import android.content.Context
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Archive
+import androidx.compose.material.icons.outlined.CameraAlt
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Delete
+
+import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import cafe.adriel.voyager.navigator.LocalNavigator
+import cafe.adriel.voyager.navigator.currentOrThrow
+import cafe.adriel.voyager.navigator.tab.LocalTabNavigator
+import cafe.adriel.voyager.navigator.tab.TabOptions
+import coil3.compose.AsyncImage
+import eu.kanade.presentation.util.Tab
+import eu.kanade.tachiyomi.data.tts.TtsSpeaker
+import eu.kanade.tachiyomi.ui.main.MainActivity
+import eu.kanade.tachiyomi.util.storage.getUriCompat
+import eu.kanade.tachiyomi.util.system.toShareIntent
+import eu.kanade.tachiyomi.util.system.toast
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import mihon.data.ocr.OcrScreenshotBuffer
+import mihon.data.ocr.OcrScreenshotEntry
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+/**
+ * Вкладка «Скриншоты» в нижней навигации.
+ *
+ * Показывает все скриншоты, сделанные во время авточтения. Каждая карточка —
+ * миниатюра настоящего кадра (JPEG, если запись сохранила картинку) + номер
+ * страницы + движок OCR, который распознал этот кадр, + время + превью текста.
+ *
+ * Нажатие на карточку открывает детальный экран с текстовым оверлеем.
+ */
+data object ScreenshotTab : Tab {
+
+    override val options: TabOptions
+        @Composable
+        get() {
+            val isSelected = LocalTabNavigator.current.current.key == key
+            return TabOptions(
+                index = 8u,
+                title = "Скриншоты",
+                icon = rememberVectorPainter(Icons.Outlined.CameraAlt),
+            )
+        }
+
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Composable
+    override fun Content() {
+        val navigator = LocalNavigator.currentOrThrow
+        val context = LocalContext.current
+        val scope = rememberCoroutineScope()
+        val entries by OcrScreenshotBuffer.entries.collectAsState()
+        var showClearDialog by remember { mutableStateOf(false) }
+        // Мультивыбор: тап по карточке в режиме выделения, «В архив»/«Удалить»
+        // применяются к набору (см. clearOnSelection в ниже по файлу).
+        var selected by remember { mutableStateOf(emptySet<Long>()) }
+        val selectionMode = selected.isNotEmpty()
+        androidx.activity.compose.BackHandler(enabled = selectionMode) {
+            selected = emptySet()
+        }
+        // «Отправить в архив» = опубликовать в галерею Pictures/Yomikai и убрать
+        // из буфера: запись переезжает в архив (удаляется насовсем из приложения,
+        // но остаётся файлом на телефоне).
+        fun archiveSelected() {
+            val ids = selected.toSet()
+            scope.launch(Dispatchers.IO) {
+                val published = ids.sumOf { id ->
+                    val entry = entries.firstOrNull { it.id == id }
+                    val publishedOk = entry
+                        ?.takeIf { it.imagePath != null }
+                        ?.let { OcrScreenshotBuffer.publishEntryToGallery(context.applicationContext, it) } != null
+                    if (publishedOk) 1 else 0
+                }
+                OcrScreenshotBuffer.removeAll(ids)
+                withContext(Dispatchers.Main) {
+                    context.toast(
+                        if (published > 0) {
+                            "В архив ушло скриншотов: $published (Pictures/Yomikai)"
+                        } else {
+                            "Не удалось опубликовать скриншоты — нечего архивировать"
+                        },
+                    )
+                }
+            }
+            selected = emptySet()
+        }
+
+        Column(modifier = Modifier.fillMaxSize().statusBarsPadding()) {
+            TopAppBar(
+                title = {
+                    Text(if (selectionMode) "Выбрано: ${selected.size}" else "Скриншоты")
+                },
+                navigationIcon = {
+                    if (selectionMode) {
+                        IconButton(onClick = { selected = emptySet() }) {
+                            Icon(Icons.Outlined.Close, contentDescription = "Снять выделение")
+                        }
+                    }
+                },
+                actions = {
+                    if (selectionMode) {
+                        // В архив — опубликовать выбранные в галерею.
+                        IconButton(onClick = { archiveSelected() }) {
+                            Icon(
+                                Icons.Outlined.Archive,
+                                contentDescription = "Отправить в архив",
+                            )
+                        }
+                        // Удалить насовсем: файлы буфера + копии в галерее.
+                        IconButton(onClick = {
+                            OcrScreenshotBuffer.removeAll(selected)
+                            selected = emptySet()
+                        }) {
+                            Icon(
+                                Icons.Outlined.Delete,
+                                contentDescription = "Удалить насовсем",
+                            )
+                        }
+                    } else if (entries.isNotEmpty()) {
+                        IconButton(onClick = { showClearDialog = true }) {
+
+                            Icon(
+                                Icons.Outlined.DeleteSweep,
+                                contentDescription = "Очистить",
+                            )
+                        }
+                    }
+                },
+            )
+
+            if (entries.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(
+                            Icons.Outlined.CameraAlt,
+                            contentDescription = null,
+                            modifier = Modifier.size(48.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        )
+                        Text(
+                            "Скриншоты появятся здесь",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            "Включите авточтение в читалке",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    items(entries, key = { it.id }) { entry ->
+                        ScreenshotCard(
+                            entry = entry,
+                            selected = entry.id in selected,
+                            onClick = {
+                                if (selectionMode) {
+                                    selected = if (entry.id in selected) selected - entry.id else selected + entry.id
+                                } else {
+                                    navigator.push(ScreenshotDetailScreen(entry.id))
+                                }
+                            },
+                            onShare = { shareScreenshot(context, it) },
+                            onSaveToGallery = { saveScreenshotToGallery(scope, context, it) },
+                            onDelete = { OcrScreenshotBuffer.remove(entry.id) },
+
+                        )
+                    }
+                }
+            }
+        }
+
+        if (showClearDialog) {
+            AlertDialog(
+                onDismissRequest = { showClearDialog = false },
+                title = { Text("Очистить скриншоты?") },
+                text = {
+                    // Удаляем насовсем: внутренние копии И опубликованные в
+                    // Pictures/Yomikai (запись помнит Uri публикации).
+                    Text("Все ${entries.size} скриншотов будут удалены насовсем — " +
+                        "и из приложения, и из галереи Pictures/Yomikai.")
+
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        OcrScreenshotBuffer.clear()
+                        showClearDialog = false
+
+                    }) {
+                        Text("Очистить")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showClearDialog = false }) {
+
+                        Text("Отмена")
+                    }
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ScreenshotCard(
+    entry: OcrScreenshotEntry,
+    onClick: () -> Unit,
+    onShare: (File) -> Unit,
+    onSaveToGallery: (OcrScreenshotEntry) -> Unit,
+    onDelete: () -> Unit = {},
+    /** Режим мультивыбора: карточка подсвечена и тапается как «флажок». */
+    selected: Boolean = false,
+
+) {
+    val dateFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+    val imageFile = entry.imagePath?.let { File(it) }?.takeIf { it.exists() }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(
+                if (selected) {
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                },
+            )
+
+            .clickable(onClick = onClick)
+            .padding(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        // Миниатюра настоящего кадра (если запись сохранила JPEG).
+        if (imageFile != null) {
+            AsyncImage(
+                model = imageFile,
+                contentDescription = null,
+                modifier = Modifier
+                    .size(width = 72.dp, height = 96.dp)
+                    .clip(RoundedCornerShape(4.dp)),
+                contentScale = ContentScale.Fit,
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Стр. ${entry.pageIndex + 1}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    text = entry.engineUsed,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = dateFormat.format(Date(entry.timestamp)),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = entry.summaryText.take(120),
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            // Кадр без текста распознавания всё равно нужно куда-то выгрузить,
+            // поэтому действия есть у каждой записи с картинкой, а не только у
+            // той, где OCR что-то нашёл.
+            if (imageFile != null) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(
+                        onClick = { onShare(imageFile) },
+                        modifier = Modifier.size(36.dp),
+                    ) {
+                        Icon(
+                            Icons.Outlined.Share,
+                            contentDescription = "Поделиться",
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                    IconButton(
+                        onClick = { onSaveToGallery(entry) },
+                        modifier = Modifier.size(36.dp),
+                    ) {
+                        Icon(
+                            Icons.Outlined.Download,
+                            contentDescription = "Сохранить в галерею",
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                    // Удалить насовсем: приватный файл + копия в галерее.
+                    IconButton(
+                        onClick = onDelete,
+                        modifier = Modifier.size(36.dp),
+                    ) {
+                        Icon(
+                            Icons.Outlined.Delete,
+                            contentDescription = "Удалить насовсем",
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+
+                }
+            }
+        }
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                text = "${entry.regions.size}",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            // Откуда запись: авточтение сняло кадр сам или читатель выбрал
+            // область пальцем. Без подписи два вида записей неотличимы.
+            Text(
+                text = entry.scanRegion.sourceLabel(),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * Отдать кадр наружу (мессенджер, облако, «Файлы»).
+ *
+ * Content Uri строит FileProvider — корень `screenshots_images` добавлен в
+ * provider_paths.xml, потому что кадры лежат в приватном filesDir и без
+ * явного корня URI не строится («Failed to find configured root»).
+ */
+fun shareScreenshot(context: Context, file: File) {
+    runCatching {
+        context.startActivity(
+            file.getUriCompat(context).toShareIntent(
+                context = context,
+                type = "image/jpeg",
+                message = file.name,
+            ),
+        )
+    }.onFailure { e ->
+        // logcat здесь — расширение на Any, поэтому без явного получателя
+        // вызов внутри лямбды не резолвится: e — и приёмник, и исключение.
+        e.logcat(LogPriority.WARN, e) { "Share screenshot failed for ${file.name}" }
+        context.toast("Не удалось открыть отправку: ${e.message ?: "нет приложений"}")
+    }
+}
+
+/**
+ * Опубликовать кадр из буфера в общую галерею (`Pictures/Yomikai`) — тот же
+ * путь, что и у «Скриншот сейчас», поэтому имя файла и папка совпадают.
+ * Запись уже лежит файлом, так что кадр не перекодируется заново.
+ *
+ * Чтение файла и вставка в MediaStore идут в IO: на главном потоке это были бы
+ * и лишний кадр в интерфейсе, и риск ANR на большом JPEG.
+ */
+fun saveScreenshotToGallery(
+    scope: CoroutineScope,
+    context: Context,
+    entry: OcrScreenshotEntry,
+) {
+    scope.launch(Dispatchers.IO) {
+        val uri = OcrScreenshotBuffer.publishEntryToGallery(context.applicationContext, entry)
+        withContext(Dispatchers.Main) {
+            context.toast(
+                if (uri != null) {
+                    "Скриншот сохранён в Pictures/Yomikai"
+                } else {
+                    "Не удалось сохранить в галерею: файл не читается или хранилище недоступно"
+                },
+            )
+        }
+    }
+}
+
+/** Короткая подпись источника записи скриншота. */
+private fun String?.sourceLabel(): String = when (this) {
+    "selection" -> "Область"
+    "viewport", "" , null -> "Кадр"
+    else -> "Кадр"
+}
