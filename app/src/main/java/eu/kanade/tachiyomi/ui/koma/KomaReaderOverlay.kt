@@ -135,12 +135,15 @@ fun KomaReaderOverlay(
 
         manga?.let { m ->
             ReadingModeSelectDialog(
-                manga = m,
                 onDismissRequest = { showReadingMode = false },
-                onReadingModeSelected = { mode: Int ->
-                    // Применяем режим чтения
-                    showReadingMode = false
-                }
+                screenModel = ReaderSettingsScreenModel(
+                    readerState = kotlinx.coroutines.flow.MutableStateFlow(
+                        eu.kanade.tachiyomi.ui.reader.ReaderViewModel.State()
+                    ),
+                    onChangeReadingMode = { },
+                    onChangeOrientation = { }
+                ),
+                onChange = { showReadingMode = false }
             )
         }
     }
@@ -156,12 +159,15 @@ fun KomaReaderOverlay(
 
         manga?.let { m ->
             OrientationSelectDialog(
-                manga = m,
                 onDismissRequest = { showOrientation = false },
-                onOrientationSelected = { orientation: Int ->
-                    // Применяем ориентацию
-                    showOrientation = false
-                }
+                screenModel = ReaderSettingsScreenModel(
+                    readerState = kotlinx.coroutines.flow.MutableStateFlow(
+                        eu.kanade.tachiyomi.ui.reader.ReaderViewModel.State()
+                    ),
+                    onChangeReadingMode = { },
+                    onChangeOrientation = { }
+                ),
+                onChange = { showOrientation = false }
             )
         }
     }
