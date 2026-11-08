@@ -187,6 +187,7 @@ fun KomaReaderScreen(
     val autoReading = autoState.running
     var speechRate by remember { mutableFloatStateOf(tts.rate()) }
     var voiceDialog by remember { mutableStateOf(false) }
+    var showOverlay by remember { mutableStateOf(false) }
     // Панели прячутся, когда идёт авточтение: экран остаётся только под текст.
     // Касание страницы возвращает их.
     var barsVisible by remember { mutableStateOf(true) }
@@ -729,6 +730,7 @@ fun KomaReaderScreen(
                 IconButton(onClick={sheet="settings"}){Icon(Icons.Outlined.RecordVoiceOver,"Голос и авточтение",tint=if(autoReading)Orange else Color.White)}
                 IconButton(onClick={barsVisible=false}){Icon(Icons.Outlined.Fullscreen,"Полный экран",tint=Color.White)}
                 Box {
+                IconButton(onClick={showOverlay=true}){Icon(Icons.Outlined.Tune,"Функции читалки",tint=Color.White)}
                     IconButton(onClick={overflow=true}){Icon(Icons.Default.MoreVert,"Ещё",tint=Color.White)}
                     DropdownMenu(expanded=overflow,onDismissRequest={overflow=false}) {
                         DropdownMenuItem(text={Text(if(book.favorite)"Убрать из избранного" else "В избранное")},onClick={save(book.copy(favorite=!book.favorite));overflow=false})
@@ -1430,6 +1432,19 @@ fun KomaReaderScreen(
     )
     if(error!=null)AlertDialog(onDismissRequest={error=null},title={Text("KOMA")},text={Text(error!!)},confirmButton={TextButton(onClick={error=null}){Text("Понятно")}})
     if(deleteConfirm)AlertDialog(onDismissRequest={deleteConfirm=false},title={Text("Удалить книгу?")},text={Text("Копия в библиотеке будет удалена. Ваш исходный архив останется на месте.")},confirmButton={TextButton(onClick={onDelete(book);onClose()}){Text("Удалить")}},dismissButton={TextButton(onClick={deleteConfirm=false}){Text("Отмена")}})
+    // Оверлей с функциями из ReaderActivity
+    if (showOverlay) {
+        KomaReaderOverlay(
+            mangaId = mangaIdForChoice,
+            chapterId = null,
+            onDismiss = { showOverlay = false },
+            onScreenshot = { /* TODO: реализовать скриншот */ },
+            onShare = { /* TODO: реализовать поделиться */ },
+            onOpenInBrowser = { /* TODO: реализовать открытие в браузере */ },
+            onOpenManga = { /* TODO: реализовать переход к манге */ },
+            onExportAnki = { /* TODO: реализовать экспорт в Anki */ }
+        )
+    }
 }
 
 @Composable
@@ -1489,6 +1504,19 @@ private fun PageImage(
             PageBody(b,boxes,currentLine,path,onTap,Modifier.size(width,height),spokenKeys)
         }
     }
+    // Оверлей с функциями из ReaderActivity
+    if (showOverlay) {
+        KomaReaderOverlay(
+            mangaId = mangaIdForChoice,
+            chapterId = null,
+            onDismiss = { showOverlay = false },
+            onScreenshot = { /* TODO: реализовать скриншот */ },
+            onShare = { /* TODO: реализовать поделиться */ },
+            onOpenInBrowser = { /* TODO: реализовать открытие в браузере */ },
+            onOpenManga = { /* TODO: реализовать переход к манге */ },
+            onExportAnki = { /* TODO: реализовать экспорт в Anki */ }
+        )
+    }
 }
 
 /** Рисунок страницы с рамками реплик и жестами (щипок, двойной тап). */
@@ -1540,6 +1568,19 @@ private fun PageBody(
             }
         }
     }
+    // Оверлей с функциями из ReaderActivity
+    if (showOverlay) {
+        KomaReaderOverlay(
+            mangaId = mangaIdForChoice,
+            chapterId = null,
+            onDismiss = { showOverlay = false },
+            onScreenshot = { /* TODO: реализовать скриншот */ },
+            onShare = { /* TODO: реализовать поделиться */ },
+            onOpenInBrowser = { /* TODO: реализовать открытие в браузере */ },
+            onOpenManga = { /* TODO: реализовать переход к манге */ },
+            onExportAnki = { /* TODO: реализовать экспорт в Anki */ }
+        )
+    }
 }
 
 @Composable
@@ -1548,6 +1589,19 @@ fun SectionLabel(text:String){Text(text,Modifier.padding(top=22.dp,bottom=9.dp),
 @Composable
 fun LanguageChooser(selected:String,onSelect:(String)->Unit) {
     Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)){ocrLanguages.forEach { name->FilterChip(selected=selected==name,onClick={onSelect(name)},label={Text(name,fontSize=11.sp)},shape=RoundedCornerShape(10.dp))}}
+    // Оверлей с функциями из ReaderActivity
+    if (showOverlay) {
+        KomaReaderOverlay(
+            mangaId = mangaIdForChoice,
+            chapterId = null,
+            onDismiss = { showOverlay = false },
+            onScreenshot = { /* TODO: реализовать скриншот */ },
+            onShare = { /* TODO: реализовать поделиться */ },
+            onOpenInBrowser = { /* TODO: реализовать открытие в браузере */ },
+            onOpenManga = { /* TODO: реализовать переход к манге */ },
+            onExportAnki = { /* TODO: реализовать экспорт в Anki */ }
+        )
+    }
 }
 
 /** Маленькая кнопка голоса в нижней панели: «об.», «1», «2», «3». */
@@ -1564,6 +1618,19 @@ private fun VoiceSlotChip(label:String,selected:Boolean,onClick:()->Unit) {
             fontWeight = if(selected) FontWeight.Bold else FontWeight.Normal,
             color = if(selected) Orange else Color(0xFFCBD2C6),
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+        )
+    }
+    // Оверлей с функциями из ReaderActivity
+    if (showOverlay) {
+        KomaReaderOverlay(
+            mangaId = mangaIdForChoice,
+            chapterId = null,
+            onDismiss = { showOverlay = false },
+            onScreenshot = { /* TODO: реализовать скриншот */ },
+            onShare = { /* TODO: реализовать поделиться */ },
+            onOpenInBrowser = { /* TODO: реализовать открытие в браузере */ },
+            onOpenManga = { /* TODO: реализовать переход к манге */ },
+            onExportAnki = { /* TODO: реализовать экспорт в Anki */ }
         )
     }
 }
