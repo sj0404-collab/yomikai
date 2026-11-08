@@ -188,6 +188,7 @@ fun KomaReaderScreen(
     var speechRate by remember { mutableFloatStateOf(tts.rate()) }
     var voiceDialog by remember { mutableStateOf(false) }
     var showOverlay by remember { mutableStateOf(false) }
+    var showEngineSelector by remember { mutableStateOf(false) }
     // Панели прячутся, когда идёт авточтение: экран остаётся только под текст.
     // Касание страницы возвращает их.
     var barsVisible by remember { mutableStateOf(true) }
@@ -727,6 +728,7 @@ fun KomaReaderScreen(
                 IconButton(onClick=onClose){Icon(Icons.Default.ArrowBack,"Назад",tint=Color.White)}
                 Column(Modifier.weight(1f).padding(start=4.dp)){Text(book.title,fontSize=15.sp,fontWeight=FontWeight.Bold,color=Color.White,maxLines=1,overflow=TextOverflow.Ellipsis);Text("KOMA · лента · ${page+1} из ${book.pages.size} · ${book.category} · ${when(mode){"rtl"->"Справа налево";"vertical"->"Вертикально";else->"Слева направо"}}",fontSize=10.sp,color=Color(0xFFB2B8AD))}
                 IconButton(onClick={if(result==null && !scanning)scan();sheet="ocr"}){Icon(Icons.Outlined.DocumentScanner,"Распознать",tint=if(result!=null)Orange else Color.White)}
+                IconButton(onClick={showEngineSelector=true}){Icon(Icons.Outlined.Settings,"Выбор движка OCR",tint=Color.White)}
                 IconButton(onClick={sheet="settings"}){Icon(Icons.Outlined.RecordVoiceOver,"Голос и авточтение",tint=if(autoReading)Orange else Color.White)}
                 IconButton(onClick={barsVisible=false}){Icon(Icons.Outlined.Fullscreen,"Полный экран",tint=Color.White)}
                 Box {
@@ -1503,6 +1505,17 @@ private fun PageImage(
             LaunchedEffect(height,density){ runCatching { onHeight(with(density){ height.roundToPx() }) } }
             PageBody(b,boxes,currentLine,path,onTap,Modifier.size(width,height),spokenKeys)
         }
+    }
+    // Диалог выбора OCR движка
+    if (showEngineSelector) {
+        KomaEngineSelector(
+            selectedEngineId = "koma_onnx", // TODO: получить текущий движок
+            onEngineSelected = { engineId ->
+                // TODO: реализовать переключение движка
+                showEngineSelector = false
+            },
+            onDismiss = { showEngineSelector = false }
+        )
     }
     // Оверлей с функциями из ReaderActivity
 }
