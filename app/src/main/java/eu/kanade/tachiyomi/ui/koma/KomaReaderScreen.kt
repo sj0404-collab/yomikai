@@ -195,13 +195,13 @@ fun KomaReaderScreen(
     val glensWrapper = remember { KomaGlensWrapper(context, engine) }
     
     // Функция распознавания с учётом выбранного движка
-    suspend fun recognizeWithEngine(book: Book, page: Int, language: String, force: Boolean, band: KomaBand? = null): PageOcr? {
+    suspend fun recognizeWithEngine(book: Book, page: Int, language: String, force: Boolean, band: KomaBand = KomaBand.Whole): PageOcr? {
         return when (selectedEngineId) {
             "glens" -> {
                 val path = book.pages[page]
                 glensWrapper.recognize(path)
             }
-            else -> engine.recognize(book, page, language, force, band?.index ?: 0)
+            else -> engine.recognize(book, page, language, force, band)
         }
     }
     // Панели прячутся, когда идёт авточтение: экран остаётся только под текст.
@@ -397,7 +397,7 @@ fun KomaReaderScreen(
                             book=book.id,
                             page=current,
                             band=currentBand.index,
-                            regions=r.regions,
+                            regions=r?.regions ?: emptyList(),
                             rulesVersion=engine.rulesVersion(),
                         )
                     }
