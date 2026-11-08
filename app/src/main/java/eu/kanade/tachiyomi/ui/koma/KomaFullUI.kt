@@ -34,74 +34,77 @@ fun KomaFullUI(
     onOpenManga: () -> Unit,
     onShowSettings: () -> Unit,
 ) {
-    // Верхняя панель
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(fadeAnimSpec) + slideInVertically(slideAnimSpec) { -it },
-        exit = fadeOut(fadeAnimSpec) + slideOutVertically(slideAnimSpec) { -it }
-    ) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 3.dp
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Верхняя панель
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(fadeAnimSpec) + slideInVertically(slideAnimSpec) { -it },
+            exit = fadeOut(fadeAnimSpec) + slideOutVertically(slideAnimSpec) { -it },
+            modifier = Modifier.align(Alignment.TopCenter)
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onOpenManga() }
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 3.dp
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(mangaTitle ?: "", style = MaterialTheme.typography.titleMedium, maxLines = 1)
-                    Text(chapterTitle ?: "", style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                }
-                IconButton(onClick = onShowSettings) {
-                    Icon(Icons.Outlined.Settings, "Настройки")
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenManga() }
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(mangaTitle ?: "", style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                        Text(chapterTitle ?: "", style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                    }
+                    IconButton(onClick = onShowSettings) {
+                        Icon(Icons.Outlined.Settings, "Настройки")
+                    }
                 }
             }
         }
-    }
 
-    // Нижняя панель
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(fadeAnimSpec) + slideInVertically(slideAnimSpec) { it },
-        exit = fadeOut(fadeAnimSpec) + slideOutVertically(slideAnimSpec) { it },
-        modifier = Modifier.align(Alignment.BottomCenter)
-    ) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 3.dp
+        // Нижняя панель
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(fadeAnimSpec) + slideInVertically(slideAnimSpec) { it },
+            exit = fadeOut(fadeAnimSpec) + slideOutVertically(slideAnimSpec) { it },
+            modifier = Modifier.align(Alignment.BottomCenter)
         ) {
-            Column(modifier = Modifier.padding(8.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    FilledIconButton(onClick = onPreviousChapter) {
-                        Icon(Icons.Outlined.SkipPrevious, "Предыдущая глава")
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 3.dp
+            ) {
+                Column(modifier = Modifier.padding(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FilledIconButton(onClick = onPreviousChapter) {
+                            Icon(Icons.Outlined.SkipPrevious, "Предыдущая глава")
+                        }
+                        Text("Страница ${currentPage + 1} из $totalPages")
+                        FilledIconButton(onClick = onNextChapter) {
+                            Icon(Icons.Outlined.SkipNext, "Следующая глава")
+                        }
                     }
-                    Text("Страница ${currentPage + 1} из $totalPages")
-                    FilledIconButton(onClick = onNextChapter) {
-                        Icon(Icons.Outlined.SkipNext, "Следующая глава")
+
+                    val navType = when (readingMode) {
+                        ReadingMode.RIGHT_TO_LEFT -> ChapterNavigatorType.HORIZONTAL_RTL
+                        ReadingMode.VERTICAL -> ChapterNavigatorType.VERTICAL_RIGHT
+                        else -> ChapterNavigatorType.HORIZONTAL_LTR
                     }
-                }
 
-                val navType = when (readingMode) {
-                    ReadingMode.RIGHT_TO_LEFT -> ChapterNavigatorType.HORIZONTAL_RTL
-                    ReadingMode.VERTICAL -> ChapterNavigatorType.VERTICAL_RIGHT
-                    else -> ChapterNavigatorType.HORIZONTAL_LTR
+                    ChapterNavigator(
+                        navigatorType = navType,
+                        currentPage = currentPage,
+                        totalPages = totalPages,
+                        onPageChange = onPageChange
+                    )
                 }
-
-                ChapterNavigator(
-                    navigatorType = navType,
-                    currentPage = currentPage,
-                    totalPages = totalPages,
-                    onPageChange = onPageChange
-                )
             }
         }
     }
@@ -109,14 +112,18 @@ fun KomaFullUI(
 
 @Composable
 fun KomaFloatingButton(visible: Boolean, onClick: () -> Unit) {
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn() + scaleIn(),
-        exit = fadeOut() + scaleOut(),
-        modifier = Modifier.padding(16.dp).align(Alignment.BottomEnd)
-    ) {
-        FloatingActionButton(onClick = onClick, containerColor = MaterialTheme.colorScheme.primary) {
-            Icon(Icons.Filled.MenuBook, "Вернуться в KOMA")
+    Box(modifier = Modifier.fillMaxSize()) {
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn() + scaleIn(),
+            exit = fadeOut() + scaleOut(),
+            modifier = Modifier.align(Alignment.BottomEnd)
+        ) {
+            Box(modifier = Modifier.padding(16.dp)) {
+                FloatingActionButton(onClick = onClick, containerColor = MaterialTheme.colorScheme.primary) {
+                    Icon(Icons.Filled.MenuBook, "Вернуться в KOMA")
+                }
+            }
         }
     }
 }

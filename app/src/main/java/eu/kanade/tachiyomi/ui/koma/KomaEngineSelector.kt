@@ -2,32 +2,33 @@ package eu.kanade.tachiyomi.ui.koma
 
 import android.content.Context
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Cloud
+import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import mihon.data.ocr.*
 
 /**
  * Выбор OCR движка для KOMA.
  * 
- * Доступные движки:
- * - KomaOnnxOcrEngine (локальный ONNX)
- * - GlensOcrEngine (Google Lens онлайн)
- * - GoogleAiOcrEngine (Google AI)
- * - OpenRouterOcrEngine (OpenRouter онлайн)
- * - FastOcrEngine (быстрый локальный)
- * - LegacyOcrEngine (устаревший)
- * - MlKitOcrEngine (ML Kit)
- * - и другие
+ * Доступные движки (ID):
+ * - koma_onnx (локальный ONNX)
+ * - glens (Google Lens онлайн)
+ * - google_ai (Google AI)
+ * - openrouter (OpenRouter онлайн)
+ * - fast (быстрый локальный)
+ * - legacy (устаревший)
+ * - mlkit (ML Kit)
+ * - cyrillic (кириллица)
  */
 data class OcrEngineOption(
     val id: String,
     val title: String,
     val description: String,
-    val online: Boolean,
-    val create: (Context) -> OcrEngine
+    val online: Boolean
 )
 
 val ENGINE_OPTIONS = listOf(
@@ -35,57 +36,49 @@ val ENGINE_OPTIONS = listOf(
         id = "koma_onnx",
         title = "KOMA ONNX",
         description = "Локальный ONNX движок (cyrillic.onnx)",
-        online = false,
-        create = { ctx -> KomaOnnxOcrEngine(ctx) }
+        online = false
     ),
     OcrEngineOption(
         id = "glens",
         title = "Google Lens",
         description = "Онлайн OCR от Google (требует интернет)",
-        online = true,
-        create = { ctx -> GlensOcrEngine() }
+        online = true
     ),
     OcrEngineOption(
         id = "google_ai",
         title = "Google AI",
         description = "Google AI OCR (требует API ключ)",
-        online = true,
-        create = { ctx -> GoogleAiOcrEngine() }
+        online = true
     ),
     OcrEngineOption(
         id = "openrouter",
         title = "OpenRouter",
         description = "OpenRouter OCR (требует API ключ)",
-        online = true,
-        create = { ctx -> OpenRouterOcrEngine() }
+        online = true
     ),
     OcrEngineOption(
         id = "fast",
         title = "Fast OCR",
         description = "Быстрый локальный движок",
-        online = false,
-        create = { ctx -> FastOcrEngine() }
+        online = false
     ),
     OcrEngineOption(
         id = "legacy",
         title = "Legacy OCR",
         description = "Устаревший локальный движок",
-        online = false,
-        create = { ctx -> LegacyOcrEngine() }
+        online = false
     ),
     OcrEngineOption(
         id = "mlkit",
         title = "ML Kit",
         description = "Google ML Kit OCR",
-        online = false,
-        create = { ctx -> MlKitOcrEngine() }
+        online = false
     ),
     OcrEngineOption(
         id = "cyrillic",
         title = "Cyrillic OCR",
         description = "Специализированный движок для кириллицы",
-        online = false,
-        create = { ctx -> CyrillicOcrEngine() }
+        online = false
     ),
 )
 
@@ -120,13 +113,13 @@ fun KomaEngineSelector(
                                 Spacer(Modifier.width(8.dp))
                                 if (option.online) {
                                     Icon(
-                                        androidx.compose.material.icons.Icons.Outlined.Cloud,
+                                        Icons.Outlined.Cloud,
                                         "онлайн",
                                         modifier = Modifier.size(16.dp)
                                     )
                                 } else {
                                     Icon(
-                                        androidx.compose.material.icons.Icons.Outlined.Storage,
+                                        Icons.Outlined.Storage,
                                         "локально",
                                         modifier = Modifier.size(16.dp)
                                     )
@@ -148,12 +141,4 @@ fun KomaEngineSelector(
             }
         }
     )
-}
-
-/**
- * Фабрика для создания OCR движка по ID.
- */
-fun createEngine(engineId: String, context: Context): OcrEngine? {
-    val option = ENGINE_OPTIONS.find { it.id == engineId } ?: return null
-    return option.create(context)
 }
