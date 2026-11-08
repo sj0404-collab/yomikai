@@ -190,6 +190,20 @@ fun KomaReaderScreen(
     var showOverlay by remember { mutableStateOf(false) }
     var showEngineSelector by remember { mutableStateOf(false) }
     var selectedEngineId by remember { mutableStateOf(repo.prefs.getString("komaOcrEngine", "koma_onnx") ?: "koma_onnx") }
+
+    // Glens wrapper для Google Lens OCR
+    val glensWrapper = remember { KomaGlensWrapper(context, engine) }
+    
+    // Функция распознавания с учётом выбранного движка
+    suspend fun recognizeWithEngine(book: Book, page: Int, language: String, force: Boolean, band: Int = 0): PageOcr? {
+        return when (selectedEngineId) {
+            "glens" -> {
+                val path = book.pages[page]
+                glensWrapper.recognize(path)
+            }
+            else -> engine.recognize(book, page, language, force, band)
+        }
+    }
     // Панели прячутся, когда идёт авточтение: экран остаётся только под текст.
     // Касание страницы возвращает их.
     var barsVisible by remember { mutableStateOf(true) }
@@ -335,7 +349,7 @@ fun KomaReaderScreen(
                     // и, тем более, ронять приложение.
                     var failed=0
                     for(n in book.pages.indices) {
-                        runCatching { engine.recognize(book,n,language,force) }
+                        runCatching { recognizeWithEngine(book,n,language,force) }
                             .onSuccess { if(n==currentPage)result=it }
                             .onFailure { failed++ }
                         batchProgress=n+1
@@ -371,7 +385,7 @@ fun KomaReaderScreen(
                     } else {
                         engineNote=null
                     }
-                    val r=bridged ?: engine.recognize(book,current,language,force,currentBand)
+                    val r=bridged ?: recognizeWithEngine(book,current,language,force,currentBand)
                     if(current==currentPage && currentBand.index==band.index)result=r
                     // Буфер строк: то, что распознавание вернуло, ложится на диск.
                     // Дальше правку правил можно проверять без нового OCR —
@@ -490,7 +504,7 @@ fun KomaReaderScreen(
                 if (ready != null) {
                     ready
                 } else {
-                    runCatching { engine.recognize(book,index,language,true,pageBand) }.getOrNull()
+                    runCatching { recognizeWithEngine(book,index,language,true,pageBand) }.getOrNull()
                         ?: engine.cached(book.id,index,language,slot(pageBand))
                 }
             },
@@ -728,8 +742,7 @@ fun KomaReaderScreen(
             Row(Modifier.statusBarsPadding().fillMaxWidth().padding(horizontal=6.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically) {
                 IconButton(onClick=onClose){Icon(Icons.Default.ArrowBack,"Назад",tint=Color.White)}
                 Column(Modifier.weight(1f).padding(start=4.dp)){Text(book.title,fontSize=15.sp,fontWeight=FontWeight.Bold,color=Color.White,maxLines=1,overflow=TextOverflow.Ellipsis);Text("KOMA · лента · ${page+1} из ${book.pages.size} · ${book.category} · ${when(mode){"rtl"->"Справа налево";"vertical"->"Вертикально";else->"Слева направо"}}",fontSize=10.sp,color=Color(0xFFB2B8AD))}
-                IconButton(onClick={if(result==null && !scanning)scan();sheet="ocr"}){Icon(Icons.Outlined.DocumentScanner,"Распознать",tint=if(result!=null)Orange else Color.White)}
-                IconButton(onClick={showEngineSelector=true}){Icon(Icons.Outlined.Settings,"Выбор движка OCR",tint=Color.White)}
+                IconButton(onClick={showEngineSelector=true}){Icon(Icons.Outlined.DocumentScanner,"Распознать",tint=if(result!=null)Orange else Color.White)}
                 IconButton(onClick={sheet="settings"}){Icon(Icons.Outlined.RecordVoiceOver,"Голос и авточтение",tint=if(autoReading)Orange else Color.White)}
                 IconButton(onClick={barsVisible=false}){Icon(Icons.Outlined.Fullscreen,"Полный экран",tint=Color.White)}
                 Box {
