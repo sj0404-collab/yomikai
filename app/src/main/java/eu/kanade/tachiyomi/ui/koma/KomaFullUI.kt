@@ -33,6 +33,8 @@ fun KomaFullUI(
     onPageChange: (Int) -> Unit,
     onOpenManga: () -> Unit,
     onShowSettings: () -> Unit,
+    hasNextChapter: Boolean = true,
+    hasPreviousChapter: Boolean = true,
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
         // Верхняя панель
@@ -77,34 +79,22 @@ fun KomaFullUI(
                 color = MaterialTheme.colorScheme.surface,
                 tonalElevation = 3.dp
             ) {
-                Column(modifier = Modifier.padding(8.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        FilledIconButton(onClick = onPreviousChapter) {
-                            Icon(Icons.Outlined.SkipPrevious, "Предыдущая глава")
-                        }
-                        Text("Страница ${currentPage + 1} из $totalPages")
-                        FilledIconButton(onClick = onNextChapter) {
-                            Icon(Icons.Outlined.SkipNext, "Следующая глава")
-                        }
-                    }
-
-                    val navType = when (readingMode) {
-                        ReadingMode.RIGHT_TO_LEFT -> ChapterNavigatorType.HORIZONTAL_RTL
-                        ReadingMode.VERTICAL -> ChapterNavigatorType.VERTICAL_RIGHT
-                        else -> ChapterNavigatorType.HORIZONTAL_LTR
-                    }
-
-                    ChapterNavigator(
-                        navigatorType = navType,
-                        currentPage = currentPage,
-                        totalPages = totalPages,
-                        onPageChange = onPageChange
-                    )
+                val navType = when (readingMode) {
+                    ReadingMode.RIGHT_TO_LEFT -> ChapterNavigatorType.HORIZONTAL_RTL
+                    ReadingMode.VERTICAL -> ChapterNavigatorType.VERTICAL_RIGHT
+                    else -> ChapterNavigatorType.HORIZONTAL_LTR
                 }
+
+                ChapterNavigator(
+                    type = navType,
+                    onNextChapter = onNextChapter,
+                    enabledNext = hasNextChapter,
+                    onPreviousChapter = onPreviousChapter,
+                    enabledPrevious = hasPreviousChapter,
+                    currentPage = currentPage,
+                    totalPages = totalPages,
+                    onPageIndexChange = onPageChange
+                )
             }
         }
     }
