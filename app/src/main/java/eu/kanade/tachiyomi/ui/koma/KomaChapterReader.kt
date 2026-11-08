@@ -99,10 +99,7 @@ class KomaReaderActivity : AppCompatActivity() {
                         // Прежняя (постраничная) читалка — по плавающей кнопке
                         // поверх KOMA. KOMA НЕ закрываем: «назад» из прежней
                         // читалки должен возвращать в неё (from_koma).
-                        onOpenLegacy = {
-                            eu.kanade.tachiyomi.ui.reader.ReaderLauncher
-                                .openLegacy(context, mangaId, chapterId, fromKoma = true)
-                        },
+                        onOpenLegacy = { },
                     )
                 }
                 is State.Empty -> Message(
