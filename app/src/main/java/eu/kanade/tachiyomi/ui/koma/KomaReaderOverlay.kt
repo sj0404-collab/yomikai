@@ -137,7 +137,7 @@ fun KomaReaderOverlay(
             ReadingModeSelectDialog(
                 manga = m,
                 onDismissRequest = { showReadingMode = false },
-                onReadingModeSelected = { mode ->
+                onReadingModeSelected = { mode: Int ->
                     // Применяем режим чтения
                     showReadingMode = false
                 }
@@ -158,7 +158,7 @@ fun KomaReaderOverlay(
             OrientationSelectDialog(
                 manga = m,
                 onDismissRequest = { showOrientation = false },
-                onOrientationSelected = { orientation ->
+                onOrientationSelected = { orientation: Int ->
                     // Применяем ориентацию
                     showOrientation = false
                 }
