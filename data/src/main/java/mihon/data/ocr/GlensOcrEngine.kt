@@ -19,7 +19,7 @@ import kotlin.random.Random
  * OCR engine backed by Google Lens online OCR.
  * Extracts plain text from text-layout boxes in the protobuf response.
  */
-internal class GlensOcrEngine(
+class GlensOcrEngine(
     /**
      * BCP-47 язык источника (en, ru, ja, ko, zh…). Раньше был зашит "ja":
      * пользователь не мог читать англ/рус/прочие источники. Прокидывается из
