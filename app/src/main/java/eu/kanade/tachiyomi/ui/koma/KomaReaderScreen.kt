@@ -1505,6 +1505,19 @@ private fun PageImage(
         }
     }
     // Оверлей с функциями из ReaderActivity
+    if (showOverlay) {
+        KomaReaderOverlay(
+            mangaId = mangaIdForChoice,
+            chapterId = null,
+            onDismiss = { showOverlay = false },
+            onScreenshot = { /* TODO: реализовать скриншот */ },
+            onShare = { /* TODO: реализовать поделиться */ },
+            onOpenInBrowser = { /* TODO: реализовать открытие в браузере */ },
+            onOpenManga = { /* TODO: реализовать переход к манге */ },
+            onExportAnki = { /* TODO: реализовать экспорт в Anki */ }
+        )
+    }
+}
 
 /** Рисунок страницы с рамками реплик и жестами (щипок, двойной тап). */
 @Composable
@@ -1556,6 +1569,19 @@ private fun PageBody(
         }
     }
     // Оверлей с функциями из ReaderActivity
+    if (showOverlay) {
+        KomaReaderOverlay(
+            mangaId = mangaIdForChoice,
+            chapterId = null,
+            onDismiss = { showOverlay = false },
+            onScreenshot = { /* TODO: реализовать скриншот */ },
+            onShare = { /* TODO: реализовать поделиться */ },
+            onOpenInBrowser = { /* TODO: реализовать открытие в браузере */ },
+            onOpenManga = { /* TODO: реализовать переход к манге */ },
+            onExportAnki = { /* TODO: реализовать экспорт в Anki */ }
+        )
+    }
+}
 
 @Composable
 fun SectionLabel(text:String){Text(text,Modifier.padding(top=22.dp,bottom=9.dp),fontSize=10.sp,fontWeight=FontWeight.Bold,letterSpacing=1.3.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)}
@@ -1564,6 +1590,19 @@ fun SectionLabel(text:String){Text(text,Modifier.padding(top=22.dp,bottom=9.dp),
 fun LanguageChooser(selected:String,onSelect:(String)->Unit) {
     Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)){ocrLanguages.forEach { name->FilterChip(selected=selected==name,onClick={onSelect(name)},label={Text(name,fontSize=11.sp)},shape=RoundedCornerShape(10.dp))}}
     // Оверлей с функциями из ReaderActivity
+    if (showOverlay) {
+        KomaReaderOverlay(
+            mangaId = mangaIdForChoice,
+            chapterId = null,
+            onDismiss = { showOverlay = false },
+            onScreenshot = { /* TODO: реализовать скриншот */ },
+            onShare = { /* TODO: реализовать поделиться */ },
+            onOpenInBrowser = { /* TODO: реализовать открытие в браузере */ },
+            onOpenManga = { /* TODO: реализовать переход к манге */ },
+            onExportAnki = { /* TODO: реализовать экспорт в Anki */ }
+        )
+    }
+}
 
 /** Маленькая кнопка голоса в нижней панели: «об.», «1», «2», «3». */
 @Composable
@@ -1582,3 +1621,16 @@ private fun VoiceSlotChip(label:String,selected:Boolean,onClick:()->Unit) {
         )
     }
     // Оверлей с функциями из ReaderActivity
+    if (showOverlay) {
+        KomaReaderOverlay(
+            mangaId = mangaIdForChoice,
+            chapterId = null,
+            onDismiss = { showOverlay = false },
+            onScreenshot = { /* TODO: реализовать скриншот */ },
+            onShare = { /* TODO: реализовать поделиться */ },
+            onOpenInBrowser = { /* TODO: реализовать открытие в браузере */ },
+            onOpenManga = { /* TODO: реализовать переход к манге */ },
+            onExportAnki = { /* TODO: реализовать экспорт в Anki */ }
+        )
+    }
+}
