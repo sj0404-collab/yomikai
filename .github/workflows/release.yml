@@ -122,6 +122,51 @@ jobs:
       # шла быстро и не зависела от инфраструктуры. Качество кода по-прежнему
       # проверяется CI-гейтом (workflow «Tests») на pull-request.
 
+      - name: Pre-download Gradle with retries
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Ручная загрузка Gradle 9.6.1 с retry..."
+          GRADLE_VERSION="9.6.1"
+          GRADLE_ZIP="gradle-${GRADLE_VERSION}-bin.zip"
+          GRADLE_URL="https://services.gradle.org/distributions/${GRADLE_ZIP}"
+          
+          # Gradle wrapper ищет дистрибутив по специфическому пути с хешем
+          # Создадим его вручную
+          GRADLE_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}"
+          DIST_BASE="${GRADLE_HOME}/wrapper/dists"
+          
+          # Хеш URL (Gradle использует MD5 от URL для имени папки)
+          URL_HASH=$(echo -n "${GRADLE_URL}" | md5sum | cut -d' ' -f1)
+          DIST_DIR="${DIST_BASE}/gradle-${GRADLE_VERSION}-bin/${URL_HASH}"
+          mkdir -p "${DIST_DIR}"
+          
+          ZIP_FILE="${DIST_DIR}/${GRADLE_ZIP}"
+          
+          if [ ! -f "${ZIP_FILE}" ] || [ ! -s "${ZIP_FILE}" ]; then
+            echo "Скачивание ${GRADLE_URL}..."
+            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+              echo "Попытка ${attempt}/10..."
+              if curl -L --fail --retry 3 --retry-delay 10 --retry-all-errors \
+                --connect-timeout 60 --max-time 600 \
+                -o "${ZIP_FILE}.tmp" "${GRADLE_URL}"; then
+                mv "${ZIP_FILE}.tmp" "${ZIP_FILE}"
+                echo "✓ Успешно скачано (попытка ${attempt})"
+                break
+              else
+                echo "✗ Не удалось (попытка ${attempt}), жду 15 секунд..."
+                rm -f "${ZIP_FILE}.tmp"
+                sleep 15
+              fi
+            done
+            [ -f "${ZIP_FILE}" ] && [ -s "${ZIP_FILE}" ] || { echo "::error::Не удалось скачать Gradle после 10 попыток"; exit 1; }
+          fi
+          
+          echo "Gradle distribution готов: ${ZIP_FILE}"
+          ls -lh "${ZIP_FILE}"
+        env:
+          GRADLE_USER_HOME: /home/runner/.gradle
+
       - name: Build the single release APK
         shell: bash
         run: sh gradlew assembleRelease -Penable-updater --stacktrace
