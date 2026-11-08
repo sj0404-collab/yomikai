@@ -1,4 +1,7 @@
 package eu.kanade.tachiyomi.ui.koma
+import mihon.data.ocr.OcrEngine
+import mihon.data.ocr.TextPostprocessor
+import mihon.data.ocr.RegionCaps
 
 import android.graphics.Bitmap
 import androidx.core.graphics.scale
