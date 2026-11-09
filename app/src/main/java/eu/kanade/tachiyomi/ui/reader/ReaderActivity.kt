@@ -271,6 +271,9 @@ class ReaderActivity : BaseActivity() {
     private var menuToggleToast: Toast? = null
 
     private var autoscrollJob: kotlinx.coroutines.Job? = null
+    
+    /** Observable state для UI: активна ли автопрокрутка. */
+    private val autoscrollActiveState = kotlinx.coroutines.flow.MutableStateFlow(false)
 
     /** Движок авточтения с историей и подсветкой. */
     private var autoReadEngineOrNull: eu.kanade.tachiyomi.data.tts.AutoReadEngine? = null
@@ -333,6 +336,7 @@ class ReaderActivity : BaseActivity() {
         else autoscrollManuallyDisabled = false
         autoscrollJob?.cancel()
         autoscrollJob = null
+        autoscrollActiveState.value = false
         if (active) lastAutoscrollSpeed = speed
         if (!active) return
         // repeatOnLifecycle, а не просто lifecycleScope: тот живёт до
@@ -340,6 +344,7 @@ class ReaderActivity : BaseActivity() {
         // продолжал крутиться в фоне и есть всю батарею, пока читатель в
         // другом приложении. Цикл теперь живёт только в STARTED.
         autoscrollJob = lifecycleScope.launch {
+        autoscrollActiveState.value = true
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 while (true) {
                     val frameBusy = autoReadActive && autoReadFrameBusy
@@ -1354,7 +1359,7 @@ class ReaderActivity : BaseActivity() {
                     onAutoSpeakPage = ::autoSpeakVisiblePage,
                     onAutoReadChapter = ::startAutoReadLoop,
                     chapterReadActive = chapterReadActive,
-                    isAutoscrollActiveFromParent = autoscrollJob != null,
+                    isAutoscrollActiveFromParent = autoscrollActiveState.collectAsState().value,
                     currentContentType = currentContentType,
 
                     onStopSpeak = {
