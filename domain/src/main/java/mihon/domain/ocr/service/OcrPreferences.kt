@@ -186,6 +186,20 @@ class OcrPreferences(
 
 
     fun speechRate() = preferenceStore.getFloat("pref_speech_rate", 1.0f)
+
+    /**
+     * Множитель скорости автопрокрутки (0.5 = медленнее, 1.0 = нормально, 2.0 = быстрее)
+     */
+    fun autoScrollSpeedMultiplier() = preferenceStore.getFloat("pref_auto_scroll_speed", 1.0f)
+
+    /**
+     * Режим автопрокрутки:
+     * - smooth: плавная прокрутка с ease-out
+     * - adaptive: адаптивная (замедление при чтении текста)
+     * - continuous: непрерывная прокрутка
+     */
+    fun autoScrollMode() = preferenceStore.getString("pref_auto_scroll_mode", "adaptive")
+
     fun speechPitch() = preferenceStore.getFloat("pref_speech_pitch", 1.0f)
     fun ttsWebLanguage() = preferenceStore.getString("pref_tts_web_lang", "ru")
     fun elevenApiKey() = preferenceStore.getString("pref_eleven_api_key", "")
