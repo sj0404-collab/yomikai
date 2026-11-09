@@ -315,11 +315,18 @@ class ReaderActivity : BaseActivity() {
     /** Автопрокрутку включила АВТОЧТЕНИЕ (снять при его остановке). */
     @Volatile
     private var autoscrollAutoEnabled = false
+    
+    /** Пользователь вручную выключил автопрокрутку (не включать автоматически). */
+    @Volatile
+    private var autoscrollManuallyDisabled = false
 
     /** Последняя выбранная скорость — чтобы авто-включение шло с той же. */
     private var lastAutoscrollSpeed = 2f
 
     private fun toggleAutoscroll(active: Boolean, speed: Float) {
+        // Если пользователь выключил автопрокрутку вручную — запоминаем
+        if (!active) autoscrollManuallyDisabled = true
+        else autoscrollManuallyDisabled = false
         autoscrollJob?.cancel()
         autoscrollJob = null
         if (active) lastAutoscrollSpeed = speed
@@ -1983,9 +1990,9 @@ class ReaderActivity : BaseActivity() {
         // останавливаем при остановке чтения (stopAutoReadLoop). Если читатель
         // сам включил прокрутку до этого — она останется его настройкой, и
         // снимать её мы не будем (флажок не взводим).
-        if (viewModel.state.value.viewer is eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer &&
-            autoscrollJob == null
-        ) {
+        // Автопрокрутка включается только если пользователь сам её не выключил
+        val shouldEnableAutoscroll = autoscrollJob == null && !autoscrollManuallyDisabled
+        if (shouldEnableAutoscroll) {
             autoscrollAutoEnabled = true
             toggleAutoscroll(true, lastAutoscrollSpeed)
         }
