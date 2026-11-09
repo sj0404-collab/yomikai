@@ -358,18 +358,19 @@ class ReaderActivity : BaseActivity() {
                             // из-под реплик, поэтому текст сверху и по краям
                             // просто не попадал в снимок. Теперь вьюпорт стоит
                             // намертво, пока кадр не доозвучен.
-                            // Плавное замедление при OCR: не полная остановка,
-                            // а минимальная скорость (20%). Убирает рывки.
-                            val busyMultiplier = if (frameBusy) 0.2f else 1.0f
-                            val targetSpeed = when (currentContentType) {
-                                "text" -> (speed * 1.5f).coerceAtLeast(1f)
-                                "background" -> (speed * 4.0f).coerceAtMost(20f)
-                                else -> speed
-                            } * busyMultiplier
-                            // lerp: плавный переход между скоростями за ~10 кадров
-                            smoothSpeed += (targetSpeed - smoothSpeed) * 0.1f
-                            viewer.recycler.scrollBy(0, smoothSpeed.toInt().coerceAtLeast(1))
-                            kotlinx.coroutines.delay(16)
+                            // Это убирает рывки и гарантирует, что OCR видит правильную часть страницы
+                            if (frameBusy) {
+                                kotlinx.coroutines.delay(16)  // Ждём завершения OCR+TTS
+                            } else {
+                                val targetSpeed = when (currentContentType) {
+                                    "text" -> (speed * 1.5f).coerceAtLeast(1f)
+                                    "background" -> (speed * 4.0f).coerceAtMost(20f)
+                                    else -> speed
+                                }
+                                smoothSpeed += (targetSpeed - smoothSpeed) * 0.1f
+                                viewer.recycler.scrollBy(0, smoothSpeed.toInt().coerceAtLeast(1))
+                                kotlinx.coroutines.delay(16)
+                            }
                         }
                         is eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer -> {
                             // Скорость 1..10 → пауза 11..2 сек на страницу.
