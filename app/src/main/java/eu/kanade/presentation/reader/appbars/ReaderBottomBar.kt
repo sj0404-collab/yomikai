@@ -3,6 +3,7 @@ package eu.kanade.presentation.reader.appbars
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AutoStories
 import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
@@ -28,6 +29,7 @@ fun ReaderBottomBar(
     onClickCropBorder: () -> Unit,
     onClickSettings: () -> Unit,
     onClickOcr: () -> Unit,
+    onClickAutoRead: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -61,6 +63,13 @@ fun ReaderBottomBar(
             Icon(
                 imageVector = Icons.Outlined.DocumentScanner,
                 contentDescription = stringResource(MR.strings.action_ocr),
+            )
+        }
+
+        IconButton(onClick = onClickAutoRead) {
+            Icon(
+                imageVector = Icons.Outlined.AutoStories,
+                contentDescription = "Авто чтение",
             )
         }
 

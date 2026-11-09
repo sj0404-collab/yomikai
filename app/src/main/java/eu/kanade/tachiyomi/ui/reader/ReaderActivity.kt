@@ -1244,6 +1244,7 @@ class ReaderActivity : BaseActivity() {
                         showModelPicker = true
                     },
                     onClickOcr = ::enterOcrMode,
+                    onAutoReadToggle = { startAutoReadLoop() },
                 )
 
                 // Линейка авточтения: подсветка текущей читаемой реплики
@@ -2918,6 +2919,8 @@ class ReaderActivity : BaseActivity() {
      * viewer because each one implements its own touch and key events.
      */
     fun toggleMenu() {
+        // Не скрываем меню, если активна автопрокрутка или авточтение
+        if (autoscrollJob != null || autoReadActive) return
         setMenuVisibility(!viewModel.state.value.menuVisible)
     }
 
@@ -2934,6 +2937,8 @@ class ReaderActivity : BaseActivity() {
      * Called from the viewer to hide the menu.
      */
     fun hideMenu() {
+        // Не скрываем меню, если активна автопрокрутка или авточтение
+        if (autoscrollJob != null || autoReadActive) return
         if (viewModel.state.value.menuVisible) {
             setMenuVisibility(false)
         }

@@ -74,6 +74,7 @@ fun ReaderAppBars(
     onClickCropBorder: () -> Unit,
     onClickSettings: () -> Unit,
     onClickOcrSettings: (() -> Unit)? = null,
+    onAutoReadToggle: () -> Unit,
     onClickOcr: () -> Unit,
 ) {
     val backgroundColor = MaterialTheme.colorScheme
@@ -174,6 +175,7 @@ fun ReaderAppBars(
                     onClickCropBorder = onClickCropBorder,
                     onClickSettings = onClickSettings,
                     onClickOcr = onClickOcr,
+                    onClickAutoRead = onAutoReadToggle,
                 )
             }
         }
