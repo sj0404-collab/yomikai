@@ -1354,6 +1354,8 @@ class ReaderActivity : BaseActivity() {
                     onAutoSpeakPage = ::autoSpeakVisiblePage,
                     onAutoReadChapter = ::startAutoReadLoop,
                     chapterReadActive = chapterReadActive,
+                    isAutoscrollActiveFromParent = autoscrollJob != null,
+                    currentContentType = currentContentType,
 
                     onStopSpeak = {
                         stopAutoReadLoop()

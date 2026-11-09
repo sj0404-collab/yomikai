@@ -96,6 +96,10 @@ fun ReaderFloatingControls(
     onAutoReadChapter: () -> Unit = {},
     /** Идёт ли чтение главы — для подписи и цвета кнопки. */
     chapterReadActive: Boolean = false,
+    /** Активна ли автопрокрутка (из родительского компонента). */
+    isAutoscrollActiveFromParent: Boolean = false,
+    /** Текущий тип контента для индикации адаптивной скорости. */
+    currentContentType: String = "text",
 
     onStopSpeak: () -> Unit = {},
     /** Мгновенный скриншот текущего кадра (Glens/любой движок): OCR сейчас,
@@ -172,7 +176,7 @@ fun ReaderFloatingControls(
     // Слайдер скорости виден только при активной автопрокрутке и вставлен
     // сразу под свою строку: в общем хвосте карточки до него пришлось бы
     // доезжать скроллом.
-    val speedBlock: (@Composable ColumnScope.() -> Unit)? = if (isAutoscrollActive) {
+    val speedBlock: (@Composable ColumnScope.() -> Unit)? = if (isAutoscrollActive || isAutoscrollActiveFromParent) {
         {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Outlined.Speed, contentDescription = null)
@@ -185,7 +189,12 @@ fun ReaderFloatingControls(
                     valueRange = 1f..10f,
                     modifier = Modifier.width(140.dp),
                 )
-                Text("×${autoscrollSpeed.roundToInt()}")
+                val adaptiveIndicator = when (currentContentType) {
+                    "text" -> "📖"
+                    "background" -> "🎨"
+                    else -> "⚙"
+                }
+                Text("$adaptiveIndicator ×${autoscrollSpeed.roundToInt()}")
             }
         }
     } else {
