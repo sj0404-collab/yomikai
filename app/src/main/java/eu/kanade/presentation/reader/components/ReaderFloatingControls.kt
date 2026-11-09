@@ -307,7 +307,7 @@ fun ReaderFloatingControls(
                             rowUnlessHidden(
                                 "r_autoread_chapter",
                                 OcrMenuRow(
-                                    label = if (chapterReadActive) "Глава: читаю…" else "Читать главу",
+                                    label = if (chapterReadActive) "Авто чтение: активно…" else "Авто чтение",
                                     action = OcrMenuAction(
                                         icon = if (chapterReadActive) {
                                             Icons.Outlined.GraphicEq
@@ -329,7 +329,7 @@ fun ReaderFloatingControls(
                                         } else {
                                             MaterialTheme.colorScheme.onPrimaryContainer
                                         },
-                                        contentDescription = "Читать главу",
+                                        contentDescription = "Авто чтение",
                                     ),
                                 ),
                             ),
