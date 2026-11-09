@@ -2304,7 +2304,7 @@ class ReaderActivity : BaseActivity() {
                 // Шаг с перекрытием держит автопрокрутку, пока кадр не прочитан,
                 // и не пропускает реплики на границе вьюпорта (фикс «рывка»).
                 if (smooth) {
-                    smoothWebtoonScroll(
+                    viewer.scrollDownByFraction(
                         if (webtoonFraction > 0f) webtoonFraction else PHRASE_FINAL_STEP,
                     )
                     withUIContext { viewer.canScrollDown() }
@@ -2333,33 +2333,6 @@ class ReaderActivity : BaseActivity() {
      * лента едет ровно, «скорость прибавляется» плавно, и кадры без текста
      * («режим сказки») листаются так же мягко.
      */
-    private suspend fun smoothWebtoonScroll(fraction: Float) {
-        val v = viewModel.state.value.viewer as? eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer
-            ?: return
-        val rootH = withUIContext { binding.root.height }
-        if (fraction <= 0f || rootH <= 0) return
-        val totalPx = (rootH * fraction).toInt().coerceAtLeast(1)
-        // Длительность — от размера шага и скорости речи: быстрее говорят,
-        // быстрее едет лента (и наоборот). Полный экран ≈1.2 с на скорости 1.
-        val rate = uy.kohesive.injekt.Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
-            .speechRate()
-            .get()
-            .takeIf { it > 0f && it.isFinite() } ?: 1f
-        val durationMs = ((totalPx.toFloat() / rootH) * 1200f / rate).toLong().coerceIn(300L, 6_000L)
-        val steps = (durationMs / 16L).toInt().coerceIn(16, 160)
-        var done = 0f
-        for (s in 1..steps) {
-            if (!autoReadActive && autoReadLoop?.isActive != true) return
-            // ease-out: быстрый разгон, мягкий выход на цель.
-            val t = s.toFloat() / steps
-            val eased = 1f - (1f - t) * (1f - t)
-            val targetPx = totalPx * eased
-            val stepPx = targetPx.toInt() - done.toInt()
-            done = targetPx
-            if (stepPx > 0) withUIContext { v.scrollByPx(stepPx) }
-            if (s < steps) kotlinx.coroutines.delay(16)
-        }
-    }
 
     /**
      * Один кадр авточтения: дождаться отрисовки → захватить → озвучить →
@@ -2394,19 +2367,7 @@ class ReaderActivity : BaseActivity() {
 
         return try {
             kotlinx.coroutines.coroutineScope {
-                val scrollJob = scrollTargets?.let { targets ->
-                    launch {
-                        for (dy in targets) {
-                            if (!autoReadActive) break
-                            val v = withUIContext { viewModel.state.value.viewer }
-                            if (v is eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer) {
-                                // Постепенно: цель дочитанной реплики размазывается
-                                // на тики, а не прилетает одним прыжком.
-                                smoothWebtoonScroll(dy)
-                            }
-                        }
-                    }
-                }
+                // scrollJob удалён: авто чтение использует только autoscrollJob
                 try {
                     autoReadEngine.readFrame(
                         bitmap = frame.bitmap,
@@ -2443,7 +2404,6 @@ class ReaderActivity : BaseActivity() {
                     // он вышел бы из for только при отмене, а значит подвесил бы
                     // coroutineScope до конца кадра.
                     scrollTargets?.close()
-                    scrollJob?.cancel()
                     autoReadFrameBusy = false // кадр закрыт: прокрутка может ехать
                 }
             }
