@@ -2325,8 +2325,8 @@ class ReaderActivity : BaseActivity() {
             .speechRate()
             .get()
             .takeIf { it > 0f && it.isFinite() } ?: 1f
-        val durationMs = ((totalPx.toFloat() / rootH) * 1200f / rate).toLong().coerceIn(120L, 6_000L)
-        val steps = (durationMs / 16L).toInt().coerceIn(8, 160)
+        val durationMs = ((totalPx.toFloat() / rootH) * 1200f / rate).toLong().coerceIn(300L, 6_000L)
+        val steps = (durationMs / 16L).toInt().coerceIn(16, 160)
         var done = 0f
         for (s in 1..steps) {
             if (!autoReadActive && autoReadLoop?.isActive != true) return

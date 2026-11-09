@@ -2223,6 +2223,7 @@ class AutoReadEngine(
     ): SpeakOutcome =
         speakMutex.withLock { speakAndAwaitAlone(text, gender, speakerSlot, langHint, prosody) }
 
+    /**     * Обрабатывает текст перед озвучкой:     * - Заменяет "..." на "в размышлении"     * - Добавляет пробел после одиночных точек, чтобы TTS их читал     */    private fun preprocessTextForTts(text: String): String {        return text            .replace("\.\.\.".toRegex(), "в размышлении")            .replace("\.(?=[^\s])".toRegex(), ". ")    }
     private suspend fun speakAndAwaitAlone(
         text: String,
         gender: String? = null,
@@ -2251,7 +2252,7 @@ class AutoReadEngine(
         val done = MutableStateFlow(false)
         val t0 = System.currentTimeMillis()
         TtsSpeaker.speakAs(
-            context, text, gender, speakerSlot, langHint = langHint,
+            context, preprocessTextForTts(text), gender, speakerSlot, langHint = langHint,
             emotionProsody = prosody,
             onState = { speaking ->
                 if (speaking && !started.value) {
