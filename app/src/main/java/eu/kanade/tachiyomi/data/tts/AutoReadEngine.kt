@@ -816,6 +816,7 @@ class AutoReadEngine(
         pageIndex: Int,
         onPageFinished: () -> Unit,
         onLineSpoken: ((OcrBoundingBox) -> Unit)? = null,
+        onContentTypeDetected: ((String) -> Unit)? = null,
         geometry: OcrFrameGeometry? = null,
         cachedResult: mihon.domain.ocr.model.OcrPageResult? = null,
 
@@ -1678,6 +1679,14 @@ class AutoReadEngine(
                     // Колбэк только для АКТУАЛЬНОГО запуска: после stop() старый
                     // цикл не имеет права листать дальше или перезапускать чтение
                     if (myGen == generation && job?.isCancelled != true) {
+
+                        // Определяем тип контента для адаптивной скорости прокрутки
+                        val contentType = when {
+                            spokenLines.isNotEmpty() -> "text"  // Есть текст — медленная прокрутка
+                            bitmap != null -> "background"  // Только фон — ускорение
+                            else -> "empty"  // Пусто — пользовательская скорость
+                        }
+                        onContentTypeDetected?.invoke(contentType)
 
                         onPageFinished()
                     }

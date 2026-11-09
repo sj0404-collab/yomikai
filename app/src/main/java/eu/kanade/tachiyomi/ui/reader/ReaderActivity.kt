@@ -319,6 +319,10 @@ class ReaderActivity : BaseActivity() {
     /** Пользователь вручную выключил автопрокрутку (не включать автоматически). */
     @Volatile
     private var autoscrollManuallyDisabled = false
+    
+    /** Текущий тип контента кадра (text/background/empty) для адаптивной скорости. */
+    @Volatile
+    private var currentContentType = "text"
 
     /** Последняя выбранная скорость — чтобы авто-включение шло с той же. */
     private var lastAutoscrollSpeed = 2f
@@ -352,7 +356,13 @@ class ReaderActivity : BaseActivity() {
                                 kotlinx.coroutines.delay(24)
                             } else {
                                 // ~60 Гц; скорость 1..10 → 1..10 px за кадр
-                                viewer.recycler.scrollBy(0, speed.toInt().coerceAtLeast(1))
+                            // Адаптивная скорость: медленнее для текста, быстрее для фона
+                            val adaptiveSpeed = when (currentContentType) {
+                                "text" -> (speed * 0.5f).coerceAtLeast(1f)  // Медленнее для текста
+                                "background" -> (speed * 2.0f).coerceAtMost(10f)  // Быстрее для фона
+                                else -> speed  // Пользовательская скорость
+                            }
+                            viewer.recycler.scrollBy(0, adaptiveSpeed.toInt().coerceAtLeast(1))
                                 kotlinx.coroutines.delay(16)
                             }
                         }
@@ -2418,6 +2428,10 @@ class ReaderActivity : BaseActivity() {
                                 .coerceAtMost(0.85f)
                             scrollTargets?.trySend(dy)
                         } else null,
+                        onContentTypeDetected = { type ->
+                            currentContentType = type
+                            logcat(LogPriority.DEBUG) { "Content type detected: $type" }
+                        },
                         onPageFinished = { finished.complete(true) },
                     )
                     if (awaitFrameOutcome(finished)) FrameResult.READ else FrameResult.BLOCKED
