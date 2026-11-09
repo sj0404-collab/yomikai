@@ -1463,6 +1463,7 @@ class AutoReadEngine(
                         runCatching { onLineSpoken(speakable.last().boundingBox) }
                             .onFailure { logcat(LogPriority.WARN, it) { "onLineSpoken failed" } }
                     }
+                delay(500) // Ждём завершения плавной прокрутки
                 }
 
                 for ((orderedIndex, region) in ordered.withIndex()) {
@@ -1642,6 +1643,7 @@ class AutoReadEngine(
                         runCatching { onLineSpoken(region.boundingBox) }
                             .onFailure { logcat(LogPriority.WARN, it) { "onLineSpoken failed" } }
                     }
+                delay(500) // Ждём завершения плавной прокрутки
                     spokenLines.add(lineKey(region.text))
                 }
             } catch (e: CancellationException) {
@@ -2152,6 +2154,7 @@ class AutoReadEngine(
                     runCatching { onLineSpoken(region.boundingBox) }
                         .onFailure { logcat(LogPriority.WARN, it) { "onLineSpoken failed" } }
                 }
+                delay(500) // Ждём завершения плавной прокрутки
 
                 rejectedStreak = 0
                 true
@@ -2161,6 +2164,7 @@ class AutoReadEngine(
                     runCatching { onLineSpoken(region.boundingBox) }
                         .onFailure { logcat(LogPriority.WARN, it) { "onLineSpoken failed" } }
                 }
+                delay(500) // Ждём завершения плавной прокрутки
 
                 rejectedStreak = 0
                 true
