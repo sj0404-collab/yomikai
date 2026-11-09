@@ -363,8 +363,8 @@ class ReaderActivity : BaseActivity() {
                                 // ~60 Гц; скорость 1..10 → 1..10 px за кадр
                             // Адаптивная скорость: медленнее для текста, быстрее для фона
                             val adaptiveSpeed = when (currentContentType) {
-                                "text" -> (speed * 0.5f).coerceAtLeast(1f)  // Медленнее для текста
-                                "background" -> (speed * 2.0f).coerceAtMost(10f)  // Быстрее для фона
+                                "text" -> (speed * 1.5f).coerceAtLeast(1f)  // Медленнее для текста
+                                "background" -> (speed * 4.0f).coerceAtMost(20f)  // Быстрее для фона
                                 else -> speed  // Пользовательская скорость
                             }
                             viewer.recycler.scrollBy(0, adaptiveSpeed.toInt().coerceAtLeast(1))

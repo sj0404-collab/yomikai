@@ -266,9 +266,9 @@ fun ReaderFloatingControls(
                             rowUnlessHidden(
                                 "r_autoscroll",
                                 OcrMenuRow(
-                                    label = if (isAutoscrollActive) "Стоп прокрутки" else "Автопрокрутка",
+                                    label = if (isAutoscrollActive || isAutoscrollActiveFromParent) "Стоп прокрутки" else "Автопрокрутка",
                                     action = OcrMenuAction(
-                                        icon = if (isAutoscrollActive) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                                        icon = if (isAutoscrollActive || isAutoscrollActiveFromParent) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
                                         onClick = {
                                             beepAction()
                                             isAutoscrollActive = !isAutoscrollActive
@@ -276,7 +276,7 @@ fun ReaderFloatingControls(
                                         },
                                         // Подсветки фона тут нет, меняется только иконка —
                                         // так владелец сразу видит, что автопрокрутка идёт.
-                                        contentColor = if (isAutoscrollActive) {
+                                        contentColor = if (isAutoscrollActive || isAutoscrollActiveFromParent) {
                                             MaterialTheme.colorScheme.primary
                                         } else {
                                             MaterialTheme.colorScheme.onSurfaceVariant
