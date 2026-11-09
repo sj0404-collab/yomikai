@@ -345,6 +345,7 @@ class ReaderActivity : BaseActivity() {
         // другом приложении. Цикл теперь живёт только в STARTED.
         autoscrollJob = lifecycleScope.launch {
         autoscrollActiveState.value = true
+                var smoothSpeed = 1f  // Плавная скорость (lerp)
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 while (true) {
                     val frameBusy = autoReadActive && autoReadFrameBusy
@@ -357,19 +358,18 @@ class ReaderActivity : BaseActivity() {
                             // из-под реплик, поэтому текст сверху и по краям
                             // просто не попадал в снимок. Теперь вьюпорт стоит
                             // намертво, пока кадр не доозвучен.
-                            if (frameBusy) {
-                                kotlinx.coroutines.delay(24)
-                            } else {
-                                // ~60 Гц; скорость 1..10 → 1..10 px за кадр
-                            // Адаптивная скорость: медленнее для текста, быстрее для фона
-                            val adaptiveSpeed = when (currentContentType) {
-                                "text" -> (speed * 1.5f).coerceAtLeast(1f)  // Медленнее для текста
-                                "background" -> (speed * 4.0f).coerceAtMost(20f)  // Быстрее для фона
-                                else -> speed  // Пользовательская скорость
-                            }
-                            viewer.recycler.scrollBy(0, adaptiveSpeed.toInt().coerceAtLeast(1))
-                                kotlinx.coroutines.delay(16)
-                            }
+                            // Плавное замедление при OCR: не полная остановка,
+                            // а минимальная скорость (20%). Убирает рывки.
+                            val busyMultiplier = if (frameBusy) 0.2f else 1.0f
+                            val targetSpeed = when (currentContentType) {
+                                "text" -> (speed * 1.5f).coerceAtLeast(1f)
+                                "background" -> (speed * 4.0f).coerceAtMost(20f)
+                                else -> speed
+                            } * busyMultiplier
+                            // lerp: плавный переход между скоростями за ~10 кадров
+                            smoothSpeed += (targetSpeed - smoothSpeed) * 0.1f
+                            viewer.recycler.scrollBy(0, smoothSpeed.toInt().coerceAtLeast(1))
+                            kotlinx.coroutines.delay(16)
                         }
                         is eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer -> {
                             // Скорость 1..10 → пауза 11..2 сек на страницу.

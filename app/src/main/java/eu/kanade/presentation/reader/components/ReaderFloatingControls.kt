@@ -186,7 +186,7 @@ fun ReaderFloatingControls(
                         autoscrollSpeed = it
                         onAutoscrollToggle(true, autoscrollSpeed)
                     },
-                    valueRange = 1f..10f,
+                    valueRange = 1f..20f,
                     modifier = Modifier.width(140.dp),
                 )
                 val adaptiveIndicator = when (currentContentType) {
