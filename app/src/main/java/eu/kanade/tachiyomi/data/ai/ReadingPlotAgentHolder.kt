@@ -22,9 +22,10 @@ object ReadingPlotAgentHolder {
                 when {
                     custom != null -> custom.apiKey.isNotBlank()
                     p == AiAssistant.PROVIDER_OPENROUTER -> prefs.openrouterApiKey().get().isNotBlank()
-                    p == AiAssistant.PROVIDER_POLLINATIONS -> prefs.pollinationsApiKey().get().isNotBlank()
-                    // LLM7 работает и без токена (анонимная строка в заголовке).
-                    p == AiAssistant.PROVIDER_LLM7 -> true
+                    BuiltInModelProviders.byId(p) != null -> {
+                        val bp = BuiltInModelProviders.byId(p)!!
+                        bp.keyPolicy != KeyPolicy.REQUIRED || prefs.builtInApiKey(bp.id).get().isNotBlank()
+                    }
                     else -> prefs.googleApiKey().get().isNotBlank()
                 }
             },

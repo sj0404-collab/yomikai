@@ -39,8 +39,6 @@ object AiAssistant {
 
     const val PROVIDER_ZEN = "zen"
     const val PROVIDER_OPENROUTER = "openrouter"
-    const val PROVIDER_POLLINATIONS = "pollinations"
-    const val PROVIDER_LLM7 = "llm7"
 
     /**
      * Базовые URL встроенных провайдеров. Вынесены в константы, потому что их
@@ -49,14 +47,6 @@ object AiAssistant {
      */
     const val ZEN_BASE_URL = "https://opencode.ai/zen/v1"
     const val OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-    const val POLLINATIONS_BASE_URL = "https://gen.pollinations.ai/v1"
-    const val LLM7_BASE_URL = "https://api.llm7.io/v1"
-
-    /**
-     * Заглушка для LLM7: без заголовка Authorization сервер отвечает
-     * `Missing API key`, а бесплатные модели принимают любую строку.
-     */
-    const val LLM7_ANONYMOUS_KEY = "unused"
 
     /**
      * Потолок размера ответа модели: 4 МиБ. Обычный readBytes() тянул в heap
@@ -100,33 +90,6 @@ object AiAssistant {
         "google/gemma-4-31b-it:free",
         "nvidia/nemotron-3-super-120b-a12b:free",
     )
-    /**
-     * Модели Pollinations из живого каталога gen.pollinations.ai/v1/models
-     * (paid_only = false). Без ключа большинство отвечает 401, поэтому
-     * пользователь вводит ключ с enter.pollinations.ai.
-     */
-    val POLLINATIONS_MODELS = listOf(
-        "openai/gpt-5.4-nano",
-        "openai/gpt-5-nano",
-        "openai/gpt-5.4-mini",
-        "openai/gpt-oss-20b",
-        "deepseek/deepseek-v4-flash",
-        "z-ai/glm-5.3-flash",
-        "minimax/minimax-m3.1-flash",
-        "nvidia/nemotron-3.5-lightning",
-        "meta/llama-3.3-70b-instruct",
-        "mistralai/mistral-large-3",
-        "moonshotai/kimi-k2.6",
-        "x-ai/grok-4.3",
-    )
-
-    /** Бесплатные модели LLM7 (tier «turbo» в api.llm7.io/v1/models). */
-    val LLM7_MODELS = listOf(
-        "mistral-Nemo-Instruct-2407",
-        "codestral-latest",
-    )
-
-
     private fun prefs(): OcrPreferences = Injekt.get()
 
     /**
@@ -169,7 +132,7 @@ object AiAssistant {
             var got: ChatReply? = null
             for (delayMs in longArrayOf(0, 1_200, 2_500)) {
                 if (delayMs > 0) kotlinx.coroutines.delay(delayMs)
-                when (val outcome = chatRawOutcome(url, model, spec.apiKey, userPrompt, systemPrompt, maxTokens)) {
+                when (val outcome = chatRawOutcome(url, model, spec.apiKey, userPrompt, systemPrompt, maxTokens, plainChat = true)) {
                     is Outcome.Ok -> {
                         got = outcome.reply
                         break
@@ -190,31 +153,34 @@ object AiAssistant {
     }
 
     /**
-     * Pollinations и LLM7: OpenAI-совместимый /chat/completions с моделью и
-     * ключом из настроек. Идёт через [customProviderChat], поэтому повторы,
-     * ротация по запасной модели и разбор ответа общие с пользовательскими
-     * провайдерами.
+     * Встроенный провайдер из [BuiltInModelProviders]: модель и ключ из настроек.
+     * Идёт через [customProviderChat], поэтому повторы и ротация по запасной
+     * модели общие с пользовательскими провайдерами. Без обязательного ключа
+     * запрос не уходит, а в чате появляется понятная причина.
      */
     private suspend fun builtInKeyedChat(
-        provider: String,
+        bp: BuiltInModelProvider,
         userPrompt: String,
         systemPrompt: String?,
         maxTokens: Int,
         modelOverride: String?,
     ): ChatReply? {
         val p = prefs()
-        val base = AiProviders.builtIn().first { it.id == provider }
-        val spec = if (provider == PROVIDER_POLLINATIONS) {
-            base.copy(
-                model = p.pollinationsModel().get().ifBlank { base.model },
-                apiKey = p.pollinationsApiKey().get().trim(),
-            )
-        } else {
-            base.copy(
-                model = p.llm7Model().get().ifBlank { base.model },
-                apiKey = p.llm7ApiKey().get().trim().ifBlank { LLM7_ANONYMOUS_KEY },
-            )
+        val typed = p.builtInApiKey(bp.id).get().trim()
+        if (bp.keyPolicy == KeyPolicy.REQUIRED && typed.isBlank()) {
+            lastFailureMessage = "${bp.title}: нужен API-ключ в настройках"
+            logcat(LogPriority.WARN) { "Built-in provider ${bp.id} has no key" }
+            return null
         }
+        val spec = AiProviders.Spec(
+            id = bp.id,
+            title = bp.title,
+            summary = bp.summary,
+            baseUrl = bp.baseUrl,
+            model = p.builtInModel(bp.id, bp.defaultModel).get().ifBlank { bp.defaultModel },
+            apiKey = typed.ifBlank { bp.anonymousKey },
+            builtIn = true,
+        )
         return customProviderChat(spec, userPrompt, systemPrompt, maxTokens, modelOverride)
     }
 
@@ -454,10 +420,10 @@ object AiAssistant {
             val provider = p.aiProvider().get()
             val override = modelOverride?.takeIf { it.isNotBlank() }
 
-            // Встроенные провайдеры с настраиваемой моделью и ключом. Раньше
-            // Pollinations и LLM7 не имели ветки, и выбор молча уходил в Zen.
-            if (provider == PROVIDER_POLLINATIONS || provider == PROVIDER_LLM7) {
-                return@withContext builtInKeyedChat(provider, userPrompt, systemPrompt, maxTokens, override)
+            // Встроенные провайдеры с моделью из списка. Без этой ветки выбор
+            // молча уходил в Zen.
+            BuiltInModelProviders.byId(provider)?.let { bp ->
+                return@withContext builtInKeyedChat(bp, userPrompt, systemPrompt, maxTokens, override)
             }
 
             // Провайдер пользователя из реестра AiProviders (свой base URL,
@@ -653,6 +619,7 @@ object AiAssistant {
         userPrompt: String,
         systemPrompt: String?,
         maxTokens: Int = 500,
+        plainChat: Boolean = false,
     ): Outcome {
         val startedAt = System.currentTimeMillis()
         val myEpoch = abortEpoch.get()
@@ -667,10 +634,11 @@ object AiAssistant {
             // ждёт /messages, GPT и Muse — /responses, Gemini — свой путь.
             // Раньше всё уходило в /chat/completions, поэтому модели этих
             // семейств не отвечали вовсе и выглядели сломанными.
-            val body = ZenProtocol.requestBody(model, userPrompt, systemPrompt, maxTokens)
+            val body = ZenProtocol.requestBody(model, userPrompt, systemPrompt, maxTokens, forceChat = plainChat)
             // Базовый адрес приходит от вызывающего кода с хвостом
             // /chat/completions; подставляем эндпоинт, который нужен модели.
-            val actualUrl = if (url.endsWith("/chat/completions")) {
+            // Провайдер с plainChat идёт строго по /chat/completions.
+            val actualUrl = if (!plainChat && url.endsWith("/chat/completions")) {
                 ZenProtocol.urlFor(url.removeSuffix("/chat/completions"), model)
             } else {
                 url
@@ -729,7 +697,7 @@ object AiAssistant {
             // только choices[0].message, поэтому у Claude (блок thinking),
             // у Responses (отдельный output) и у Gemini (флаг thought)
             // размышления терялись, и в чате появлялось «🤔 null».
-            val parsed = ZenProtocol.parse(text, model)
+            val parsed = ZenProtocol.parse(text, model, forceChat = plainChat)
             val answer = parsed.content
             val reasoning = parsed.reasoning
             addLog(LogEntry(startedAt, model, userPrompt.take(200), (answer ?: "<пусто>").take(200), System.currentTimeMillis() - startedAt))

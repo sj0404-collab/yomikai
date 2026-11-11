@@ -49,12 +49,9 @@ object AiProviders {
     )
 
     /** Id встроенных провайдеров: пользовательский не может их занять. */
-    val RESERVED_IDS: Set<String> = setOf(
-        AiAssistant.PROVIDER_ZEN,
-        AiAssistant.PROVIDER_OPENROUTER,
-        AiAssistant.PROVIDER_POLLINATIONS,
-        AiAssistant.PROVIDER_LLM7,
-    )
+    val RESERVED_IDS: Set<String> =
+        setOf(AiAssistant.PROVIDER_ZEN, AiAssistant.PROVIDER_OPENROUTER) +
+            BuiltInModelProviders.ALL.map { it.id }.toSet()
 
     private fun dir(context: Context): File =
         File(AiWorkspace.root(context), "providers").apply { runCatching { mkdirs() } }
@@ -116,23 +113,16 @@ object AiProviders {
             model = AiAssistant.OPENROUTER_FREE_FALLBACK.first(),
             builtIn = true,
         ),
+    ) + BuiltInModelProviders.ALL.map { bp ->
         Spec(
-            id = AiAssistant.PROVIDER_POLLINATIONS,
-            title = "Pollinations",
-            summary = "GPT-5 nano/mini, DeepSeek, GLM, Kimi, Grok, Mistral, Llama и др. Часть моделей — по ключу с enter.pollinations.ai.",
-            baseUrl = AiAssistant.POLLINATIONS_BASE_URL,
-            model = AiAssistant.POLLINATIONS_MODELS.first(),
+            id = bp.id,
+            title = bp.title,
+            summary = bp.summary,
+            baseUrl = bp.baseUrl,
+            model = bp.defaultModel,
             builtIn = true,
-        ),
-        Spec(
-            id = AiAssistant.PROVIDER_LLM7,
-            title = "LLM7",
-            summary = "Бесплатные модели LLM7 (Mistral Nemo, Codestral). Ключ не обязателен.",
-            baseUrl = AiAssistant.LLM7_BASE_URL,
-            model = AiAssistant.LLM7_MODELS.first(),
-            builtIn = true,
-        ),
-    )
+        )
+    }
 
     /** Провайдеры пользователя. Битые файлы пропускаются, остальные работают. */
     fun list(context: Context): List<Spec> = runCatching {

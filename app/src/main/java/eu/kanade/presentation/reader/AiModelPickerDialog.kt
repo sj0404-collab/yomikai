@@ -19,6 +19,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -26,6 +27,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import eu.kanade.tachiyomi.data.ai.BuiltInModelProvider
+import eu.kanade.tachiyomi.data.ai.BuiltInModelProviders
+import eu.kanade.tachiyomi.data.ai.KeyPolicy
 import eu.kanade.tachiyomi.util.system.toast
 import mihon.domain.ocr.service.OcrPreferences
 import uy.kohesive.injekt.Injekt
@@ -57,10 +61,19 @@ fun AiModelPickerDialog(
     var orFreeModel by remember { mutableStateOf(prefs.openrouterFreeModel().get()) }
     var orKey by remember { mutableStateOf(prefs.openrouterApiKey().get()) }
     var orModels by remember { mutableStateOf<List<String>>(emptyList()) }
-    var pollModel by remember { mutableStateOf(prefs.pollinationsModel().get()) }
-    var pollKey by remember { mutableStateOf(prefs.pollinationsApiKey().get()) }
-    var llm7Model by remember { mutableStateOf(prefs.llm7Model().get()) }
-    var llm7Key by remember { mutableStateOf(prefs.llm7ApiKey().get()) }
+    // Модели и ключи встроенных провайдеров по id: правки живут в памяти до «Применить».
+    val builtInModels = remember {
+        mutableStateMapOf<String, String>().apply {
+            BuiltInModelProviders.ALL.forEach { bp ->
+                put(bp.id, prefs.builtInModel(bp.id, bp.defaultModel).get().ifBlank { bp.defaultModel })
+            }
+        }
+    }
+    val builtInKeys = remember {
+        mutableStateMapOf<String, String>().apply {
+            BuiltInModelProviders.ALL.forEach { bp -> put(bp.id, prefs.builtInApiKey(bp.id).get()) }
+        }
+    }
 
     // Оркестратор — агент читалки. Пусто = «как у чата», поэтому поведение
     // по умолчанию не меняется, но роль можно увести на другой бэкенд/модель.
@@ -90,10 +103,11 @@ fun AiModelPickerDialog(
         prefs.zenModel().set(zenModel)
         prefs.openrouterFreeModel().set(orFreeModel)
         prefs.openrouterApiKey().set(orKey.trim())
-        prefs.pollinationsModel().set(pollModel)
-        prefs.pollinationsApiKey().set(pollKey.trim())
-        prefs.llm7Model().set(llm7Model)
-        prefs.llm7ApiKey().set(llm7Key.trim())
+        BuiltInModelProviders.ALL.forEach { bp ->
+            prefs.builtInModel(bp.id, bp.defaultModel)
+                .set(builtInModels[bp.id].orEmpty().ifBlank { bp.defaultModel })
+            prefs.builtInApiKey(bp.id).set(builtInKeys[bp.id].orEmpty().trim())
+        }
         prefs.aiOrchestratorBackend().set(orchBackend)
         // Модель, которую бэкенд всё равно игнорирует, не сохраняем: иначе
         // она всплыла бы при возврате роли на онлайн как «своя».
@@ -102,13 +116,13 @@ fun AiModelPickerDialog(
         val orchestrator = eu.kanade.tachiyomi.data.ai.AiModelRoles.orchestratorTarget(
             chatBackend = prefs.aiBackend().get(),
             chatProvider = aiProvider,
-            chatModel = currentModelLabel(aiProvider, zenModel, orFreeModel, pollModel, llm7Model, userProviders),
+            chatModel = currentModelLabel(aiProvider, zenModel, orFreeModel, builtInModels, userProviders),
             orchestratorBackend = orchBackend,
             orchestratorModel = orchModelValue,
             backendState = eu.kanade.tachiyomi.data.ai.AiBackends.state(context, prefs),
         )
         context.toast(
-            "Чат: ${currentModelLabel(aiProvider, zenModel, orFreeModel, pollModel, llm7Model, userProviders)}" +
+            "Чат: ${currentModelLabel(aiProvider, zenModel, orFreeModel, builtInModels, userProviders)}" +
                 " · Оркестратор: ${orchestrator.backendTitle} · ${orchestrator.model}",
         )
         onDismissRequest()
@@ -128,32 +142,41 @@ fun AiModelPickerDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Row(modifier = Modifier.padding(top = 4.dp)) {
-                    FilterChip(
-                        selected = aiProvider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_ZEN,
-                        onClick = { aiProvider = eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_ZEN },
-                        label = { Text("Zen (без ключа)") },
-                        modifier = Modifier.padding(end = 6.dp),
-                    )
-                    FilterChip(
-                        selected = aiProvider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_OPENROUTER,
-                        onClick = { aiProvider = eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_OPENROUTER },
-                        label = { Text("OpenRouter") },
-                    )
-                }
-                Row(modifier = Modifier.padding(top = 6.dp)) {
-                    FilterChip(
-                        selected = aiProvider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_POLLINATIONS,
-                        onClick = { aiProvider = eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_POLLINATIONS },
-                        label = { Text("Pollinations") },
-                        modifier = Modifier.padding(end = 6.dp),
-                    )
-                    FilterChip(
-                        selected = aiProvider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_LLM7,
-                        onClick = { aiProvider = eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_LLM7 },
-                        label = { Text("LLM7") },
-                    )
-                }
+                Text(
+                    text = "Без ключа:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                ProviderChipRows(
+                    options = listOf(eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_ZEN to "Zen (без ключа)") +
+                        BuiltInModelProviders.ALL.filter { it.keyPolicy == KeyPolicy.NONE }.map { it.id to it.title },
+                    selected = aiProvider,
+                    onSelect = { aiProvider = it },
+                )
+                Text(
+                    text = "Ключ необязателен:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+                ProviderChipRows(
+                    options = BuiltInModelProviders.ALL.filter { it.keyPolicy == KeyPolicy.OPTIONAL }.map { it.id to it.title },
+                    selected = aiProvider,
+                    onSelect = { aiProvider = it },
+                )
+                Text(
+                    text = "С ключом:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+                ProviderChipRows(
+                    options = listOf(eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_OPENROUTER to "OpenRouter") +
+                        BuiltInModelProviders.ALL.filter { it.keyPolicy == KeyPolicy.REQUIRED }.map { it.id to it.title },
+                    selected = aiProvider,
+                    onSelect = { aiProvider = it },
+                )
                 // Свои провайдеры пользователя (Ollama, LM Studio, прокси).
                 if (userProviders.isNotEmpty()) {
                     Text(
@@ -225,25 +248,14 @@ fun AiModelPickerDialog(
                             }
                         }
                     }
-                } else if (aiProvider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_POLLINATIONS) {
+                } else if (BuiltInModelProviders.byId(aiProvider) != null) {
+                    val bp = BuiltInModelProviders.byId(aiProvider)!!
                     KeyedBuiltInProviderPanel(
-                        models = eu.kanade.tachiyomi.data.ai.AiAssistant.POLLINATIONS_MODELS,
-                        model = pollModel,
-                        onModelChange = { pollModel = it },
-                        apiKey = pollKey,
-                        onApiKeyChange = { pollKey = it },
-                        keyLabel = "Pollinations API-ключ (необязательно)",
-                        keyHint = "Без ключа большинство моделей не отвечает. Ключ: enter.pollinations.ai/keys",
-                    )
-                } else if (aiProvider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_LLM7) {
-                    KeyedBuiltInProviderPanel(
-                        models = eu.kanade.tachiyomi.data.ai.AiAssistant.LLM7_MODELS,
-                        model = llm7Model,
-                        onModelChange = { llm7Model = it },
-                        apiKey = llm7Key,
-                        onApiKeyChange = { llm7Key = it },
-                        keyLabel = "LLM7 токен (необязательно)",
-                        keyHint = "Бесплатные модели работают и без токена. Токен поднимает лимиты: token.llm7.io",
+                        provider = bp,
+                        model = builtInModels[bp.id].orEmpty(),
+                        onModelChange = { builtInModels[bp.id] = it },
+                        apiKey = builtInKeys[bp.id].orEmpty(),
+                        onApiKeyChange = { builtInKeys[bp.id] = it },
                     )
                 } else {
                     // Пользовательский провайдер; его модель и адрес фиксированы
@@ -285,7 +297,7 @@ fun AiModelPickerDialog(
                     modifier = Modifier.padding(top = 4.dp),
                 )
                 Text(
-                    text = "Чат: ${currentModelLabel(aiProvider, zenModel, orFreeModel, pollModel, llm7Model, userProviders)}",
+                    text = "Чат: ${currentModelLabel(aiProvider, zenModel, orFreeModel, builtInModels, userProviders)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -355,40 +367,64 @@ private fun currentModelLabel(
     provider: String,
     zenModel: String,
     orFreeModel: String,
-    pollModel: String,
-    llm7Model: String,
+    builtInModels: Map<String, String>,
     userProviders: List<eu.kanade.tachiyomi.data.ai.AiProviders.Spec>,
 ): String = when {
     provider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_ZEN -> "Zen • $zenModel"
     provider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_OPENROUTER ->
         "OpenRouter • ${orFreeModel.ifBlank { eu.kanade.tachiyomi.data.ai.AiAssistant.OPENROUTER_FREE_FALLBACK.first() }}"
-    provider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_POLLINATIONS -> "Pollinations • $pollModel"
-    provider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_LLM7 -> "LLM7 • $llm7Model"
+    BuiltInModelProviders.byId(provider) != null ->
+        "${BuiltInModelProviders.byId(provider)!!.title} • ${builtInModels[provider].orEmpty()}"
     else -> userProviders.find { it.id == provider }?.title?.ifBlank { provider } ?: provider
 }
 
+/** Ряды чипов провайдеров по два в ряд: в узком диалоге одна строка не влезает. */
+@Composable
+fun ProviderChipRows(
+    options: List<Pair<String, String>>,
+    selected: String,
+    onSelect: (String) -> Unit,
+) {
+    options.chunked(2).forEach { row ->
+        Row(modifier = Modifier.padding(top = 4.dp)) {
+            row.forEach { (id, label) ->
+                FilterChip(
+                    selected = selected == id,
+                    onClick = { onSelect(id) },
+                    label = { Text(label) },
+                    modifier = Modifier.padding(end = 6.dp),
+                )
+            }
+        }
+    }
+}
+
 /**
- * Список моделей встроенного провайдера и необязательный ключ. Общий для
- * быстрого диалога читалки и настроек озвучки, чтобы поведение совпадало.
+ * Модели встроенного провайдера и, если нужно, поле ключа. Общая для диалога
+ * читалки и настроек озвучки, чтобы поведение совпадало.
  */
 @Composable
 fun KeyedBuiltInProviderPanel(
-    models: List<String>,
+    provider: BuiltInModelProvider,
     model: String,
     onModelChange: (String) -> Unit,
     apiKey: String,
     onApiKeyChange: (String) -> Unit,
-    keyLabel: String,
-    keyHint: String,
 ) {
     Text(
-        text = "Модель:",
+        text = provider.summary,
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(top = 8.dp),
     )
+    Text(
+        text = "Модель:",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 6.dp),
+    )
     Column(modifier = Modifier.heightIn(max = 200.dp).verticalScroll(rememberScrollState())) {
-        models.forEach { m ->
+        provider.models.forEach { m ->
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
@@ -400,14 +436,16 @@ fun KeyedBuiltInProviderPanel(
             }
         }
     }
-    OutlinedTextField(
-        value = apiKey,
-        onValueChange = onApiKeyChange,
-        label = { Text(keyLabel) },
-        supportingText = { Text(keyHint) },
-        singleLine = true,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 8.dp),
-    )
+    if (provider.keyPolicy != KeyPolicy.NONE) {
+        OutlinedTextField(
+            value = apiKey,
+            onValueChange = onApiKeyChange,
+            label = { Text(provider.keyLabel) },
+            supportingText = { Text(provider.keyHint) },
+            singleLine = true,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp),
+        )
+    }
 }

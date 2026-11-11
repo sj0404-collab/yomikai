@@ -117,13 +117,33 @@ object SettingsAiScreen : SearchableSettings {
         val providerEntries = buildMap {
             put(eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_ZEN, "Zen (без ключа)")
             put(eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_OPENROUTER, "OpenRouter")
-            put(eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_POLLINATIONS, "Pollinations")
-            put(eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_LLM7, "LLM7")
+            eu.kanade.tachiyomi.data.ai.BuiltInModelProviders.ALL.forEach { bp -> put(bp.id, bp.title) }
             // Свои провайдеры (id -> название) добавляются как обычный элемент
             // списка, потому что aiProvider хранит именно их id.
             userProviders.forEach { spec ->
                 put(spec.id, spec.title.ifBlank { spec.id })
             }
+        }
+        // Модели и ключи встроенных провайдеров: список моделей на каждого и,
+        // если нужен ключ, поле ключа.
+        val builtInItems: List<Preference> = eu.kanade.tachiyomi.data.ai.BuiltInModelProviders.ALL.flatMap { bp ->
+            listOfNotNull<Preference>(
+                Preference.PreferenceItem.ListPreference(
+                    preference = prefs.builtInModel(bp.id, bp.defaultModel),
+                    entries = bp.models.associateWith { it },
+                    title = "Модель ${bp.title}",
+                    subtitle = "Модель: %s",
+                ),
+                if (bp.keyPolicy != eu.kanade.tachiyomi.data.ai.KeyPolicy.NONE) {
+                    Preference.PreferenceItem.EditTextPreference(
+                        preference = prefs.builtInApiKey(bp.id),
+                        title = bp.keyLabel,
+                        subtitle = "Ключ: %s",
+                    )
+                } else {
+                    null
+                },
+            )
         }
         return Preference.PreferenceGroup(
             title = "Модели и ключи",
@@ -150,30 +170,9 @@ object SettingsAiScreen : SearchableSettings {
                     title = "OpenRouter модель (:free)",
                     subtitle = "Модель: %s",
                 ),
-                Preference.PreferenceItem.ListPreference(
-                    preference = prefs.pollinationsModel(),
-                    entries = eu.kanade.tachiyomi.data.ai.AiAssistant.POLLINATIONS_MODELS.associateWith { it },
-                    title = "Модель Pollinations",
-                    subtitle = "Модель: %s",
-                ),
-                Preference.PreferenceItem.EditTextPreference(
-                    preference = prefs.pollinationsApiKey(),
-                    title = "Pollinations API-ключ (необязательно)",
-                    subtitle = "Ключ: %s",
-                ),
-                Preference.PreferenceItem.ListPreference(
-                    preference = prefs.llm7Model(),
-                    entries = eu.kanade.tachiyomi.data.ai.AiAssistant.LLM7_MODELS.associateWith { it },
-                    title = "Модель LLM7",
-                    subtitle = "Модель: %s",
-                ),
-                Preference.PreferenceItem.EditTextPreference(
-                    preference = prefs.llm7ApiKey(),
-                    title = "LLM7 токен (необязательно)",
-                    subtitle = "Токен: %s",
-                ),
+            ) + builtInItems + listOf<Preference>(
                 Preference.PreferenceItem.InfoPreference(
-                    title = "Без ключа работают бесплатные модели Zen и LLM7. Для OpenRouter нужен ключ; модель можно выбрать из списка :free. Pollinations без ключа отвечает не на всех моделях.",
+                    title = "Без ключа работают Zen, Pollinations (openai, openai-fast) и LLM7. DeepSeek, Grok, Groq, Mistral, Gemini и OpenRouter требуют ключ.",
                 ),
             ),
         )

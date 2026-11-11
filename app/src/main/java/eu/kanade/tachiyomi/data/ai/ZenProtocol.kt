@@ -77,6 +77,7 @@ object ZenProtocol {
         userPrompt: String,
         systemPrompt: String?,
         maxTokens: Int,
+        forceChat: Boolean = false,
     ): JsonObject {
         val system = systemPrompt.orEmpty()
         val limit = maxTokens.coerceAtLeast(1)
@@ -92,7 +93,7 @@ object ZenProtocol {
                 put("content", value)
             }
         }
-        return when (familyOf(model)) {
+        return when (if (forceChat) Family.CHAT else familyOf(model)) {
             // У Anthropic system — отдельное поле, а не сообщение в массиве.
             Family.MESSAGES -> buildJsonObject {
                 put("model", model)
@@ -171,10 +172,10 @@ object ZenProtocol {
      * не пересекающиеся с остальными, поэтому явная ветка по семейству читается
      * проще, чем поиск «какая форма пришла».
      */
-    fun parse(body: String, model: String): Parsed {
+    fun parse(body: String, model: String, forceChat: Boolean = false): Parsed {
         val root = runCatching { json.parseToJsonElement(body) as? JsonObject }.getOrNull()
             ?: return Parsed(null, null, 0, true)
-        return when (familyOf(model)) {
+        return when (if (forceChat) Family.CHAT else familyOf(model)) {
             Family.CHAT -> parseChat(root)
             Family.RESPONSES -> parseResponses(root)
             Family.MESSAGES -> parseMessages(root)

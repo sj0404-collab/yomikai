@@ -23,6 +23,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
+import androidx.compose.runtime.mutableStateMapOf
+import eu.kanade.tachiyomi.data.ai.BuiltInModelProviders
+import eu.kanade.tachiyomi.data.ai.KeyPolicy
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
@@ -127,10 +130,18 @@ fun TtsSettingsDialog(
     var bgMusicOn by remember { mutableStateOf(prefs.bgMusicEnabled().get()) }
     var bgMusicGenre by remember { mutableStateOf(prefs.bgMusicGenre().get()) }
     var bgMusicVolume by remember { mutableStateOf(prefs.bgMusicVolume().get()) }
-    var pollModel by remember { mutableStateOf(prefs.pollinationsModel().get()) }
-    var pollKey by remember { mutableStateOf(prefs.pollinationsApiKey().get()) }
-    var llm7Model by remember { mutableStateOf(prefs.llm7Model().get()) }
-    var llm7Key by remember { mutableStateOf(prefs.llm7ApiKey().get()) }
+    val builtInModels = remember {
+        mutableStateMapOf<String, String>().apply {
+            BuiltInModelProviders.ALL.forEach { bp ->
+                put(bp.id, prefs.builtInModel(bp.id, bp.defaultModel).get().ifBlank { bp.defaultModel })
+            }
+        }
+    }
+    val builtInKeys = remember {
+        mutableStateMapOf<String, String>().apply {
+            BuiltInModelProviders.ALL.forEach { bp -> put(bp.id, prefs.builtInApiKey(bp.id).get()) }
+        }
+    }
     var showAiLog by remember { mutableStateOf(false) }
 
     // Edge TTS (Microsoft, без ключа): голос + фильтр языка в списке.
@@ -766,32 +777,41 @@ fun TtsSettingsDialog(
                             }
                         }
                     }
-                    Row(modifier = Modifier.padding(top = 4.dp)) {
-                        FilterChip(
-                            selected = aiProvider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_ZEN,
-                            onClick = { aiProvider = eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_ZEN },
-                            label = { Text("Zen (без ключа)") },
-                            modifier = Modifier.padding(end = 6.dp),
-                        )
-                        FilterChip(
-                            selected = aiProvider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_OPENROUTER,
-                            onClick = { aiProvider = eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_OPENROUTER },
-                            label = { Text("OpenRouter") },
-                        )
-                    }
-                    Row(modifier = Modifier.padding(top = 4.dp)) {
-                        FilterChip(
-                            selected = aiProvider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_POLLINATIONS,
-                            onClick = { aiProvider = eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_POLLINATIONS },
-                            label = { Text("Pollinations") },
-                            modifier = Modifier.padding(end = 6.dp),
-                        )
-                        FilterChip(
-                            selected = aiProvider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_LLM7,
-                            onClick = { aiProvider = eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_LLM7 },
-                            label = { Text("LLM7") },
-                        )
-                    }
+                    Text(
+                        text = "Без ключа:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                    ProviderChipRows(
+                        options = listOf(eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_ZEN to "Zen (без ключа)") +
+                            BuiltInModelProviders.ALL.filter { it.keyPolicy == KeyPolicy.NONE }.map { it.id to it.title },
+                        selected = aiProvider,
+                        onSelect = { aiProvider = it },
+                    )
+                    Text(
+                        text = "Ключ необязателен:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                    ProviderChipRows(
+                        options = BuiltInModelProviders.ALL.filter { it.keyPolicy == KeyPolicy.OPTIONAL }.map { it.id to it.title },
+                        selected = aiProvider,
+                        onSelect = { aiProvider = it },
+                    )
+                    Text(
+                        text = "С ключом:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                    ProviderChipRows(
+                        options = listOf(eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_OPENROUTER to "OpenRouter") +
+                            BuiltInModelProviders.ALL.filter { it.keyPolicy == KeyPolicy.REQUIRED }.map { it.id to it.title },
+                        selected = aiProvider,
+                        onSelect = { aiProvider = it },
+                    )
                     // Провайдеры пользователя из реестра AiProviders: свой
                     // endpoint (Ollama, LM Studio, прокси). Создаются файлом в
                     // workspace/providers или через AI-чат (provider_create).
@@ -844,25 +864,14 @@ fun TtsSettingsDialog(
                                 }
                             }
                         }
-                    } else if (aiProvider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_POLLINATIONS) {
+                    } else if (BuiltInModelProviders.byId(aiProvider) != null) {
+                        val bp = BuiltInModelProviders.byId(aiProvider)!!
                         KeyedBuiltInProviderPanel(
-                            models = eu.kanade.tachiyomi.data.ai.AiAssistant.POLLINATIONS_MODELS,
-                            model = pollModel,
-                            onModelChange = { pollModel = it },
-                            apiKey = pollKey,
-                            onApiKeyChange = { pollKey = it },
-                            keyLabel = "Pollinations API-ключ (необязательно)",
-                            keyHint = "Без ключа большинство моделей не отвечает. Ключ: enter.pollinations.ai/keys",
-                        )
-                    } else if (aiProvider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_LLM7) {
-                        KeyedBuiltInProviderPanel(
-                            models = eu.kanade.tachiyomi.data.ai.AiAssistant.LLM7_MODELS,
-                            model = llm7Model,
-                            onModelChange = { llm7Model = it },
-                            apiKey = llm7Key,
-                            onApiKeyChange = { llm7Key = it },
-                            keyLabel = "LLM7 токен (необязательно)",
-                            keyHint = "Бесплатные модели работают и без токена. Токен поднимает лимиты: token.llm7.io",
+                            provider = bp,
+                            model = builtInModels[bp.id].orEmpty(),
+                            onModelChange = { builtInModels[bp.id] = it },
+                            apiKey = builtInKeys[bp.id].orEmpty(),
+                            onApiKeyChange = { builtInKeys[bp.id] = it },
                         )
                     } else {
                         OutlinedTextField(
@@ -1258,10 +1267,11 @@ fun TtsSettingsDialog(
                     prefs.bgMusicEnabled().set(bgMusicOn)
                     prefs.bgMusicGenre().set(bgMusicGenre)
                     prefs.bgMusicVolume().set(bgMusicVolume.coerceIn(0f, 1f))
-                    prefs.pollinationsModel().set(pollModel)
-                    prefs.pollinationsApiKey().set(pollKey.trim())
-                    prefs.llm7Model().set(llm7Model)
-                    prefs.llm7ApiKey().set(llm7Key.trim())
+                    BuiltInModelProviders.ALL.forEach { bp ->
+                        prefs.builtInModel(bp.id, bp.defaultModel)
+                            .set(builtInModels[bp.id].orEmpty().ifBlank { bp.defaultModel })
+                        prefs.builtInApiKey(bp.id).set(builtInKeys[bp.id].orEmpty().trim())
+                    }
                     prefs.speechRate().set(rate.coerceIn(0.5f, 2f))
                     prefs.ttsWebLanguage().set(webLang.trim().ifBlank { "ru" })
                     prefs.elevenApiKey().set(elevenKey.trim())
