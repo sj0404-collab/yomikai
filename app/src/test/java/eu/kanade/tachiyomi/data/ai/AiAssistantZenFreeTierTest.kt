@@ -33,15 +33,12 @@ class AiAssistantZenFreeTierTest {
 
     @Test
     fun `a blocked model does not prove the whole catalog is dead`() {
-        // OCR-движок в этом же приложении ходит в
-        // https://opencode.ai/zen/v1/chat/completions с моделью
-        // space-bunny-free и получает ответ — значит блокировка помодельная, и
-        // исход FreeTierBlocked должен означать «пропусти эту модель».
-        // Та же модель обязана быть и в каталоге чата, иначе исправленный
-        // выход по кругу всё равно её не найдёт.
+        // Блокировка помодельная: FreeTierBlocked означает «пропусти эту
+        // модель», а не «Zen недоступен». Поэтому в запасном списке должны
+        // быть разные модели, и одна блокировка не обрывает ротацию.
         assertTrue(
-            AiAssistant.ZEN_MODELS.contains("space-bunny-free"),
-            "рабочая OCR-модель space-bunny-free обязана быть в каталоге чата",
+            AiAssistant.ZEN_MODELS.distinct().size >= 3,
+            "при блокировке одной модели в запасном списке должны остаться другие",
         )
     }
 

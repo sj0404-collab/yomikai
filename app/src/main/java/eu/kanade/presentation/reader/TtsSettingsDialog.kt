@@ -127,6 +127,7 @@ fun TtsSettingsDialog(
     var orFreeModel by remember { mutableStateOf(prefs.openrouterFreeModel().get()) }
     var orKey by remember { mutableStateOf(prefs.openrouterApiKey().get()) }
     var orModels by remember { mutableStateOf<List<String>>(emptyList()) }
+    var zenList by remember { mutableStateOf(eu.kanade.tachiyomi.data.ai.AiAssistant.zenModelList()) }
     var orCustom by remember {
         mutableStateOf(
             prefs.openrouterCustomModels().get().lines().map { it.trim() }.filter { it.isNotBlank() },
@@ -157,6 +158,9 @@ fun TtsSettingsDialog(
     var edgeVoicesLoaded by remember { mutableStateOf(false) }
     var edgeProbingVoice by remember { mutableStateOf<String?>(null) }
 
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        zenList = eu.kanade.tachiyomi.data.ai.AiAssistant.refreshZenModels()
+    }
     // Живой список :free моделей OpenRouter (фолбэк при оффлайне)
     androidx.compose.runtime.LaunchedEffect(aiProvider) {
         if (aiProvider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_OPENROUTER && orModels.isEmpty()) {
@@ -857,7 +861,7 @@ fun TtsSettingsDialog(
                             modifier = Modifier.padding(top = 6.dp),
                         )
                         Column(modifier = Modifier.heightIn(max = 150.dp).verticalScroll(rememberScrollState())) {
-                            eu.kanade.tachiyomi.data.ai.AiAssistant.ZEN_MODELS.forEach { m ->
+                            zenList.forEach { m ->
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier

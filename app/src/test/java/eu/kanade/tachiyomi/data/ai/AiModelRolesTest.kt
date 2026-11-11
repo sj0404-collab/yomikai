@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test
  */
 class AiModelRolesTest {
 
-    private val chat = "Zen • mimo-v2.5-free"
+    private val chat = "Zen • mimo-v2.6-flash-free"
 
     private val localState = AiBackendState(
         networkAvailable = false,
@@ -158,8 +158,8 @@ class AiModelRolesTest {
         )
         lines.size shouldBe 3
         lines[0] shouldBe "OCR: Cyrillic PP-OCR (офлайн)"
-        lines[1] shouldBe "Чат: Онлайн (Zen / OpenRouter) · zen · Zen • mimo-v2.5-free"
-        lines[2] shouldBe "Оркестратор: Онлайн (Zen / OpenRouter) · zen · Zen • mimo-v2.5-free · как у чата"
+        lines[1] shouldBe "Чат: Онлайн (Zen / OpenRouter) · zen · Zen • mimo-v2.6-flash-free"
+        lines[2] shouldBe "Оркестратор: Онлайн (Zen / OpenRouter) · zen · Zen • mimo-v2.6-flash-free · как у чата"
     }
 
     @Test

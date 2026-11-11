@@ -61,6 +61,8 @@ fun AiModelPickerDialog(
     var orFreeModel by remember { mutableStateOf(prefs.openrouterFreeModel().get()) }
     var orKey by remember { mutableStateOf(prefs.openrouterApiKey().get()) }
     var orModels by remember { mutableStateOf<List<String>>(emptyList()) }
+    // Бесплатные модели Zen: из каталога при открытии, иначе запасной список.
+    var zenList by remember { mutableStateOf(eu.kanade.tachiyomi.data.ai.AiAssistant.zenModelList()) }
     // Модели, которые пользователь добавил вручную (сохраняются сразу).
     var orCustom by remember {
         mutableStateOf(
@@ -93,6 +95,10 @@ fun AiModelPickerDialog(
 
     val userProviders = remember(context) {
         eu.kanade.tachiyomi.data.ai.AiProviders.list(context)
+    }
+
+    LaunchedEffect(Unit) {
+        zenList = eu.kanade.tachiyomi.data.ai.AiAssistant.refreshZenModels()
     }
 
     // Живой список :free моделей OpenRouter (фолбэк при оффлайне — в fallback).
@@ -212,7 +218,7 @@ fun AiModelPickerDialog(
                         modifier = Modifier.padding(top = 8.dp),
                     )
                     Column(modifier = Modifier.heightIn(max = 200.dp).verticalScroll(rememberScrollState())) {
-                        eu.kanade.tachiyomi.data.ai.AiAssistant.ZEN_MODELS.forEach { m ->
+                        zenList.forEach { m ->
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier

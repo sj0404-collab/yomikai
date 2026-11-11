@@ -26,7 +26,7 @@ internal class ZenFreeOcrEngine : OcrEngine {
         val connection = URL(ENDPOINT).openConnection() as HttpURLConnection
         try {
             val payload = JSONObject().apply {
-                put("model", MODEL)
+                put("model", resolveModel())
                 put("max_tokens", MAX_TOKENS)
                 put("stream", false)
                 put(
@@ -102,7 +102,7 @@ internal class ZenFreeOcrEngine : OcrEngine {
         val prompt = question.trim()
         if (prompt.isEmpty()) return@withContext null
         val payload = JSONObject().apply {
-            put("model", MODEL)
+            put("model", resolveModel())
             put("max_tokens", ASK_MAX_TOKENS)
             put("stream", false)
             put(
@@ -208,7 +208,60 @@ internal class ZenFreeOcrEngine : OcrEngine {
     }
 
     companion object {
-        const val MODEL = "space-bunny-free"
+        /**
+         * Запасная vision-модель Zen (принимает изображение и отвечает).
+         * space-bunny-free удалена из Zen: запрос даёт 400 «Model is unavailable».
+         */
+        const val FALLBACK_MODEL = "longcat-2.5-free"
+        private const val CATALOG_URL = "https://opencode.ai/zen/v1/models"
+        private const val CATALOG_TTL_MS = 30 * 60_000L
+
+        @Volatile private var pickedModel: String? = null
+        @Volatile private var pickedAt = 0L
+
+        /**
+         * Бесплатная vision-модель Zen из живого каталога. Каталог перечитывается
+         * не чаще раза в [CATALOG_TTL_MS]; при сбое — прежний выбор или запасная.
+         * Вызывать только вне главного потока (вызывающие уже в Dispatchers.IO).
+         */
+        fun resolveModel(): String {
+            val now = System.currentTimeMillis()
+            if (pickedAt == 0L || now - pickedAt > CATALOG_TTL_MS) {
+                pickedModel = runCatching { fetchVisionModel() }.getOrNull() ?: pickedModel
+                pickedAt = now
+            }
+            return pickedModel ?: FALLBACK_MODEL
+        }
+
+        private fun fetchVisionModel(): String? {
+            val conn = URL(CATALOG_URL).openConnection() as HttpURLConnection
+            conn.connectTimeout = 5_000
+            conn.readTimeout = 10_000
+            try {
+                val arr = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                    .getJSONArray("data")
+                val candidates = buildList {
+                    for (i in 0 until arr.length()) {
+                        val m = arr.getJSONObject(i)
+                        val id = m.optString("id")
+                        val input = m.optJSONObject("modalities")?.optJSONArray("input") ?: continue
+                        val hasImage = (0 until input.length()).any { input.optString(it) == "image" }
+                        if (id.isNotBlank() && hasImage && isFree(m)) add(id)
+                    }
+                }
+                return candidates.firstOrNull { it == FALLBACK_MODEL } ?: candidates.firstOrNull()
+            } finally {
+                conn.disconnect()
+            }
+        }
+
+        /** Цена входа и выхода = 0 по полю `cost` каталога Zen. */
+        private fun isFree(model: JSONObject): Boolean {
+            val text = model.optJSONObject("cost")?.optJSONObject("text") ?: return false
+            val input = text.optJSONObject("input")?.optDouble("price", -1.0) ?: -1.0
+            val output = text.optJSONObject("output")?.optDouble("price", -1.0) ?: -1.0
+            return input == 0.0 && output == 0.0
+        }
         private const val ENDPOINT = "https://opencode.ai/zen/v1/chat/completions"
         private const val MAX_IMAGE_SIDE = 1080
         private const val JPEG_QUALITY = 78

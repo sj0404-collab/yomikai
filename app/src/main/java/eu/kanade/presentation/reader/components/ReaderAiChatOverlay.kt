@@ -888,7 +888,7 @@ private fun chatModelLabel(
     val provider = prefs.aiProvider().get()
     return when (provider) {
         eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_ZEN ->
-            prefs.zenModel().get().ifBlank { eu.kanade.tachiyomi.data.ai.AiAssistant.ZEN_MODELS.first() }
+            prefs.zenModel().get().ifBlank { eu.kanade.tachiyomi.data.ai.AiAssistant.zenModelList().first() }
         eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_OPENROUTER -> prefs.openrouterFreeModel().get()
             .ifBlank { eu.kanade.tachiyomi.data.ai.AiAssistant.OPENROUTER_FREE_FALLBACK.first() }
         else -> eu.kanade.tachiyomi.data.ai.BuiltInModelProviders.byId(provider)

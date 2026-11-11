@@ -21,6 +21,11 @@ class AiAssistantModelListTest {
             "laguna-s-2.1-free",
             "deepseek-v4-flash-free",
             "hy3-free",
+            // Удалены 2026-09: в каталоге Zen их нет, запрос даёт 400 «Model is unavailable».
+            "mimo-v2.5-free",
+            "nemotron-3-ultra-free",
+            "space-bunny-free",
+            "ling-3.0-flash-fin-free",
         )
         for (model in dead) {
             assertFalse(
@@ -36,12 +41,8 @@ class AiAssistantModelListTest {
         // рабочий путь вообще.
         val current = listOf(
             "mimo-v2.6-flash-free",
-            "mimo-v2.5-free",
             "nemotron-3.5-lightning-free",
-            "nemotron-3-ultra-free",
             "big-pickle",
-            "space-bunny-free",
-            "ling-3.0-flash-fin-free",
         )
         for (model in current) {
             assertTrue(

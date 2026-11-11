@@ -33,7 +33,7 @@ class ZenProtocolTest {
         // вовсе и увидеть модель как сломанную.
         assertEquals(ZenProtocol.Family.CHAT, ZenProtocol.familyOf("big-pickle"))
         assertEquals(ZenProtocol.Family.CHAT, ZenProtocol.familyOf("mimo-v2.6-flash-free"))
-        assertEquals(ZenProtocol.Family.CHAT, ZenProtocol.familyOf("nemotron-3-ultra-free"))
+        assertEquals(ZenProtocol.Family.CHAT, ZenProtocol.familyOf("nemotron-3.5-lightning-free"))
         assertEquals(ZenProtocol.Family.CHAT, ZenProtocol.familyOf("qwen3.8-max"))
         assertEquals(ZenProtocol.Family.CHAT, ZenProtocol.familyOf("glm-5.3"))
 
@@ -68,7 +68,7 @@ class ZenProtocolTest {
         val nemotron = ZenProtocol.parse(
             """{"choices":[{"message":{"content":"Привет","reasoning":"Думаю о погоде"}}],
                "usage":{"total_tokens":12}}""",
-            "nemotron-3-ultra-free",
+            "nemotron-3.5-lightning-free",
         )
         assertEquals("Привет", nemotron.content)
         assertEquals("Думаю о погоде", nemotron.reasoning)

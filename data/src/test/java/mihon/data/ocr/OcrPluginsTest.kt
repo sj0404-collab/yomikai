@@ -259,7 +259,7 @@ class OcrPluginsTest {
         regions[0].boundingBox shouldBe mihon.domain.ocr.model.OcrBoundingBox(0.1f, 0.2f, 0.9f, 0.26f)
         regions[1].boundingBox shouldBe mihon.domain.ocr.model.OcrBoundingBox(0.1f, 0.3f, 0.8f, 0.4f)
         regions[1].textOrientation shouldBe mihon.domain.ocr.model.OcrTextOrientation.Vertical
-        ZenFreeOcrEngine.MODEL shouldBe "space-bunny-free"
+        ZenFreeOcrEngine.FALLBACK_MODEL shouldBe "longcat-2.5-free"
     }
 
     @Test

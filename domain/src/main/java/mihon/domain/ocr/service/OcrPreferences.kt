@@ -383,7 +383,7 @@ class OcrPreferences(
     fun aiAllowGithub() = preferenceStore.getBoolean("pref_ai_allow_github", false)
 
     // Модель Zen (opencode.ai/zen, бесплатные *-free, работают без ключа)
-    fun zenModel() = preferenceStore.getString("pref_zen_model", "mimo-v2.5-free")
+    fun zenModel() = preferenceStore.getString("pref_zen_model", "mimo-v2.6-flash-free")
 
     // Автосмена моделей: при лимите/ошибке выбранной модели запрос уходит
     // следующей из списка. Выключено — только выбранная модель.

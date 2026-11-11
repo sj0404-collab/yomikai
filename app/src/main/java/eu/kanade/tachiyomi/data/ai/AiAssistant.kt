@@ -24,10 +24,10 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * Онлайн AI-ассистент читалки. Два провайдера, оба OpenAI-совместимые:
  *
- * • ZEN (opencode.ai/zen) — БЕЗ API-ключа. Бесплатные текстовые модели:
- *   mimo-v2.5-free, deepseek-v4-flash-free, laguna-s-2.1-free,
- *   nemotron-3-ultra-free, nemotron-3.5-lightning-free, hy3-free,
- *   big-pickle. Space Bunny Free используется отдельным vision-OCR движком.
+ * • ZEN (opencode.ai/zen) — БЕЗ API-ключа. Бесплатные чат-модели берутся из
+ *   живого каталога ([refreshZenModels]); запасной список — [ZEN_MODELS].
+ *   Vision-OCR движок выбирает свою бесплатную vision-модель тем же способом
+ *   (ZenFreeOcrEngine.resolveModel).
  *
  * • OPENROUTER — по API-ключу, выбор из бесплатных «:free» моделей
  *   (список тянется живьём с /api/v1/models и фильтруется по суффиксу).
@@ -59,28 +59,91 @@ object AiAssistant {
 
     /**
 
-     * Модели Zen, проверенные без ключа.
+     * Запасной список бесплатных моделей Zen (оффлайн и приоритет порядка).
      *
-     * Список взят из документации opencode Zen, а не придуман: там перечислены
-     * именно бесплатные модели, которые отдаются без ключа. Модели, которые
-     * из неё ушли (laguna-s-2.1-free, deepseek-v4-flash-free, hy3-free),
-     * выброшены — они больше не существуют, и каждая попытка получить ответ
-     * была чистой потерей времени.
+     * Каждый id проверен запросом к opencode Zen: ответ 429 FreeUsageLimit
+     * означает, что модель существует и лишь исчерпала лимит; ответ 400
+     * «Model is unavailable» означает, что модели нет. Мёртвые
+     * (mimo-v2.5-free, nemotron-3-ultra-free, space-bunny-free,
+     * ling-3.0-flash-fin-free) сюда не возвращать.
      *
-     * Порядок = приоритет ротации: первыми идут БЫСТРЫЕ без тяжёлого
-     * reasoning, reasoning-модели — в хвосте. При FreeUsageLimitError
-     * (rate limit конкретной модели) запрос автоматически повторяется на
-     * следующей модели списка.
+     * Актуальный список не зашит: [refreshZenModels] берёт каталог Zen и
+     * оставляет бесплатные чат-модели. Здесь порядок: сначала быстрые без
+     * тяжёлого reasoning, затем остальные. При лимите конкретной модели
+     * ротация переходит к следующей.
      */
     val ZEN_MODELS = listOf(
         "mimo-v2.6-flash-free",
-        "mimo-v2.5-free",
         "nemotron-3.5-lightning-free",
-        "nemotron-3-ultra-free",
         "big-pickle",
-        "space-bunny-free",
-        "ling-3.0-flash-fin-free",
+        "deepseek-v4.1-flash-free",
+        "glm-5.3-flash-free",
+        "inkling-2-small-free",
+        "nemotron-3.5-super-vl-free",
+        "minimax-m3.1-flash-free",
+        "longcat-2.5-free",
+        "flint-40b-free",
+        "beam-free",
+        "iceman-free",
     )
+
+    /** Как часто перепроверять каталог Zen (и после неудачи тоже). */
+    private const val ZEN_CATALOG_TTL_MS = 30 * 60_000L
+
+    @Volatile private var zenLiveModels: List<String>? = null
+    @Volatile private var zenCatalogCheckedAt = 0L
+
+    /** Список для UI без сети: живой, если уже загружен, иначе запасной. */
+    fun zenModelList(): List<String> = zenLiveModels ?: ZEN_MODELS
+
+    /** Бесплатная ли модель по полю `cost` каталога Zen (вход и выход = 0). */
+    private fun isZenFree(model: JSONObject): Boolean {
+        val text = model.optJSONObject("cost")?.optJSONObject("text") ?: return false
+        val input = text.optJSONObject("input")?.optDouble("price", -1.0) ?: -1.0
+        val output = text.optJSONObject("output")?.optDouble("price", -1.0) ?: -1.0
+        return input == 0.0 && output == 0.0
+    }
+
+    /**
+     * Обновить список бесплатных чат-моделей Zen из каталога. Модель попадает
+     * в список, только если она есть в каталоге, бесплатна и маршрутизируется
+     * в чат. Сначала идут знакомые из [ZEN_MODELS] (сохраняя их порядок),
+     * затем остальные. Если сеть недоступна, остаётся прежний список.
+     */
+    suspend fun refreshZenModels(): List<String> = withContext(Dispatchers.IO) {
+        zenCatalogCheckedAt = System.currentTimeMillis()
+        val fresh = runCatching {
+            val conn = openConnection("$ZEN_BASE_URL/models")
+            conn.connectTimeout = 5_000
+            conn.readTimeout = 10_000
+            try {
+                val arr = JSONObject(conn.inputStream.use { it.readBoundedText() }).getJSONArray("data")
+                val free = buildList {
+                    for (i in 0 until arr.length()) {
+                        val m = arr.getJSONObject(i)
+                        val id = m.optString("id")
+                        if (id.isBlank() || m.optString("type") != "chat") continue
+                        if (!isZenFree(m)) continue
+                        if (ZenProtocol.familyOf(id) == ZenProtocol.Family.SYSTEM_ONE) continue
+                        add(id)
+                    }
+                }
+                ZEN_MODELS.filter { it in free } + free.filterNot { it in ZEN_MODELS }
+            } finally {
+                conn.disconnect()
+            }
+        }.onFailure { e ->
+            logcat(LogPriority.WARN) { "Zen: каталог моделей не загружен (${e.message}), остаётся прежний список" }
+        }.getOrNull()
+        if (!fresh.isNullOrEmpty()) zenLiveModels = fresh
+        zenModelList()
+    }
+
+    /** Список для ротации: каталог перечитывается не чаще [ZEN_CATALOG_TTL_MS]. */
+    private suspend fun zenRotationPool(): List<String> {
+        val stale = System.currentTimeMillis() - zenCatalogCheckedAt > ZEN_CATALOG_TTL_MS
+        return if (stale) refreshZenModels() else zenModelList()
+    }
 
     /**
      * Запасной список OpenRouter :free на случай оффлайна при первом открытии.
@@ -365,6 +428,8 @@ object AiAssistant {
                 // оставалось открытым.
                 conn.disconnect()
             }
+        }.onFailure { e ->
+            logcat(LogPriority.WARN) { "OpenRouter: список :free не загружен (${e.message}), запасной список" }
         }.getOrDefault(OPENROUTER_FREE_FALLBACK)
     }
 
@@ -547,10 +612,15 @@ object AiAssistant {
         // Модель, названная ролью, идёт первой ЛЮБОЙ: каталог [ZEN_MODELS] — это
         // список для ротации, а не белый список. Раньше незнакомый id молча
         // заменялся моделью чата, и статус обещал несуществующий выбор.
+        val pool = zenRotationPool()
+        // Сохранённый в настройках id мог уйти из Zen (старый дефолт
+        // mimo-v2.5-free был удалён): тогда берём первую живую из каталога.
+        val stored = prefs().zenModel().get()
         val preferred = preferredOverride?.takeIf { it.isNotBlank() }
-            ?: prefs().zenModel().get().ifBlank { ZEN_MODELS.first() }
+            ?: stored.takeIf { it.isNotBlank() && it in pool }
+            ?: pool.first()
         val configuredOrder = if (prefs().aiAutoRotate().get()) {
-            listOf(preferred) + ZEN_MODELS.filter { it != preferred }
+            listOf(preferred) + pool.filter { it != preferred }
         } else {
             listOf(preferred)
         }
@@ -579,8 +649,8 @@ object AiAssistant {
                         break
                     }
                     // 403 FreeTierError — это про конкретную модель, а не про
-                    // весь Zen разом. Доказано тем, что OCR-движок ходит в тот
-                    // же эндпоинт с той же моделью space-bunny-free и работает.
+                    // весь Zen разом: другие модели того же эндпоинта продолжают
+                    // работать (проверено каталогом и ответами 429 по моделям).
                     // Раньше здесь был выход сразу, и первая закрытая модель
                     // убивала чат целиком, не дав дойти до рабочей.
                     Outcome.FreeTierBlocked -> {
@@ -621,9 +691,8 @@ object AiAssistant {
         object Fatal : Outcome()
         /**
          * Бесплатные модели Zen закрыты для сторонних клиентов самим
-         * OpenCode. Закрытие помодельное, а не общее: OCR-движок в этом же
-         * приложении ходит в тот же эндпоинт с моделью `space-bunny-free` и
-         * получает ответ. Поэтому исход означает «пропусти эту модель», а не
+         * OpenCode. Закрытие помодельное, а не общее: другие модели того же
+         * эндпоинта продолжают отвечать. Поэтому исход означает «пропусти эту модель», а не
          * «сдавайся» — иначе чат переставал работать из-за одной закрытой
          * модели, не дойдя до рабочей.
          */

@@ -156,7 +156,7 @@ object SettingsAiScreen : SearchableSettings {
                 ),
                 Preference.PreferenceItem.ListPreference(
                     preference = prefs.zenModel(),
-                    entries = eu.kanade.tachiyomi.data.ai.AiAssistant.ZEN_MODELS.associateWith { it },
+                    entries = eu.kanade.tachiyomi.data.ai.AiAssistant.zenModelList().associateWith { it },
                     title = "Модель Zen",
                     subtitle = "Модель: %s",
                 ),
