@@ -126,8 +126,8 @@ object SettingsAiScreen : SearchableSettings {
         }
         // Модели и ключи встроенных провайдеров: список моделей на каждого и,
         // если нужен ключ, поле ключа.
-        val builtInItems: List<Preference.PreferenceItem<*, *>> = eu.kanade.tachiyomi.data.ai.BuiltInModelProviders.ALL.flatMap { bp ->
-            listOfNotNull<Preference.PreferenceItem<*, *>>(
+        val builtInItems: List<Preference.PreferenceItem<out Any, out Any>> = eu.kanade.tachiyomi.data.ai.BuiltInModelProviders.ALL.flatMap { bp ->
+            listOfNotNull<Preference.PreferenceItem<out Any, out Any>>(
                 Preference.PreferenceItem.ListPreference(
                     preference = prefs.builtInModel(bp.id, bp.defaultModel),
                     entries = bp.models.associateWith { it },
@@ -170,7 +170,7 @@ object SettingsAiScreen : SearchableSettings {
                     title = "OpenRouter модель (:free)",
                     subtitle = "Модель: %s",
                 ),
-            ) + builtInItems + listOf<Preference.PreferenceItem<*, *>>(
+            ) + builtInItems + listOf<Preference.PreferenceItem<out Any, out Any>>(
                 Preference.PreferenceItem.InfoPreference(
                     title = "Без ключа работают Zen, Pollinations (openai, openai-fast) и LLM7. DeepSeek, Grok, Groq, Mistral, Gemini и OpenRouter требуют ключ.",
                 ),
