@@ -345,6 +345,10 @@ class AutoReadEngine(
     }
 
     /** Слот персонажа с учётом режима голоса: в обычном режиме слот не нужен. */
+    /** Фоновая музыка, которую ведёт читалка. Задаётся на время авточтения; null — музыки нет. */
+    @Volatile
+    var music: eu.kanade.tachiyomi.data.audio.GenerativeMusic? = null
+
     private fun speakerSlotFor(
         roleMode: VoiceModeResolver.Mode,
         gender: String?,
@@ -2234,7 +2238,17 @@ class AutoReadEngine(
         langHint: String? = null,
         prosody: Pair<Float, Float>? = null,
     ): SpeakOutcome =
-        speakMutex.withLock { speakAndAwaitAlone(text, gender, speakerSlot, langHint, prosody) }
+        speakMutex.withLock {
+            // Фоновая музыка приглушается на время реплики и возвращается после неё.
+            // Все пути озвучки проходят через эту функцию.
+            val bg = music
+            bg?.duck()
+            try {
+                speakAndAwaitAlone(text, gender, speakerSlot, langHint, prosody)
+            } finally {
+                bg?.unduck()
+            }
+        }
 
     /**
      * Обрабатывает текст перед озвучкой:

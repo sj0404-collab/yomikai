@@ -117,6 +117,8 @@ object SettingsAiScreen : SearchableSettings {
         val providerEntries = buildMap {
             put(eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_ZEN, "Zen (без ключа)")
             put(eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_OPENROUTER, "OpenRouter")
+            put(eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_POLLINATIONS, "Pollinations")
+            put(eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_LLM7, "LLM7")
             // Свои провайдеры (id -> название) добавляются как обычный элемент
             // списка, потому что aiProvider хранит именно их id.
             userProviders.forEach { spec ->
@@ -148,8 +150,30 @@ object SettingsAiScreen : SearchableSettings {
                     title = "OpenRouter модель (:free)",
                     subtitle = "Модель: %s",
                 ),
+                Preference.PreferenceItem.ListPreference(
+                    preference = prefs.pollinationsModel(),
+                    entries = eu.kanade.tachiyomi.data.ai.AiAssistant.POLLINATIONS_MODELS.associateWith { it },
+                    title = "Модель Pollinations",
+                    subtitle = "Модель: %s",
+                ),
+                Preference.PreferenceItem.EditTextPreference(
+                    preference = prefs.pollinationsApiKey(),
+                    title = "Pollinations API-ключ (необязательно)",
+                    subtitle = "Ключ: %s",
+                ),
+                Preference.PreferenceItem.ListPreference(
+                    preference = prefs.llm7Model(),
+                    entries = eu.kanade.tachiyomi.data.ai.AiAssistant.LLM7_MODELS.associateWith { it },
+                    title = "Модель LLM7",
+                    subtitle = "Модель: %s",
+                ),
+                Preference.PreferenceItem.EditTextPreference(
+                    preference = prefs.llm7ApiKey(),
+                    title = "LLM7 токен (необязательно)",
+                    subtitle = "Токен: %s",
+                ),
                 Preference.PreferenceItem.InfoPreference(
-                    title = "Без ключа работают бесплатные модели Zen. Для OpenRouter нужен ключ; модель можно выбрать из списка :free.",
+                    title = "Без ключа работают бесплатные модели Zen и LLM7. Для OpenRouter нужен ключ; модель можно выбрать из списка :free. Pollinations без ключа отвечает не на всех моделях.",
                 ),
             ),
         )

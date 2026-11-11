@@ -395,6 +395,22 @@ class OcrPreferences(
     // Бесплатная модель OpenRouter (суффикс :free)
     fun openrouterFreeModel() = preferenceStore.getString("pref_openrouter_free_model", "")
 
+    // Pollinations (gen.pollinations.ai). Ключ необязателен: без него доступна
+    // только часть моделей, остальные отвечают 401 и требуют ключ.
+    fun pollinationsModel() = preferenceStore.getString("pref_pollinations_model", "openai/gpt-5.4-nano")
+    fun pollinationsApiKey() = preferenceStore.getString("pref_pollinations_api_key", "")
+
+    // Фоновая генеративная музыка во время авточтения (WAV синтезируется кодом)
+    fun bgMusicEnabled() = preferenceStore.getBoolean("pref_bg_music_enabled", true)
+    /** «auto» — жанр по тегам ComicInfo; иначе имя жанра из GenerativeMusic.Genre. */
+    fun bgMusicGenre() = preferenceStore.getString("pref_bg_music_genre", "auto")
+    fun bgMusicVolume() = preferenceStore.getFloat("pref_bg_music_volume", 0.3f)
+
+    // LLM7 (api.llm7.io). Бесплатные модели (tier turbo) работают с любой
+    // строкой в Authorization; личный токен с token.llm7.io поднимает лимиты.
+    fun llm7Model() = preferenceStore.getString("pref_llm7_model", "mistral-Nemo-Instruct-2407")
+    fun llm7ApiKey() = preferenceStore.getString("pref_llm7_api_key", "")
+
     // ---- Вид подсветки реплики ----
     // Цвет рамки/подчёркивания текущей реплики (ARGB). По умолчанию — бирюзовый,
     // как на скриншотах пользователя.

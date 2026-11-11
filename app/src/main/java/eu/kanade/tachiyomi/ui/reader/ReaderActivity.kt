@@ -283,6 +283,9 @@ class ReaderActivity : BaseActivity() {
                 .also { autoReadEngineOrNull = it }
 
     private var autoReadLoop: kotlinx.coroutines.Job? = null
+
+    /** Фоновая музыка авточтения: жанр по ComicInfo, приглушается под голос. */
+    private val backgroundMusic by lazy { eu.kanade.tachiyomi.data.audio.GenerativeMusic(applicationContext) }
     private val autoLookedUpChapters = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
 
     /**
@@ -2017,6 +2020,7 @@ class ReaderActivity : BaseActivity() {
         }
         autoReadEngine.clearHistory()
         autoReadEngine.pageLabel = null
+        startBackgroundMusic()
         // Запрос «остановить» из шторки относится к ПРЕДЫДУЩЕЙ главе: забытый,
         // он остановил бы новую с первой страницы.
         eu.kanade.tachiyomi.data.tts.TtsReadingNotifier.consumeStopRequest()
@@ -2043,6 +2047,26 @@ class ReaderActivity : BaseActivity() {
         toast("▶ Авточтение включено")
         ensureBookAiSession(announce = true)
         readCurrentPage(thenAdvance = true)
+    }
+
+    /**
+     * Запускает фоновую музыку под жанр книги (ComicInfo). Выключено в настройках
+     * озвучки — ничего не делает. Музыка остаётся тихой под голос: громкость
+     * ведёт сам движок через duck/unduck.
+     */
+    private fun startBackgroundMusic() {
+        val prefs = Injekt.get<mihon.domain.ocr.service.OcrPreferences>()
+        if (!prefs.bgMusicEnabled().get()) {
+            backgroundMusic.stop()
+            autoReadEngine.music = null
+            return
+        }
+        val genre = eu.kanade.tachiyomi.data.audio.GenerativeMusic.resolve(
+            prefs.bgMusicGenre().get(),
+            viewModel.manga?.genre,
+        )
+        autoReadEngine.music = backgroundMusic
+        backgroundMusic.start(genre, prefs.bgMusicVolume().get())
     }
 
     /**
@@ -2093,6 +2117,8 @@ class ReaderActivity : BaseActivity() {
         autoReadLoop?.cancel()
         autoReadLoop = null
         autoReadEngine.stop()
+        backgroundMusic.stop()
+        autoReadEngineOrNull?.music = null
         eu.kanade.tachiyomi.data.tts.TtsReadingNotifier.dismiss(this)
         // v1.9.137: прокрутку, которую включала сама авто-чтение — выключаем
         // вместе с ним (ручную настройку читателя не трогаем).

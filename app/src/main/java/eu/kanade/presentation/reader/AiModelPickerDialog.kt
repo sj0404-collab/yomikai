@@ -57,6 +57,10 @@ fun AiModelPickerDialog(
     var orFreeModel by remember { mutableStateOf(prefs.openrouterFreeModel().get()) }
     var orKey by remember { mutableStateOf(prefs.openrouterApiKey().get()) }
     var orModels by remember { mutableStateOf<List<String>>(emptyList()) }
+    var pollModel by remember { mutableStateOf(prefs.pollinationsModel().get()) }
+    var pollKey by remember { mutableStateOf(prefs.pollinationsApiKey().get()) }
+    var llm7Model by remember { mutableStateOf(prefs.llm7Model().get()) }
+    var llm7Key by remember { mutableStateOf(prefs.llm7ApiKey().get()) }
 
     // Оркестратор — агент читалки. Пусто = «как у чата», поэтому поведение
     // по умолчанию не меняется, но роль можно увести на другой бэкенд/модель.
@@ -86,6 +90,10 @@ fun AiModelPickerDialog(
         prefs.zenModel().set(zenModel)
         prefs.openrouterFreeModel().set(orFreeModel)
         prefs.openrouterApiKey().set(orKey.trim())
+        prefs.pollinationsModel().set(pollModel)
+        prefs.pollinationsApiKey().set(pollKey.trim())
+        prefs.llm7Model().set(llm7Model)
+        prefs.llm7ApiKey().set(llm7Key.trim())
         prefs.aiOrchestratorBackend().set(orchBackend)
         // Модель, которую бэкенд всё равно игнорирует, не сохраняем: иначе
         // она всплыла бы при возврате роли на онлайн как «своя».
@@ -94,13 +102,13 @@ fun AiModelPickerDialog(
         val orchestrator = eu.kanade.tachiyomi.data.ai.AiModelRoles.orchestratorTarget(
             chatBackend = prefs.aiBackend().get(),
             chatProvider = aiProvider,
-            chatModel = currentModelLabel(aiProvider, zenModel, orFreeModel, userProviders),
+            chatModel = currentModelLabel(aiProvider, zenModel, orFreeModel, pollModel, llm7Model, userProviders),
             orchestratorBackend = orchBackend,
             orchestratorModel = orchModelValue,
             backendState = eu.kanade.tachiyomi.data.ai.AiBackends.state(context, prefs),
         )
         context.toast(
-            "Чат: ${currentModelLabel(aiProvider, zenModel, orFreeModel, userProviders)}" +
+            "Чат: ${currentModelLabel(aiProvider, zenModel, orFreeModel, pollModel, llm7Model, userProviders)}" +
                 " · Оркестратор: ${orchestrator.backendTitle} · ${orchestrator.model}",
         )
         onDismissRequest()
@@ -131,6 +139,19 @@ fun AiModelPickerDialog(
                         selected = aiProvider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_OPENROUTER,
                         onClick = { aiProvider = eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_OPENROUTER },
                         label = { Text("OpenRouter") },
+                    )
+                }
+                Row(modifier = Modifier.padding(top = 6.dp)) {
+                    FilterChip(
+                        selected = aiProvider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_POLLINATIONS,
+                        onClick = { aiProvider = eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_POLLINATIONS },
+                        label = { Text("Pollinations") },
+                        modifier = Modifier.padding(end = 6.dp),
+                    )
+                    FilterChip(
+                        selected = aiProvider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_LLM7,
+                        onClick = { aiProvider = eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_LLM7 },
+                        label = { Text("LLM7") },
                     )
                 }
                 // Свои провайдеры пользователя (Ollama, LM Studio, прокси).
@@ -204,6 +225,26 @@ fun AiModelPickerDialog(
                             }
                         }
                     }
+                } else if (aiProvider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_POLLINATIONS) {
+                    KeyedBuiltInProviderPanel(
+                        models = eu.kanade.tachiyomi.data.ai.AiAssistant.POLLINATIONS_MODELS,
+                        model = pollModel,
+                        onModelChange = { pollModel = it },
+                        apiKey = pollKey,
+                        onApiKeyChange = { pollKey = it },
+                        keyLabel = "Pollinations API-ключ (необязательно)",
+                        keyHint = "Без ключа большинство моделей не отвечает. Ключ: enter.pollinations.ai/keys",
+                    )
+                } else if (aiProvider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_LLM7) {
+                    KeyedBuiltInProviderPanel(
+                        models = eu.kanade.tachiyomi.data.ai.AiAssistant.LLM7_MODELS,
+                        model = llm7Model,
+                        onModelChange = { llm7Model = it },
+                        apiKey = llm7Key,
+                        onApiKeyChange = { llm7Key = it },
+                        keyLabel = "LLM7 токен (необязательно)",
+                        keyHint = "Бесплатные модели работают и без токена. Токен поднимает лимиты: token.llm7.io",
+                    )
                 } else {
                     // Пользовательский провайдер; его модель и адрес фиксированы
                     // в объявлении, поэтому показываем их как справку.
@@ -244,7 +285,7 @@ fun AiModelPickerDialog(
                     modifier = Modifier.padding(top = 4.dp),
                 )
                 Text(
-                    text = "Чат: ${currentModelLabel(aiProvider, zenModel, orFreeModel, userProviders)}",
+                    text = "Чат: ${currentModelLabel(aiProvider, zenModel, orFreeModel, pollModel, llm7Model, userProviders)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -314,10 +355,59 @@ private fun currentModelLabel(
     provider: String,
     zenModel: String,
     orFreeModel: String,
+    pollModel: String,
+    llm7Model: String,
     userProviders: List<eu.kanade.tachiyomi.data.ai.AiProviders.Spec>,
 ): String = when {
     provider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_ZEN -> "Zen • $zenModel"
     provider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_OPENROUTER ->
         "OpenRouter • ${orFreeModel.ifBlank { eu.kanade.tachiyomi.data.ai.AiAssistant.OPENROUTER_FREE_FALLBACK.first() }}"
+    provider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_POLLINATIONS -> "Pollinations • $pollModel"
+    provider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_LLM7 -> "LLM7 • $llm7Model"
     else -> userProviders.find { it.id == provider }?.title?.ifBlank { provider } ?: provider
+}
+
+/**
+ * Список моделей встроенного провайдера и необязательный ключ. Общий для
+ * быстрого диалога читалки и настроек озвучки, чтобы поведение совпадало.
+ */
+@Composable
+fun KeyedBuiltInProviderPanel(
+    models: List<String>,
+    model: String,
+    onModelChange: (String) -> Unit,
+    apiKey: String,
+    onApiKeyChange: (String) -> Unit,
+    keyLabel: String,
+    keyHint: String,
+) {
+    Text(
+        text = "Модель:",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 8.dp),
+    )
+    Column(modifier = Modifier.heightIn(max = 200.dp).verticalScroll(rememberScrollState())) {
+        models.forEach { m ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onModelChange(m) },
+            ) {
+                RadioButton(selected = model == m, onClick = { onModelChange(m) })
+                Text(m, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+            }
+        }
+    }
+    OutlinedTextField(
+        value = apiKey,
+        onValueChange = onApiKeyChange,
+        label = { Text(keyLabel) },
+        supportingText = { Text(keyHint) },
+        singleLine = true,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp),
+    )
 }

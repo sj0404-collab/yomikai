@@ -53,6 +53,7 @@ object AiProviders {
         AiAssistant.PROVIDER_ZEN,
         AiAssistant.PROVIDER_OPENROUTER,
         AiAssistant.PROVIDER_POLLINATIONS,
+        AiAssistant.PROVIDER_LLM7,
     )
 
     private fun dir(context: Context): File =
@@ -117,10 +118,18 @@ object AiProviders {
         ),
         Spec(
             id = AiAssistant.PROVIDER_POLLINATIONS,
-            title = "Pollinations (без ключа)",
-            summary = "Бесплатные модели: GPT, Claude, Gemini, DeepSeek, Qwen, Grok, Mistral, Kimi, Llama. Ключ не нужен.",
+            title = "Pollinations",
+            summary = "GPT-5 nano/mini, DeepSeek, GLM, Kimi, Grok, Mistral, Llama и др. Часть моделей — по ключу с enter.pollinations.ai.",
             baseUrl = AiAssistant.POLLINATIONS_BASE_URL,
             model = AiAssistant.POLLINATIONS_MODELS.first(),
+            builtIn = true,
+        ),
+        Spec(
+            id = AiAssistant.PROVIDER_LLM7,
+            title = "LLM7",
+            summary = "Бесплатные модели LLM7 (Mistral Nemo, Codestral). Ключ не обязателен.",
+            baseUrl = AiAssistant.LLM7_BASE_URL,
+            model = AiAssistant.LLM7_MODELS.first(),
             builtIn = true,
         ),
     )

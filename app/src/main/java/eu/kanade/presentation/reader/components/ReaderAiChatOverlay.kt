@@ -891,6 +891,8 @@ private fun chatModelLabel(
             prefs.zenModel().get().ifBlank { eu.kanade.tachiyomi.data.ai.AiAssistant.ZEN_MODELS.first() }
         eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_OPENROUTER -> prefs.openrouterFreeModel().get()
             .ifBlank { eu.kanade.tachiyomi.data.ai.AiAssistant.OPENROUTER_FREE_FALLBACK.first() }
+        eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_POLLINATIONS -> prefs.pollinationsModel().get()
+        eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_LLM7 -> prefs.llm7Model().get()
         else -> eu.kanade.tachiyomi.data.ai.AiProviders.userProvider(context, provider)?.model ?: provider
     }
 }

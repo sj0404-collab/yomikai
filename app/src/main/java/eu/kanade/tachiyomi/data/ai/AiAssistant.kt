@@ -40,6 +40,7 @@ object AiAssistant {
     const val PROVIDER_ZEN = "zen"
     const val PROVIDER_OPENROUTER = "openrouter"
     const val PROVIDER_POLLINATIONS = "pollinations"
+    const val PROVIDER_LLM7 = "llm7"
 
     /**
      * Базовые URL встроенных провайдеров. Вынесены в константы, потому что их
@@ -48,7 +49,14 @@ object AiAssistant {
      */
     const val ZEN_BASE_URL = "https://opencode.ai/zen/v1"
     const val OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-    const val POLLINATIONS_BASE_URL = "https://text.pollinations.ai/openai"
+    const val POLLINATIONS_BASE_URL = "https://gen.pollinations.ai/v1"
+    const val LLM7_BASE_URL = "https://api.llm7.io/v1"
+
+    /**
+     * Заглушка для LLM7: без заголовка Authorization сервер отвечает
+     * `Missing API key`, а бесплатные модели принимают любую строку.
+     */
+    const val LLM7_ANONYMOUS_KEY = "unused"
 
     /**
      * Потолок размера ответа модели: 4 МиБ. Обычный readBytes() тянул в heap
@@ -92,17 +100,30 @@ object AiAssistant {
         "google/gemma-4-31b-it:free",
         "nvidia/nemotron-3-super-120b-a12b:free",
     )
-    /** Бесплатные модели Pollinations (без API-ключа, OpenAI-совместимый API). */
+    /**
+     * Модели Pollinations из живого каталога gen.pollinations.ai/v1/models
+     * (paid_only = false). Без ключа большинство отвечает 401, поэтому
+     * пользователь вводит ключ с enter.pollinations.ai.
+     */
     val POLLINATIONS_MODELS = listOf(
-        "openai",
-        "claude",
-        "gemini",
-        "deepseek",
-        "qwen",
-        "grok",
-        "mistral",
-        "kimi",
-        "llama",
+        "openai/gpt-5.4-nano",
+        "openai/gpt-5-nano",
+        "openai/gpt-5.4-mini",
+        "openai/gpt-oss-20b",
+        "deepseek/deepseek-v4-flash",
+        "z-ai/glm-5.3-flash",
+        "minimax/minimax-m3.1-flash",
+        "nvidia/nemotron-3.5-lightning",
+        "meta/llama-3.3-70b-instruct",
+        "mistralai/mistral-large-3",
+        "moonshotai/kimi-k2.6",
+        "x-ai/grok-4.3",
+    )
+
+    /** Бесплатные модели LLM7 (tier «turbo» в api.llm7.io/v1/models). */
+    val LLM7_MODELS = listOf(
+        "mistral-Nemo-Instruct-2407",
+        "codestral-latest",
     )
 
 
@@ -166,6 +187,35 @@ object AiAssistant {
             logcat(LogPriority.WARN) { "Custom provider ${spec.id} (${models.joinToString()}) did not answer" }
         }
         return reply
+    }
+
+    /**
+     * Pollinations и LLM7: OpenAI-совместимый /chat/completions с моделью и
+     * ключом из настроек. Идёт через [customProviderChat], поэтому повторы,
+     * ротация по запасной модели и разбор ответа общие с пользовательскими
+     * провайдерами.
+     */
+    private suspend fun builtInKeyedChat(
+        provider: String,
+        userPrompt: String,
+        systemPrompt: String?,
+        maxTokens: Int,
+        modelOverride: String?,
+    ): ChatReply? {
+        val p = prefs()
+        val base = AiProviders.builtIn().first { it.id == provider }
+        val spec = if (provider == PROVIDER_POLLINATIONS) {
+            base.copy(
+                model = p.pollinationsModel().get().ifBlank { base.model },
+                apiKey = p.pollinationsApiKey().get().trim(),
+            )
+        } else {
+            base.copy(
+                model = p.llm7Model().get().ifBlank { base.model },
+                apiKey = p.llm7ApiKey().get().trim().ifBlank { LLM7_ANONYMOUS_KEY },
+            )
+        }
+        return customProviderChat(spec, userPrompt, systemPrompt, maxTokens, modelOverride)
     }
 
     private val modelCooldownUntil = ConcurrentHashMap<String, Long>()
@@ -403,6 +453,12 @@ object AiAssistant {
             val p = prefs()
             val provider = p.aiProvider().get()
             val override = modelOverride?.takeIf { it.isNotBlank() }
+
+            // Встроенные провайдеры с настраиваемой моделью и ключом. Раньше
+            // Pollinations и LLM7 не имели ветки, и выбор молча уходил в Zen.
+            if (provider == PROVIDER_POLLINATIONS || provider == PROVIDER_LLM7) {
+                return@withContext builtInKeyedChat(provider, userPrompt, systemPrompt, maxTokens, override)
+            }
 
             // Провайдер пользователя из реестра AiProviders (свой base URL,
             // модель и ключ). Проверяется первым: id у него свой, поэтому ветки

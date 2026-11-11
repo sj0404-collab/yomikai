@@ -124,6 +124,13 @@ fun TtsSettingsDialog(
     var orFreeModel by remember { mutableStateOf(prefs.openrouterFreeModel().get()) }
     var orKey by remember { mutableStateOf(prefs.openrouterApiKey().get()) }
     var orModels by remember { mutableStateOf<List<String>>(emptyList()) }
+    var bgMusicOn by remember { mutableStateOf(prefs.bgMusicEnabled().get()) }
+    var bgMusicGenre by remember { mutableStateOf(prefs.bgMusicGenre().get()) }
+    var bgMusicVolume by remember { mutableStateOf(prefs.bgMusicVolume().get()) }
+    var pollModel by remember { mutableStateOf(prefs.pollinationsModel().get()) }
+    var pollKey by remember { mutableStateOf(prefs.pollinationsApiKey().get()) }
+    var llm7Model by remember { mutableStateOf(prefs.llm7Model().get()) }
+    var llm7Key by remember { mutableStateOf(prefs.llm7ApiKey().get()) }
     var showAiLog by remember { mutableStateOf(false) }
 
     // Edge TTS (Microsoft, без ключа): голос + фильтр языка в списке.
@@ -772,6 +779,19 @@ fun TtsSettingsDialog(
                             label = { Text("OpenRouter") },
                         )
                     }
+                    Row(modifier = Modifier.padding(top = 4.dp)) {
+                        FilterChip(
+                            selected = aiProvider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_POLLINATIONS,
+                            onClick = { aiProvider = eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_POLLINATIONS },
+                            label = { Text("Pollinations") },
+                            modifier = Modifier.padding(end = 6.dp),
+                        )
+                        FilterChip(
+                            selected = aiProvider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_LLM7,
+                            onClick = { aiProvider = eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_LLM7 },
+                            label = { Text("LLM7") },
+                        )
+                    }
                     // Провайдеры пользователя из реестра AiProviders: свой
                     // endpoint (Ollama, LM Studio, прокси). Создаются файлом в
                     // workspace/providers или через AI-чат (provider_create).
@@ -824,6 +844,26 @@ fun TtsSettingsDialog(
                                 }
                             }
                         }
+                    } else if (aiProvider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_POLLINATIONS) {
+                        KeyedBuiltInProviderPanel(
+                            models = eu.kanade.tachiyomi.data.ai.AiAssistant.POLLINATIONS_MODELS,
+                            model = pollModel,
+                            onModelChange = { pollModel = it },
+                            apiKey = pollKey,
+                            onApiKeyChange = { pollKey = it },
+                            keyLabel = "Pollinations API-ключ (необязательно)",
+                            keyHint = "Без ключа большинство моделей не отвечает. Ключ: enter.pollinations.ai/keys",
+                        )
+                    } else if (aiProvider == eu.kanade.tachiyomi.data.ai.AiAssistant.PROVIDER_LLM7) {
+                        KeyedBuiltInProviderPanel(
+                            models = eu.kanade.tachiyomi.data.ai.AiAssistant.LLM7_MODELS,
+                            model = llm7Model,
+                            onModelChange = { llm7Model = it },
+                            apiKey = llm7Key,
+                            onApiKeyChange = { llm7Key = it },
+                            keyLabel = "LLM7 токен (необязательно)",
+                            keyHint = "Бесплатные модели работают и без токена. Токен поднимает лимиты: token.llm7.io",
+                        )
                     } else {
                         OutlinedTextField(
                             value = orKey,
@@ -855,6 +895,48 @@ fun TtsSettingsDialog(
                             }
                         }
                     }
+                }
+
+                // Фоновая музыка авточтения: синтезируется кодом по жанру книги и
+                // звучит тише голоса. Изменения применяются со следующего запуска чтения.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                ) {
+                    Text(
+                        text = "Фоновая музыка",
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(checked = bgMusicOn, onCheckedChange = { bgMusicOn = it })
+                }
+                if (bgMusicOn) {
+                    val genreOptions = listOf("auto" to "Авто") +
+                        eu.kanade.tachiyomi.data.audio.GenerativeMusic.Genre.entries.map { it.name to it.label }
+                    genreOptions.chunked(3).forEach { row ->
+                        Row(modifier = Modifier.padding(top = 4.dp)) {
+                            row.forEach { (key, label) ->
+                                FilterChip(
+                                    selected = bgMusicGenre == key,
+                                    onClick = { bgMusicGenre = key },
+                                    label = { Text(label) },
+                                    modifier = Modifier.padding(end = 6.dp),
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        text = "Громкость музыки: ${(bgMusicVolume * 100).toInt()}%",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                    Slider(
+                        value = bgMusicVolume,
+                        onValueChange = { bgMusicVolume = it },
+                        valueRange = 0f..1f,
+                    )
                 }
 
                 Text(
@@ -1173,6 +1255,13 @@ fun TtsSettingsDialog(
                     prefs.zenModel().set(zenModel)
                     prefs.openrouterFreeModel().set(orFreeModel)
                     prefs.openrouterApiKey().set(orKey.trim())
+                    prefs.bgMusicEnabled().set(bgMusicOn)
+                    prefs.bgMusicGenre().set(bgMusicGenre)
+                    prefs.bgMusicVolume().set(bgMusicVolume.coerceIn(0f, 1f))
+                    prefs.pollinationsModel().set(pollModel)
+                    prefs.pollinationsApiKey().set(pollKey.trim())
+                    prefs.llm7Model().set(llm7Model)
+                    prefs.llm7ApiKey().set(llm7Key.trim())
                     prefs.speechRate().set(rate.coerceIn(0.5f, 2f))
                     prefs.ttsWebLanguage().set(webLang.trim().ifBlank { "ru" })
                     prefs.elevenApiKey().set(elevenKey.trim())
