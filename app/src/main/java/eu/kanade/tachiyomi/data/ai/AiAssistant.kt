@@ -39,6 +39,7 @@ object AiAssistant {
 
     const val PROVIDER_ZEN = "zen"
     const val PROVIDER_OPENROUTER = "openrouter"
+    const val PROVIDER_POLLINATIONS = "pollinations"
 
     /**
      * Базовые URL встроенных провайдеров. Вынесены в константы, потому что их
@@ -47,6 +48,7 @@ object AiAssistant {
      */
     const val ZEN_BASE_URL = "https://opencode.ai/zen/v1"
     const val OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+    const val POLLINATIONS_BASE_URL = "https://text.pollinations.ai/openai"
 
     /**
      * Потолок размера ответа модели: 4 МиБ. Обычный readBytes() тянул в heap
@@ -90,6 +92,19 @@ object AiAssistant {
         "google/gemma-4-31b-it:free",
         "nvidia/nemotron-3-super-120b-a12b:free",
     )
+    /** Бесплатные модели Pollinations (без API-ключа, OpenAI-совместимый API). */
+    val POLLINATIONS_MODELS = listOf(
+        "openai",
+        "claude",
+        "gemini",
+        "deepseek",
+        "qwen",
+        "grok",
+        "mistral",
+        "kimi",
+        "llama",
+    )
+
 
     private fun prefs(): OcrPreferences = Injekt.get()
 

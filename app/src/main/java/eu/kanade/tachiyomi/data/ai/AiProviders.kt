@@ -52,6 +52,7 @@ object AiProviders {
     val RESERVED_IDS: Set<String> = setOf(
         AiAssistant.PROVIDER_ZEN,
         AiAssistant.PROVIDER_OPENROUTER,
+        AiAssistant.PROVIDER_POLLINATIONS,
     )
 
     private fun dir(context: Context): File =
@@ -112,6 +113,14 @@ object AiProviders {
             summary = "Бесплатные модели «:free» по вашему ключу OpenRouter.",
             baseUrl = AiAssistant.OPENROUTER_BASE_URL,
             model = AiAssistant.OPENROUTER_FREE_FALLBACK.first(),
+            builtIn = true,
+        ),
+        Spec(
+            id = AiAssistant.PROVIDER_POLLINATIONS,
+            title = "Pollinations (без ключа)",
+            summary = "Бесплатные модели: GPT, Claude, Gemini, DeepSeek, Qwen, Grok, Mistral, Kimi, Llama. Ключ не нужен.",
+            baseUrl = AiAssistant.POLLINATIONS_BASE_URL,
+            model = AiAssistant.POLLINATIONS_MODELS.first(),
             builtIn = true,
         ),
     )
