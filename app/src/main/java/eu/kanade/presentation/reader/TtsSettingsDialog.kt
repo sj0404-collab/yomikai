@@ -127,6 +127,11 @@ fun TtsSettingsDialog(
     var orFreeModel by remember { mutableStateOf(prefs.openrouterFreeModel().get()) }
     var orKey by remember { mutableStateOf(prefs.openrouterApiKey().get()) }
     var orModels by remember { mutableStateOf<List<String>>(emptyList()) }
+    var orCustom by remember {
+        mutableStateOf(
+            prefs.openrouterCustomModels().get().lines().map { it.trim() }.filter { it.isNotBlank() },
+        )
+    }
     var bgMusicOn by remember { mutableStateOf(prefs.bgMusicEnabled().get()) }
     var bgMusicGenre by remember { mutableStateOf(prefs.bgMusicGenre().get()) }
     var bgMusicVolume by remember { mutableStateOf(prefs.bgMusicVolume().get()) }
@@ -883,26 +888,23 @@ fun TtsSettingsDialog(
                                 .fillMaxWidth()
                                 .padding(top = 6.dp),
                         )
-                        Text(
-                            if (orModels.isEmpty()) "Загрузка списка :free моделей…"
-                            else "Бесплатные модели (:free):",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 6.dp),
-                        )
-                        Column(modifier = Modifier.heightIn(max = 150.dp).verticalScroll(rememberScrollState())) {
-                            orModels.forEach { m ->
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { orFreeModel = m },
-                                ) {
-                                    RadioButton(selected = orFreeModel == m, onClick = { orFreeModel = m })
-                                    Text(m, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                        OpenRouterModelsSection(
+                            apiKey = orKey,
+                            selected = orFreeModel,
+                            onSelect = { orFreeModel = it },
+                            liveModels = orModels.ifEmpty { eu.kanade.tachiyomi.data.ai.AiAssistant.OPENROUTER_FREE_FALLBACK },
+                            customModels = orCustom,
+                            onAddCustom = { id ->
+                                if (id !in orCustom) {
+                                    orCustom = orCustom + id
+                                    prefs.openrouterCustomModels().set(orCustom.joinToString("\n"))
                                 }
-                            }
-                        }
+                            },
+                            onRemoveCustom = { id ->
+                                orCustom = orCustom - id
+                                prefs.openrouterCustomModels().set(orCustom.joinToString("\n"))
+                            },
+                        )
                     }
                 }
 

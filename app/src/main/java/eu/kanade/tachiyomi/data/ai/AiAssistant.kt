@@ -82,13 +82,18 @@ object AiAssistant {
         "ling-3.0-flash-fin-free",
     )
 
-    /** Запасной список OpenRouter :free на случай оффлайна при первом открытии. */
+    /**
+     * Запасной список OpenRouter :free на случай оффлайна при первом открытии.
+     * Сверен с живым каталогом openrouter.ai/api/v1/models: прежние id
+     * (nemotron-3-nano-30b-a3b, laguna-s-2.1, glm-5.2, nemotron-3-super-120b)
+     * в каталоге отсутствуют, и запрос по ним давал «модель не найдена».
+     */
     val OPENROUTER_FREE_FALLBACK = listOf(
-        "nvidia/nemotron-3-nano-30b-a3b:free",
-        "poolside/laguna-s-2.1:free",
-        "z-ai/glm-5.2:free",
+        "nvidia/nemotron-3.5-lightning:free",
+        "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "nvidia/nemotron-3.5-super-vl:free",
         "google/gemma-4-31b-it:free",
-        "nvidia/nemotron-3-super-120b-a12b:free",
+        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
     )
     private fun prefs(): OcrPreferences = Injekt.get()
 
@@ -478,8 +483,16 @@ object AiAssistant {
                     )
                 }
                 if (reply != null || !p.aiAutoRotate().get()) return@withContext reply
-                // Автосмена: OpenRouter реально недоступен → пробуем Zen
-                return@withContext zenChatWithRotation(userPrompt, systemPrompt, maxTokens, override)
+                // Автосмена: OpenRouter реально недоступен → пробуем Zen.
+                // Ошибку OpenRouter сохраняем: иначе в чате была бы видна только
+                // ошибка последней модели Zen, и выбранная модель оставалась бы
+                // загадкой.
+                val openRouterFailure = lastFailureMessage
+                val zenReply = zenChatWithRotation(userPrompt, systemPrompt, maxTokens, override)
+                if (zenReply == null) {
+                    lastFailureMessage = "OpenRouter — $openRouterFailure\nАвтосмена Zen — $lastFailureMessage"
+                }
+                return@withContext zenReply
             }
             if (provider == PROVIDER_OPENROUTER) {
                 logcat(LogPriority.WARN) { "OpenRouter selected but no API key; falling back to Zen" }
@@ -493,6 +506,30 @@ object AiAssistant {
      * ротация почти всегда находит живую модель. Тумблер «Автосмена моделей»
      * (pref_ai_auto_rotate) ограничивает попытки одной выбранной моделью.
      */
+    /**
+     * Проверка одной модели OpenRouter для кнопки «Тест»: один короткий запрос
+     * без автосмены на Zen, чтобы результат относился именно к выбранной модели.
+     * Возвращает готовую строку для показа под моделью.
+     */
+    suspend fun testOpenRouterModel(model: String, apiKey: String): String = withContext(Dispatchers.IO) {
+        val key = apiKey.trim()
+        val id = model.trim()
+        if (key.isBlank()) return@withContext "Нужен ключ OpenRouter выше в списке"
+        if (id.isBlank()) return@withContext "Пустой id модели"
+        val startedAt = System.currentTimeMillis()
+        val outcome = chatRawOutcome(
+            "$OPENROUTER_BASE_URL/chat/completions",
+            id, key, "Ответь одним словом: OK", null, 16, plainChat = true,
+        )
+        val tookMs = System.currentTimeMillis() - startedAt
+        when (outcome) {
+            is Outcome.Ok -> "✓ Работает, ответ за $tookMs мс"
+            Outcome.RateLimited -> "⏳ Лимит: модель сейчас занята, попробуйте позже"
+            Outcome.Transient -> "⚠ Временный сбой: ${lastFailureMessage.take(200)}"
+            else -> "✗ ${lastFailureMessage.ifBlank { "ошибка без описания" }.take(240)}"
+        }
+    }
+
     /**
      * Zen с ПРАВИЛЬНОЙ ротацией (фикс по жалобе пользователя):
      *  • настоящий rate limit (429/FreeUsageLimit) → сразу СЛЕДУЮЩАЯ модель;

@@ -395,6 +395,9 @@ class OcrPreferences(
     // Бесплатная модель OpenRouter (суффикс :free)
     fun openrouterFreeModel() = preferenceStore.getString("pref_openrouter_free_model", "")
 
+    // Модели OpenRouter, которые пользователь добавил вручную (по одной на строку).
+    fun openrouterCustomModels() = preferenceStore.getString("pref_openrouter_custom_models", "")
+
     // Встроенные провайдеры с выбором модели (см. BuiltInModelProviders).
     // Модель хранится как pref_ai_model_<id>, ключ как pref_ai_key_<id>.
     fun builtInModel(id: String, default: String = "") = preferenceStore.getString("pref_ai_model_$id", default)

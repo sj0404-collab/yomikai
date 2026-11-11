@@ -61,6 +61,12 @@ fun AiModelPickerDialog(
     var orFreeModel by remember { mutableStateOf(prefs.openrouterFreeModel().get()) }
     var orKey by remember { mutableStateOf(prefs.openrouterApiKey().get()) }
     var orModels by remember { mutableStateOf<List<String>>(emptyList()) }
+    // Модели, которые пользователь добавил вручную (сохраняются сразу).
+    var orCustom by remember {
+        mutableStateOf(
+            prefs.openrouterCustomModels().get().lines().map { it.trim() }.filter { it.isNotBlank() },
+        )
+    }
     // Модели и ключи встроенных провайдеров по id: правки живут в памяти до «Применить».
     val builtInModels = remember {
         mutableStateMapOf<String, String>().apply {
@@ -228,26 +234,23 @@ fun AiModelPickerDialog(
                             .fillMaxWidth()
                             .padding(top = 8.dp),
                     )
-                    Text(
-                        text = if (orModels.isEmpty()) "Загрузка списка :free моделей…" else "Бесплатные модели (:free):",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 6.dp),
-                    )
-                    Column(modifier = Modifier.heightIn(max = 200.dp).verticalScroll(rememberScrollState())) {
-                        val list = orModels.ifEmpty { eu.kanade.tachiyomi.data.ai.AiAssistant.OPENROUTER_FREE_FALLBACK }
-                        list.forEach { m ->
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { orFreeModel = m },
-                            ) {
-                                RadioButton(selected = orFreeModel == m, onClick = { orFreeModel = m })
-                                Text(m, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                    OpenRouterModelsSection(
+                        apiKey = orKey,
+                        selected = orFreeModel,
+                        onSelect = { orFreeModel = it },
+                        liveModels = orModels.ifEmpty { eu.kanade.tachiyomi.data.ai.AiAssistant.OPENROUTER_FREE_FALLBACK },
+                        customModels = orCustom,
+                        onAddCustom = { id ->
+                            if (id !in orCustom) {
+                                orCustom = orCustom + id
+                                prefs.openrouterCustomModels().set(orCustom.joinToString("\n"))
                             }
-                        }
-                    }
+                        },
+                        onRemoveCustom = { id ->
+                            orCustom = orCustom - id
+                            prefs.openrouterCustomModels().set(orCustom.joinToString("\n"))
+                        },
+                    )
                 } else if (BuiltInModelProviders.byId(aiProvider) != null) {
                     val bp = BuiltInModelProviders.byId(aiProvider)!!
                     KeyedBuiltInProviderPanel(
